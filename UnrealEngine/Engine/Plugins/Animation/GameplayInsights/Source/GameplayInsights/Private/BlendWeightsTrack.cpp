@@ -10,9 +10,13 @@
 
 #if WITH_EDITOR
 #include "Animation/AnimInstance.h"
+#include "AnimPreviewInstance.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/BlendSpace.h"
+#include "Animation/DebugSkelMeshComponent.h"
 #include "Editor.h"
+#include "IAnimationEditor.h"
+#include "IPersonaToolkit.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #endif
 
@@ -38,6 +42,7 @@ void FBlendWeightsTrack::IterateSubTracksInternal(TFunction<void(TSharedPtr<FRew
 
 bool FBlendWeightsTrack::UpdateInternal()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FBlendWeights::UpdateInternal);
 	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
 
 	struct TrackId
@@ -70,7 +75,7 @@ bool FBlendWeightsTrack::UpdateInternal()
 	if(GameplayProvider && AnimationProvider)
 	{
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
-		UniqueTrackIds.SetNum(0, false);
+		UniqueTrackIds.SetNum(0, EAllowShrinking::No);
 
 		AnimationProvider->ReadTickRecordTimeline(ObjectId, [&UniqueTrackIds,&GameplayProvider, StartTime, EndTime](const FAnimationProvider::TickRecordTimeline& InTimeline)
 		{
@@ -101,7 +106,10 @@ bool FBlendWeightsTrack::UpdateInternal()
 				bChanged = true;
 			}
 
-			bChanged = bChanged || Children[i]->Update();
+			if (Children[i]->Update())
+			{
+				bChanged = true;
+			}
 		}
 	}
 
@@ -163,8 +171,9 @@ bool FBlendWeightTrack::UpdateInternal()
 
 	if(CurvesUpdateRequested > 10 && GameplayProvider && AnimationProvider)
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(FBlendWeightTrack::UpdateCurvePointsInternal);
 		auto& CurvePoints = CurveData->Points;
-		CurvePoints.SetNum(0,false);
+		CurvePoints.SetNum(0,EAllowShrinking::No);
 		
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 		
@@ -278,44 +287,31 @@ static FLinearColor MakeBlendWeightCurveColor(uint32 InSeed, bool bInLine = fals
 
 TSharedPtr<SWidget> FBlendWeightTrack::GetTimelineViewInternal()
 {
-	FLinearColor Color;
+	FLinearColor FillColor;
+	FLinearColor CurveColor;
+	FLinearColor SelectedColor;
+	
 	switch(CurveType)
 	{
 	case ECurveType::BlendWeight:
-		Color = MakeBlendWeightCurveColor(CityHash32(reinterpret_cast<char*>(&AssetId), 8));
-		Color.A = 0.5f;
-		break; 
-	case ECurveType::PlaybackTime:
-		Color = FLinearColor::MakeFromHSV8(0, 50, 50);
+		FillColor = MakeBlendWeightCurveColor(CityHash32(reinterpret_cast<char*>(&AssetId), 8));
+		FillColor.A = 0.5f;
+		CurveColor = FillColor;
+		CurveColor.R *= 0.5;
+		CurveColor.G *= 0.5;
+		CurveColor.B *= 0.5;
+		SelectedColor = CurveColor;
 		break;
-	case ECurveType::RootMotionWeight:
-		Color = FLinearColor::MakeFromHSV8(60, 50, 50);
-		break;
-	case ECurveType::PlayRate:		
-		Color = FLinearColor::MakeFromHSV8(120, 50, 50);
-		break;
-	case ECurveType::BlendSpacePositionX:
-		Color = FLinearColor::MakeFromHSV8(180, 50, 50);
-		break;
-	case ECurveType::BlendSpacePositionY:
-		Color = FLinearColor::MakeFromHSV8(240, 50, 50);
-		break;
-	case ECurveType::BlendSpaceFilteredPositionX:
-		Color = FLinearColor::MakeFromHSV8(180, 50, 80);
-		break;
-	case ECurveType::BlendSpaceFilteredPositionY:
-		Color = FLinearColor::MakeFromHSV8(240, 50, 80);
+	default:
+		CurveColor = FLinearColor::MakeFromHSV8(100, 50, 65);
+		SelectedColor = FLinearColor::MakeFromHSV8(100, 50, 130);
 		break;
 	}
 
-	FLinearColor CurveColor = Color;
-	CurveColor.R *= 0.5;
-	CurveColor.G *= 0.5;
-	CurveColor.B *= 0.5;
-
 	TSharedPtr<SCurveTimelineView> CurveTimelineView = SNew(SCurveTimelineView)
-		.FillColor(Color)
-		.CurveColor(CurveColor)
+		.TrackName(GetDisplayNameInternal())
+		.FillColor(FillColor)
+		.CurveColor_Lambda([CurveColor, SelectedColor,  this]() { return GetIsSelected() ? SelectedColor : CurveColor; })
 		.ViewRange_Lambda([]() { return IRewindDebugger::Instance()->GetCurrentViewRange(); })
 		.RenderFill(CurveType == ECurveType::BlendWeight)
 		.CurveData_Raw(this, &FBlendWeightTrack::GetCurveData);
@@ -339,6 +335,7 @@ TSharedPtr<SWidget> FBlendWeightTrack::GetDetailsViewInternal()
 
 bool FBlendWeightTrack::HandleDoubleClickInternal()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FBlendWeightsTrack::UpdateInternal);
 #if WITH_EDITOR
 	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
 	if (const TraceServices::IAnalysisSession* AnalysisSession = RewindDebugger->GetAnalysisSession())
@@ -348,8 +345,79 @@ bool FBlendWeightTrack::HandleDoubleClickInternal()
 		const FGameplayProvider* GameplayProvider = AnalysisSession->ReadProvider<FGameplayProvider>(FGameplayProvider::ProviderName);
 
 		const FObjectInfo& AssetInfo = GameplayProvider->GetObjectInfo(GetAssetId());
+		
+		UObject* Asset = nullptr;
+		bool bMessageFound = false;
+		float PlaybackTime = 0;
+		float BlendSpaceX = 0;
+		float BlendSpaceY = 0;
 
-		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AssetInfo.PathName);
+		float CurrentTraceTime = IRewindDebugger::Instance()->CurrentTraceTime();
+		
+		const FAnimationProvider* AnimationProvider = AnalysisSession->ReadProvider<FAnimationProvider>(FAnimationProvider::ProviderName);
+		const TraceServices::IFrameProvider& FrameProvider = TraceServices::ReadFrameProvider(*AnalysisSession);
+		TraceServices::FFrame Frame;
+		if (FrameProvider.GetFrameFromTime(ETraceFrameType::TraceFrameType_Game, CurrentTraceTime, Frame))
+		{
+			AnimationProvider->ReadTickRecordTimeline(ObjectId, [this, &bMessageFound, &PlaybackTime, &BlendSpaceX, &BlendSpaceY, &GameplayProvider, &Frame](const FAnimationProvider::TickRecordTimeline& InTimeline)
+			{
+				InTimeline.EnumerateEvents(Frame.StartTime, Frame.EndTime, [this, &bMessageFound, &PlaybackTime, &BlendSpaceX, &BlendSpaceY, &GameplayProvider, &Frame](double InStartTime, double InEndTime, uint32 InDepth, const FTickRecordMessage& InMessage)
+				{
+					if(InStartTime >= Frame.StartTime && InEndTime <= Frame.EndTime)
+					{
+						if (InMessage.NodeId == NodeId && InMessage.AssetId == AssetId)
+						{
+							bMessageFound = true;
+							PlaybackTime = InMessage.PlaybackTime;
+							BlendSpaceX = InMessage.BlendSpacePositionX;
+							BlendSpaceY = InMessage.BlendSpacePositionY;
+							return TraceServices::EEventEnumerate::Stop;
+						}
+					}
+					return TraceServices::EEventEnumerate::Continue;
+				});
+			});
+		}
+		
+		FString PackagePathString = FPackageName::ObjectPathToPackageName(FString(AssetInfo.PathName));
+
+		UPackage* Package = LoadPackage(NULL, ToCStr(PackagePathString), LOAD_NoRedirects);
+		if (Package)
+		{
+			Package->FullyLoad();
+                
+			FString AssetName = FPaths::GetBaseFilename(AssetInfo.PathName);
+			Asset = FindObject<UObject>(Package, *AssetName);
+		}
+		else
+		{
+			// fallback for unsaved assets
+			Asset = FindObject<UObject>(nullptr, AssetInfo.PathName);
+		}
+                    	
+		if (Asset != nullptr)
+		{
+			if (UAssetEditorSubsystem* AssetEditorSS = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+			{
+				AssetEditorSS->OpenEditorForAsset(Asset);
+
+				if (bMessageFound)
+				{
+					// if the asset is playing on the current frame, scrub to the appropriate time
+					if (IAssetEditorInstance* Editor = AssetEditorSS->FindEditorForAsset(Asset, true))
+					{
+						if (Editor->GetEditorName()=="AnimationEditor")
+						{
+							IAnimationEditor* AnimationEditor = static_cast<IAnimationEditor*>(Editor);
+							UDebugSkelMeshComponent* PreviewComponent = AnimationEditor->GetPersonaToolkit()->GetPreviewMeshComponent();
+							PreviewComponent->PreviewInstance->SetPosition(PlaybackTime);
+							PreviewComponent->PreviewInstance->SetPlaying(false);
+							PreviewComponent->PreviewInstance->SetBlendSpacePosition(FVector(BlendSpaceX, BlendSpaceY, 0.0f));
+						}
+					}
+				}
+			}
+		}
 
 		return true;
 	}
@@ -362,11 +430,17 @@ FName FBlendWeightsTrackCreator::GetTargetTypeNameInternal() const
 	static const FName TargetTypeName = "AnimInstance";
 	return TargetTypeName;
 }
+	
+static const FName BlendWeightsName("BlendWeights");
 
 FName FBlendWeightsTrackCreator::GetNameInternal() const
 {
-	static const FName BlendWeightsName("BlendWeights");
 	return BlendWeightsName;
+}
+	
+void FBlendWeightsTrackCreator::GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const
+{
+	Types.Add({BlendWeightsName, LOCTEXT("Blend Weights", "Blend Weights")});
 }
 
 TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FBlendWeightsTrackCreator::CreateTrackInternal(uint64 ObjectId) const
@@ -376,12 +450,13 @@ TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FBlendWeightsTrackCreator::Crea
 
 bool FBlendWeightsTrackCreator::HasDebugInfoInternal(uint64 ObjectId) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FBlendWeightsTrack::HasDebugInfoInternal);
 	const TraceServices::IAnalysisSession* AnalysisSession = IRewindDebugger::Instance()->GetAnalysisSession();
 	TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 	bool bHasData = false;
 	if (const FAnimationProvider* AnimationProvider = AnalysisSession->ReadProvider<FAnimationProvider>(FAnimationProvider::ProviderName))
 	{
-		AnimationProvider->ReadAnimGraphTimeline(ObjectId, [&bHasData](const FAnimationProvider::AnimGraphTimeline& InGraphTimeline)
+		AnimationProvider->ReadTickRecordTimeline(ObjectId, [&bHasData](const FAnimationProvider::TickRecordTimeline& InGraphTimeline)
 		{
 			bHasData = true;
 		});

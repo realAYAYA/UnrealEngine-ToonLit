@@ -75,8 +75,6 @@ bool FDateTimeNetSerializer::IsEqual(FNetSerializationContext& Context, const FN
 		const SourceType& Value1 = *reinterpret_cast<SourceType*>(Args.Source1);
 		return Value0 == Value1;
 	}
-
-	return true;
 }
 
 }

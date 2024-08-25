@@ -27,6 +27,21 @@ AXRCreativeTeleporter::AXRCreativeTeleporter(const FObjectInitializer& ObjectIni
 	TeleportMesh = CreateDefaultSubobject<UStaticMeshComponent>("TeleportMesh");
 	TeleportMesh->SetupAttachment(GetRootComponent());
 	TeleportMesh->SetMobility(EComponentMobility::Movable);
+
+	HeadMountedDisplay = CreateDefaultSubobject<UMotionControllerComponent>("HeadMountedDisplay");
+	HeadMountedDisplay->SetupAttachment(GetRootComponent());
+	HeadMountedDisplay->bTickInEditor = true;
+	HeadMountedDisplay->MotionSource = "HMD";
+
+	LeftControllerVisual = CreateDefaultSubobject<UStaticMeshComponent>("LeftControllerVisual");
+	LeftControllerVisual->SetupAttachment(LeftController);
+
+	RightControllerVisual = CreateDefaultSubobject<UStaticMeshComponent>("RightControllerVisual");
+	RightControllerVisual->SetupAttachment(RightController);
+	
+	HMDVisual = CreateDefaultSubobject<UStaticMeshComponent>("HMDVisual");
+	HMDVisual->SetupAttachment(HeadMountedDisplay);
+	
 }
 
 // Called when the game starts or when spawned

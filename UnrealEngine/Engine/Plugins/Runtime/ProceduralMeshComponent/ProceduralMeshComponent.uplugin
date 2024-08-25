@@ -13,21 +13,23 @@
 	"EnabledByDefault" : true,
 	"CanContainContent" : false,
 	"IsBetaVersion" : false,
-	"Installed" : false,
+	"Installed": false,
+	"SupportedPrograms":  ["LiveLinkHub"],
 	"Modules" :
 	[
 		{
-			"Name" : "ProceduralMeshComponent",
-			"Type" : "Runtime",
-			"LoadingPhase" : "PreDefault",
-			"PlatformDenyList" :
-			[
+			"Name": "ProceduralMeshComponent",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault",
+			"ProgramAllowList": [ "LiveLinkHub" ],
+			"PlatformDenyList": [
 			]
 		},
 		{
-			"Name" : "ProceduralMeshComponentEditor",
-			"Type" : "Editor",
-			"LoadingPhase" : "Default"
+			"Name": "ProceduralMeshComponentEditor",
+			"Type": "Editor",
+			"ProgramAllowList": [ "LiveLinkHub" ],
+			"LoadingPhase": "Default"
 		}
 	]
 }

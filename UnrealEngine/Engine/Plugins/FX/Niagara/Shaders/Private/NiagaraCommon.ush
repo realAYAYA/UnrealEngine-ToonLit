@@ -93,30 +93,6 @@ float3x3 NiagaraFindRotationBetweenNormals(float3 A, float3 B)
 	return NiagaraQuatTo3x3(Quat);
 }
 
-float4 NiagaraQuatSLerp(float4 Quat1, float4 Quat2, float Slerp)
-{
-	const float RawCosom = dot(Quat1, Quat2);
-	const float Cosom = abs(RawCosom);
-	
-	float Scale0, Scale1;
-	if (Cosom < 0.9999f)
-	{
-		const float Omega = acos(Cosom);
-		const float InvSin = 1.f / sin(Omega);
-		Scale0 = sin((1.f - Slerp) * Omega) * InvSin;
-		Scale1 = sin(Slerp * Omega) * InvSin;
-	}
-	else
-	{
-		Scale0 = 1.0f - Slerp;
-		Scale1 = Slerp;
-	}
-
-	Scale1 = RawCosom >= 0.0f ? Scale1 : -Scale1;
-
-	return (Scale0 * Quat1) + (Scale1 * Quat2);
-}
-
 float4 NiagaraQuatMul(float4 Quat1, float4 Quat2)
 {
 	return float4(

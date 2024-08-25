@@ -173,18 +173,6 @@ public:
 	bool GetAbsoluteWorldSnappingEnabled() const { return bEnableAbsoluteWorldSnapping; }
 
 protected:
-	/**
-	 * Called upon Level Editor Created in order to bind to EditorElementSelectionPtr changed
-	 * event since global selection set is not initialized before the tools context.
-	 * @param InSelectionSet - typed element selection set which invoked this selection changed call
-	 */
-	virtual void OnLevelEditorCreated(TSharedPtr<ILevelEditor> InLevelEditor);
-
-	/**
-	 * Handle Editor selection changes
-	 * @param InSelectionSet - typed element selection set which invoked this selection changed call
-	 */
-	virtual void OnEditorSelectionSetChanged(const UTypedElementSelectionSet* InSelectionSet);
 
 	// we hide these 
 	virtual void Initialize(IToolsContextQueriesAPI* QueriesAPI, IToolsContextTransactionsAPI* TransactionsAPI) override;
@@ -268,6 +256,12 @@ public:
 	//
 public:
 	bool InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event);
+	/**
+	 * This updates internal state like InputKey, but doesn't route the results to the input router. 
+	 * Use this if the input is captured by some higher system, to avoid this class from having an
+	 * incorrect view of e.g. the mouse state because it did not receive a mouse release event.
+	 */
+	void UpdateStateWithoutRoutingInputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event);
 
 	bool MouseEnter(FEditorViewportClient* ViewportClient, FViewport* Viewport, int32 x, int32 y);
 	bool MouseLeave(FEditorViewportClient* ViewportClient, FViewport* Viewport);

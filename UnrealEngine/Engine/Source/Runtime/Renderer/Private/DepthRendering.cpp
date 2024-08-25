@@ -83,6 +83,15 @@ static TAutoConsoleVariable<int32> CVarPSOPrecacheDitheredLODFadingOutMaskPass(
 	ECVF_ReadOnly
 );
 
+static TAutoConsoleVariable<int32> CVarPSOPrecacheProjectedShadows(
+	TEXT("r.PSOPrecache.ProjectedShadows"),
+	1,
+	TEXT("Also Precache PSOs with for projected shadows.")  \
+	TEXT(" 0: No PSOs are compiled for this pass.\n") \
+	TEXT(" 1: PSOs are compiled for all primitives which render to depth pass (default).\n"),
+	ECVF_ReadOnly
+);
+
 extern bool IsHMDHiddenAreaMaskActive();
 
 FDepthPassInfo GetDepthPassInfo(const FScene* Scene)
@@ -483,7 +492,7 @@ void SetupDepthPassState(FMeshPassProcessorRenderState& DrawRenderState)
 
 extern const TCHAR* GetDepthPassReason(bool bDitheredLODTransitionsUseStencil, EShaderPlatform ShaderPlatform);
 
-void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRDGTextureRef SceneDepthTexture, FInstanceCullingManager& InstanceCullingManager, FRDGTextureRef* FirstStageDepthBuffer)
+void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, TArrayView<FViewInfo> InViews, FRDGTextureRef SceneDepthTexture, FInstanceCullingManager& InstanceCullingManager, FRDGTextureRef* FirstStageDepthBuffer)
 {
 	RDG_EVENT_SCOPE(GraphBuilder, "PrePass %s %s", GetDepthDrawingModeString(DepthPass.EarlyZPassMode), GetDepthPassReason(DepthPass.bDitheredLODTransitionsUseStencil, ShaderPlatform));
 	RDG_CSV_STAT_EXCLUSIVE_SCOPE(GraphBuilder, RenderPrePass);
@@ -494,11 +503,11 @@ void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRD
 
 	const bool bParallelDepthPass = GRHICommandList.UseParallelAlgorithms() && CVarParallelPrePass.GetValueOnRenderThread();
 
-	RenderPrePassHMD(GraphBuilder, SceneDepthTexture);
+	RenderPrePassHMD(GraphBuilder, InViews, SceneDepthTexture);
 
 	if (DepthPass.IsRasterStencilDitherEnabled())
 	{
-		AddDitheredStencilFillPass(GraphBuilder, Views, SceneDepthTexture, DepthPass);
+		AddDitheredStencilFillPass(GraphBuilder, InViews, SceneDepthTexture, DepthPass);
 	}
 
 	auto RenderDepthPass = [&](uint8 DepthMeshPass)
@@ -510,11 +519,11 @@ void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRD
 		{
 			RDG_WAIT_FOR_TASKS_CONDITIONAL(GraphBuilder, IsDepthPassWaitForTasksEnabled());
 
-			for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+			for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ++ViewIndex)
 			{
-				FViewInfo& View = Views[ViewIndex];
+				FViewInfo& View = InViews[ViewIndex];
 				RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
-				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1, "View%d", ViewIndex);
+				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, InViews.Num() > 1, "View%d", ViewIndex);
 
 				FMeshPassProcessorRenderState DrawRenderState;
 				SetupDepthPassState(DrawRenderState);
@@ -544,11 +553,11 @@ void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRD
 		}
 		else
 		{
-			for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+			for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ++ViewIndex)
 			{
-				FViewInfo& View = Views[ViewIndex];
+				FViewInfo& View = InViews[ViewIndex];
 				RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
-				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1, "View%d", ViewIndex);
+				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, InViews.Num() > 1, "View%d", ViewIndex);
 
 				FMeshPassProcessorRenderState DrawRenderState;
 				SetupDepthPassState(DrawRenderState);
@@ -585,9 +594,9 @@ void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRD
 
 		// Evaluate if any second stage depth buffer processing is required
 		bool bUsesSecondStageDepthPass = false;
-		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+		for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ++ViewIndex)
 		{
-			FViewInfo& View = Views[ViewIndex];
+			FViewInfo& View = InViews[ViewIndex];
 			bUsesSecondStageDepthPass |= View.bUsesSecondStageDepthPass;
 		}
 
@@ -600,9 +609,9 @@ void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRD
 			// TODO: A proper solution would be an update to AddCopyTexturePass that also maintain the source texture HTile data.
 			FRDGTextureDesc FirstStageDepthBufferDesc = FRDGTextureDesc::Create2D(SceneDepthTexture->Desc.Extent, PF_R32_FLOAT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
 			*FirstStageDepthBuffer = GraphBuilder.CreateTexture(FirstStageDepthBufferDesc, TEXT("FirstStageDepthBuffer"));
-			for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+			for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ++ViewIndex)
 			{
-				FViewInfo& View = Views[ViewIndex];
+				FViewInfo& View = InViews[ViewIndex];
 				if (View.ViewState && !View.bStatePrevViewInfoIsReadOnly && View.bUsesSecondStageDepthPass)
 				{
 					AddViewDepthCopyCSPass(GraphBuilder, View, SceneDepthTexture, *FirstStageDepthBuffer);
@@ -624,14 +633,14 @@ void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRD
 			RDG_EVENT_NAME("DitherStencilClear"),
 			PassParameters,
 			ERDGPassFlags::Raster,
-			[this](FRHICommandList& RHICmdList)
+			[this, InViews](FRHICommandList& RHICmdList)
 		{
-			if (Views.Num() > 1)
+			if (InViews.Num() > 1)
 			{
-				FIntRect FullViewRect = Views[0].ViewRect;
-				for (int32 ViewIndex = 1; ViewIndex < Views.Num(); ++ViewIndex)
+				FIntRect FullViewRect = InViews[0].ViewRect;
+				for (int32 ViewIndex = 1; ViewIndex < InViews.Num(); ++ViewIndex)
 				{
-					FullViewRect.Union(Views[ViewIndex].ViewRect);
+					FullViewRect.Union(InViews[ViewIndex].ViewRect);
 				}
 				RHICmdList.SetViewport(FullViewRect.Min.X, FullViewRect.Min.Y, 0, FullViewRect.Max.X, FullViewRect.Max.Y, 1);
 			}
@@ -643,7 +652,7 @@ void FDeferredShadingSceneRenderer::RenderPrePass(FRDGBuilder& GraphBuilder, FRD
 	const bool bForwardShadingEnabled = IsForwardShadingEnabled(ShaderPlatform);
 	if (!bForwardShadingEnabled)
 	{
-		StampDeferredDebugProbeDepthPS(GraphBuilder, Views, SceneDepthTexture);
+		StampDeferredDebugProbeDepthPS(GraphBuilder, InViews, SceneDepthTexture);
 	}
 #endif
 }
@@ -654,13 +663,8 @@ bool FMobileSceneRenderer::ShouldRenderPrePass() const
 	return Scene->EarlyZPassMode == DDM_MaskedOnly || Scene->EarlyZPassMode == DDM_AllOpaque;
 }
 
-void FMobileSceneRenderer::RenderPrePass(FRHICommandList& RHICmdList, const FViewInfo& View)
+void FMobileSceneRenderer::RenderPrePass(FRHICommandList& RHICmdList, const FViewInfo& View, const FInstanceCullingDrawParams* InstanceCullingDrawParams)
 {
-	if (!ShouldRenderPrePass())
-	{
-		return;
-	}
-	
 	checkSlow(RHICmdList.IsInsideRenderPass());
 
 	SCOPED_NAMED_EVENT(FMobileSceneRenderer_RenderPrePass, FColor::Emerald);
@@ -671,10 +675,10 @@ void FMobileSceneRenderer::RenderPrePass(FRHICommandList& RHICmdList, const FVie
 	SCOPED_GPU_STAT(RHICmdList, Prepass);
 
 	SetStereoViewport(RHICmdList, View);
-	View.ParallelMeshDrawCommandPasses[EMeshPass::DepthPass].DispatchDraw(nullptr, RHICmdList, &MeshPassInstanceCullingDrawParams[EMeshPass::DepthPass]);
+	View.ParallelMeshDrawCommandPasses[EMeshPass::DepthPass].DispatchDraw(nullptr, RHICmdList, InstanceCullingDrawParams);
 }
 
-void FDeferredShadingSceneRenderer::RenderPrePassHMD(FRDGBuilder& GraphBuilder, FRDGTextureRef DepthTexture)
+void FDeferredShadingSceneRenderer::RenderPrePassHMD(FRDGBuilder& GraphBuilder, TArrayView<FViewInfo> InViews, FRDGTextureRef DepthTexture)
 {
 	// Early out before we change any state if there's not a mask to render
 	if (!IsHMDHiddenAreaMaskActive())
@@ -688,7 +692,7 @@ void FDeferredShadingSceneRenderer::RenderPrePassHMD(FRDGBuilder& GraphBuilder, 
 		return;
 	}
 
-	for (const FViewInfo& View : Views)
+	for (const FViewInfo& View : InViews)
 	{
 		// Don't draw the hidden area mesh in scene captures as they are not displayed
 		// through the HMD lenses.
@@ -769,6 +773,11 @@ void SetMobileDepthPassRenderState(const FPrimitiveSceneProxy* RESTRICT Primitiv
 		uint8 ShadingModel = GetMobileShadingModelStencilValue(MaterialResource.GetShadingModels());
 		StencilValue |= GET_STENCIL_MOBILE_SM_MASK(ShadingModel);
 		StencilValue |= STENCIL_LIGHTING_CHANNELS_MASK(PrimitiveSceneProxy ? PrimitiveSceneProxy->GetLightingChannelStencilValue() : 0x00);
+	}
+	else
+	{
+		uint8 CastContactShadows = (PrimitiveSceneProxy && PrimitiveSceneProxy->CastsContactShadow() ? 0x01 : 0x00);
+		StencilValue |= GET_STENCIL_BIT_MASK(MOBILE_CAST_CONTACT_SHADOW, CastContactShadows);
 	}
 
 	DrawRenderState.SetStencilRef(StencilValue);
@@ -897,11 +906,41 @@ void FDepthPassMeshProcessor::CollectPSOInitializersInternal(
 		bPositionOnly ? EMeshPassFeatures::PositionOnly : EMeshPassFeatures::Default,
 		true /*bRequired*/,
 		PSOInitializers);
+
+	// Also cache with project shadow depth stencil state (see FProjectedShadowInfo::SetupMeshDrawCommandsForProjectionStenciling)
+	if (CVarPSOPrecacheProjectedShadows.GetValueOnAnyThread() > 0)
+	{
+		// Set stencil to one.
+		DrawRenderState.SetDepthStencilState(
+			TStaticDepthStencilState<
+			false, CF_DepthNearOrEqual,
+			true, CF_Always, SO_Keep, SO_Keep, SO_Replace,
+			false, CF_Always, SO_Keep, SO_Keep, SO_Keep,
+			0xff, 0xff
+			>::GetRHI());
+
+		AddRenderTargetInfo(PF_B8G8R8A8, TexCreate_RenderTargetable | TexCreate_ShaderResource, RenderTargetsInfo);
+
+		AddGraphicsPipelineStateInitializer(
+			VertexFactoryData,
+			MaterialResource,
+			DrawRenderState,
+			RenderTargetsInfo,
+			DepthPassShaders,
+			MeshFillMode,
+			MeshCullMode,
+			PrimitiveType,
+			bPositionOnly ? EMeshPassFeatures::PositionOnly : EMeshPassFeatures::Default,
+			true /*bRequired*/,
+			PSOInitializers);
+	}
 }
 
-bool FDepthPassMeshProcessor::UseDefaultMaterial(const FMaterial& Material, bool bMaterialModifiesMeshPosition, bool bSupportPositionOnlyStream, bool bVFTypeSupportsNullPixelShader, bool& bPositionOnly)
+bool FDepthPassMeshProcessor::ShouldRender(const FMaterial& Material, bool bMaterialModifiesMeshPosition, bool bSupportPositionOnlyStream, bool bVFTypeSupportsNullPixelShader, bool& bUseDefaultMaterial, bool& bPositionOnly)
 {
-	bool bUseDefaultMaterial = false;
+	bool bShouldRender = false;
+	bUseDefaultMaterial = false;
+	bPositionOnly = false;
 
 	if (IsOpaqueBlendMode(Material)
 		&& EarlyZPassMode != DDM_MaskedOnly
@@ -909,6 +948,7 @@ bool FDepthPassMeshProcessor::UseDefaultMaterial(const FMaterial& Material, bool
 		&& !bMaterialModifiesMeshPosition
 		&& Material.WritesEveryPixel(false, bVFTypeSupportsNullPixelShader))
 	{
+		bShouldRender = true;
 		bUseDefaultMaterial = true;
 		bPositionOnly = true;
 	}
@@ -918,6 +958,8 @@ bool FDepthPassMeshProcessor::UseDefaultMaterial(const FMaterial& Material, bool
 		const bool bMaterialMasked = !Material.WritesEveryPixel(false, bVFTypeSupportsNullPixelShader) || Material.IsTranslucencyWritingCustomDepth();
 		if ((!bMaterialMasked && EarlyZPassMode != DDM_MaskedOnly) || (bMaterialMasked && EarlyZPassMode != DDM_NonMaskedOnly))
 		{
+			bShouldRender = true;
+
 			if (!bMaterialMasked && !bMaterialModifiesMeshPosition)
 			{
 				bUseDefaultMaterial = true;
@@ -926,7 +968,7 @@ bool FDepthPassMeshProcessor::UseDefaultMaterial(const FMaterial& Material, bool
 		}
 	}
 
-	return bUseDefaultMaterial;
+	return bShouldRender;
 }
 
 bool FDepthPassMeshProcessor::TryAddMeshBatch(const FMeshBatch& RESTRICT MeshBatch, uint64 BatchElementMask, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, int32 StaticMeshId, const FMaterialRenderProxy& MaterialRenderProxy, const FMaterial& Material)
@@ -945,29 +987,31 @@ bool FDepthPassMeshProcessor::TryAddMeshBatch(const FMeshBatch& RESTRICT MeshBat
 		const bool bEvaluateWPO = Material.MaterialModifiesMeshPosition_RenderThread()
 			&& (!ShouldOptimizedWPOAffectNonNaniteShaderSelection() || !PrimitiveSceneProxy || PrimitiveSceneProxy->EvaluateWorldPositionOffset());
 		bool bPositionOnly = false;
-		bool bUseDefaultMaterial = UseDefaultMaterial(Material, bEvaluateWPO, bSupportPositionOnlyStream, bVFTypeSupportsNullPixelShader, bPositionOnly);
-
-		const FMaterialRenderProxy* EffectiveMaterialRenderProxy = &MaterialRenderProxy;
-		const FMaterial* EffectiveMaterial = &Material;
-		if (bUseDefaultMaterial)
+		bool bUseDefaultMaterial = false;
+		if (ShouldRender(Material, bEvaluateWPO, bSupportPositionOnlyStream, bVFTypeSupportsNullPixelShader, bUseDefaultMaterial, bPositionOnly))
 		{
-			// Override with the default material
-			EffectiveMaterialRenderProxy = UMaterial::GetDefaultMaterial(MD_Surface)->GetRenderProxy();
-			EffectiveMaterial = EffectiveMaterialRenderProxy->GetMaterialNoFallback(FeatureLevel);
-			check(EffectiveMaterial);
-		}
+			const FMaterialRenderProxy* EffectiveMaterialRenderProxy = &MaterialRenderProxy;
+			const FMaterial* EffectiveMaterial = &Material;
+			if (bUseDefaultMaterial)
+			{
+				// Override with the default material
+				EffectiveMaterialRenderProxy = UMaterial::GetDefaultMaterial(MD_Surface)->GetRenderProxy();
+				EffectiveMaterial = EffectiveMaterialRenderProxy->GetMaterialNoFallback(FeatureLevel);
+				check(EffectiveMaterial);
+			}
 
-		const FMeshDrawingPolicyOverrideSettings OverrideSettings = ComputeMeshOverrideSettings(MeshBatch);
-		const ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(Material, OverrideSettings);
-		const ERasterizerCullMode MeshCullMode = ComputeMeshCullMode(Material, OverrideSettings);
+			const FMeshDrawingPolicyOverrideSettings OverrideSettings = ComputeMeshOverrideSettings(MeshBatch);
+			const ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(Material, OverrideSettings);
+			const ERasterizerCullMode MeshCullMode = ComputeMeshCullMode(Material, OverrideSettings);
 
-		if (bPositionOnly)
-		{
-			bResult = Process<true>(MeshBatch, BatchElementMask, StaticMeshId, PrimitiveSceneProxy, *EffectiveMaterialRenderProxy, *EffectiveMaterial, MeshFillMode, MeshCullMode);
-		}
-		else
-		{
-			bResult = Process<false>(MeshBatch, BatchElementMask, StaticMeshId, PrimitiveSceneProxy, *EffectiveMaterialRenderProxy, *EffectiveMaterial, MeshFillMode, MeshCullMode);
+			if (bPositionOnly)
+			{
+				bResult = Process<true>(MeshBatch, BatchElementMask, StaticMeshId, PrimitiveSceneProxy, *EffectiveMaterialRenderProxy, *EffectiveMaterial, MeshFillMode, MeshCullMode);
+			}
+			else
+			{
+				bResult = Process<false>(MeshBatch, BatchElementMask, StaticMeshId, PrimitiveSceneProxy, *EffectiveMaterialRenderProxy, *EffectiveMaterial, MeshFillMode, MeshCullMode);
+			}
 		}
 	}
 
@@ -978,12 +1022,6 @@ void FDepthPassMeshProcessor::AddMeshBatch(const FMeshBatch& RESTRICT MeshBatch,
 {
 	bool bDraw = MeshBatch.bUseForDepthPass;
 	
-	// Mobile rendering does not use depth prepass by default
-	if (FeatureLevel == ERHIFeatureLevel::ES3_1 && EarlyZPassMode == DDM_None)
-	{
-		bDraw = false;
-	}
-
 	// Filter by occluder flags and settings if required.
 	if (bDraw && bRespectUseAsOccluderFlag && !MeshBatch.bUseAsOccluder && EarlyZPassMode < DDM_AllOpaque)
 	{
@@ -1070,12 +1108,6 @@ void FDepthPassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig&
 		return;
 	}
 
-	// Mobile rendering does not use depth prepass by default
-	if (FeatureLevel == ERHIFeatureLevel::ES3_1 && EarlyZPassMode == DDM_None)
-	{
-		return;
-	}
-
 	const bool bIsTranslucent = IsTranslucentBlendMode(Material);
 
 	// Early out if translucent or material shouldn't be used during this pass
@@ -1091,33 +1123,38 @@ void FDepthPassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig&
 	const bool bSupportPositionOnlyStream = VertexFactoryData.VertexFactoryType->SupportsPositionOnly();  
 	const bool bVFTypeSupportsNullPixelShader = VertexFactoryData.VertexFactoryType->SupportsNullPixelShader();
 	bool bPositionOnly = false;
-	bool bUseDefaultMaterial = UseDefaultMaterial(Material, Material.MaterialModifiesMeshPosition_GameThread(), bSupportPositionOnlyStream, bVFTypeSupportsNullPixelShader, bPositionOnly);
-
-	const FMaterial* EffectiveMaterial = &Material;
-	if (bUseDefaultMaterial && !bSupportPositionOnlyStream && VertexFactoryData.CustomDefaultVertexDeclaration)
+	bool bUseDefaultMaterial = false;
+	if (ShouldRender(Material, Material.MaterialModifiesMeshPosition_GameThread(), bSupportPositionOnlyStream, bVFTypeSupportsNullPixelShader, bUseDefaultMaterial, bPositionOnly))
 	{
-		EMaterialQualityLevel::Type ActiveQualityLevel = GetCachedScalabilityCVars().MaterialQualityLevel;
-		EffectiveMaterial = UMaterial::GetDefaultMaterial(MD_Surface)->GetMaterialResource(FeatureLevel, ActiveQualityLevel);
-		bUseDefaultMaterial = false;
-	}
+		bool bCollectPSOs = !bUseDefaultMaterial;
 
-	if (!bUseDefaultMaterial)
-	{
-		check(!bPositionOnly);
-
-		const FMeshDrawingPolicyOverrideSettings OverrideSettings = ComputeMeshOverrideSettings(PreCacheParams);
-		const ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(Material, OverrideSettings);
-		const ERasterizerCullMode MeshCullMode = ComputeMeshCullMode(Material, OverrideSettings);
-
-		bool bIsMoveable = PreCacheParams.IsMoveable();
-		const bool bAllowDitheredLODTransition = !bIsMoveable && Material.IsDitheredLODTransition();
-
-		bool bDitheredLODTransition = false;
-		CollectPSOInitializersInternal<false>(SceneTexturesConfig, VertexFactoryData, *EffectiveMaterial, MeshFillMode, MeshCullMode, bDitheredLODTransition, (EPrimitiveType)PreCacheParams.PrimitiveType, PSOInitializers);
-		if (bAllowDitheredLODTransition)
+		// Collect PSOs for default material if there is a custom vertex declaration
+		const FMaterial* EffectiveMaterial = &Material;
+		if (bUseDefaultMaterial && !bSupportPositionOnlyStream && VertexFactoryData.CustomDefaultVertexDeclaration)
 		{
-			bDitheredLODTransition = true;
+			EMaterialQualityLevel::Type ActiveQualityLevel = GetCachedScalabilityCVars().MaterialQualityLevel;
+			EffectiveMaterial = UMaterial::GetDefaultMaterial(MD_Surface)->GetMaterialResource(FeatureLevel, ActiveQualityLevel);
+			bCollectPSOs = true;
+		}
+
+		if (bCollectPSOs)
+		{
+			check(!bPositionOnly);
+
+			const FMeshDrawingPolicyOverrideSettings OverrideSettings = ComputeMeshOverrideSettings(PreCacheParams);
+			const ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(Material, OverrideSettings);
+			const ERasterizerCullMode MeshCullMode = ComputeMeshCullMode(Material, OverrideSettings);
+
+			bool bIsMoveable = PreCacheParams.IsMoveable();
+			const bool bAllowDitheredLODTransition = !bIsMoveable && Material.IsDitheredLODTransition();
+
+			bool bDitheredLODTransition = false;
 			CollectPSOInitializersInternal<false>(SceneTexturesConfig, VertexFactoryData, *EffectiveMaterial, MeshFillMode, MeshCullMode, bDitheredLODTransition, (EPrimitiveType)PreCacheParams.PrimitiveType, PSOInitializers);
+			if (bAllowDitheredLODTransition)
+			{
+				bDitheredLODTransition = true;
+				CollectPSOInitializersInternal<false>(SceneTexturesConfig, VertexFactoryData, *EffectiveMaterial, MeshFillMode, MeshCullMode, bDitheredLODTransition, (EPrimitiveType)PreCacheParams.PrimitiveType, PSOInitializers);
+			}
 		}
 	}
 }

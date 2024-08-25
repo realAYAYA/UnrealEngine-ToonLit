@@ -1963,8 +1963,9 @@ private:
 		GraphXBounds.X = FMath::Min((int32)GraphXBounds.X, X);
 		GraphXBounds.Y = FMath::Max((int32)GraphXBounds.Y, X);
 
+		constexpr bool bShouldSelectNewNode = false;
 		const FVector2D Location = GetNodePosition(X, Y);
-		return FEdGraphSchemaAction_K2NewNode::SpawnNodeFromTemplate<NodeType>(CompilingNode->BoundGraph, Template, Location);
+		return FEdGraphSchemaAction_K2NewNode::SpawnNodeFromTemplate<NodeType>(CompilingNode->BoundGraph, Template, Location, bShouldSelectNewNode);
 	}
 
 private:
@@ -2622,8 +2623,8 @@ bool UK2Node_MathExpression::ShouldExpandInsteadCompile() const
 	if ((TunnelNodesNum + 1) == BoundGraph->Nodes.Num())
 	{
 		TArray<UEdGraphNode*> InnerNodes = BoundGraph->Nodes;
-		InnerNodes.RemoveSingleSwap(GetEntryNode(), false);
-		InnerNodes.RemoveSingleSwap(GetExitNode(), false);
+		InnerNodes.RemoveSingleSwap(GetEntryNode(), EAllowShrinking::No);
+		InnerNodes.RemoveSingleSwap(GetExitNode(), EAllowShrinking::No);
 		const bool bTheOnlyNodeIsNotAFunctionCall = (1 == InnerNodes.Num())
 			&& (nullptr != InnerNodes[0])
 			&& !InnerNodes[0]->IsA<UK2Node_CallFunction>();
@@ -2717,6 +2718,12 @@ void UK2Node_MathExpression::RebuildExpression(FString InExpression)
 					Parser.GetErrorState().Description);
 				CachedMessageLog->Error(*ErrorText.ToString(), this);
 			}
+		}
+
+		// notify any listeners that the bound graph has changed
+		if (BoundGraph)
+		{
+			BoundGraph->NotifyGraphChanged();
 		}
 
 		// refresh the node since the connections may have changed, this won't be reentrant due to bool above

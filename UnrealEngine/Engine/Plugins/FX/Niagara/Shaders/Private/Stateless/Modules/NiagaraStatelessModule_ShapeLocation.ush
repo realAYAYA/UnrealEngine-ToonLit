@@ -1,0 +1,92 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+uint4	ShapeLocation_Mode;
+float4	ShapeLocation_Parameters0;
+float4	ShapeLocation_Parameters1;
+
+struct FStatelessModule_ShapeLocation
+{
+};
+
+float3 ShapeLocation_GetLocation(inout FStatelessParticle Particle)
+{
+	// ENSM_ShapePrimitive::Box | ENSM_ShapePrimitive::Plane
+	BRANCH
+	if ( ShapeLocation_Mode.x == 0 )
+	{
+		const float3 BoxScale = ShapeLocation_Parameters0.xyz;
+		const float3 BoxBias = ShapeLocation_Parameters1.xyz;
+		const bool bOnSurface = ShapeLocation_Mode.y == 1;
+		const float SurfaceScale = ShapeLocation_Parameters0.w;
+		const float SurfaceBias = ShapeLocation_Parameters1.w;
+
+		const float3 P0 = RandomFloat3(Particle);
+		if (bOnSurface)
+		{
+			//-TODO: This isn't quite what we want
+			const float3 L0 = round(P0);
+			const uint S = RandomUInt(Particle) % 3;
+			float3 Location;
+			Location.x = S != 0 ? P0.x : L0.x;
+			Location.y = S != 1 ? P0.y : L0.y;
+			Location.z = S != 2 ? P0.z : L0.z;
+			return (Location * BoxScale + BoxBias) + (P0 * SurfaceScale + SurfaceBias);
+		}
+		else
+		{
+			return P0 * BoxScale + BoxBias;
+		}
+	}
+
+	// ENSM_ShapePrimitive::Cylinder:
+	BRANCH
+	if ( ShapeLocation_Mode.x == 1 )
+	{
+		const float4 Random = RandomFloat4(Particle);
+		const float HeightScale = ShapeLocation_Parameters0.x;
+		const float HeightBias = ShapeLocation_Parameters0.y;
+		const float Radius = ShapeLocation_Parameters0.z;
+
+		return float3(
+			SafeNormalize(Random.xy - 0.5f) * Radius * Random.z,
+			Random.w * HeightScale + HeightBias
+		);
+	}
+
+	// ENSM_ShapePrimitive::Ring:
+	BRANCH
+	if ( ShapeLocation_Mode.x == 2 )
+	{
+		const float RadiusScale = ShapeLocation_Parameters0.x;
+		const float RadiusBias = ShapeLocation_Parameters0.y;
+		const float UDistributionScale = ShapeLocation_Parameters0.z;
+		const float UDistributionBias = ShapeLocation_Parameters0.w;
+
+		const float Radius = RandomScaleBiasFloat(Particle, RadiusScale, RadiusBias);
+		const float U = RandomScaleBiasFloat(Particle, UDistributionScale, UDistributionBias);
+
+		return float3(cos(U) * Radius, sin(U) * Radius, 0.0f);
+	}
+
+	// ENSM_ShapePrimitive::Sphere:
+	{
+		const float SphereScale	= ShapeLocation_Parameters0.x;
+		const float SphereBias	= ShapeLocation_Parameters0.y;
+
+		const float3 Vector = RandomUnitFloat3(Particle);
+		return Vector * RandomScaleBiasFloat(Particle, SphereScale, SphereBias);
+	}
+}
+
+void ShapeLocation_Initialize(inout FStatelessModule_ShapeLocation ModuleData, inout FStatelessParticle Particle)
+{
+	float3 Location = ShapeLocation_GetLocation(Particle);
+	Particle.Position += Location;
+	Particle.PreviousPosition += Location;
+}
+	
+void ShapeLocation_Simulate(in FStatelessModule_ShapeLocation ModuleData, inout FStatelessParticle Particle)
+{
+}

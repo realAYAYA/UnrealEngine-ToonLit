@@ -800,7 +800,7 @@ public:
 
 		if (CurrentNode != nullptr && CurrentNode->AsCategoryNode() != nullptr)
 		{
-			TSharedRef< FPropertyPath > NewPath = MakeShareable(new FPropertyPath());
+			TSharedRef< FPropertyPath > NewPath = MakeShared<FPropertyPath>();
 			return NewPath;
 		}
 
@@ -810,6 +810,10 @@ public:
 			{
 				FPropertyInfo NewPropInfo;
 				NewPropInfo.Property = CurrentNode->GetProperty();
+				if (!NewPropInfo.Property.IsValid())
+				{
+					return MakeShared<FPropertyPath>();
+				}
 				NewPropInfo.ArrayIndex = CurrentNode->GetArrayIndex();
 
 				Properties.Add(NewPropInfo);
@@ -818,7 +822,7 @@ public:
 			CurrentNode = CurrentNode->GetParentNode();
 		}
 
-		TSharedRef< FPropertyPath > NewPath = MakeShareable(new FPropertyPath());
+		TSharedRef< FPropertyPath > NewPath = MakeShared<FPropertyPath>();
 
 		for (int PropertyIndex = Properties.Num() - 1; PropertyIndex >= 0; --PropertyIndex)
 		{
@@ -1070,8 +1074,34 @@ public:
 	/** Queries whether the node would like to ignore CPF_InstancedReference semantics */
 	bool IsIgnoringInstancedReference() const;
 
-protected:
+	/** Return true if DestroyTree() has been called on this node. */
+	bool IsDestroyed() const;
+
+	/**
+	 * Sets bIsDestroyed on all nodes within the hierarchy
+	 */
+	void MarkDestroyedRecursive();
+
+	TSharedPtr<FPropertyNode>& GetOptionalValueNode() { return OptionalValueNode; }
+
+	/**
+	 * Interface function for getting an optionals ValueNode (May construct it if needed).
+	 * @return The optional's value OR null if this is a non-optional/unset-optional.
+	 * 
+	 * Note: This is currently the only method by which an optional's Value FPropertyNode is created (If you change this please update this documentation).
+	 */
+	virtual TSharedPtr<FPropertyNode>& GetOrCreateOptionalValueNode() { return OptionalValueNode; }
+
+	virtual bool IsOptionalValueNode() 
+	{ 
+		return ParentNodeWeakPtr.IsValid() 
+			&& ParentNodeWeakPtr.Pin()->GetOptionalValueNode().IsValid()
+			&& ParentNodeWeakPtr.Pin()->GetOptionalValueNode().Get() == this;
+	}
+
 	TSharedRef<FEditPropertyChain> BuildPropertyChain( FProperty* PropertyAboutToChange ) const;
+	
+protected:
 	TSharedRef<FEditPropertyChain> BuildPropertyChain( FProperty* PropertyAboutToChange, const TSet<UObject*>& InAffectedArchetypeInstances ) const;
 	TSharedRef<FEditPropertyChain> BuildPropertyChain( FProperty* PropertyAboutToChange, TSet<UObject*>&& InAffectedArchetypeInstances ) const;
 
@@ -1109,11 +1139,17 @@ protected:
 	/** @return		The property stored at this node, to be passed to Pre/PostEditChange. */
 	FProperty*		GetStoredProperty()		{ return nullptr; }
 
-	bool GetDiffersFromDefault(const uint8* PropertyValueAddress, const uint8* PropertyDefaultAddress, const uint8* DefaultPropertyValueBaseAddress, const FProperty* InProperty) const;
+	bool GetDiffersFromDefault(const uint8* PropertyValueAddress, const uint8* PropertyDefaultAddress, const uint8* DefaultPropertyValueBaseAddress, const FProperty* InProperty, const UObject* TopLevelObject) const;
 	bool GetDiffersFromDefaultForObject( FPropertyItemValueDataTrackerSlate& ValueTracker, FProperty* InProperty );
 
-	FString GetDefaultValueAsString(const uint8* PropertyDefaultAddress, const FProperty* InProperty, const bool bUseDisplayName) const;
-	FString GetDefaultValueAsStringForObject( FPropertyItemValueDataTrackerSlate& ValueTracker, UObject* InObject, FProperty* InProperty, bool bUseDisplayName );
+	enum class EValueAsStringMode
+	{
+		None,
+		UseDisplayName,
+		ForDiff,
+	};
+	FString GetDefaultValueAsString(const uint8* PropertyDefaultAddress, const FProperty* InProperty, EValueAsStringMode Mode, const UObject* TopLevelObject) const;
+	FString GetDefaultValueAsStringForObject( FPropertyItemValueDataTrackerSlate& ValueTracker, UObject* InObject, FProperty* InProperty, EValueAsStringMode Mode);
 	
 	/**
 	 * Helper function to obtain the display name for an enum property
@@ -1174,6 +1210,9 @@ protected:
 
 	/**	The property node, if any, that serves as the key value for this node */
 	TSharedPtr<FPropertyNode> PropertyKeyNode;
+
+	/**	The property node, if any, is this nodes optional value */
+	TSharedPtr<FPropertyNode> OptionalValueNode;
 
 	/** Cached read addresses for this property node */
 	mutable FReadAddressListData CachedReadAddresses;
@@ -1236,6 +1275,9 @@ protected:
 	/** Set to true when we want to ignore CPF_InstancedReference */
 	bool bIgnoreInstancedReference;
 
+	/** If true, DestroyTree() has been called on the node. */
+	bool bIsDestroyed = false;
+	
 	/** An array of restrictions limiting this property's potential values in property editors.*/
 	TArray<TSharedRef<const FPropertyRestriction>> Restrictions;
 
@@ -1304,4 +1346,7 @@ public:
 	virtual EPropertyType GetPropertyType() const = 0;
 
 	virtual void Disconnect() = 0;
+
+	/** Generates a single child from the provided property name.  Any existing children are destroyed */
+	virtual TSharedPtr<FPropertyNode> GenerateSingleChild(FName ChildPropertyName) = 0;
 };

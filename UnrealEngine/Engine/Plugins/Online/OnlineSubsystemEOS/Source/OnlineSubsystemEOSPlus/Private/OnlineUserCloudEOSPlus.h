@@ -43,6 +43,7 @@ PACKAGE_SCOPE:
 
 	void OnEnumerateUserFilesComplete(bool bWasSuccessful, const FUniqueNetId& UserId);
 	void OnWriteUserFileProgress(int32 BytesWritten, const FUniqueNetId& UserId, const FString& FileName);
+	void OnWriteUserFileProgress64(uint64 BytesWritten, const FUniqueNetId& UserId, const FString& FileName);
 	void OnWriteUserFileComplete(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName);
 	void OnWriteUserFileCanceled(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName);
 	void OnReadUserFileComplete(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName);

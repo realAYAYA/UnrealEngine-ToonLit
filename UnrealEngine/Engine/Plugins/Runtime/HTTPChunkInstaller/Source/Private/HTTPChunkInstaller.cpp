@@ -505,7 +505,7 @@ private:
 			FileProgressRequestsMap.Add(HttpRequest, FPendingFileRequest(FileName));
 
 			HttpRequest->OnProcessRequestComplete().BindRaw(this, &FOnlineTitleFileHttp::ReadFile_HttpRequestComplete);
-			HttpRequest->OnRequestProgress().BindRaw(this, &FOnlineTitleFileHttp::ReadFile_HttpRequestProgress);
+			HttpRequest->OnRequestProgress64().BindRaw(this, &FOnlineTitleFileHttp::ReadFile_HttpRequestProgress);
 			FString RequestUrl;
 			// Grab the file from the specified URL if that was set, otherwise use the old method that hits the game service
 			if (CloudFileHeader != nullptr && !CloudFileHeader->URL.IsEmpty())
@@ -712,7 +712,7 @@ private:
 		FileRequests.Remove(HttpRequest);
 		// remove from progress updates
 		FileProgressRequestsMap.Remove(HttpRequest);
-		HttpRequest->OnRequestProgress().Unbind();
+		HttpRequest->OnRequestProgress64().Unbind();
 
 		// Cloud file being operated on
 		FCloudEntry* CloudFile = GetCloudFile(PendingRequest.FileName, true);
@@ -760,7 +760,7 @@ private:
 	/**
 	* Delegate called as a Http request progresses for reading a cloud file
 	*/
-	void ReadFile_HttpRequestProgress(FHttpRequestPtr HttpRequest, int32 BytesSent, int32 BytesReceived)
+	void ReadFile_HttpRequestProgress(FHttpRequestPtr HttpRequest, uint64 BytesSent, uint64 BytesReceived)
 	{
 		FPendingFileRequest PendingRequest = FileProgressRequestsMap.FindChecked(HttpRequest);
 		// Just forward this to anyone that is listening
@@ -1212,7 +1212,7 @@ void FHTTPChunkInstall::UpdatePendingInstallQueue()
 		if (FoundChunkManifests.Num() > 0)
 		{
 			auto ChunkManifest = FoundChunkManifests[0];
-			auto ChunkIDField = ChunkManifest->GetCustomField("ChunkID");
+			auto ChunkIDField = ChunkManifest->GetCustomField(TEXT("ChunkID"));
 			if (ChunkIDField.IsValid())
 			{
 				BeginChunkInstall(NextChunk.ChunkID, ChunkManifest, FindPreviousInstallManifest(ChunkManifest));
@@ -1235,7 +1235,7 @@ void FHTTPChunkInstall::UpdatePendingInstallQueue()
 			if (It)
 			{
 				IBuildManifestPtr ChunkManifest = It.Value();
-				auto ChunkIDField = ChunkManifest->GetCustomField("ChunkID");
+				auto ChunkIDField = ChunkManifest->GetCustomField(TEXT("ChunkID"));
 				if (ChunkIDField.IsValid())
 				{
 					BeginChunkInstall(ChunkIDField->AsInteger(), ChunkManifest, FindPreviousInstallManifest(ChunkManifest));
@@ -1369,7 +1369,7 @@ void FHTTPChunkInstall::OSSInstallComplete(const IBuildInstallerRef& Installer)
 		InstalledManifests.MultiFind(ChunkID, FoundManifests);
 		for (const auto& It : FoundManifests)
 		{
-			auto FoundPatchField = It->GetCustomField("bIsPatch");
+			auto FoundPatchField = It->GetCustomField(TEXT("bIsPatch"));
 			bool bFoundPatch = FoundPatchField.IsValid() ? FoundPatchField->AsString() == TEXT("true") : false;
 			if (bFoundPatch == bIsPatch)
 			{
@@ -1403,7 +1403,7 @@ void FHTTPChunkInstall::ParseTitleFileManifest(const FString& ManifestFileHash)
 		UE_LOG(LogHTTPChunkInstaller, Warning, TEXT("Manifest was invalid"));
 		return;
 	}
-	auto RemoteChunkIDField = RemoteManifest->GetCustomField("ChunkID");
+	auto RemoteChunkIDField = RemoteManifest->GetCustomField(TEXT("ChunkID"));
 	if (!RemoteChunkIDField.IsValid())
 	{
 		UE_LOG(LogHTTPChunkInstaller, Warning, TEXT("Manifest ChunkID was invalid or missing"));
@@ -1417,14 +1417,14 @@ void FHTTPChunkInstall::ParseTitleFileManifest(const FString& ManifestFileHash)
 	uint32 FoundCount = FoundManifests.Num();
 	if (FoundCount > 0)
 	{
-		auto RemotePatchManifest = RemoteManifest->GetCustomField("bIsPatch");
+		auto RemotePatchManifest = RemoteManifest->GetCustomField(TEXT("bIsPatch"));
 		auto RemoteVersion = RemoteManifest->GetVersionString();
 		bool bRemoteIsPatch = RemotePatchManifest.IsValid() ? RemotePatchManifest->AsString() == TEXT("true") : false;
 		for (uint32 FoundIndex = 0; FoundIndex < FoundCount; ++FoundIndex)
 		{
 			const auto& InstalledManifest = FoundManifests[FoundIndex];
 			auto InstalledVersion = InstalledManifest->GetVersionString();
-			auto InstallPatchManifest = InstalledManifest->GetCustomField("bIsPatch");
+			auto InstallPatchManifest = InstalledManifest->GetCustomField(TEXT("bIsPatch"));
 			bool bInstallIsPatch = InstallPatchManifest.IsValid() ? InstallPatchManifest->AsString() == TEXT("true") : false;
 			if (InstalledVersion != RemoteVersion && bInstallIsPatch == bRemoteIsPatch)
 			{
@@ -1470,8 +1470,8 @@ void FHTTPChunkInstall::ParseTitleFileManifest(const FString& ManifestFileHash)
 
 bool FHTTPChunkInstall::BuildChunkFolderName(IBuildManifestRef Manifest, FString& ChunkFdrName, FString& ManifestName, uint32& ChunkID, bool& bIsPatch)
 {
-	auto ChunkIDField = Manifest->GetCustomField("ChunkID");
-	auto ChunkPatchField = Manifest->GetCustomField("bIsPatch");
+	auto ChunkIDField = Manifest->GetCustomField(TEXT("ChunkID"));
+	auto ChunkPatchField = Manifest->GetCustomField(TEXT("bIsPatch"));
 
 	if (!ChunkIDField.IsValid())
 	{
@@ -1508,12 +1508,12 @@ bool FHTTPChunkInstall::PrioritizeChunk(uint32 ChunkID, EChunkPriority::Type Pri
 
 void FHTTPChunkInstall::BeginChunkInstall(uint32 ChunkID,IBuildManifestPtr ChunkManifest, IBuildManifestPtr PrevInstallChunkManifest)
 {
-	check(ChunkManifest->GetCustomField("ChunkID").IsValid());
+	check(ChunkManifest->GetCustomField(TEXT("ChunkID")).IsValid());
 	InstallingChunkID = ChunkID;
 	check(ChunkID > 0);
 	InstallingChunkManifest = ChunkManifest;
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	auto PatchField = ChunkManifest->GetCustomField("bIsPatch");
+	auto PatchField = ChunkManifest->GetCustomField(TEXT("bIsPatch"));
 	bool bIsPatch = PatchField.IsValid() ? PatchField->AsString() == TEXT("true") : false;
 	auto ChunkFolderName = FString::Printf(TEXT("%s%d"),!bIsPatch ? TEXT("base") : TEXT("patch"), InstallingChunkID);
 	auto ChunkInstallDir = FPaths::Combine(*InstallDir,*ChunkFolderName);
@@ -1672,7 +1672,7 @@ void FHTTPChunkInstall::InitialiseSystem()
 
 IBuildManifestPtr FHTTPChunkInstall::FindPreviousInstallManifest(const IBuildManifestPtr& ChunkManifest)
 {
-	auto ChunkIDField = ChunkManifest->GetCustomField("ChunkID");
+	auto ChunkIDField = ChunkManifest->GetCustomField(TEXT("ChunkID"));
 	if (!ChunkIDField.IsValid())
 	{
 		return IBuildManifestPtr();

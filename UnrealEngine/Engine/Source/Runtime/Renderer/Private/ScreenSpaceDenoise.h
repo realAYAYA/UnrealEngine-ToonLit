@@ -26,7 +26,6 @@ BEGIN_SHADER_PARAMETER_STRUCT(FCommonShaderParameters, )
 	SHADER_PARAMETER(FVector4f, DenoiserBufferSizeAndInvSize)
 	SHADER_PARAMETER(FVector4f, DenoiserBufferBilinearUVMinMax)
 	SHADER_PARAMETER(FVector4f, SceneBufferUVToScreenPosition) // TODO: move to view uniform buffer
-	SHADER_PARAMETER(float, WorldDepthToPixelWorldRadius)
 END_SHADER_PARAMETER_STRUCT()
 
 void SetupCommonShaderParameters(
@@ -290,15 +289,6 @@ public:
 
 	/** Entry point to denoise SkyLight diffuse indirect. */
 	virtual FDiffuseIndirectOutputs DenoiseSkyLight(
-		FRDGBuilder& GraphBuilder,
-		const FViewInfo& View,
-		FPreviousViewInfo* PreviousViewInfos,
-		const FSceneTextureParameters& SceneTextures,
-		const FDiffuseIndirectInputs& Inputs,
-		const FAmbientOcclusionRayTracingConfig Config) const = 0;
-
-	/** Entry point to denoise reflected SkyLight diffuse indirect. */
-	virtual FDiffuseIndirectOutputs DenoiseReflectedSkyLight(
 		FRDGBuilder& GraphBuilder,
 		const FViewInfo& View,
 		FPreviousViewInfo* PreviousViewInfos,

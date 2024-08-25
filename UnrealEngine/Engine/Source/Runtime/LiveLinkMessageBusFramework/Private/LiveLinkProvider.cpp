@@ -3,6 +3,8 @@
 #include "LiveLinkProvider.h"
 #include "LiveLinkProviderImpl.h"
 
+#include "Algo/RemoveIf.h"
+#include "Algo/Transform.h"
 #include "HAL/PlatformProcess.h"
 #include "IMessageContext.h"
 #include "LiveLinkMessages.h"
@@ -93,10 +95,47 @@ void FLiveLinkProvider::ValidateConnections()
 {
 	FConnectionValidator Validator;
 
-	const int32 RemovedConnections = ConnectedAddresses.RemoveAll([=](const FTrackedAddress& Address) { return !Validator(Address); });
+	TArray<FMessageAddress> RemovedConnections;
 
-	if (RemovedConnections > 0)
+	// Using SetNumUninitialized because FTrackedAddress does not have a default constructor, resulting in SetNum not
+	// compiling (due to the DefaultConstructItems<> usage). Uninitialized is not unsafe here, because we're shrinking.
+	ConnectedAddresses.SetNumUninitialized(Algo::RemoveIf(ConnectedAddresses, [this, &Validator, &RemovedConnections](const FTrackedAddress& Address) mutable
 	{
+		if (!Validator(Address))
+	    {
+			RemovedConnections.Add(Address.Address);
+			return true;
+	    }
+		return false;
+	}));
+
+	if (RemovedConnections.Num() > 0)
+	{
+		OnConnectionsClosed(RemovedConnections);
+		OnConnectionStatusChanged.Broadcast();
+	}
+}
+
+void FLiveLinkProvider::CloseConnection(FMessageAddress Address)
+{
+	TArray<FMessageAddress> RemovedConnections;
+
+	{
+		FScopeLock Lock(&CriticalSection);
+		ConnectedAddresses.SetNumUninitialized(Algo::RemoveIf(ConnectedAddresses, [this, Address, &RemovedConnections](const FTrackedAddress& TrackedAddress) mutable
+		{
+			if (TrackedAddress.Address == Address)
+			{
+				RemovedConnections.Add(TrackedAddress.Address);
+				return true;
+			}
+			return false;
+		}));
+	}
+
+	if (RemovedConnections.Num() > 0)
+	{
+		OnConnectionsClosed(RemovedConnections);
 		OnConnectionStatusChanged.Broadcast();
 	}
 }
@@ -115,9 +154,9 @@ void FLiveLinkProvider::SendSubject(FName SubjectName, const FTrackedSubject& Su
 	SubjectData->SubjectName = SubjectName;
 
 	TArray<FMessageAddress> Addresses;
-	GetConnectedAddresses(Addresses);
+	GetFilteredAddresses(SubjectName, Addresses);
 
-	MessageEndpoint->Send(SubjectData, Addresses);
+	MessageEndpoint->Send(SubjectData, FLiveLinkSubjectDataMessage::StaticStruct(), EMessageFlags::None, GetAnnotations(), nullptr, Addresses, FTimespan::Zero(), FDateTime::MaxValue());
 }
 
 // Send frame data for named subject
@@ -131,9 +170,26 @@ void FLiveLinkProvider::SendSubjectFrame(FName SubjectName, const FTrackedSubjec
 	SubjectFrame->Time = Subject.Time;
 
 	TArray<FMessageAddress> Addresses;
-	GetConnectedAddresses(Addresses);
+	GetFilteredAddresses(SubjectName, Addresses);
 
-	MessageEndpoint->Send(SubjectFrame, Addresses);
+	MessageEndpoint->Send(SubjectFrame, FLiveLinkSubjectFrameMessage::StaticStruct(), EMessageFlags::None, GetAnnotations(), nullptr, Addresses, FTimespan::Zero(), FDateTime::MaxValue());
+}
+
+TPair<UClass*, FLiveLinkStaticDataStruct*> FLiveLinkProvider::GetLastSubjectStaticDataStruct(FName SubjectName)
+{
+	FScopeLock Lock(&CriticalSection);
+	TPair<UClass*, FLiveLinkStaticDataStruct*> Pair = { nullptr, nullptr };
+
+	if (FTrackedStaticData* TrackedStaticData = GetLastSubjectStaticData(SubjectName))
+	{
+		if (TrackedStaticData->RoleClass.IsValid() && TrackedStaticData->StaticData.IsValid())
+		{
+			Pair.Key = TrackedStaticData->RoleClass.Get();
+			Pair.Value = &TrackedStaticData->StaticData;
+		}
+	}
+
+	return Pair;
 }
 
 // Get the cached data for the named subject
@@ -190,14 +246,6 @@ void FLiveLinkProvider::ClearTrackedSubject(const FName& SubjectName)
 	}
 }
 
-void FLiveLinkProvider::SendClearSubjectToConnections(FName SubjectName)
-{
-	TArray<FMessageAddress> MessageAddresses;
-	GetConnectedAddresses(MessageAddresses);
-
-	MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FLiveLinkClearSubject>(SubjectName), EMessageFlags::Reliable, nullptr, MessageAddresses, FTimespan::Zero(), FDateTime::MaxValue());
-}
-
 FLiveLinkProvider::FLiveLinkProvider(const FString& InProviderName)
 	: ProviderName(InProviderName)
 	, MachineName(FPlatformProcess::ComputerName())
@@ -211,6 +259,17 @@ FLiveLinkProvider::FLiveLinkProvider(const FString& InProviderName, FMessageEndp
 	, MachineName(FPlatformProcess::ComputerName())
 {
 	CreateMessageEndpoint(EndpointBuilder);
+}
+
+FLiveLinkProvider::FLiveLinkProvider(const FString& InProviderName, bool bInCreateEndpoint)
+	: ProviderName(InProviderName)
+	, MachineName(FPlatformProcess::ComputerName())
+{
+	if (bInCreateEndpoint)
+	{
+		FMessageEndpointBuilder EndpointBuilder = FMessageEndpoint::Builder(*InProviderName);
+    	CreateMessageEndpoint(EndpointBuilder);
+	}
 }
 
 FLiveLinkProvider::~FLiveLinkProvider()
@@ -233,6 +292,14 @@ void FLiveLinkProvider::UpdateSubject(const FName& SubjectName, const TArray<FNa
 	Subject.Transforms.Empty();
 
 	SendSubject(SubjectName, Subject);
+}
+
+void FLiveLinkProvider::SendClearSubjectToConnections(FName SubjectName)
+{
+	TArray<FMessageAddress> MessageAddresses;
+	GetFilteredAddresses(SubjectName, MessageAddresses);
+
+	MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FLiveLinkClearSubject>(SubjectName), EMessageFlags::Reliable, GetAnnotations(), nullptr, MessageAddresses, FTimespan::Zero(), FDateTime::MaxValue());
 }
 
 bool FLiveLinkProvider::UpdateSubjectStaticData(const FName SubjectName, TSubclassOf<ULiveLinkRole> Role, FLiveLinkStaticDataStruct&& StaticData)
@@ -259,11 +326,7 @@ bool FLiveLinkProvider::UpdateSubjectStaticData(const FName SubjectName, TSubcla
 	if (ConnectedAddresses.Num() > 0)
 	{
 		TArray<FMessageAddress> Addresses;
-		Addresses.Reserve(ConnectedAddresses.Num());
-		for (const FTrackedAddress& Address : ConnectedAddresses)
-		{
-			Addresses.Add(Address.Address);
-		}
+		GetFilteredAddresses(SubjectName, Addresses);
 
 		TMap<FName, FString> Annotations;
 		Annotations.Add(FLiveLinkMessageAnnotation::SubjectAnnotation, SubjectName.ToString());
@@ -351,11 +414,7 @@ bool FLiveLinkProvider::UpdateSubjectFrameData(const FName SubjectName, FLiveLin
 	if (ConnectedAddresses.Num() > 0)
 	{
 		TArray<FMessageAddress> Addresses;
-		Addresses.Reserve(ConnectedAddresses.Num());
-		for (const FTrackedAddress& Address : ConnectedAddresses)
-		{
-			Addresses.Add(Address.Address);
-		}
+		GetFilteredAddresses(SubjectName, Addresses);
 
 		TMap<FName, FString> Annotations;
 		Annotations.Add(FLiveLinkMessageAnnotation::SubjectAnnotation, SubjectName.ToString());
@@ -404,7 +463,7 @@ void FLiveLinkProvider::HandlePingMessage(const FLiveLinkPingMessage& Message, c
 		return;
 	}
 
-	MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FLiveLinkPongMessage>(ProviderName, MachineName, Message.PollRequest, LIVELINK_SupportedVersion), Context->GetSender());
+	MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FLiveLinkPongMessage>(ProviderName, MachineName, Message.PollRequest, LIVELINK_SupportedVersion), GetAnnotations(), Context->GetSender());
 }
 
 void FLiveLinkProvider::HandleConnectMessage(const FLiveLinkConnectMessage& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
@@ -435,7 +494,7 @@ void FLiveLinkProvider::HandleConnectMessage(const FLiveLinkConnectMessage& Mess
 		TArray<FMessageAddress> MessageAddress;
 		MessageAddress.Add(ConnectionAddress);
 
-		TMap<FName, FString> Annotations;
+		TMap<FName, FString> Annotations = GetAnnotations();
 		Annotations.Add(FLiveLinkMessageAnnotation::SubjectAnnotation, TEXT(""));
 		Annotations.Add(FLiveLinkMessageAnnotation::RoleAnnotation, TEXT(""));
 
@@ -469,7 +528,7 @@ void FLiveLinkProvider::HandleHeartbeat(const FLiveLinkHeartbeatMessage& Message
 		TrackedAddress->LastHeartbeatTime = FPlatformTime::Seconds();
 
 		// Respond so editor gets heartbeat too
-		MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FLiveLinkHeartbeatMessage>(), Context->GetSender());
+		MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FLiveLinkHeartbeatMessage>(), GetAnnotations(), Context->GetSender());
 	}
 }
 
@@ -497,4 +556,14 @@ void FLiveLinkProvider::GetConnectedAddresses(TArray<FMessageAddress>& Addresses
 	{
 		Addresses.Add(Address.Address);
 	}
+}
+
+void FLiveLinkProvider::GetFilteredAddresses(FName SubjectName, TArray<FMessageAddress>& Addresses)
+{
+	ValidateConnections();
+	Addresses.Reserve(ConnectedAddresses.Num());
+
+	Algo::TransformIf(ConnectedAddresses, Addresses,
+		[this, SubjectName](const FTrackedAddress& Address){ return ShouldTransmitToSubject_AnyThread(SubjectName, Address.Address); },
+		[](const FTrackedAddress& Address){ return Address.Address; });
 }

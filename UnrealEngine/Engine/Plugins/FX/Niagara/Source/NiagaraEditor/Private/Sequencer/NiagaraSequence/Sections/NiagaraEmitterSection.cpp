@@ -5,6 +5,7 @@
 #include "ViewModels/NiagaraEmitterHandleViewModel.h"
 #include "ViewModels/NiagaraEmitterViewModel.h"
 
+#include "MVVM/ViewModels/ViewDensity.h"
 #include "SequencerSectionPainter.h"
 #include "ISectionLayoutBuilder.h"
 
@@ -20,18 +21,23 @@ UMovieSceneSection* FNiagaraEmitterSection::GetSectionObject(void)
 	return EmitterSection;
 }
 
+float FNiagaraEmitterSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
+{
+	return ViewDensity.UniformHeight.Get(20.0f);
+}
+
 int32 FNiagaraEmitterSection::OnPaintSection(FSequencerSectionPainter& InPainter) const
 {
 	return InPainter.PaintSectionBackground();
 
 	// TODO: Fix the looping drawing and interaction
+	/*
 	TSharedPtr<FNiagaraEmitterHandleViewModel> EmitterHandleViewModel = EmitterSection->GetEmitterHandleViewModel();
 	if (EmitterHandleViewModel.IsValid() == false)
 	{
 		return InPainter.LayerId;
 	}
 
-	/*
 	// draw the first run of the emitter
 	FSlateDrawElement::MakeBox
 	(
@@ -59,8 +65,8 @@ int32 FNiagaraEmitterSection::OnPaintSection(FSequencerSectionPainter& InPainter
 			FLinearColor(0.3f, 0.3f, 0.6f, 0.25f)
 		);
 	}
-	*/
 	return InPainter.LayerId;
+	*/
 }
 
 FText FNiagaraEmitterSection::GetSectionTitle(void) const

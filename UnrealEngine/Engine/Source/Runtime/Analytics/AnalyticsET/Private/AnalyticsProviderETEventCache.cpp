@@ -98,7 +98,7 @@ namespace EventCacheStatic
 		// convert directly into new array, precompute length
 		// get the string length and expand our buffer to fit it.
 		//const int32 StrLen = FPlatformString::ConvertedLength<UTF8CHAR>(Str, Len);
-		//UTF8Stream.SetNumUninitialized(OldLen + StrLen, false);
+		//UTF8Stream.SetNumUninitialized(OldLen + StrLen, EAllowShrinking::No);
 		//FPlatformString::Convert((UTF8CHAR*)&UTF8Stream[OldLen], StrLen, Str, Len);
 
 		// optimistically allocate a bit of extra space and see if we fill up the buffer.
@@ -111,12 +111,12 @@ namespace EventCacheStatic
 			// Give some padding. ensure we add at least one char.
 			const int32 StrLen = Len + (int32)FMath::Max(1.f, (float)Len * SizeMultiplier);
 			// make space for the string
-			UTF8Stream.SetNumUninitialized(OldLen + StrLen, false);
+			UTF8Stream.SetNumUninitialized(OldLen + StrLen, EAllowShrinking::No);
 			// convert it to UTF8
 			if (UTF8CHAR* NewEnd = FPlatformString::Convert((UTF8CHAR*)&UTF8Stream[OldLen], StrLen, Str, Len))
 			{
 				// truncate to that length.
-				UTF8Stream.SetNum(OldLen + (int32)(NewEnd - (UTF8CHAR*)&UTF8Stream[OldLen]), false);
+				UTF8Stream.SetNum(OldLen + (int32)(NewEnd - (UTF8CHAR*)&UTF8Stream[OldLen]), EAllowShrinking::No);
 				bWroteFullString = true;
 			}
 			else
@@ -127,7 +127,7 @@ namespace EventCacheStatic
 				if (SizeMultiplier >= 2.0f)
 				{
 					const int32 ActualCharsNeeded = FPlatformString::ConvertedLength<UTF8CHAR>(Str, Len);
-					UTF8Stream.SetNumUninitialized(OldLen + ActualCharsNeeded, false);
+					UTF8Stream.SetNumUninitialized(OldLen + ActualCharsNeeded, EAllowShrinking::No);
 					// convert it to UTF8 using the known number of charts
 					FPlatformString::Convert((UTF8CHAR*)&UTF8Stream[OldLen], ActualCharsNeeded, Str, Len);
 					bWroteFullString = true;
@@ -187,6 +187,10 @@ namespace EventCacheStatic
 	}
 }
 
+ANALYTICSET_API void FAnalyticsProviderETEventCache::OnStartupModule()
+{
+}
+
 FAnalyticsProviderETEventCache::FAnalyticsProviderETEventCache(int32 InMaximumPayloadSize, int32 InPreallocatedPayloadSize)
 : MaximumPayloadSize(InMaximumPayloadSize)
 , PreallocatedPayloadSize(InPreallocatedPayloadSize)
@@ -233,7 +237,7 @@ void FAnalyticsProviderETEventCache::AddToCache(FString EventName, const TArray<
 	EventCacheStatic::FJsonStringBuilder EscapedJsonBuffer;
 
 	// strip the payload tail off
-	CachedEventUTF8Stream.SetNum(CachedEventUTF8Stream.Num() - EventCacheStatic::PayloadTrailerLength, false);
+	CachedEventUTF8Stream.SetNum(CachedEventUTF8Stream.Num() - EventCacheStatic::PayloadTrailerLength, EAllowShrinking::No);
 	if (CachedEventEntries.Num() > 0)
 	{
 		// If we already have an event in there, start with a comma.
@@ -335,7 +339,7 @@ TArray<uint8> FAnalyticsProviderETEventCache::FlushCacheUTF8()
 	{
 		// pull out the first element without copying the array or shrinking the queue size
 		TArray<uint8> Payload = MoveTemp(FlushQueue[0]);
-		FlushQueue.RemoveAt(0, 1, false);
+		FlushQueue.RemoveAt(0, 1, EAllowShrinking::No);
 		return Payload;
 	}
 
@@ -385,12 +389,32 @@ void FAnalyticsProviderETEventCache::QueueFlush()
 
 	// see if it took too long or we have a really large payload. If so, log out the events.
 	const double EndTime = FPlatformTime::Seconds();
-	if ((EndTime - StartTime) > EventCacheStatic::PayloadFlushTimeSecForWarning || CachedEventUTF8Stream.Num() > (int32)((float)MaximumPayloadSize * EventCacheStatic::PayloadPercentageOfMaxForWarning))
+	const bool bPlayloadTooLarge = CachedEventUTF8Stream.Num() > (int32)((float)MaximumPayloadSize * EventCacheStatic::PayloadPercentageOfMaxForWarning);
+	const bool bTookTooLongToFlush = (EndTime - StartTime) > EventCacheStatic::PayloadFlushTimeSecForWarning;
+	if (bPlayloadTooLarge)
 	{
-		UE_LOG(LogAnalytics, Warning, TEXT("EventCache either took too long to flush (%.3f ms) or had a very large payload (%.3f KB, %d events). Listing events in the payload for investigation:"), (EndTime-StartTime) * 1000, (float)CachedEventUTF8Stream.Num() / 1024.f, CachedEventEntries.Num());
+		
+		UE_LOG(LogAnalytics, Warning, TEXT("EventCache payload exceeded the maximum allowed size (%.3f KB > %.3f KB), containing %d events. Listing events in the payload for investigation:"),
+			(float)CachedEventUTF8Stream.Num() / 1024.f,
+			((float)MaximumPayloadSize * EventCacheStatic::PayloadPercentageOfMaxForWarning) / 1024.f,
+			CachedEventEntries.Num());
 		for (const FAnalyticsEventEntry& Entry : CachedEventEntries)
 		{
 			UE_LOG(LogAnalytics, Warning, TEXT("    %s,%d"), *Entry.EventName, Entry.EventSizeChars);
+		}
+	}
+	// If the event took too long to flush, this may cause it to come up during profiling sessions. But generally, the problem is not with the telemetry code,
+	// the problem is with Events that are trying to send too much data. List the events here to make it a bit easier to track down the responsible party for the slow telemetry.
+	// Don't log at warning level because a lot automated tools don't care if telemetry flushes slowly, and it may happen in practice, and those tools will also error and
+	// break the build if they detect warnings or errors.
+	else if (bTookTooLongToFlush)
+	{
+		UE_LOG(LogAnalytics, Display, TEXT("EventCache took too long to flush (%.3f ms > %.3f ms). Payload size: %.3f KB, %d events. Listing events in the payload for investigation:"),
+			(EndTime - StartTime) * 1000, EventCacheStatic::PayloadFlushTimeSecForWarning * 1000,
+			(float)CachedEventUTF8Stream.Num() / 1024.f, CachedEventEntries.Num());
+		for (const FAnalyticsEventEntry& Entry : CachedEventEntries)
+		{
+			UE_LOG(LogAnalytics, Display, TEXT("    %s,%d"), *Entry.EventName, Entry.EventSizeChars);
 		}
 	}
 

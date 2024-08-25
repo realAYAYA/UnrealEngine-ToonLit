@@ -12,7 +12,7 @@
 class IAnalyticsProviderET;
 class IMediaEventSink;
 class IMediaPlayer;
-
+class IElectraPlayerDataCache;
 
 /**
  * This class is used to get safe access to an IMediaOptions interface.
@@ -107,6 +107,13 @@ public:
 	TArray<FTimespan> Data;
 };
 
+class FElectraPlayerDataCacheContainer : public IMediaOptions::FDataContainer
+{
+public:
+	FElectraPlayerDataCacheContainer(TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> InData) : Data(InData) {}
+	virtual ~FElectraPlayerDataCacheContainer() {}
+	TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> Data;
+};
 
 /**
  * Interface for the ElectraPlayerPlugin module.

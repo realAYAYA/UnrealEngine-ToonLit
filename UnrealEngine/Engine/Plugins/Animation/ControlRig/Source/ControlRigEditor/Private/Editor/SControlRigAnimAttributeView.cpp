@@ -73,7 +73,7 @@ void SControlRigAnimAttributeView::StopObservingCurrentControlRig()
 	{
 		if(UControlRig* ControlRig = ControlRigBeingDebuggedPtr.Get())
 		{
-			if(!ControlRig->HasAnyFlags(RF_BeginDestroyed))
+			if(!URigVMHost::IsGarbageOrDestroyed(ControlRig))
 			{
 				ControlRig->OnPostForwardsSolve_AnyThread().RemoveAll(this);
 				ControlRig->SetEnableAnimAttributeTrace(false);

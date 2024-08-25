@@ -1,6 +1,7 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -30,10 +31,10 @@ namespace UnrealBuildTool
 		private UnrealTargetPlatform HostPlatform = BuildHostPlatform.Current.Platform;
 		private bool bForeignProject;
 		private DirectoryReference ProjectRoot;
-		private string FrameworkExecutableExtension = ".exe";
+		private string FrameworkExecutableExtension = OperatingSystem.IsWindows() ? ".exe" : "";
 		private string FrameworkLibraryExtension = ".dll";
 
-		private readonly List<BuildTarget> BuildTargets = new List<BuildTarget>();
+		private readonly ConcurrentBag<BuildTarget> BuildTargets = new();
 
 		/// <summary>
 		/// Includes all files in the generated workspace.
@@ -335,7 +336,7 @@ namespace UnrealBuildTool
 			DirectoryReference? SysRootPath = null;
 			if (OperatingSystem.IsWindows())
 			{
-				VCEnvironment Environment = VCEnvironment.Create(WindowsPlatform.GetDefaultCompiler(null, Target.Rules.WindowsPlatform.Architecture, Logger), WindowsCompiler.Default, Target.Platform, Target.Rules.WindowsPlatform.Architecture, null, null, Target.Rules.WindowsPlatform.WindowsSdkVersion, null, Target.Rules.WindowsPlatform.bUseCPPWinRT, Target.Rules.WindowsPlatform.bAllowClangLinker, Logger);
+				VCEnvironment Environment = VCEnvironment.Create(WindowsPlatform.GetDefaultCompiler(null, Target.Rules.WindowsPlatform.Architecture, Logger, true), WindowsCompiler.Default, Target.Platform, Target.Rules.WindowsPlatform.Architecture, null, null, Target.Rules.WindowsPlatform.WindowsSdkVersion, null, Target.Rules.WindowsPlatform.bUseCPPWinRT, Target.Rules.WindowsPlatform.bAllowClangLinker, Logger);
 				CompilerPath = FileReference.FromString(Environment.CompilerPath.FullName);
 				UsingClang = false;
 			}
@@ -351,8 +352,8 @@ namespace UnrealBuildTool
 			else if (OperatingSystem.IsMacOS())
 			{
 				MacToolChainSettings Settings = new MacToolChainSettings(false, Logger);
-				CompilerPath = FileReference.FromString(Settings.ToolchainDir + "clang++");
-				SysRootPath = DirectoryReference.FromString(Settings.BaseSDKDir + "/MacOSX" + Settings.MacOSSDKVersion + ".sdk");
+				CompilerPath = FileReference.Combine(Settings.ToolchainDir, "clang++");
+				SysRootPath = Settings.GetSDKPath();
 			}
 			else
 			{
@@ -1020,7 +1021,7 @@ namespace UnrealBuildTool
 							OutFile.AddField("group", "build");
 							if (!RuntimePlatform.IsWindows)
 							{
-								OutFile.AddField("command", MakePathString(FileReference.Combine(ProjectRoot, "Engine", "Build", "BatchFiles", HostPlatform.ToString(), "RunDotnet.sh")));
+								OutFile.AddField("command", MakePathString(FileReference.Combine(ProjectRoot, "Engine", "Build", "BatchFiles", "RunDotnet.sh")));
 							}
 							else
 							{
@@ -1333,7 +1334,7 @@ namespace UnrealBuildTool
 					if (HostPlatform == UnrealTargetPlatform.Win64)
 					{
 						OutFile.AddField("stopAtEntry", false);
-						OutFile.AddField("console", "externalTerminal");
+						OutFile.AddField("console", "integratedTerminal");
 
 						OutFile.AddField("type", "cppvsdbg");
 						OutFile.AddField("visualizerFile", MakeUnquotedPathString(FileReference.Combine(ProjectRoot, "Engine", "Extras", "VisualStudioDebugging", "Unreal.natvis"), EPathType.Absolute));
@@ -1411,7 +1412,7 @@ namespace UnrealBuildTool
 				OutFile.EndArray();
 				if (HostPlatform == UnrealTargetPlatform.Win64)
 				{
-					OutFile.AddField("console", "externalTerminal");
+					OutFile.AddField("console", "integratedTerminal");
 				}
 				else
 				{
@@ -1668,14 +1669,6 @@ namespace UnrealBuildTool
 					if (bUseVSCodeExtension)
 					{
 						WorkspaceFile.AddUnnamedField("epic.vscode-ue");
-					}
-
-					// If the platform we run the generator on uses mono, there are additional debugging extensions to add.
-					if (!RuntimePlatform.IsWindows)
-					{
-						WorkspaceFile.AddUnnamedField("vadimcn.vscode-lldb");
-						WorkspaceFile.AddUnnamedField("ms-vscode.mono-debug");
-						WorkspaceFile.AddUnnamedField("dfarley1.file-picker");
 					}
 				}
 				WorkspaceFile.EndArray();

@@ -9,7 +9,7 @@
 
 namespace AVEncoder
 {
-	class FCodecPacket
+	class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FCodecPacket
 	{
 	public:
 		virtual ~FCodecPacket() = default;
@@ -19,7 +19,7 @@ namespace AVEncoder
 		/**
 		 * Encoding/Decoding latency
 		 */
-		struct FTimings
+		struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FTimings
 		{
 			FTimespan StartTs;
 			FTimespan FinishTs;

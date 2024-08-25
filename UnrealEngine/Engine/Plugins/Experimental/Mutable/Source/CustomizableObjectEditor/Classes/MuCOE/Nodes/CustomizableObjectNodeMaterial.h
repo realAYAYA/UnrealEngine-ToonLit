@@ -83,6 +83,20 @@ enum class EPinMode
 	Passthrough
 };
 
+
+/** Image Pin, UV Layout Mode. */
+UENUM()
+enum class EUVLayoutMode
+{
+	/** Does not override the UV Index specified in the Material. */
+	FromMaterial,
+	/* Texture should not be transformed by any layout. Theses textures will not be reduced automatically for LODs. */
+	Ignore,
+	/** User specified UV Index. */
+	Index
+};
+
+
 /** Enum to FText. */
 FText EPinModeToText(EPinMode PinMode);
 
@@ -105,10 +119,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = CustomizableObject, meta = (ClampMin = "0"))
 	int32 MeshComponentIndex = 0;
 
-	/** Reuse material between LODs when using the LODStrategy - Automatic from mesh. If the material is extended or edited by a CO using
-	* custom LODs (LODStrategy), on that given LOD, reuse materials will not be applied and the material and its textures will be unique. */
+	/** Materials will be reused between LODs when possible unless explicitly disabled. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
-	bool bReuseMaterialBetweenLODs = false;
+	bool bReuseMaterialBetweenLODs = true;
 	
 	// UObject interface.
 	virtual void Serialize(FArchive& Ar) override;
@@ -224,9 +237,10 @@ public:
 	 * @param ImageIndex Have to be valid. */
 	UTexture2D* GetImageValue(int32 ImageIndex) const;
 	
-	/** Get the Material Texture Parameter UV index.
+	/** Get the Material Texture Parameter UV Index.
 	 *
-	 * @param ImageIndex Have to be valid. */
+	 * @param ImageIndex Have to be valid.
+	 * @return Return -1 if the UV Index is set to Ignore. Return >= 0 for a valid UV Index.  */
 	int32 GetImageUVLayout(int32 ImageIndex) const;
 
 	/** Delegate called when a Texture Parameter Pin Mode changes. */
@@ -272,6 +286,9 @@ private:
 	/** Returns the Image Pin Mode the pin should be at. It does not update its mode, to update it call UpdateImagePinMode. */
 	EPinMode GetImagePinMode(const UEdGraphPin& Pin) const;
 
+	/** Get the UV Layout Index defined in the Material. */
+	int32 GetImageUVLayoutFromMaterial(int32 ImageIndex) const;
+	
 	// Deprecated properties
 	/** Set all pins to Mutable mode. Even so, each pin can override its behaviour. */
 	UPROPERTY()
@@ -299,6 +316,13 @@ class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeMaterialPinDataImage :
 public:
 	// UObject interface
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+private:
+	virtual void PostLoad() override;
+	
+public:
+	// NodePinDataParameter interface
+	/** Virtual function used to copy pin data when remapping pins. */
+	virtual void Copy(const UCustomizableObjectNodePinData& Other) override;
 	
 	// UCustomizableObjectNodeMaterialPinParameter interface
 	virtual bool IsDefault() const override;
@@ -313,24 +337,23 @@ public:
 	
 private:
 	/** Image pin mode. If is not default, overrides the defined node behaviour. */
-	UPROPERTY()
+	UPROPERTY(EditAnywhere, Category = NoCategory)
 	EPinMode PinMode = EPinMode::Default;
 
 public:
-	/* UVLayout Mode. Indicates that the texture should not be transformed by any layout. Theses textures will not be reduced automatically for LODs. */
 	constexpr static int32 UV_LAYOUT_IGNORE = -1;
-	
-	/** UVLayout Mode. Does not override the Material Texture Parameter. */
-	constexpr static int32 UV_LAYOUT_DEFAULT = -2;
+
+	UPROPERTY(EditAnywhere, Category = NoCategory)
+	EUVLayoutMode UVLayoutMode = EUVLayoutMode::FromMaterial;
 	
 	/** Index of the UV channel that will be used with this image.It is necessary to apply the proper layout transformations to it. */
-	UPROPERTY()
-	int32 UVLayout = UV_LAYOUT_DEFAULT;
+	UPROPERTY(EditAnywhere, Category = NoCategory, meta = (EditCondition = "UVLayoutMode == EUVLayoutMode::Index", EditConditionHides))
+	int32 UVLayout = -2;
 
 	/** Reference Texture used to decide the texture properties of the mutable-generated textures
 	* connected to this material. If null, it will try to be guessed at compile time from
 	* the graph. */
-	UPROPERTY(EditAnywhere, Category=CustomizableObject) // Required to be EditAnywhere for the selector to work.
+	UPROPERTY(EditAnywhere, Category = NoCategory) // Required to be EditAnywhere for the selector to work.
 	TObjectPtr<UTexture2D> ReferenceTexture = nullptr;
 
 private:

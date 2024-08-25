@@ -227,6 +227,14 @@ public:
 	{
 		return false;
 	}
+
+	/*
+	*  @return true if the plugin returns from its external submix to a submix in the plugin.
+	*/
+	virtual bool ReturnsToSubmixGraph() const
+	{
+		return false;
+	}
 };
 
 /************************************************************************/
@@ -653,6 +661,11 @@ public:
 
 	/** Returns the plugin-managed effect submix instance */
 	virtual FSoundEffectSubmixPtr GetEffectSubmix() = 0;
+
+	virtual USoundSubmix* LoadSubmix()
+	{
+		return GetSubmix();
+	}
 
 	/** Returns the plugin-managed effect submix */
 	virtual USoundSubmix* GetSubmix() = 0;

@@ -13,6 +13,7 @@
 #include "Misc/Paths.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/MemoryReader.h"
+#include "Misc/Compression.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/ConfigContext.h"
 #include "Misc/FeedbackContext.h"
@@ -247,7 +248,7 @@ namespace PackFactoryHelper
 		UInputSettings* InputSettingsCDO = GetMutableDefault<UInputSettings>();
 		bool bCheckedOut = false;
 
-		FConfigSection* InputSettingsSection = PackConfig.Find("InputSettings");
+		const FConfigSection* InputSettingsSection = PackConfig.FindSection("InputSettings");
 		if (InputSettingsSection)
 		{
 			TArray<FInputActionKeyMapping> ActionMappingsToAdd;
@@ -306,16 +307,16 @@ namespace PackFactoryHelper
 			}
 		}
 
-		FConfigSection* RedirectsSection = PackConfig.Find("Redirects");
+		const FConfigSection* RedirectsSection = PackConfig.FindSection("Redirects");
 		if (RedirectsSection)
 		{	
-			if (FConfigValue* GameName = RedirectsSection->Find("GameName"))
+			if (const FConfigValue* GameName = RedirectsSection->Find("GameName"))
 			{
 				ConfigParameters.GameName = GameName->GetValue();
 			}
 		}
 
-		FConfigSection* AdditionalFilesSection = PackConfig.Find("AdditionalFilesToAdd");
+		const FConfigSection* AdditionalFilesSection = PackConfig.FindSection("AdditionalFilesToAdd");
 		if (AdditionalFilesSection)
 		{
 			for (auto FilePair : *AdditionalFilesSection)
@@ -356,14 +357,14 @@ namespace PackFactoryHelper
 			}
 		}
 
-		FConfigSection* FeaturePackSettingsSection = PackConfig.Find("FeaturePackSettings");
+		const FConfigSection* FeaturePackSettingsSection = PackConfig.FindSection("FeaturePackSettings");
 		if (FeaturePackSettingsSection)
 		{
-			if (FConfigValue* CompileSource = FeaturePackSettingsSection->Find("CompileSource"))
+			if (const FConfigValue* CompileSource = FeaturePackSettingsSection->Find("CompileSource"))
 			{
 				ConfigParameters.bCompileSource = FCString::ToBool(*CompileSource->GetValue());
 			}
-			if (FConfigValue* InstallMessage = FeaturePackSettingsSection->Find("InstallMessage"))
+			if (const FConfigValue* InstallMessage = FeaturePackSettingsSection->Find("InstallMessage"))
 			{
 				ConfigParameters.InstallMessage = InstallMessage->GetValue();
 			}
@@ -496,10 +497,9 @@ UObject* UPackFactory::FactoryCreateBinary
 						FConfigCacheIni Config(EConfigCacheType::Temporary);
 						FConfigFile& NewFile = Config.Add(EngineIniFilename, FConfigFile());
 						FConfigCacheIni::LoadLocalIniFile(NewFile, TEXT("DefaultEngine"), false);
-						FConfigSection* PackageRedirects = Config.GetSectionPrivate(*RedirectsSection, true, false, EngineIniFilename);
 
-						PackageRedirects->Add(TEXT("+ActiveGameNameRedirects"), FString::Printf(TEXT("(OldGameName=\"%s\",NewGameName=\"%s\")"), *LongOldGameName, *LongNewGameName));
-						PackageRedirects->Add(TEXT("+ActiveGameNameRedirects"), FString::Printf(TEXT("(OldGameName=\"%s\",NewGameName=\"%s\")"), *ConfigParameters.GameName, *LongNewGameName));
+						NewFile.AddToSection(*RedirectsSection, TEXT("+ActiveGameNameRedirects"), FString::Printf(TEXT("(OldGameName=\"%s\",NewGameName=\"%s\")"), *LongOldGameName, *LongNewGameName));
+						NewFile.AddToSection(*RedirectsSection, TEXT("+ActiveGameNameRedirects"), FString::Printf(TEXT("(OldGameName=\"%s\",NewGameName=\"%s\")"), *ConfigParameters.GameName, *LongNewGameName));
 
 						NewFile.UpdateSections(*EngineIniFilename, *RedirectsSection);
 
@@ -542,14 +542,14 @@ UObject* UPackFactory::FactoryCreateBinary
 					FString DestFilename = *EntryFilename;
 					if (DestFilename.StartsWith(TEXT("Source/")))
 					{
-						DestFilename.RightChopInline(7, false);
+						DestFilename.RightChopInline(7, EAllowShrinking::No);
 					}
 					else 
 					{
 						const int32 SourceIndex = DestFilename.Find(TEXT("/Source/"));
 						if (SourceIndex != INDEX_NONE)
 						{
-							DestFilename.RightChopInline(SourceIndex + 8, false);
+							DestFilename.RightChopInline(SourceIndex + 8, EAllowShrinking::No);
 						}
 					}
 
@@ -584,14 +584,14 @@ UObject* UPackFactory::FactoryCreateBinary
 					FString DestFilename = *EntryFilename;
 					if (DestFilename.StartsWith(TEXT("Content/")))
 					{
-						DestFilename.RightChopInline(8, false);
+						DestFilename.RightChopInline(8, EAllowShrinking::No);
 					}
 					else
 					{
 						const int32 ContentIndex = DestFilename.Find(ContentFolder);
 						if (ContentIndex != INDEX_NONE)
 						{
-							DestFilename.RightChopInline(ContentIndex + 9, false);
+							DestFilename.RightChopInline(ContentIndex + 9, EAllowShrinking::No);
 						}
 					}
 					DestFilename = ContentDestinationRoot / DestFilename;
@@ -631,14 +631,14 @@ UObject* UPackFactory::FactoryCreateBinary
 					FString DestFilename = FileToCopy;
 					if (DestFilename.StartsWith(TEXT("Source/")))
 					{
-						DestFilename.RightChopInline(7, false);
+						DestFilename.RightChopInline(7, EAllowShrinking::No);
 					}
 					else 
 					{
 						const int32 SourceIndex = DestFilename.Find(TEXT("/Source/"));
 						if (SourceIndex != INDEX_NONE)
 						{
-							DestFilename.RightChopInline(SourceIndex + 8, false);
+							DestFilename.RightChopInline(SourceIndex + 8, EAllowShrinking::No);
 						}
 					}
 					DestFilename = SourceModuleInfo.ModuleSourcePath / DestFilename;
@@ -683,14 +683,14 @@ UObject* UPackFactory::FactoryCreateBinary
 					FString DestFilename = FileToCopy;
 					if (DestFilename.StartsWith(TEXT("Content/")))
 					{
-						DestFilename.RightChopInline(8, false);
+						DestFilename.RightChopInline(8, EAllowShrinking::No);
 					}
 					else
 					{
 						const int32 ContentIndex = DestFilename.Find(ContentFolder);
 						if (ContentIndex != INDEX_NONE)
 						{
-							DestFilename.RightChopInline(ContentIndex + 9, false);
+							DestFilename.RightChopInline(ContentIndex + 9, EAllowShrinking::No);
 						}
 					}
 					DestFilename = ContentDestinationRoot / DestFilename;

@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "RigUnit_Converter.h"
+#include "Units/Deprecated/Math/RigUnit_Converter.h"
 #include "RigVMFunctions/Math/RigVMFunction_MathTransform.h"
 #include "RigVMFunctions/Math/RigVMFunction_MathQuaternion.h"
 

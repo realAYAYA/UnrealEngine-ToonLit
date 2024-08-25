@@ -789,33 +789,10 @@ void FTabManager::UpdateMainMenu(TSharedPtr<SDockTab> ForTab, const bool bForce)
 		ParentWindowOfOwningTab = MainNonCloseableTabPinned->GetParentWindow();
 	}
 
-	// We only use the platform native global menu bar on Mac
-#if PLATFORM_MAC
-	if (MenuMultiBox.IsValid())
-	{
-		bool bUpdate = bForce;
-		// On OS X opening the tab will set the multi-box and take key focus, but not seemingly send a keyboard focus event into Slate.
-		if (ParentWindowOfOwningTab.IsValid())
-		{
-			bUpdate |= ParentWindowOfOwningTab->GetNativeWindow()->IsForegroundWindow();
-		}
-
-		if (bUpdate)
-		{
-			FSlateMacMenu::UpdateWithMultiBox(MenuMultiBox.ToSharedRef());
-		}
-	}
-	else
-	{
-		FSlateMacMenu::UpdateWithMultiBox(nullptr);
-	}
-#else
-
-
 	if (bAllowPerWindowMenu)
 	{
 		if (ParentWindowOfOwningTab)
-		{	
+		{
 			ParentWindowOfOwningTab->GetTitleBar()->UpdateWindowMenu(MenuWidget);
 		}
 	}
@@ -828,9 +805,6 @@ void FTabManager::UpdateMainMenu(TSharedPtr<SDockTab> ForTab, const bool bForce)
 			ParentWindowOfOwningTab->GetTitleBar()->UpdateWindowMenu(nullptr);
 		}
 	}
-
-
-#endif
 }
 
 void FTabManager::SetMainTab(const FTabId& InMainTabID)
@@ -849,6 +823,20 @@ void FTabManager::SetMainTab(const TSharedRef<const SDockTab>& InTab)
 		PendingMainNonClosableTab = InTab;
 	}
 	
+}
+
+void FTabManager::SetReadOnly(bool bInReadOnly)
+{
+	if(bReadOnly != bInReadOnly)
+	{
+		bReadOnly = bInReadOnly;
+		OnReadOnlyModeChanged.Broadcast(bReadOnly);
+	}
+}
+
+bool FTabManager::IsReadOnly()
+{
+	return bReadOnly;
 }
 
 bool FTabManager::IsTabCloseable(const TSharedRef<const SDockTab>& InTab) const
@@ -1007,7 +995,7 @@ FTabSpawnerEntry& FTabManager::RegisterTabSpawner(const FName TabId, const FOnSp
 
 	TSharedRef<FTabSpawnerEntry> NewSpawnerEntry = MakeShareable(new FTabSpawnerEntry(TabId, OnSpawnTab, CanSpawnTab));
 	TabSpawner.Add(TabId, NewSpawnerEntry);
-	
+
 	return NewSpawnerEntry.Get();
 }
 
@@ -1172,7 +1160,8 @@ void FTabManager::PopulateTabSpawnerMenu_Helper( FMenuBuilder& PopulateMe, FPopu
 
 void FTabManager::MakeSpawnerMenuEntry( FMenuBuilder &PopulateMe, const TSharedPtr<FTabSpawnerEntry> &InSpawnerNode ) 
 {
-	if (InSpawnerNode->MenuType.Get() != ETabSpawnerMenuType::Hidden )
+	// We don't want to add a menu entry for this tab if it is hidden, or if we are in read only mode and it is asking to be hidden
+	if (InSpawnerNode->MenuType.Get() != ETabSpawnerMenuType::Hidden && !(bReadOnly && InSpawnerNode->ReadOnlyBehavior == ETabReadOnlyBehavior::Hidden) )
 	{
 		PopulateMe.AddMenuEntry(
 			InSpawnerNode->GetDisplayName().IsEmpty() ? FText::FromName(InSpawnerNode->TabType ) : InSpawnerNode->GetDisplayName(),
@@ -1365,7 +1354,7 @@ void FTabManager::RestoreDocumentTab( FName PlaceholderId, ESearchPreference::Ty
 
 TSharedPtr<SDockTab> FTabManager::TryInvokeTab(const FTabId& TabId, bool bInvokeAsInactive)
 {
-	TSharedPtr<SDockTab> NewTab = InvokeTab_Internal(TabId, bInvokeAsInactive);
+	TSharedPtr<SDockTab> NewTab = InvokeTab_Internal(TabId, bInvokeAsInactive, true);
 	if (!NewTab.IsValid())
 	{
 		return NewTab;
@@ -1382,7 +1371,7 @@ TSharedPtr<SDockTab> FTabManager::TryInvokeTab(const FTabId& TabId, bool bInvoke
 	return NewTab;
 }
 
-TSharedPtr<SDockTab> FTabManager::InvokeTab_Internal(const FTabId& TabId, bool bInvokeAsInactive)
+TSharedPtr<SDockTab> FTabManager::InvokeTab_Internal(const FTabId& TabId, bool bInvokeAsInactive, bool bForceOpenWindowIfNeeded)
 {
 	// Tab Spawning Rules:
 	// 
@@ -1442,7 +1431,7 @@ TSharedPtr<SDockTab> FTabManager::InvokeTab_Internal(const FTabId& TabId, bool b
 	}
 
 	// Tab is not live. Figure out where to spawn it.
-	TSharedPtr<SDockingTabStack> StackToSpawnIn = FindPotentiallyClosedTab( TabId );
+	TSharedPtr<SDockingTabStack> StackToSpawnIn = bForceOpenWindowIfNeeded ? AttemptToOpenTab( TabId, true ) : FindPotentiallyClosedTab( TabId );
 
 	if (StackToSpawnIn.IsValid())
 	{
@@ -1460,12 +1449,13 @@ TSharedPtr<SDockTab> FTabManager::InvokeTab_Internal(const FTabId& TabId, bool b
 	else if ( FGlobalTabmanager::Get() != SharedThis(this) && NomadTabSpawner->Contains(TabId.TabType) )
 	{
 		// This tab could have been spawned in the global tab manager since it has a nomad tab spawner
-		return FGlobalTabmanager::Get()->InvokeTab_Internal(TabId, bInvokeAsInactive);
+		return FGlobalTabmanager::Get()->InvokeTab_Internal(TabId, bInvokeAsInactive, bForceOpenWindowIfNeeded);
 	}
 	else
 	{
-		// No layout info about this tab found; start 
-		TSharedRef<FArea> NewAreaForTab = FTabManager::NewArea(FTabManager::GetDefaultTabWindowSize(TabId))
+		const TSharedRef<FArea> NewAreaForTab = GetAreaForTabId(TabId);
+
+		NewAreaForTab
 		->Split
 		(
 			FTabManager::NewStack()
@@ -1488,6 +1478,11 @@ TSharedPtr<SDockTab> FTabManager::InvokeTab_Internal(const FTabId& TabId, bool b
 
 TSharedPtr<SDockingTabStack> FTabManager::FindPotentiallyClosedTab( const FTabId& ClosedTabId )
 {
+	return AttemptToOpenTab( ClosedTabId );
+}
+
+TSharedPtr<SDockingTabStack> FTabManager::AttemptToOpenTab( const FTabId& ClosedTabId, bool bForceOpenWindowIfNeeded )
+{
 	TSharedPtr<SDockingTabStack> StackWithClosedTab;
 
 	FTabMatcher TabMatcher( ClosedTabId );
@@ -1497,14 +1492,13 @@ TSharedPtr<SDockingTabStack> FTabManager::FindPotentiallyClosedTab( const FTabId
 	if ( CollapsedAreaWithMatchingTabIndex != INDEX_NONE )
 	{
 		TSharedRef<FTabManager::FArea> CollapsedAreaWithMatchingTab = CollapsedDockAreas[CollapsedAreaWithMatchingTabIndex];
-
-		TSharedPtr<SDockingArea> RestoredArea = RestoreArea(CollapsedAreaWithMatchingTab, GetPrivateApi().GetParentWindow());
+		
+		TSharedPtr<SDockingArea> RestoredArea = RestoreArea(CollapsedDockAreas[CollapsedAreaWithMatchingTabIndex],
+			GetPrivateApi().GetParentWindow(), false, EOutputCanBeNullptr::Never, bForceOpenWindowIfNeeded);
 		check(RestoredArea.IsValid());
-
 		// We have just un-collapsed this dock area.
 		// Don't rely on the collapsed tab index: RestoreArea() can end up kicking the task graph which could do other tab work and modify the CollapsedDockAreas array.
 		CollapsedDockAreas.Remove(CollapsedAreaWithMatchingTab);
-
 		if (RestoredArea.IsValid())
 		{
 			StackWithClosedTab = FindTabInLiveArea(TabMatcher, StaticCastSharedRef<SDockingArea>(RestoredArea->AsShared()));
@@ -1578,7 +1572,7 @@ void FTabManager::OpenUnmanagedTab(FName PlaceholderId, const FSearchPreference&
 	}
 	else
 	{
-		TSharedPtr<SDockingTabStack> StackToSpawnIn = FindPotentiallyClosedTab( PlaceholderId );
+		TSharedPtr<SDockingTabStack> StackToSpawnIn = AttemptToOpenTab( PlaceholderId, true );
 		if (StackToSpawnIn.IsValid())
 		{
 			StackToSpawnIn->OpenTab(UnmanagedTab);
@@ -1605,14 +1599,14 @@ FTabManager::FTabManager( const TSharedPtr<SDockTab>& InOwnerTab, const TSharedR
 	LocalWorkspaceMenuRoot = FWorkspaceItem::NewGroup(LOCTEXT("LocalWorkspaceRoot", "Local Workspace Root"));
 }
 
-TSharedPtr<SDockingArea> FTabManager::RestoreArea(const TSharedRef<FArea>& AreaToRestore, const TSharedPtr<SWindow>& InParentWindow, const bool bEmbedTitleAreaContent, const EOutputCanBeNullptr OutputCanBeNullptr)
+TSharedPtr<SDockingArea> FTabManager::RestoreArea(const TSharedRef<FArea>& AreaToRestore, const TSharedPtr<SWindow>& InParentWindow, const bool bEmbedTitleAreaContent, const EOutputCanBeNullptr OutputCanBeNullptr, bool bForceOpenWindowIfNeeded)
 {
 	// Sidebar tabs for this area
 	FSidebarTabLists SidebarTabs;
 
 	TemporarilySidebaredTabs.Empty();
 
-	if (TSharedPtr<SDockingNode> RestoredNode = RestoreArea_Helper(AreaToRestore, InParentWindow, bEmbedTitleAreaContent, SidebarTabs, OutputCanBeNullptr))
+	if (TSharedPtr<SDockingNode> RestoredNode = RestoreArea_Helper(AreaToRestore, InParentWindow, bEmbedTitleAreaContent, SidebarTabs, OutputCanBeNullptr, bForceOpenWindowIfNeeded))
 	{
 		TSharedRef<SDockingArea> RestoredArea = StaticCastSharedRef<SDockingArea>(RestoredNode->AsShared());
 
@@ -1639,7 +1633,8 @@ TSharedPtr<SDockingArea> FTabManager::RestoreArea(const TSharedRef<FArea>& AreaT
 	}
 }
 
-TSharedPtr<SDockingNode> FTabManager::RestoreArea_Helper(const TSharedRef<FLayoutNode>& LayoutNode, const TSharedPtr<SWindow>& ParentWindow, const bool bEmbedTitleAreaContent, FSidebarTabLists& OutSidebarTabs, const EOutputCanBeNullptr OutputCanBeNullptr)
+TSharedPtr<SDockingNode> FTabManager::RestoreArea_Helper(const TSharedRef<FLayoutNode>& LayoutNode, const TSharedPtr<SWindow>& ParentWindow, const bool bEmbedTitleAreaContent,
+	FSidebarTabLists& OutSidebarTabs, const EOutputCanBeNullptr OutputCanBeNullptr, bool bForceOpenWindowIfNeeded)
 {
 	TSharedPtr<FTabManager::FStack> NodeAsStack = LayoutNode->AsStack();
 	TSharedPtr<FTabManager::FSplitter> NodeAsSplitter = LayoutNode->AsSplitter();
@@ -1775,20 +1770,8 @@ TSharedPtr<SDockingNode> FTabManager::RestoreArea_Helper(const TSharedRef<FLayou
 			TArray<TSharedRef<SDockingNode>> DockingNodes;
 			if (CanRestoreSplitterContent(DockingNodes, NodeAsArea.ToSharedRef(), NewWindow, OutSidebarTabs, OutputCanBeNullptr))
 			{
-				// Create SplitterWidget only if it will be filled with at least 1 DockingNodes
-				// Any windows that were "pulled out" of a dock area should be children of the window in which the parent dock area resides.
-				if (bIsChildWindow)
-				{
-					FSlateApplication::Get().AddWindowAsNativeChild(NewWindow, ParentWindow.ToSharedRef())->SetContent(
-						SAssignNew(NewDockAreaWidget, SDockingArea, SharedThis(this), NodeAsArea.ToSharedRef()).ParentWindow(NewWindow)
-					);
-				}
-				else
-				{
-					FSlateApplication::Get().AddWindow(NewWindow)->SetContent(
-						SAssignNew(NewDockAreaWidget, SDockingArea, SharedThis(this), NodeAsArea.ToSharedRef()).ParentWindow(NewWindow)
-					);
-				}
+				NewWindow->SetContent(SAssignNew(NewDockAreaWidget, SDockingArea, SharedThis(this), NodeAsArea.ToSharedRef()).ParentWindow(NewWindow));
+
 				// Restore content
 				if (!bCanOutputBeNullptr)
 				{
@@ -1797,6 +1780,21 @@ TSharedPtr<SDockingNode> FTabManager::RestoreArea_Helper(const TSharedRef<FLayou
 				else
 				{
 					RestoreSplitterContent(DockingNodes, NewDockAreaWidget.ToSharedRef());
+				}
+
+				if (bIsChildWindow)
+				{
+					// Recursively check to see how many actually spawned tabs there are in this dock area. If there are none we will not spawn a useless window
+					const int32 TotalNumTabs = NewDockAreaWidget->GetNumTabs();
+
+					if (TotalNumTabs > 0 || bForceOpenWindowIfNeeded)
+					{
+						FSlateApplication::Get().AddWindowAsNativeChild(NewWindow, ParentWindow.ToSharedRef());
+					}
+				}
+				else
+				{
+					FSlateApplication::Get().AddWindow(NewWindow);
 				}
 			}
 		}
@@ -1940,7 +1938,31 @@ bool FTabManager::IsValidTabForSpawning( const FTab& SomeTab ) const
 
 bool FTabManager::IsAllowedTab(const FTabId& TabId) const
 {
-	return IsAllowedTabType(TabId.TabType);
+	bool bAllowed = true;
+
+	// If we are in read-only mode, make sure this tab doesn't want to be hidden
+	if(bReadOnly)
+	{
+		TOptional<ETabReadOnlyBehavior> TabReadOnlyBehavior = GetTabReadOnlyBehavior(TabId);
+
+		if(TabReadOnlyBehavior.IsSet())
+		{
+			bAllowed &= (TabReadOnlyBehavior.GetValue() != ETabReadOnlyBehavior::Hidden);
+		}
+	}
+	
+	bAllowed &= IsAllowedTabType(TabId.TabType);
+	
+	return bAllowed;
+}
+
+TOptional<ETabReadOnlyBehavior> FTabManager::GetTabReadOnlyBehavior(const FTabId& TabId) const
+{
+	if (const TSharedPtr<const FTabSpawnerEntry> Spawner = FindTabSpawnerFor(TabId.TabType))
+	{
+		return Spawner->ReadOnlyBehavior;
+	}
+	return TOptional<ETabReadOnlyBehavior>();
 }
 
 bool FTabManager::IsAllowedTabType(const FName TabType) const
@@ -2190,8 +2212,56 @@ FVector2D FTabManager::GetDefaultTabWindowSize(const FTabId& TabId)
 	return WindowSize;
 }
 
-template<typename MatchFunctorType>
-bool FTabManager::HasAnyMatchingTabs( const TSharedRef<FTabManager::FLayoutNode>& SomeNode, const MatchFunctorType& Matcher )
+bool FTabManager::HasAnyTabWithTabId( const TSharedRef<FLayoutNode>& SomeNode, const FName& InTabTypeToMatch ) const
+{
+	return HasAnyMatchingTabs(SomeNode,
+		[this, InTabTypeToMatch](const FTab& Candidate)
+		{
+			return this->IsValidTabForSpawning(Candidate) && Candidate.TabId.TabType == InTabTypeToMatch;
+		});
+}
+
+TSharedPtr<FTabManager::FArea> FTabManager::GetAreaFromInitialLayoutWithTabType( const FTabId& InTabIdToMatch ) const
+{
+	const TSharedPtr<FTabManager::FLayout> InitialLayoutSP = FGlobalTabmanager::Get()->GetInitialLayoutSP();
+	if (InitialLayoutSP.IsValid())
+	{
+		for (const TSharedRef<FArea>& Area : InitialLayoutSP->Areas)
+		{
+			if (HasAnyTabWithTabId(Area, InTabIdToMatch.TabType))
+			{
+				return Area.ToSharedPtr();
+			}
+		}
+	}
+	return nullptr;
+}
+
+TSharedRef<FTabManager::FArea> FTabManager::GetAreaForTabId(const FTabId& TabId)
+{
+	if (const TSharedPtr<FArea> AreaFromInitiallyLoadedLayout = FGlobalTabmanager::Get()->GetAreaFromInitialLayoutWithTabType(TabId))
+	{
+		/* we must reuse positions from the initial layout for positionally specified floating windows. If we don't
+		* do this then any persisted floating windows load in a big cluster in the middle on top of one another */
+		if ( AreaFromInitiallyLoadedLayout->DefinesPositionallySpecifiedFloatingWindow() )
+		{
+			return AreaFromInitiallyLoadedLayout.ToSharedRef();
+		}
+	}
+	return NewArea( GetDefaultTabWindowSize(TabId) );
+}
+
+void FGlobalTabmanager::SetInitialLayoutSP(TSharedPtr<FTabManager::FLayout> InLayout)
+{
+	InitialLayoutSP = InLayout;
+}
+
+TSharedPtr<FTabManager::FLayout> FGlobalTabmanager::GetInitialLayoutSP()
+{
+	return InitialLayoutSP;
+}
+
+bool FTabManager::HasAnyMatchingTabs( const TSharedRef<FTabManager::FLayoutNode>& SomeNode, const TFunctionRef<bool(const FTab& Candidate)>& Matcher )
 {
 	TSharedPtr<FTabManager::FSplitter> AsSplitter = SomeNode->AsSplitter();
 	TSharedPtr<FTabManager::FStack> AsStack = SomeNode->AsStack();
@@ -2218,37 +2288,21 @@ bool FTabManager::HasAnyMatchingTabs( const TSharedRef<FTabManager::FLayoutNode>
 bool FTabManager::HasValidOpenTabs( const TSharedRef<FTabManager::FLayoutNode>& SomeNode ) const
 {
 	// Search for valid and open tabs
-	struct OpenTabMatcher
-	{
-		const FTabManager* TabManager;
-
-		bool operator()(const FTab& Candidate) const
+	return HasAnyMatchingTabs(SomeNode,
+		[this](const FTab& Candidate)
 		{
-			return TabManager->IsValidTabForSpawning(Candidate) && Candidate.TabState == ETabState::OpenedTab;
-		}
-	};
-	OpenTabMatcher FindOpenTab;
-	FindOpenTab.TabManager = this;
-
-	return HasAnyMatchingTabs(SomeNode, FindOpenTab);
+				return this->IsValidTabForSpawning(Candidate) && Candidate.TabState == ETabState::OpenedTab;
+		});
 }
 
 bool FTabManager::HasValidTabs( const TSharedRef<FTabManager::FLayoutNode>& SomeNode ) const
 {
 	// Search for valid tabs that can be spawned
-	struct ValidTabMatcher
-	{
-		const FTabManager* TabManager;
-
-		bool operator()(const FTab& Candidate) const
+	return HasAnyMatchingTabs(SomeNode,
+		[this](const FTab& Candidate)
 		{
-			return TabManager->IsValidTabForSpawning(Candidate);
-		}
-	};
-	ValidTabMatcher FindValidTab;
-	FindValidTab.TabManager = this;
-
-	return HasAnyMatchingTabs(SomeNode, FindValidTab);
+			return this->IsValidTabForSpawning(Candidate);
+		});
 }
 
 void FTabManager::SetTabsTo(const TSharedRef<FTabManager::FLayoutNode>& SomeNode, const ETabState::Type NewTabState, const ETabState::Type OriginalTabState) const
@@ -2695,7 +2749,7 @@ void FGlobalTabmanager::SaveAllVisualState()
 
 	for( int32 ManagerIndex=0; ManagerIndex < SubTabManagers.Num(); ++ManagerIndex )
 	{
-		const TSharedPtr<FTabManager> SubManagerTab = SubTabManagers[ManagerIndex].TabManager.Pin();
+		const TSharedPtr<FTabManager> SubManagerTab = SubTabManagers[ManagerIndex].TabManager.Pin();		
 		if (SubManagerTab.IsValid())
 		{
 			SubManagerTab->SavePersistentLayout();
@@ -2908,8 +2962,10 @@ void FProxyTabmanager::OpenUnmanagedTab(FName PlaceholderId, const FSearchPrefer
 	TSharedPtr<SWindow> ParentWindowPtr = ParentWindow.Pin();
 	if (ensure(ParentWindowPtr.IsValid()))
 	{
-		// No layout info about this tab found; start 
-		TSharedRef<FArea> NewAreaForTab = FTabManager::NewPrimaryArea()
+		const TSharedPtr<FArea> Area = FGlobalTabmanager::Get()->GetAreaFromInitialLayoutWithTabType(UnmanagedTab->GetLayoutIdentifier());
+		const TSharedRef<FArea> NewAreaForTab =  Area.IsValid() ? Area.ToSharedRef() : NewPrimaryArea();
+
+		NewAreaForTab
 			->Split
 			(
 				FTabManager::NewStack()

@@ -312,7 +312,7 @@ void FDerivedData::Serialize(FArchive& Ar, UObject* Owner)
 
 		///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		// TEMPORARY SERIALIZATION AS BULK DATA
-
+#if 1
 		FCookedData LocalCookedData = Linker->AddDerivedData(*this).CookedData;
 		LocalCookedData.ChunkId[8] = 0;
 		LocalCookedData.ChunkId[9] = 0;
@@ -362,8 +362,9 @@ void FDerivedData::Serialize(FArchive& Ar, UObject* Owner)
 
 		// TEMPORARY SERIALIZATION AS BULK DATA
 		///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+#else
 		return Linker->AddDerivedData(*this).CookedData.Serialize(Ar);
+#endif
 	}
 #endif
 

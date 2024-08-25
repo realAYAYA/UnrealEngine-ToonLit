@@ -438,17 +438,21 @@ void UEdGraphNode::BreakAllNodeLinks()
 	NodeList.Add(this);
 
 	// Iterate over each pin and break all links
-	for(int32 PinIdx = 0; PinIdx < Pins.Num(); ++PinIdx)
+	for (int32 PinIdx = 0; PinIdx < Pins.Num(); ++PinIdx)
 	{
-		UEdGraphPin* Pin = Pins[PinIdx];
-
-		// Save all the connected nodes to be notified below
-		for (UEdGraphPin* Connection : Pin->LinkedTo)
+		if (UEdGraphPin* Pin = Pins[PinIdx])
 		{
-			NodeList.Add(Connection->GetOwningNode());
-		}
+			// Save all the connected nodes to be notified below
+			for (UEdGraphPin* Connection : Pin->LinkedTo)
+			{
+				if (Connection != nullptr)
+				{
+					NodeList.Add(Connection->GetOwningNode());
+				}
+			}
 
-		Pin->BreakAllPinLinks();
+			Pin->BreakAllPinLinks();
+		}
 	}
 
 	// Send a notification to all nodes that lost a connection
@@ -770,6 +774,11 @@ FString UEdGraphNode::GetFindReferenceSearchString() const
 	return GetNodeTitle(ENodeTitleType::ListView).ToString();
 }
 
+FString UEdGraphNode::GetFindReferenceSearchString(EGetFindReferenceSearchStringFlags InFlags) const
+{
+	return GetFindReferenceSearchString_Impl(InFlags);
+}
+
 UObject* UEdGraphNode::GetJumpTargetForDoubleClick() const
 {
 	return nullptr;
@@ -992,7 +1001,7 @@ bool UEdGraphNode::IsInDevelopmentMode() const
 {
 #if WITH_EDITOR
 	// By default, development mode is implied when running in the editor and not cooking via commandlet, unless enabled in the project settings.
-	return !IsRunningCommandlet() || GetDefault<UCookerSettings>()->bCompileBlueprintsInDevelopmentMode;
+	return !IsRunningCookCommandlet() || GetDefault<UCookerSettings>()->bCompileBlueprintsInDevelopmentMode;
 #else
 	return false;
 #endif

@@ -11,7 +11,6 @@
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUdpMessageTransportTest, "System.Core.Messaging.Transports.Udp.UdpMessageTransport", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
 
-
 class FUdpMessageTransportTestState
 	: public IMessageTransportHandler
 {
@@ -21,7 +20,7 @@ public:
 		: NumReceivedMessages(0)
 	{
 		TArray<FIPv4Endpoint> StaticEndpoints;
-		TArray<FIPv4Endpoint> ExcludeEndpoints;
+		TArray<FString> ExcludeEndpoints;
 		Transport = MakeShared<FUdpMessageTransport, ESPMode::ThreadSafe>(UnicastEndpoint, MulticastEndpoint,
 																		  MoveTemp(StaticEndpoints),
 																		  MoveTemp(ExcludeEndpoints), MulticastTimeToLive);
@@ -88,6 +87,8 @@ public:
 
 private:
 
+	void TestWildcardEndpointExclusion();
+
 	TArray<FGuid> DiscoveredNodes;
 	TArray<FGuid> LostNodes;
 	int32 NumReceivedMessages;
@@ -96,6 +97,39 @@ private:
 	TSharedPtr<IMessageContext, ESPMode::ThreadSafe> LastMessageContext;
 };
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUdpMessageTransportTestExclusionList, "System.Core.Messaging.Transports.Udp.UdpMessageTransportExclusionList", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+
+bool FUdpMessageTransportTestExclusionList::RunTest(const FString& Parameters)
+{
+	const FIPv4Endpoint SimpleEndpoint(FIPv4Address(192, 168, 10, 120), 12777);
+
+	TArray<FString> PassTests = {
+		TEXT("192.16?.10.*"),
+		TEXT("192.168.10.120"),
+		TEXT("192.168.10.*:0"),
+		TEXT("192.168.10.120:12777"),
+		TEXT("*.*.*.*:12777")
+	};
+	for (const FString& Test : PassTests)
+	{
+		AddInfo(FString::Printf(TEXT("Testing wildcard string %s against target %s"), *Test, *SimpleEndpoint.ToString()));
+		TestTrue(TEXT("Wilcard match should succeed."),	 FUdpMessageTransport::MatchesEndpoint(Test, SimpleEndpoint));
+	}
+
+	TArray<FString> FailTests = {
+		TEXT("192.168.10.11"),
+		TEXT("192.168.10.120:1210"),
+		TEXT("192.168.*.55:0"),
+		TEXT("192.168.11.11")
+    };
+
+	for (const FString& Test : FailTests)
+	{
+		AddInfo(FString::Printf(TEXT("Testing wildcard string %s against target %s"), *Test, *SimpleEndpoint.ToString()));
+		TestFalse(TEXT("Wilcard match should not succeed."), FUdpMessageTransport::MatchesEndpoint(Test, SimpleEndpoint));
+	}
+	return true;
+}
 
 bool FUdpMessageTransportTest::RunTest(const FString& Parameters)
 {

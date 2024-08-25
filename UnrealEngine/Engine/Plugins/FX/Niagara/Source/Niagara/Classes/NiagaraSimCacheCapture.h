@@ -74,8 +74,11 @@ struct FNiagaraSimCacheCaptureParameters
 class FNiagaraSimCacheCapture
 {
 public:
+	UE_NONCOPYABLE(FNiagaraSimCacheCapture);
+
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnCaptureComplete, UNiagaraSimCache*);
 
+	FNiagaraSimCacheCapture() = default;
 	NIAGARA_API ~FNiagaraSimCacheCapture();
 
 	FOnCaptureComplete& OnCaptureComplete() {return CaptureComplete;}

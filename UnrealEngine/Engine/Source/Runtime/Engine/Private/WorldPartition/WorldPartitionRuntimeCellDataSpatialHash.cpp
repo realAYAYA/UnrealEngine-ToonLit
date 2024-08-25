@@ -18,24 +18,30 @@ static FAutoConsoleVariableRef CVarRuntimeSpatialHashSortUsingCellExtent(
 	GRuntimeSpatialHashSortUsingCellExtent,
 	TEXT("Set to 1 to use cell extent instead of cell grid level when sorting cells by importance."));
 
+static bool GRuntimeSpatialHashSortUsingCellPriority = true;
+static FAutoConsoleVariableRef CVarRuntimeSpatialHashSortUsingCellPriority(
+	TEXT("wp.Runtime.RuntimeSpatialHashSortUsingCellPriority"),
+	GRuntimeSpatialHashSortUsingCellPriority,
+	TEXT("Set to 1 to use cell priority before distance to/angle from source as part of the sorting criterias when sorting cells by importance."));
+
 UWorldPartitionRuntimeCellDataSpatialHash::UWorldPartitionRuntimeCellDataSpatialHash(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, Extent(0)
-	, Level(0)
-	, bCachedIsBlockingSource(false)
-	, CachedMinSquareDistanceToBlockingSource(MAX_dbl)
 	, CachedMinSquareDistanceToSource(MAX_dbl)
+	, CachedMinBlockOnSlowStreamingRatio2D(MAX_dbl)
+	, CachedMinSquareDistanceToBlockingSource2D(MAX_dbl)
 {}
 
 void UWorldPartitionRuntimeCellDataSpatialHash::ResetStreamingSourceInfo() const
 {
 	Super::ResetStreamingSourceInfo();
 
-	bCachedIsBlockingSource = false;
-	CachedMinSquareDistanceToBlockingSource = MAX_dbl;
 	CachedMinSquareDistanceToSource = MAX_dbl;
+	CachedSourcePriorityWeights.Reset();
 	CachedSourceSquaredDistances.Reset();
 	CachedInstersectingShapes.Reset();
+	CachedMinBlockOnSlowStreamingRatio2D = MAX_dbl;
+	CachedMinSquareDistanceToBlockingSource2D = MAX_dbl;
 }
 
 float UWorldPartitionRuntimeCellDataSpatialHash::ComputeSourceToCellAngleFactor(const FSphericalSector& SourceShape) const
@@ -81,15 +87,16 @@ void UWorldPartitionRuntimeCellDataSpatialHash::AppendStreamingSourceInfo(const 
 {
 	Super::AppendStreamingSourceInfo(Source, SourceShape);
 
-	const double SquareDistance = FVector::DistSquared2D(SourceShape.GetCenter(), Position);
+	const double SquareDistance2D = FVector::DistSquared2D(SourceShape.GetCenter(), Position);
 
-	// Only consider blocking sources
+	// Update cached values based on the 2D distance
 	if (Source.bBlockOnSlowLoading)
 	{
-		bCachedIsBlockingSource = true;
-		CachedMinSquareDistanceToBlockingSource = FMath::Min(SquareDistance, CachedMinSquareDistanceToBlockingSource);
+		CachedMinSquareDistanceToBlockingSource2D = FMath::Min(SquareDistance2D, CachedMinSquareDistanceToBlockingSource2D);
+		CachedMinBlockOnSlowStreamingRatio2D = FMath::Min(CachedMinBlockOnSlowStreamingRatio2D, FMath::Sqrt(CachedMinSquareDistanceToBlockingSource2D) / SourceShape.GetRadius());
 	}
-	CachedSourceSquaredDistances.Add(SquareDistance);
+	CachedSourceSquaredDistances.Add(SquareDistance2D);
+	CachedSourcePriorityWeights.Add(1.0f - ((float)Source.Priority / (float)EStreamingSourcePriority::Lowest));
 	CachedInstersectingShapes.Add(SourceShape);
 }
 
@@ -102,6 +109,8 @@ void UWorldPartitionRuntimeCellDataSpatialHash::MergeStreamingSourceInfo() const
 	check(Count == CachedInstersectingShapes.Num());
 
 	CachedMinSquareDistanceToSource = Count ? FMath::Min(CachedSourceSquaredDistances) : MAX_dbl;
+	CachedMinBlockOnSlowStreamingRatio = CachedMinBlockOnSlowStreamingRatio2D;
+	CachedMinSquareDistanceToBlockingSource = CachedMinSquareDistanceToBlockingSource2D;
 
 	if (Count)
 	{
@@ -135,30 +144,48 @@ void UWorldPartitionRuntimeCellDataSpatialHash::MergeStreamingSourceInfo() const
 	}
 }
 
-int32 UWorldPartitionRuntimeCellDataSpatialHash::SortCompare(const UWorldPartitionRuntimeCellData* InOther, bool bCanUseSortingCache) const
+int32 UWorldPartitionRuntimeCellDataSpatialHash::SortCompare(const UWorldPartitionRuntimeCellData* InOther) const
 {
-	int32 Result = Super::SortCompare(InOther, bCanUseSortingCache);
+	int32 Result = (int32)CachedMinSourcePriority - (int32)InOther->CachedMinSourcePriority;
+
 	if (Result == 0)
 	{
 		const UWorldPartitionRuntimeCellDataSpatialHash* Other = (UWorldPartitionRuntimeCellDataSpatialHash*)InOther;
-		
+
 		// By default, now compare cell's extent instead of its grid level since we compare cells across multiple WPs/grids (higher value is higher prio)
-		Result = GRuntimeSpatialHashSortUsingCellExtent ? int32(Other->Extent - Extent) : (Other->Level - Level);
-		if (bCanUseSortingCache && (Result == 0))
+		Result = GRuntimeSpatialHashSortUsingCellExtent ? int32(Other->Extent - Extent) : (InOther->HierarchicalLevel - HierarchicalLevel);
+
+		if (Result == 0)
 		{
-			// Closest distance (lower value is higher prio)
-			const double Diff = CachedSourceSortingDistance - Other->CachedSourceSortingDistance;
-			if (FMath::IsNearlyZero(Diff))
+			if (GRuntimeSpatialHashSortUsingCellPriority)
 			{
-				const double RawDistanceDiff = CachedMinSquareDistanceToSource - Other->CachedMinSquareDistanceToSource;
-				Result = RawDistanceDiff < 0 ? -1 : (RawDistanceDiff > 0.f ? 1 : 0);
+				// Cell priority (lower value is higher prio)
+				Result = Priority - Other->Priority;
 			}
-			else
+
+			if (Result == 0)
 			{
-				Result = Diff < 0.f ? -1 : (Diff > 0.f ? 1 : 0);
+				// Closest distance (lower value is higher prio)
+				const double Diff = CachedSourceSortingDistance - Other->CachedSourceSortingDistance;
+				if (FMath::IsNearlyZero(Diff))
+				{
+					const double RawDistanceDiff = CachedMinSquareDistanceToSource - Other->CachedMinSquareDistanceToSource;
+					Result = RawDistanceDiff < 0 ? -1 : (RawDistanceDiff > 0.f ? 1 : 0);
+				}
+				else
+				{
+					Result = Diff < 0.f ? -1 : (Diff > 0.f ? 1 : 0);
+				}
 			}
 		}
 	}
+
+	if (!GRuntimeSpatialHashSortUsingCellPriority && Result == 0)
+	{
+		// Cell priority (lower value is higher prio)
+		Result = Priority - InOther->Priority;
+	}
+
 	return Result;
 }
 
@@ -169,6 +196,11 @@ FBox UWorldPartitionRuntimeCellDataSpatialHash::GetCellBounds() const
 	Box.Min.Z = GetContentBounds().Min.Z;
 	Box.Max.Z = GetContentBounds().Max.Z;
 	return Box;
+}
+
+FBox UWorldPartitionRuntimeCellDataSpatialHash::GetStreamingBounds() const
+{
+	return GetCellBounds();
 }
 
 bool UWorldPartitionRuntimeCellDataSpatialHash::IsDebugShown() const

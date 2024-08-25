@@ -13,6 +13,7 @@ class IDetailLayoutBuilder;
 class UActorComponent;
 class UMaterialInterface;
 class USceneComponent;
+class SWidget;
 
 /**
  * Encapsulates functionality for the ActorDetails material category
@@ -69,6 +70,14 @@ private:
 	 */
 	void OnPasteMaterialItem(int32 CurrentSlot);
 
+	/**
+	 * Called by the material list widget to customize the material slot widget
+	 *
+	 * @param Material	The material for the slot widget to be customized
+	 * @param SlotIndex The slot index for the slot widget to be customized
+	 */
+	TSharedRef<SWidget> OnGenerateWidgetsForMaterial(UMaterialInterface* Material, int32 SlotIndex);
+
 	/** 
 	 * @return true if a component is editable (and visible in the view)
 	 */
@@ -82,4 +91,6 @@ private:
 	FNotifyHook* NotifyHook;
 
 	IDetailCategoryBuilder* MaterialCategory;
+
+	FText GetMaterialNameText(int32 MaterialIndex) const;
 };

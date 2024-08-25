@@ -28,14 +28,14 @@
 #define STENCIL_LIGHTING_CHANNELS_BIT_ID				4
 #define STENCIL_RECEIVE_DECAL_BIT_ID					7
 // Used only during the lighting pass - alias/reuse light channels (which copied from stencil to a texture prior to lighting pass)
-#define STENCIL_STRATA_FASTPATH							4 
-#define STENCIL_STRATA_SINGLEPATH						5
-#define STENCIL_STRATA_COMPLEX							6
-#define STENCIL_STRATA_COMPLEX_SPECIAL					1
-// Used only by Strata during the base pass when bUseDBufferPass is enabled (to mark material STRATA_DBUFFER_RESPONSE_xxx Normal/BaseColor/Roughness)
-#define STENCIL_STRATA_RECEIVE_DBUFFER_NORMAL_BIT_ID	1
-#define STENCIL_STRATA_RECEIVE_DBUFFER_DIFFUSE_BIT_ID	3
-#define STENCIL_STRATA_RECEIVE_DBUFFER_ROUGHNESS_BIT_ID	7
+#define STENCIL_SUBSTRATE_FASTPATH							4
+#define STENCIL_SUBSTRATE_SINGLEPATH						5
+#define STENCIL_SUBSTRATE_COMPLEX							6
+#define STENCIL_SUBSTRATE_COMPLEX_SPECIAL					7
+// Used only by Substrate during the base pass when bUseDBufferPass is enabled (to mark material SUBSTRATE_DBUFFER_RESPONSE_xxx Normal/BaseColor/Roughness)
+#define STENCIL_SUBSTRATE_RECEIVE_DBUFFER_NORMAL_BIT_ID		1
+#define STENCIL_SUBSTRATE_RECEIVE_DBUFFER_DIFFUSE_BIT_ID	3
+#define STENCIL_SUBSTRATE_RECEIVE_DBUFFER_ROUGHNESS_BIT_ID	7
 
 // Outputs a compile-time constant stencil's bit mask ready to be used
 // in TStaticDepthStencilState<> template parameter. It also takes care
@@ -49,8 +49,19 @@
 
 #define STENCIL_LIGHTING_CHANNELS_MASK(Value) uint8(((Value) & 0x7) << STENCIL_LIGHTING_CHANNELS_BIT_ID)
 
-// Mobile specific
-// Store shading model into stencil [1-2] bits
-#define GET_STENCIL_MOBILE_SM_MASK(Value) uint8(((Value) & 0x3) << 1)
+// [Mobile specific]
+
+// stencil [0-2] bits are used to render per-object shadows (see ShadowStencilMask in ShadowRendering.cpp)
+
 // Sky material mask - bit 3
-#define STENCIL_MOBILE_SKY_MASK uint8(1 << 3)
+#define STENCIL_MOBILE_SKY_MASK						uint8(1 << 3)
+
+// [Mobile Deferred only]
+// Store shading model into stencil [1-2] bits
+#define GET_STENCIL_MOBILE_SM_MASK(Value)			uint8(((Value) & 0x3) << 1)
+
+// [Mobile Forward only]
+// Cast contact shadow mask - bit 4 / Must match shader (ScreenSpaceShadows.usf)
+#define STENCIL_MOBILE_CAST_CONTACT_SHADOW_BIT_ID	4
+// Forward local light buffer mask for light function - bit 5
+#define STENCIL_MOBILE_LIGHTFUNCTION_MASK			uint8(1 << 5)

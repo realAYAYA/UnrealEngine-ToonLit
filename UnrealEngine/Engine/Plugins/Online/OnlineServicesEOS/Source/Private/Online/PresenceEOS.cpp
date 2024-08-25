@@ -1,11 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Online/PresenceEOS.h"
+
 #include "EOSShared.h"
-#include "Online/OnlineIdEOS.h"
-#include "Online/OnlineServicesEOS.h"
+#include "IEOSSDKManager.h"
 #include "Online/AuthEOS.h"
 #include "Online/OnlineErrorEOSGS.h"
+#include "Online/OnlineIdEOS.h"
+#include "Online/OnlineServicesEOS.h"
 
 #include "eos_presence.h"
 
@@ -68,7 +70,7 @@ void FPresenceEOS::Initialize()
 {
 	FPresenceCommon::Initialize();
 
-	PresenceHandle = EOS_Platform_GetPresenceInterface(static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
+	PresenceHandle = EOS_Platform_GetPresenceInterface(*static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
 	check(PresenceHandle != nullptr);
 
 	// Register for friend updates

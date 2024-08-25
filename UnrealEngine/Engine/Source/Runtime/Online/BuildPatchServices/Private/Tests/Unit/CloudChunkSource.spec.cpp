@@ -20,6 +20,7 @@
 #include "Tests/Mock/MessagePump.mock.h"
 #include "Tests/Mock/DownloadConnectionCount.mock.h"
 #include "Installer/CloudChunkSource.h"
+#include "Installer/InstallerSharedContext.h"
 #include "Core/Platform.h"
 #include "BuildPatchHash.h"
 
@@ -31,6 +32,7 @@ namespace BuildPatchServices
 BEGIN_DEFINE_SPEC(FCloudChunkSourceSpec, "BuildPatchServices.Unit", EAutomationTestFlags::ProductFilter | EAutomationTestFlags::ApplicationContextMask)
 // Unit.
 TUniquePtr<BuildPatchServices::ICloudChunkSource> CloudChunkSource;
+TUniquePtr<BuildPatchServices::FBuildInstallerSharedContext> InstallerSharedContext;
 // Mock/Fake.
 TUniquePtr<BuildPatchServices::FMockPlatform> MockPlatform;
 TUniquePtr<BuildPatchServices::FFakeChunkStore> FakeChunkStore;
@@ -87,7 +89,9 @@ void FCloudChunkSourceSpec::Define()
 	BeforeEach([this]()
 	{
 		MockPlatform.Reset(new FMockPlatform());
+		InstallerSharedContext.Reset(new FBuildInstallerSharedContext(TEXT("CloudChunkSourceSpec")));
 		CloudSourceConfig.Reset(new FCloudSourceConfig({ "http://download.mydomain.com/clouddata" }));
+		CloudSourceConfig->SharedContext = InstallerSharedContext.Get();
 		FakeChunkStore.Reset(new FFakeChunkStore());
 		FakeDownloadService.Reset(new FFakeDownloadService());
 		MockChunkReferenceTracker.Reset(new FFakeChunkReferenceTracker());

@@ -173,7 +173,7 @@ void UMLAdapterSensor_AIPerception::SenseImpl(const float DeltaTime)
 		
 		if (TmpCachedTargets.Num() > 1)
 		{
-			TmpCachedTargets.SetNum(TargetsToSenseCount, /*bAllowShrinking=*/false);
+			TmpCachedTargets.SetNum(TargetsToSenseCount, EAllowShrinking::No);
 
 			switch (TargetsSortType)
 			{

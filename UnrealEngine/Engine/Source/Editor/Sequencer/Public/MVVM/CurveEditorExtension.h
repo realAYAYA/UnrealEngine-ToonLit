@@ -9,11 +9,13 @@
 #include "CurveDataAbstraction.h"
 #include "CurveEditorTypes.h"
 #include "Tree/ICurveEditorTreeItem.h"
+#include "STemporarilyFocusedSpinBox.h"
 
 class ISequencer;
 class IPropertyTypeCustomization;
 class SCurveEditorPanel;
 class SCurveEditorTree;
+class SCurveEditorTreeFilterStatusBar;
 struct FTimeSliderArgs;
 
 namespace UE
@@ -46,10 +48,14 @@ public:
 	/** Closes the curve editor */
 	void CloseCurveEditor();
 
+	/** Curve editor tree widget */
+	TSharedPtr<SCurveEditorTree> GetCurveEditorTreeView() const { return CurveEditorTreeView; }
+
 	/**
 	 * Synchronize curve editor selection with sequencer outliner selection on the next update.
 	 */
 	void RequestSyncSelection();
+
 
 public:
 
@@ -81,6 +87,10 @@ private:
 	TSharedPtr<SWidget> CurveEditorWidget;
 	/** The curve editor panel. This is created and updated even if it is not currently visible. */
 	TSharedPtr<SCurveEditorPanel> CurveEditorPanel;
+	/** Filter Status Bar */
+	TSharedPtr<SCurveEditorTreeFilterStatusBar> CurveEditorTreeFilterStatusBar;
+	/** The current playback time display. */
+	TSharedPtr<STemporarilyFocusedSpinBox<double>> PlayTimeDisplay;
 
 	friend class FCurveEditorIntegrationExtension;
 };

@@ -69,14 +69,20 @@ public:
 	/** Returns true if this is a runtime-only source */
 	virtual bool IsTransientSource() const;
 
+	/** Resets transient source so it can be correctly garbage collected */
+	virtual bool ResetTransientSource();
+
 	/** Returns the editor-defined source, which is either this or the parent source */
 	virtual UDataRegistrySource* GetOriginalSource();
 
 	/** Returns true if this asset is already registered with this source */
 	virtual bool IsSpecificAssetRegistered(const FSoftObjectPath& AssetPath) const;
 
-	/** Attempt to register a specified asset with a source, returns true if any changes were made. Can be used to update priority for existing asset as well */
-	virtual bool RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority = 0);
+	/**
+	 * Attempt to register a specified asset with a source, returns an EDataRegistryRegisterAssetResult, indicating whether the asset was registered or not. Can be used to update priority for existing asset as well
+	 * @return An EDataRegistryRegisterAssetResult that indicates if the asset Was Registered, whether it failed to register, or did not register because the asset was already registered.
+	 */
+	virtual EDataRegistryRegisterAssetResult RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority = 0);
 
 	/** Removes references to a specific asset, returns bool if it was removed */
 	virtual bool UnregisterSpecificAsset(const FSoftObjectPath& AssetPath);
@@ -145,7 +151,7 @@ public:
 	virtual void RefreshRuntimeSources() override;
 	virtual void AddRuntimeSources(TArray<UDataRegistrySource*>& OutRuntimeSources) override;
 	virtual bool IsSpecificAssetRegistered(const FSoftObjectPath& AssetPath) const override;
-	virtual bool RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority) override;
+	virtual EDataRegistryRegisterAssetResult RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority) override;
 	virtual bool UnregisterSpecificAsset(const FSoftObjectPath& AssetPath) override;
 	virtual int32 UnregisterAssetsWithPriority(int32 AssetPriority) override;
 

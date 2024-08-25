@@ -179,7 +179,7 @@ namespace UE::MultiUserServer
 
 		// Add items that are new in GetFilteredLogs()
 		bChanged |= PageView.Num() < ItemsOnPage; 
-		for (size_t i = PageView.Num(); i < ItemsOnPage && GetFilteredLogs().IsValidIndex(i); ++i)
+		for (size_t i = PageView.Num(); i < ItemsOnPage && GetFilteredLogs().IsValidIndex(i); ++i) //-V614
 		{
 			PageView.Emplace(GetFilteredLogs()[i]);
 		}
@@ -202,7 +202,7 @@ namespace UE::MultiUserServer
 	{
 		size_t StartIndex, NumItems;
 		Tie(StartIndex, NumItems) = GetLogIndicesForPage();
-		for (size_t i = 0; i < NumItems && i < MaxItems; ++i)
+		for (size_t i = 0; i < NumItems && i < MaxItems; ++i) //-V614
 		{
 			Callback(StartIndex + i);
 		}

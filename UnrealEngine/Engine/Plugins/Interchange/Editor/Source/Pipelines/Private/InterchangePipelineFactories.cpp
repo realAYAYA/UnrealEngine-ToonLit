@@ -36,7 +36,7 @@ UObject* UInterchangeBlueprintPipelineBaseFactory::FactoryCreateNew(UClass* Clas
 	{
 		FFormatNamedArguments Args;
 		Args.Add(TEXT("ClassName"), (ParentClass != nullptr) ? FText::FromString(ParentClass->GetName()) : NSLOCTEXT("UInterchangeBlueprintPipelineBaseFactory", "Null", "(null)"));
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(NSLOCTEXT("UInterchangeBlueprintPipelineBaseFactory", "CannotCreateInterchangeBlueprintPipelineBase", "Cannot create a Interchange Blueprint Pipeline based on the class '{ClassName}'."), Args));
+		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(NSLOCTEXT("UInterchangeBlueprintPipelineBaseFactory", "CannotCreateInterchangeBlueprintPipelineBase", "Cannot create an Interchange Blueprint Pipeline based on the class '{ClassName}'."), Args));
 		return nullptr;
 	}
 	else
@@ -155,6 +155,8 @@ UObject* UInterchangePythonPipelineAssetFactory::FactoryCreateNew(UClass* Class,
 	if (PythonClass && PythonClass->IsChildOf(UInterchangePipelineBase::StaticClass()))
 	{
 		Pipeline = NewObject<UInterchangePythonPipelineAsset>(InParent, SupportedClass, InName, InFlags | RF_Transactional);
+		//Python pipeline are editor only package
+		Pipeline->GetPackage()->SetPackageFlags(PKG_EditorOnly);
 		Pipeline->PythonClass = PythonClass;
 		Pipeline->GeneratePipeline();
 	}

@@ -6,10 +6,13 @@
 
 #include "UObject/UObjectArray.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/LowLevelMemStats.h"
 #include "Misc/ScopeLock.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
 #include "UObject/UObjectAllocator.h"
 #include "UObject/Class.h"
 #include "UObject/UObjectIterator.h"
+#include "UObject/ReachabilityAnalysisState.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUObjectArray, Log, All);
 
@@ -179,6 +182,17 @@ void FUObjectArray::CloseDisregardForGC()
 
 void FUObjectArray::DisableDisregardForGC()
 {
+	if (!GExitPurge && (ObjFirstGCIndex > 0 || DisregardForGCEnabled()))
+	{
+		void OnDisregardForGCSetDisabled(int32 NumObjects);
+		// If disregard for GC was already closed then ObjFirstGCIndex is the number of objects we need to scan, otherwise disregard for GC is still open and we need to scan all objects
+		int32 NumDisregardForGCObjects = ObjFirstGCIndex > 0 ? ObjFirstGCIndex : GetObjectArrayNum();
+		if (NumDisregardForGCObjects > 0)
+		{
+			OnDisregardForGCSetDisabled(NumDisregardForGCObjects);
+		}
+	}
+
 	MaxObjectsNotConsideredByGC = 0;
 	ObjFirstGCIndex = 0;
 	if (IsOpenForDisregardForGC())
@@ -189,6 +203,12 @@ void FUObjectArray::DisableDisregardForGC()
 
 void FUObjectArray::AllocateUObjectIndex(UObjectBase* Object, EInternalObjectFlags InitialFlags, int32 AlreadyAllocatedIndex, int32 SerialNumber)
 {
+	LLM_SCOPE(ELLMTag::UObject);
+	// Clear asset scopes
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(FName{NAME_Default}, ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(FName{NAME_Default}, ELLMTagSet::AssetClasses);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, NAME_None);
+
 	int32 Index = INDEX_NONE;
 	check(Object->InternalIndex == INDEX_NONE);
 
@@ -234,10 +254,20 @@ void FUObjectArray::AllocateUObjectIndex(UObjectBase* Object, EInternalObjectFla
 	UE_CLOG(ObjectItem->Object != nullptr, LogUObjectArray, Fatal, TEXT("Attempting to add %s at index %d but another object (0x%016llx) exists at that index!"), *Object->GetFName().ToString(), Index, (int64)(PTRINT)ObjectItem->Object);
 	ObjectItem->Object = Object;
 	// At this point all not-compiled-in objects are not fully constructed yet and this is the earliest we can mark them as such
-	ObjectItem->Flags = (int32)(EInternalObjectFlags::PendingConstruction | InitialFlags);
+	ObjectItem->Flags = (int32)EInternalObjectFlags::PendingConstruction;
+	if (!(IsOpenForDisregardForGC() & GUObjectArray.DisregardForGCEnabled())) //-V792
+	{
+		ObjectItem->Flags |= (int32)UE::GC::GReachableObjectFlag;
+	}
 	ObjectItem->ClusterRootIndex = 0;
 	ObjectItem->SerialNumber = SerialNumber;
 	Object->InternalIndex = Index;
+
+	// This needs to happen after the InternalIndex is set because setting root flags may result in the object being added to UE::GC::Priate::GRoots array 
+	if (InitialFlags != EInternalObjectFlags::None)
+	{
+		ObjectItem->ThisThreadAtomicallySetFlag(InitialFlags);
+	}
 
 	UnlockInternalArray();
 
@@ -287,6 +317,8 @@ void FUObjectArray::RemoveObjectFromDeleteListeners(UObjectBase* Object)
  */
 void FUObjectArray::FreeUObjectIndex(UObjectBase* Object)
 {
+	LLM_SCOPE(ELLMTag::UObject);
+
 	// This should only be happening on the game thread (GC runs only on game thread when it's freeing objects)
 	check(IsInGameThread() || IsInGarbageCollectorThread());
 
@@ -295,6 +327,13 @@ void FUObjectArray::FreeUObjectIndex(UObjectBase* Object)
 	int32 Index = Object->InternalIndex;
 	FUObjectItem* ObjectItem = IndexToObject(Index);
 	UE_CLOG(ObjectItem->Object != Object, LogUObjectArray, Fatal, TEXT("Removing object (0x%016llx) at index %d but the index points to a different object (0x%016llx)!"), (int64)(PTRINT)Object, Index, (int64)(PTRINT)ObjectItem->Object);
+
+	// Clear root flags to remove this object's index from UE::GC::Private::GRoots array 
+	if ((ObjectItem->Flags & (int32)EInternalObjectFlags_RootFlags) != 0)
+	{
+		ObjectItem->ThisThreadAtomicallyClearedFlag(EInternalObjectFlags_RootFlags);
+	}
+
 	ObjectItem->Object = nullptr;
 	ObjectItem->Flags = 0;
 	ObjectItem->ClusterRootIndex = 0;
@@ -401,14 +440,17 @@ int32 FUObjectArray::AllocateSerialNumber(int32 Index)
 	int32 SerialNumber = *SerialNumberPtr;
 	if (!SerialNumber)
 	{
-		SerialNumber = PrimarySerialNumber.Increment();
-		UE_CLOG(SerialNumber <= START_SERIAL_NUMBER, LogUObjectArray, Fatal, TEXT("UObject serial numbers overflowed (trying to allocate serial number %d)."), SerialNumber);
-		int32 ValueWas = FPlatformAtomics::InterlockedCompareExchange((int32*)SerialNumberPtr, SerialNumber, 0);
-		if (ValueWas != 0)
-		{
-			// someone else go it first, use their value
-			SerialNumber = ValueWas;
-		}
+		// Open around PrimarySerialNumber as if we fail/abort a transaction we dont need to undo this, simply allow it to grow for the next use
+		UE_AUTORTFM_OPEN({
+			SerialNumber = PrimarySerialNumber.Increment();
+			UE_CLOG(SerialNumber <= START_SERIAL_NUMBER, LogUObjectArray, Fatal, TEXT("UObject serial numbers overflowed (trying to allocate serial number %d)."), SerialNumber);
+			int32 ValueWas = FPlatformAtomics::InterlockedCompareExchange((int32*)SerialNumberPtr, SerialNumber, 0);
+			if (ValueWas != 0)
+			{
+				// someone else go it first, use their value
+				SerialNumber = ValueWas;
+			}
+		});
 	}
 	checkSlow(SerialNumber > START_SERIAL_NUMBER);
 	return SerialNumber;

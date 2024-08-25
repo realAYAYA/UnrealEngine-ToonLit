@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
+#include "Engine/OverlapResult.h"
 #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "EngineLogs.h"
 #include "Misc/PackageName.h"
@@ -1424,7 +1425,7 @@ FHitResult UGameplayStatics::MakeHitResult(bool bBlockingHit, bool bInitialOverl
 	Hit.Normal = Normal;
 	Hit.ImpactNormal = ImpactNormal;
 	Hit.PhysMaterial = PhysMat;
-	Hit.HitObjectHandle = FActorInstanceHandle(HitActor);
+	Hit.HitObjectHandle = FActorInstanceHandle(HitActor, HitComponent, HitItem);
 	Hit.Component = HitComponent;
 	Hit.BoneName = HitBoneName;
 	Hit.MyBoneName = BoneName;
@@ -2593,188 +2594,223 @@ FString UGameplayStatics::GetPlatformName()
 	return FPlatformProperties::IniPlatformName();
 }
 
-bool UGameplayStatics::BlueprintSuggestProjectileVelocity(const UObject* WorldContextObject, FVector& OutTossVelocity, FVector StartLocation, FVector EndLocation, float LaunchSpeed, float OverrideGravityZ, ESuggestProjVelocityTraceOption::Type TraceOption, float CollisionRadius, bool bFavorHighArc, bool bDrawDebug)
+bool UGameplayStatics::BlueprintSuggestProjectileVelocity(const UObject* WorldContextObject, FVector& OutTossVelocity, FVector StartLocation, FVector EndLocation, float LaunchSpeed, float OverrideGravityZ, ESuggestProjVelocityTraceOption::Type TraceOption, float CollisionRadius, bool bFavorHighArc, bool bDrawDebug, bool bAcceptClosestOnNoSolutions)
 {
 	// simple pass-through to the C++ interface
-	return UGameplayStatics::SuggestProjectileVelocity(WorldContextObject, OutTossVelocity, StartLocation, EndLocation, LaunchSpeed, bFavorHighArc, CollisionRadius, OverrideGravityZ, TraceOption, FCollisionResponseParams::DefaultResponseParam, TArray<AActor*>(), bDrawDebug);
+	FSuggestProjectileVelocityParameters ProjectileParams = FSuggestProjectileVelocityParameters(WorldContextObject, StartLocation, EndLocation, LaunchSpeed);
+	ProjectileParams.bFavorHighArc = bFavorHighArc;
+	ProjectileParams.CollisionRadius = CollisionRadius;
+	ProjectileParams.OverrideGravityZ = OverrideGravityZ;
+	ProjectileParams.TraceOption = TraceOption;
+	ProjectileParams.bDrawDebug = bDrawDebug;
+	ProjectileParams.bAcceptClosestOnNoSolutions = bAcceptClosestOnNoSolutions;
+
+	return SuggestProjectileVelocity(ProjectileParams, OutTossVelocity);
+}
+
+bool UGameplayStatics::SuggestProjectileVelocity(const UObject* WorldContextObject, FVector& TossVelocity, FVector StartLocation, FVector EndLocation, float TossSpeed, bool bHighArc , float CollisionRadius, float OverrideGravityZ, ESuggestProjVelocityTraceOption::Type TraceOption, FCollisionResponseParams& ResponseParam, TArray<AActor*> ActorsToIgnore, bool bDrawDebug, bool bAcceptClosestOnNoSolutions)
+{
+	FSuggestProjectileVelocityParameters ProjectileParams = FSuggestProjectileVelocityParameters(WorldContextObject,StartLocation, EndLocation, TossSpeed);
+	ProjectileParams.bFavorHighArc = bHighArc;
+	ProjectileParams.CollisionRadius = CollisionRadius;
+	ProjectileParams.OverrideGravityZ = OverrideGravityZ;
+	ProjectileParams.TraceOption = TraceOption;
+	ProjectileParams.ResponseParam = ResponseParam;
+	ProjectileParams.ActorsToIgnore = ActorsToIgnore;
+	ProjectileParams.bDrawDebug = bDrawDebug;
+	ProjectileParams.bAcceptClosestOnNoSolutions = bAcceptClosestOnNoSolutions;
+
+	return SuggestProjectileVelocity(ProjectileParams, TossVelocity);
 }
 
 // note: this will automatically fall back to line test if radius is small enough
 // Based on analytic solution to ballistic angle of launch http://en.wikipedia.org/wiki/Trajectory_of_a_projectile#Angle_required_to_hit_coordinate_.28x.2Cy.29
-bool UGameplayStatics::SuggestProjectileVelocity(const UObject* WorldContextObject, FVector& OutTossVelocity, FVector Start, FVector End, float TossSpeed, bool bFavorHighArc, float CollisionRadius, float OverrideGravityZ, ESuggestProjVelocityTraceOption::Type TraceOption, const FCollisionResponseParams& ResponseParam, const TArray<AActor*>& ActorsToIgnore, bool bDrawDebug)
+bool UGameplayStatics::SuggestProjectileVelocity(const FSuggestProjectileVelocityParameters& ProjectileParams, FVector& OutTossVelocity)
 {
-	const FVector FlightDelta = End - Start;
+	const FVector FlightDelta = ProjectileParams.End - ProjectileParams.Start;
 	const FVector DirXY = FlightDelta.GetSafeNormal2D();
 	const float DeltaXY = FlightDelta.Size2D();
 
 	const float DeltaZ = FlightDelta.Z;
 
-	const float TossSpeedSq = FMath::Square(TossSpeed);
+	const float TossSpeedSq = FMath::Square(ProjectileParams.TossSpeed);
 
-	const UWorld* const World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
+	const UWorld* const World = GEngine->GetWorldFromContextObject(ProjectileParams.WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
 	if (World == nullptr)
 	{
 		return false;
 	}
-	const float GravityZ = FMath::IsNearlyEqual(OverrideGravityZ, 0.0f) ? -World->GetGravityZ() : -OverrideGravityZ;
+	const float GravityZ = FMath::IsNearlyEqual(ProjectileParams.OverrideGravityZ, 0.0f) ? -World->GetGravityZ() : -ProjectileParams.OverrideGravityZ;
+
+	FVector PrioritizedProjVelocities[2];
+	int32 NumSolutions;
 
 	// v^4 - g*(g*x^2 + 2*y*v^2)
-	const float InsideTheSqrt = FMath::Square(TossSpeedSq) - GravityZ * ( (GravityZ * FMath::Square(DeltaXY)) + (2.f * DeltaZ * TossSpeedSq) );
+	const float InsideTheSqrt = FMath::Square(TossSpeedSq) - GravityZ * ((GravityZ * FMath::Square(DeltaXY)) + (2.f * DeltaZ * TossSpeedSq));
+
 	if (InsideTheSqrt < 0.f)
 	{
-		// sqrt will be imaginary, therefore no solutions
-		return false;
+		if (ProjectileParams.bAcceptClosestOnNoSolutions)
+		{
+			NumSolutions = 1;
+			// To get closest, we want to maximise the displacement in the direction of the target
+			// R = v^2/g * 1/cos^2(theta) * (sin(2phi + theta) - sin(theta))
+			// R = range, theta= angle to target (incline), phi = launch angle
+			// 2phi + theta maximises at PI/2 rads
+			// phi = PI/4 - theta/2    for max R
+			// alpha = phi + theta
+			// Create a vector at angle alpha up from DirXY and * by TossSpeed
+			const FVector DirFlightDelta = FlightDelta.GetSafeNormal();
+			const float AngleToTarget = FMath::Acos(FVector::DotProduct(DirFlightDelta, DirXY));
+			const float AngleAlpha = UE_PI / 4 - (AngleToTarget / 2) + AngleToTarget;
+			const FVector Cross = DirXY.Cross(FVector(0, 0, 1));
+			const FVector TrajectoryHeading = DirXY.RotateAngleAxisRad(AngleAlpha, Cross);
+			PrioritizedProjVelocities[0] = TrajectoryHeading * ProjectileParams.TossSpeed;
+		}
+		else
+		{
+			return false;
+		}
+	}
+	else
+	{
+		// if we got here, there are 2 solutions: one high-angle and one low-angle.
+		NumSolutions = 2;
+
+		const float SqrtPart = FMath::Sqrt(InsideTheSqrt);
+
+		// this is the tangent of the firing angle for the first (+) solution
+		const float TanSolutionAngleA = (TossSpeedSq + SqrtPart) / (GravityZ * DeltaXY);
+		// this is the tangent of the firing angle for the second (-) solution
+		const float TanSolutionAngleB = (TossSpeedSq - SqrtPart) / (GravityZ * DeltaXY);
+
+		// mag in the XY dir = sqrt( TossSpeedSq / (TanSolutionAngle^2 + 1) );
+		const float MagXYSq_A = TossSpeedSq / (FMath::Square(TanSolutionAngleA) + 1.f);
+		const float MagXYSq_B = TossSpeedSq / (FMath::Square(TanSolutionAngleB) + 1.f);
+
+		float PrioritizedSolutionsMagXYSq[2];
+		PrioritizedSolutionsMagXYSq[0] = ProjectileParams.bFavorHighArc ? FMath::Min(MagXYSq_A, MagXYSq_B) : FMath::Max(MagXYSq_A, MagXYSq_B);
+		PrioritizedSolutionsMagXYSq[1] = ProjectileParams.bFavorHighArc ? FMath::Max(MagXYSq_A, MagXYSq_B) : FMath::Min(MagXYSq_A, MagXYSq_B);
+
+		float PrioritizedSolutionZSign[2];
+		PrioritizedSolutionZSign[0] = ProjectileParams.bFavorHighArc ?
+			(MagXYSq_A < MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB) :
+			(MagXYSq_A > MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB);
+		PrioritizedSolutionZSign[1] = ProjectileParams.bFavorHighArc ?
+			(MagXYSq_A > MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB) :
+			(MagXYSq_A < MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB);
+
+		// solutions in priority order
+		for (int32 CurrentSolutionIdx = 0; (CurrentSolutionIdx < 2); ++CurrentSolutionIdx)
+		{
+			const float MagXY = FMath::Sqrt(PrioritizedSolutionsMagXYSq[CurrentSolutionIdx]);
+			const float MagZ = FMath::Sqrt(TossSpeedSq - PrioritizedSolutionsMagXYSq[CurrentSolutionIdx]);		// pythagorean
+			const float ZSign = PrioritizedSolutionZSign[CurrentSolutionIdx];
+
+			PrioritizedProjVelocities[CurrentSolutionIdx] = (DirXY * MagXY) + (FVector::UpVector * MagZ * ZSign);
+		}
 	}
 
-	// if we got here, there are 2 solutions: one high-angle and one low-angle.
-
-	const float SqrtPart = FMath::Sqrt(InsideTheSqrt);
-
-	// this is the tangent of the firing angle for the first (+) solution
-	const float TanSolutionAngleA = (TossSpeedSq + SqrtPart) / (GravityZ * DeltaXY);
-	// this is the tangent of the firing angle for the second (-) solution
-	const float TanSolutionAngleB = (TossSpeedSq - SqrtPart) / (GravityZ * DeltaXY);
-	
-	// mag in the XY dir = sqrt( TossSpeedSq / (TanSolutionAngle^2 + 1) );
-	const float MagXYSq_A = TossSpeedSq / (FMath::Square(TanSolutionAngleA) + 1.f);
-	const float MagXYSq_B = TossSpeedSq / (FMath::Square(TanSolutionAngleB) + 1.f);
-
-	bool bFoundAValidSolution = false;
-
 	// trace if desired
-	if (TraceOption == ESuggestProjVelocityTraceOption::DoNotTrace)
+	if (ProjectileParams.TraceOption == ESuggestProjVelocityTraceOption::DoNotTrace)
 	{
-		// choose which arc
-		const float FavoredMagXYSq = bFavorHighArc ? FMath::Min(MagXYSq_A, MagXYSq_B) : FMath::Max(MagXYSq_A, MagXYSq_B);
-		const float ZSign = bFavorHighArc ?
-							(MagXYSq_A < MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB) :
-							(MagXYSq_A > MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB);
-
-		// finish calculations
-		const float MagXY = FMath::Sqrt(FavoredMagXYSq);
-		const float MagZ = FMath::Sqrt(TossSpeedSq - FavoredMagXYSq);		// pythagorean
-
-		// final answer!
-		OutTossVelocity = (DirXY * MagXY) + (FVector::UpVector * MagZ * ZSign);
-		bFoundAValidSolution = true;
-
+		OutTossVelocity = PrioritizedProjVelocities[0];
+		const float MagXY = OutTossVelocity.Size2D();
 #if ENABLE_DRAW_DEBUG
-	 	if (bDrawDebug)
-	 	{
-	 		static const float StepSize = 0.125f;
-	 		FVector TraceStart = Start;
-	 		for ( float Step=0.f; Step<1.f; Step+=StepSize )
-	 		{
-	 			const float TimeInFlight = (Step+StepSize) * DeltaXY/MagXY;
-	 
-	 			// d = vt + .5 a t^2
-				const FVector TraceEnd = Start + OutTossVelocity*TimeInFlight + FVector(0.f, 0.f, 0.5f * -GravityZ * FMath::Square(TimeInFlight) - CollisionRadius);
-	 
-	 			DrawDebugLine( World, TraceStart, TraceEnd, (bFoundAValidSolution ? FColor::Yellow : FColor::Red), true );
-	 			TraceStart = TraceEnd;
-	 		}
-	 	}
+		if (ProjectileParams.bDrawDebug)
+		{
+			static const float StepSize = 0.125f;
+			FVector TraceStart = ProjectileParams.Start;
+			for (float Step = 0.f; Step < 1.f; Step += StepSize)
+			{
+				const float TimeInFlight = (Step + StepSize) * DeltaXY / MagXY;
+
+				// d = vt + .5 a t^2
+				const FVector TraceEnd = ProjectileParams.Start + OutTossVelocity * TimeInFlight + FVector(0.f, 0.f, 0.5f * -GravityZ * FMath::Square(TimeInFlight) - ProjectileParams.CollisionRadius);
+
+				DrawDebugLine(World, TraceStart, TraceEnd, FColor::Yellow, true);
+				TraceStart = TraceEnd;
+			}
+		}
 #endif // ENABLE_DRAW_DEBUG
+		return true;
 	}
 	else
 	{
 		// need to trace to validate
-
-		// sort potential solutions by priority
-		float PrioritizedSolutionsMagXYSq[2];
-		PrioritizedSolutionsMagXYSq[0] = bFavorHighArc ? FMath::Min(MagXYSq_A, MagXYSq_B) : FMath::Max(MagXYSq_A, MagXYSq_B);
-		PrioritizedSolutionsMagXYSq[1] = bFavorHighArc ? FMath::Max(MagXYSq_A, MagXYSq_B) : FMath::Min(MagXYSq_A, MagXYSq_B);
-
-		float PrioritizedSolutionZSign[2];
-		PrioritizedSolutionZSign[0] = bFavorHighArc ?
-										(MagXYSq_A < MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB) :
-										(MagXYSq_A > MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB);
-		PrioritizedSolutionZSign[1] = bFavorHighArc ?
-										(MagXYSq_A > MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB) :
-										(MagXYSq_A < MagXYSq_B) ? FMath::Sign(TanSolutionAngleA) : FMath::Sign(TanSolutionAngleB);
-
-		FVector PrioritizedProjVelocities[2];
-
-		// try solutions in priority order
 		int32 ValidSolutionIdx = INDEX_NONE;
-		for (int32 CurrentSolutionIdx=0; (CurrentSolutionIdx<2); ++CurrentSolutionIdx)
+
+		for (int32 SolutionIdx = 0; SolutionIdx < NumSolutions; ++SolutionIdx)
 		{
-			const float MagXY = FMath::Sqrt( PrioritizedSolutionsMagXYSq[CurrentSolutionIdx] );
-			const float MagZ = FMath::Sqrt( TossSpeedSq - PrioritizedSolutionsMagXYSq[CurrentSolutionIdx] );		// pythagorean
-			const float ZSign = PrioritizedSolutionZSign[CurrentSolutionIdx];
-
-			PrioritizedProjVelocities[CurrentSolutionIdx] = (DirXY * MagXY) + (FVector::UpVector * MagZ * ZSign);
-
-			// iterate along the arc, doing stepwise traces
-			bool bFailedTrace = false;
-			static const float StepSize = 0.125f;
-			FVector TraceStart = Start;
-			for ( float Step=0.f; Step<1.f; Step+=StepSize )
+			// trace each solution
+			if (!IsProjectileTrajectoryBlocked(World, ProjectileParams.Start, PrioritizedProjVelocities[SolutionIdx], DeltaXY, GravityZ, ProjectileParams.CollisionRadius, ProjectileParams.TraceOption, ProjectileParams.ResponseParam, ProjectileParams.ActorsToIgnore, ProjectileParams.bDrawDebug))
 			{
-				const float TimeInFlight = (Step+StepSize) * DeltaXY/MagXY;
+				OutTossVelocity = PrioritizedProjVelocities[SolutionIdx];
+				return true;
+			}
+		}
 
-				// d = vt + .5 a t^2
-				const FVector TraceEnd = Start + PrioritizedProjVelocities[CurrentSolutionIdx]*TimeInFlight + FVector(0.f, 0.f, 0.5f * -GravityZ * FMath::Square(TimeInFlight) - CollisionRadius);
+		return false;
+	}
+}
 
-				if ( (TraceOption == ESuggestProjVelocityTraceOption::OnlyTraceWhileAscending) && (TraceEnd.Z < TraceStart.Z) )
-				{
-					// falling, we are done tracing
-					if (!bDrawDebug)
-					{
-						// if we're drawing, we continue stepping without the traces
-						// else we can just trivially end the iteration loop
-						break;
-					}
-				}
-				else
-				{
-					FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(SuggestProjVelTrace), true);
-					QueryParams.AddIgnoredActors(ActorsToIgnore);
-					if (World->SweepTestByChannel(TraceStart, TraceEnd, FQuat::Identity, ECC_WorldDynamic, FCollisionShape::MakeSphere(CollisionRadius), QueryParams, ResponseParam))
-					{
-						// hit something, failed
-						bFailedTrace = true;
+bool UGameplayStatics::IsProjectileTrajectoryBlocked(const UWorld* World, FVector StartLocation, FVector& ProjectileVelocity, float TargetDeltaXY, float GravityZ, float CollisionRadius, ESuggestProjVelocityTraceOption::Type TraceOption, const FCollisionResponseParams& ResponseParam, const TArray<AActor*>& ActorsToIgnore, bool bDrawDebug)
+{
+	
+	// iterate along the arc, doing stepwise traces
+	static const float StepSize = 0.125f;
+	const float MagXY = ProjectileVelocity.Size2D();
+	FVector TraceStart = StartLocation;
 
-#if ENABLE_DRAW_DEBUG
-						if (bDrawDebug)
-						{
-							// draw failed segment in red
-							DrawDebugLine( World, TraceStart, TraceEnd, FColor::Red, true );
-						}
-#endif // ENABLE_DRAW_DEBUG
+	for (float Step = 0.f; Step < 1.f; Step += StepSize)
+	{
+		const float TimeInFlight = (Step + StepSize) * TargetDeltaXY / MagXY;
 
-						break;
-					}
+		// d = vt + .5 a t^2
+		const FVector TraceEnd = StartLocation + ProjectileVelocity * TimeInFlight + FVector(0.f, 0.f, 0.5f * -GravityZ * FMath::Square(TimeInFlight) - CollisionRadius);
 
-				}
+		if ((TraceOption == ESuggestProjVelocityTraceOption::OnlyTraceWhileAscending) && (TraceEnd.Z < TraceStart.Z))
+		{
+			// falling, we are done tracing
+			if (!bDrawDebug)
+			{
+				// if we're drawing, we continue stepping without the traces
+				// else we can just trivially end the iteration loop
+				break;
+			}
+		}
+		else
+		{
+			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(SuggestProjVelTrace), true);
+			QueryParams.AddIgnoredActors(ActorsToIgnore);
+			if (World->SweepTestByChannel(TraceStart, TraceEnd, FQuat::Identity, ECC_WorldDynamic, FCollisionShape::MakeSphere(CollisionRadius), QueryParams, ResponseParam))
+			{
+
 
 #if ENABLE_DRAW_DEBUG
 				if (bDrawDebug)
 				{
-					DrawDebugLine( World, TraceStart, TraceEnd, FColor::Yellow, true );
+					// draw failed segment in red
+					DrawDebugLine(World, TraceStart, TraceEnd, FColor::Red, true);
 				}
 #endif // ENABLE_DRAW_DEBUG
-
-				// advance
-				TraceStart = TraceEnd;
-			}
-
-			if (bFailedTrace == false)
-			{
-				// passes all traces along the arc, we have a valid solution and can be done
-				ValidSolutionIdx = CurrentSolutionIdx;
-				break;
+				// hit something, failed
+				return true;
 			}
 		}
 
-		if (ValidSolutionIdx != INDEX_NONE)
+#if ENABLE_DRAW_DEBUG
+		if (bDrawDebug)
 		{
-			OutTossVelocity = PrioritizedProjVelocities[ValidSolutionIdx];
-			bFoundAValidSolution = true;
+			DrawDebugLine(World, TraceStart, TraceEnd, FColor::Yellow, true);
 		}
+#endif // ENABLE_DRAW_DEBUG
+
+		// advance
+		TraceStart = TraceEnd;
 	}
 
-	return bFoundAValidSolution;
+	return false;
 }
 
 // note: this will automatically fall back to line test if radius is small enough
@@ -3347,14 +3383,14 @@ bool UGameplayStatics::GrabOption( FString& Options, FString& Result )
 		const int32 QMIdx = Result.Find(QuestionMark, ESearchCase::CaseSensitive);
 		if (QMIdx != INDEX_NONE)
 		{
-			Result.LeftInline(QMIdx, false);
+			Result.LeftInline(QMIdx, EAllowShrinking::No);
 		}
 
 		// Update options.
-		Options.MidInline(1, MAX_int32, false);
+		Options.MidInline(1, MAX_int32, EAllowShrinking::No);
 		if (Options.Contains(QuestionMark, ESearchCase::CaseSensitive))
 		{
-			Options.MidInline(Options.Find(QuestionMark, ESearchCase::CaseSensitive), MAX_int32, false);
+			Options.MidInline(Options.Find(QuestionMark, ESearchCase::CaseSensitive), MAX_int32, EAllowShrinking::No);
 		}
 		else
 		{

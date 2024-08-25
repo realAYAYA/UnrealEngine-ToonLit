@@ -46,13 +46,30 @@ private:
 };
 
 
-UCLASS()
-class UFractureToolResetAsset : public UFractureToolGenerateAsset
+
+UCLASS(config = EditorPerProjectUserSettings)
+class UGeometryCollectionResetSettings : public UFractureToolSettings
 {
 public:
 	GENERATED_BODY()
 
-	UFractureToolResetAsset(const FObjectInitializer& ObjInit) : Super(ObjInit) {}
+	UGeometryCollectionResetSettings(const FObjectInitializer& ObjInit)
+		: Super(ObjInit)
+	{}
+
+	/** Whether to reset the materials along with the rest of the collection, or attempt to keep the current materials across the reset. */
+	UPROPERTY(EditAnywhere, Category = Settings)
+	bool bResetMaterials = true;
+};
+
+
+UCLASS()
+class UFractureToolResetAsset : public UFractureModalTool
+{
+public:
+	GENERATED_BODY()
+
+	UFractureToolResetAsset(const FObjectInitializer& ObjInit);
 
 	// UFractureActionTool Interface
 	virtual FText GetDisplayText() const override;
@@ -61,6 +78,14 @@ public:
 	virtual void RegisterUICommand(FFractureEditorCommands* BindingContext) override;
 	virtual void Execute(TWeakPtr<FFractureEditorModeToolkit> InToolkit) override;
 	virtual bool CanExecute() const override;
+
+	// UFractureModalTool Interface
+	virtual FText GetApplyText() const override;
+	virtual TArray<UObject*> GetSettingsObjects() const override;
+
+private:
+	UPROPERTY()
+	TObjectPtr<UGeometryCollectionResetSettings> ResetSettings;
 };
 
 

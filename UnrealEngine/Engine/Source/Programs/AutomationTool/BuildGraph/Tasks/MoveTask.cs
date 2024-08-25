@@ -102,33 +102,49 @@ namespace AutomationTool.Tasks
 			}
 
 			// Build the file mapping
-			Dictionary<FileReference, FileReference> TargetFileToSourceFile = FilePattern.CreateMapping(Files, ref SourcePattern, ref TargetPattern);
+			Dictionary<FileReference, FileReference> TargetFileToSourceFile;
 
-			// Check we got some files
-			if(TargetFileToSourceFile.Count == 0)
+			try
+			{
+				TargetFileToSourceFile = FilePattern.CreateMapping(Files, ref SourcePattern, ref TargetPattern);
+
+				// Check we got some files
+				if (TargetFileToSourceFile.Count == 0)
+				{
+					if (Parameters.ErrorIfNotFound)
+					{
+						Logger.LogError("No files found matching '{SourcePattern}'", SourcePattern);
+					}
+					else
+					{
+						Logger.LogInformation("No files found matching '{SourcePattern}'", SourcePattern);
+					}
+					return Task.CompletedTask;
+				}
+				// Copy them all
+				Logger.LogInformation("Moving {Arg0} file{Arg1} from {Arg2} to {Arg3}...", TargetFileToSourceFile.Count, (TargetFileToSourceFile.Count == 1) ? "" : "s", SourcePattern.BaseDirectory, TargetPattern.BaseDirectory);
+				CommandUtils.ParallelMoveFiles(TargetFileToSourceFile.Select(x => new KeyValuePair<FileReference, FileReference>(x.Value, x.Key)), Parameters.Overwrite);
+
+				// Update the list of build products
+				BuildProducts.UnionWith(TargetFileToSourceFile.Keys);
+
+				// Apply the optional output tag to them
+				foreach (string TagName in FindTagNamesFromList(Parameters.Tag))
+				{
+					FindOrAddTagSet(TagNameToFileSet, TagName).UnionWith(TargetFileToSourceFile.Keys);
+				}
+
+			}
+			catch (FilePatternSourceFileMissingException Ex)
 			{
 				if (Parameters.ErrorIfNotFound)
 				{
-					Logger.LogError("No files found matching '{SourcePattern}'", SourcePattern);
+					Logger.LogError("Error while trying to create file pattern match for '{SourcePattern}', error {ExceptionString}", SourcePattern, Ex.ToString());
 				}
 				else
 				{
-					Logger.LogInformation("No files found matching '{SourcePattern}'", SourcePattern);
+					Logger.LogInformation("Error while trying to create file pattern match for '{SourcePattern}', error {ExceptionString}", SourcePattern, Ex.ToString());
 				}
-				return Task.CompletedTask;
-			}
-
-			// Copy them all
-			Logger.LogInformation("Moving {Arg0} file{Arg1} from {Arg2} to {Arg3}...", TargetFileToSourceFile.Count, (TargetFileToSourceFile.Count == 1)? "" : "s", SourcePattern.BaseDirectory, TargetPattern.BaseDirectory);
-			CommandUtils.ParallelMoveFiles(TargetFileToSourceFile.Select(x => new KeyValuePair<FileReference, FileReference>(x.Value, x.Key)), Parameters.Overwrite);
-
-			// Update the list of build products
-			BuildProducts.UnionWith(TargetFileToSourceFile.Keys);
-
-			// Apply the optional output tag to them
-			foreach(string TagName in FindTagNamesFromList(Parameters.Tag))
-			{
-				FindOrAddTagSet(TagNameToFileSet, TagName).UnionWith(TargetFileToSourceFile.Keys);
 			}
 
 			return Task.CompletedTask;

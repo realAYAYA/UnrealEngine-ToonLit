@@ -1,15 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodePatchImage.h"
 
 #include "Misc/AssertionMacros.h"
 #include "MuT/NodeImage.h"
 #include "MuT/NodePatchImagePrivate.h"
 #include "MuT/NodePrivate.h"
-
-#include <memory>
-#include <utility>
 
 
 namespace mu
@@ -19,60 +15,14 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     // Static initialisation
     //---------------------------------------------------------------------------------------------
-    NODE_TYPE NodePatchImage::Private::s_type =
-            NODE_TYPE( "PatchTexture", NodePatchImage::GetStaticType() );
+    FNodeType NodePatchImage::Private::s_type = FNodeType( "PatchTexture", Node::GetStaticType() );
 
 
     //---------------------------------------------------------------------------------------------
     //!
     //---------------------------------------------------------------------------------------------
 
-    MUTABLE_IMPLEMENT_NODE( NodePatchImage, EType::PatchImage, Node, Node::EType::PatchImage);
-
-
-    //---------------------------------------------------------------------------------------------
-    // Node Interface
-    //---------------------------------------------------------------------------------------------
-    int NodePatchImage::GetInputCount() const
-    {
-        return 2;
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    Node* NodePatchImage::GetInputNode( int i ) const
-    {
-        check( i >=0 && i < GetInputCount());
-
-        Node* pResult = 0;
-
-        if ( i==0 )
-        {
-            pResult = m_pD->m_pImage.get();
-        }
-        else
-        {
-            pResult = m_pD->m_pMask.get();
-        }
-
-        return pResult;
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    void NodePatchImage::SetInputNode( int i, NodePtr pNode )
-    {
-        check( i >=0 && i < GetInputCount());
-
-        if ( i==0 )
-        {
-            m_pD->m_pImage = dynamic_cast<NodeImage*>( pNode.get() );
-        }
-        else
-        {
-            m_pD->m_pMask = dynamic_cast<NodeImage*>( pNode.get() );
-        }
-    }
+    MUTABLE_IMPLEMENT_NODE( NodePatchImage, EType::PatchImage, Node, Node::EType::None)
 
 
     //---------------------------------------------------------------------------------------------

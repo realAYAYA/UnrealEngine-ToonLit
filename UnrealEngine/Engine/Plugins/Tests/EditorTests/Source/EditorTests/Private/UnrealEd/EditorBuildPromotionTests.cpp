@@ -2392,7 +2392,7 @@ bool FBuildPromotionPIETest::RunTest(const FString& Parameters)
 	}
 
 	WindowScreenshotParameters ScreenshotParams;
-	ScreenshotParams.ScreenshotName = AutomationCommon::GetScreenshotName(TEXT("EditorBuildPromotion/RunMap"));
+	ScreenshotParams.ScreenshotName = AutomationCommon::GetScreenshotPath(TEXT("EditorBuildPromotion/RunMap"));
 	ScreenshotParams.CurrentWindow = AllWindows[0];
 	//Wait for the play world to come up
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.f));

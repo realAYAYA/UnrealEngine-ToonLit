@@ -63,13 +63,13 @@ namespace Metasound
 				return DefaultInterface;
 			}
 
-			FIntRange(const FOperatorSettings& OperatorSettings, const FInputVertexInterface& InputInterface, const FDataReferenceCollection& InputCollection)
-				: Value(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputValueName), OperatorSettings))
-				, InRangeA(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputInRangeAName), OperatorSettings))
-				, InRangeB(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputInRangeBName), OperatorSettings))
-				, OutRangeA(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputOutRangeAName), OperatorSettings))
-				, OutRangeB(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputOutRangeBName), OperatorSettings))
-				, bClamped(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(InputClampedName), OperatorSettings))
+			FIntRange(const FOperatorSettings& OperatorSettings, const FInputVertexInterfaceData& InInputData)
+				: Value(InInputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputValueName), OperatorSettings))
+				, InRangeA(InInputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputInRangeAName), OperatorSettings))
+				, InRangeB(InInputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputInRangeBName), OperatorSettings))
+				, OutRangeA(InInputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputOutRangeAName), OperatorSettings))
+				, OutRangeB(InInputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputOutRangeBName), OperatorSettings))
+				, bClamped(InInputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputClampedName), OperatorSettings))
 				, OutputValue(TDataWriteReferenceFactory<int32>::CreateAny(OperatorSettings))
 			{
 			}
@@ -142,13 +142,13 @@ namespace Metasound
 				return DefaultInterface;
 			}
 
-			FFloatRange(const FOperatorSettings& OperatorSettings, const FInputVertexInterface& InputInterface, const FDataReferenceCollection& InputCollection)
-				: Value(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface,		METASOUND_GET_PARAM_NAME(InputValueName),		OperatorSettings))
-				, InRangeA(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface,	METASOUND_GET_PARAM_NAME(InputInRangeAName),	OperatorSettings))
-				, InRangeB(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface,	METASOUND_GET_PARAM_NAME(InputInRangeBName),	OperatorSettings))
-				, OutRangeA(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputOutRangeAName),	OperatorSettings))
-				, OutRangeB(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputOutRangeBName),	OperatorSettings))
-				, bClamped(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface,	METASOUND_GET_PARAM_NAME(InputClampedName),		OperatorSettings))
+			FFloatRange(const FOperatorSettings& OperatorSettings, const FInputVertexInterfaceData& InInputData)
+				: Value(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputValueName),		OperatorSettings))
+				, InRangeA(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputInRangeAName),	OperatorSettings))
+				, InRangeB(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputInRangeBName),	OperatorSettings))
+				, OutRangeA(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputOutRangeAName),	OperatorSettings))
+				, OutRangeB(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputOutRangeBName),	OperatorSettings))
+				, bClamped(InInputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputClampedName),		OperatorSettings))
 				, OutputValue(TDataWriteReferenceFactory<float>::CreateAny(OperatorSettings))
 			{
 			}
@@ -223,13 +223,13 @@ namespace Metasound
 				return DefaultInterface;
 			}
 
-			FAudioRange(const FOperatorSettings& OperatorSettings, const FInputVertexInterface& InputInterface, const FDataReferenceCollection& InputCollection)
-				: Value(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FAudioBuffer>(InputInterface, METASOUND_GET_PARAM_NAME(InputValueName), OperatorSettings))
-				, InRangeA(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputInRangeAName), OperatorSettings))
-				, InRangeB(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputInRangeBName), OperatorSettings))
-				, OutRangeA(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputOutRangeAName), OperatorSettings))
-				, OutRangeB(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputOutRangeBName), OperatorSettings))
-				, bClamped(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(InputClampedName), OperatorSettings))
+			FAudioRange(const FOperatorSettings& OperatorSettings, const FInputVertexInterfaceData& InInputData)
+				: Value(InInputData.GetOrCreateDefaultDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputValueName), OperatorSettings))
+				, InRangeA(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputInRangeAName), OperatorSettings))
+				, InRangeB(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputInRangeBName), OperatorSettings))
+				, OutRangeA(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputOutRangeAName), OperatorSettings))
+				, OutRangeB(InInputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputOutRangeBName), OperatorSettings))
+				, bClamped(InInputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputClampedName), OperatorSettings))
 				, OutputValue(TDataWriteReferenceFactory<FAudioBuffer>::CreateAny(OperatorSettings))
 			{
 			}
@@ -313,12 +313,9 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-
-			FMappingClass MappingObject(InParams.OperatorSettings, InputInterface, InputCollection);
+			FMappingClass MappingObject(InParams.OperatorSettings, InParams.InputData);
 
 			return MakeUnique<TMapRangeOperator<FMappingClass>>(MappingObject);
 		}

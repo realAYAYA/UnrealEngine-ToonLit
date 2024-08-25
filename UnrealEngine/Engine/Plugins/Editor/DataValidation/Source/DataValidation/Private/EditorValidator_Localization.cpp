@@ -23,12 +23,12 @@ UEditorValidator_Localization::UEditorValidator_Localization()
 	bIsEnabled = true;
 }
 
-bool UEditorValidator_Localization::CanValidateAsset_Implementation(UObject* InAsset) const
+bool UEditorValidator_Localization::CanValidateAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
 	return true;
 }
 
-EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors)
+EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext)
 {
 	static const FName NAME_AssetToools = "AssetTools";
 	IAssetTools& AssetTools = FModuleManager::Get().LoadModuleChecked<FAssetToolsModule>(NAME_AssetToools).Get();
@@ -53,7 +53,8 @@ EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Impleme
 				// Can this type of asset be localized?
 				if (!AssetTools.CanLocalize(InAsset->GetClass()))
 				{
-					AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_LocalizedAssetTypeCannotBeLocalized", "Localized asset is of type '{0}', which is not a type that can be localized!"), FText::FromString(InAsset->GetClass()->GetName())), ValidationErrors);
+					AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_LocalizedAssetTypeCannotBeLocalized", "Localized asset is of type '{0}', which is not a type that can be localized!"),
+						FText::FromString(InAsset->GetClass()->GetName())));
 					return EDataValidationResult::Invalid;
 				}
 
@@ -82,7 +83,8 @@ EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Impleme
 
 					if (!bIsRedirectorReferringToRedirectedLocation)
 					{
-						AssetFails(InAsset, LOCTEXT("LocalizationError_LocalizedAssetHasSourceRedirector", "Localized asset has a source asset that is a redirector. Did you forget to rename the localized assets too?"), ValidationErrors);
+						AssetFails(InAsset, 
+							LOCTEXT("LocalizationError_LocalizedAssetHasSourceRedirector", "Localized asset has a source asset that is a redirector. Did you forget to rename the localized assets too?"));
 						return EDataValidationResult::Invalid;
 					}
 				}
@@ -90,7 +92,9 @@ EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Impleme
 				// Is the source asset the expected type?
 				if (SourceAssetData.AssetClassPath != InAsset->GetClass()->GetClassPathName())
 				{
-					AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_LocalizedTypeMismatchWithSourceAsset", "Localized asset is of type '{0}', but its source asset is of type '{1}'. A localized asset must have the same type as its source asset!"), FText::FromString(InAsset->GetClass()->GetPathName()), FText::FromString(SourceAssetData.AssetClassPath.ToString())), ValidationErrors);
+					AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_LocalizedTypeMismatchWithSourceAsset", 
+							"Localized asset is of type '{0}', but its source asset is of type '{1}'. A localized asset must have the same type as its source asset!"),
+							FText::FromString(InAsset->GetClass()->GetPathName()), FText::FromString(SourceAssetData.AssetClassPath.ToString())));
 					return EDataValidationResult::Invalid;
 				}
 			}
@@ -119,7 +123,9 @@ EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Impleme
 							// Can this type of asset be localized?
 							if (!AssetTools.CanLocalize(InAsset->GetClass()))
 							{
-								AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_SourceAssetTypeCannotBeLocalized", "Source asset has a localized asset for '{0}', but is of type '{1}' which is not a type that can be localized!"), FText::FromString(CultureName), FText::FromString(InAsset->GetClass()->GetName())), ValidationErrors);
+								AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_SourceAssetTypeCannotBeLocalized", 
+									"Source asset has a localized asset for '{0}', but is of type '{1}' which is not a type that can be localized!"),
+									FText::FromString(CultureName), FText::FromString(InAsset->GetClass()->GetName())));
 								return EDataValidationResult::Invalid;
 							}
 
@@ -148,7 +154,9 @@ EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Impleme
 
 								if (!bIsRedirectorReferringToRedirectedLocation)
 								{
-									AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_SourceIsRedirector", "Source asset is a redirector but has a localized asset for '{0}'. Did you forget to rename the localized assets too?"), FText::FromString(CultureName)), ValidationErrors);
+									AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_SourceIsRedirector", 
+										"Source asset is a redirector but has a localized asset for '{0}'. Did you forget to rename the localized assets too?"), 
+										FText::FromString(CultureName)));
 									return EDataValidationResult::Invalid;
 								}
 							}
@@ -156,7 +164,9 @@ EDataValidationResult UEditorValidator_Localization::ValidateLoadedAsset_Impleme
 							// Is the localized asset the expected type?
 							if (LocalizedAssetData.AssetClassPath != InAsset->GetClass()->GetClassPathName())
 							{
-								AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_SourceTypeMismatchWithLocalizedAsset", "Source asset is of type '{0}', but its localized asset for '{1}' is of type '{2}'. A localized asset must have the same type as its source asset!"), FText::FromString(InAsset->GetClass()->GetPathName()), FText::FromString(CultureName), FText::FromString(LocalizedAssetData.AssetClassPath.ToString())), ValidationErrors);
+								AssetFails(InAsset, FText::Format(LOCTEXT("LocalizationError_SourceTypeMismatchWithLocalizedAsset", 
+									"Source asset is of type '{0}', but its localized asset for '{1}' is of type '{2}'. A localized asset must have the same type as its source asset!"), 
+									FText::FromString(InAsset->GetClass()->GetPathName()), FText::FromString(CultureName), FText::FromString(LocalizedAssetData.AssetClassPath.ToString())));
 								return EDataValidationResult::Invalid;
 							}
 						}

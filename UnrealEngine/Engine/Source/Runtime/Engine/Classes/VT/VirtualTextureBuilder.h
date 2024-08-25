@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/Texture.h"
+#include "PerPlatformProperties.h"
 #include "VirtualTextureBuilder.generated.h"
 
 enum class EShadingPath;
@@ -67,6 +68,10 @@ public:
 	/** Whether to use a separate texture for Mobile rendering. A separate texure will be built using mobile preview editor mode */
 	UPROPERTY(EditAnywhere, Category = Texture)
 	bool bSeparateTextureForMobile = false;
+
+	/** Per platform overrides for cooking the virtual texture. */
+	UPROPERTY(EditAnywhere, Category = Texture)
+	FPerPlatformBool EnableCookPerPlatform;
 
 #if WITH_EDITOR
 	/** Creates a new UVirtualTexture2D and stores it in the contained Texture. */

@@ -4,6 +4,7 @@
 #include "DataDrivenShaderPlatformInfo.h"
 #include "Misc/CommandLine.h"
 #include "RHICommandList.h"
+#include "DumpGPU.h"
 
 #if RDG_ENABLE_DEBUG
 
@@ -638,7 +639,7 @@ bool IsParallelExecuteEnabled()
 		&& !IsVulkanMobileSM5Platform(GMaxRHIShaderPlatform)
 		&& GRHISupportsMultithreadedShaderCreation
 #if WITH_DUMPGPU
-		&& !IsDumpingRDGResources()
+		&& !UE::RenderCore::DumpGPU::IsDumpingFrame()
 #endif
 		// Only run parallel RDG if we have a rendering thread.
 		&& IsInActualRenderingThread()
@@ -657,7 +658,7 @@ bool IsParallelSetupEnabled()
 		&& !IsVulkanMobileSM5Platform(GMaxRHIShaderPlatform)
 		&& GRHISupportsMultithreadedShaderCreation
 #if WITH_DUMPGPU
-		&& !IsDumpingRDGResources()
+		&& !UE::RenderCore::DumpGPU::IsDumpingFrame()
 #endif
 		// Only run parallel RDG if we have a rendering thread.
 		&& IsInActualRenderingThread()

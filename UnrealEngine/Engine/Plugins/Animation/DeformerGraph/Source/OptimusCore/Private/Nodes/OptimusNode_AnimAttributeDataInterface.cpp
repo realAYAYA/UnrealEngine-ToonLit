@@ -41,7 +41,7 @@ void UOptimusNode_AnimAttributeDataInterface::PostEditChangeChainProperty(FPrope
 {
 	Super::PostEditChangeChainProperty(PropertyChangedEvent);
 
-	if (PropertyChangedEvent.ChangeType == EPropertyChangeType::ValueSet)
+	if (PropertyChangedEvent.ChangeType == EPropertyChangeType::Unspecified)
 	{
 		static FProperty* NameProperty =
 			FOptimusAnimAttributeDescription::StaticStruct()->FindPropertyByName(
@@ -70,20 +70,9 @@ void UOptimusNode_AnimAttributeDataInterface::PostEditChangeChainProperty(FPrope
 			UpdatePinTypes();
 		}
 
-	}
-	else if (PropertyChangedEvent.ChangeType & (EPropertyChangeType::ArrayAdd | EPropertyChangeType::Duplicate |
-												EPropertyChangeType::ArrayRemove | EPropertyChangeType::ArrayMove))
-	{
 		if (PropertyChangedEvent.PropertyChain.GetTail()->GetValue()->GetFName() == GET_MEMBER_NAME_STRING_CHECKED(FOptimusAnimAttributeArray, InnerArray))
 		{
 			RefreshOutputPins();
-		}
-	}
-	else if(PropertyChangedEvent.ChangeType == EPropertyChangeType::ArrayClear)
-	{
-		if (PropertyChangedEvent.PropertyChain.GetTail()->GetValue()->GetFName() == GET_MEMBER_NAME_STRING_CHECKED(FOptimusAnimAttributeArray, InnerArray))
-		{
-			ClearOutputPins();
 		}
 	}
 }

@@ -35,6 +35,10 @@ public:
 
 	/** Resolution of the output texture maps (tangent, coverage, ...) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ShowOnlyInnerProperties), Category = Options)
+	EHairTextureLayout Layout = EHairTextureLayout::Layout1;
+
+	/** Resolution of the output texture maps (tangent, coverage, ...) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ShowOnlyInnerProperties), Category = Options)
 	int32 Resolution = 2048;
 
 	/** Direction in which the tracing will be done: either from the mesh's surface to the outside, or from the mesh's surface to the inside. */

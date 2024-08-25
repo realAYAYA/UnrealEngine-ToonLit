@@ -15,20 +15,13 @@
 
 class FRegisteredFileHandle : public IFileHandle
 {
-public:
-	FRegisteredFileHandle()
-		: NextLink(nullptr)
-		, PreviousLink(nullptr)
-		, bIsOpenAndAvailableForClosing(false)
-	{
-	}
-
 private:
 	friend class FFileHandleRegistry;
 
-	FRegisteredFileHandle* NextLink;
-	FRegisteredFileHandle* PreviousLink;
-	bool bIsOpenAndAvailableForClosing;
+	FRegisteredFileHandle* NextLink = nullptr;
+	FRegisteredFileHandle* PreviousLink = nullptr;
+	uint32 ReadRequestCount = 0;
+	bool bIsOpenAndAvailableForClosing = false;
 };
 
 
@@ -37,14 +30,11 @@ class FFileHandleRegistry
 public:
 	FFileHandleRegistry(int32 InMaxOpenHandles)
 		: MaxOpenHandles(InMaxOpenHandles)
-		, OpenAndAvailableForClosingHead(nullptr)
-		, OpenAndAvailableForClosingTail(nullptr)
-	{
-	}
+	{}
 
 	virtual ~FFileHandleRegistry() = default;
 
-	FRegisteredFileHandle* InitialOpenFile(const TCHAR* Filename)
+	[[nodiscard]] FRegisteredFileHandle* InitialOpenFile(const TCHAR* Filename)
 	{
 		if (HandlesCurrentlyInUse.Increment() > MaxOpenHandles)
 		{
@@ -70,6 +60,7 @@ public:
 		bool bWasOpen = false;
 		{
 			FScopeLock Lock(&LockSection);
+			check(Handle->ReadRequestCount == 0);
 			if (Handle->bIsOpenAndAvailableForClosing)
 			{
 				UnLink(Handle);
@@ -83,15 +74,22 @@ public:
 		}
 	}
 
-	void TrackStartRead(FRegisteredFileHandle* Handle)
+	// Only returns false if the platform handle cannot be reopened.
+	// TrackEndRead should only be called if TrackStartRead succeeded
+	[[nodiscard]] bool TrackStartRead(FRegisteredFileHandle* Handle)
 	{
 		{
 			FScopeLock Lock(&LockSection);
+			
+			if (Handle->ReadRequestCount++ != 0)
+			{
+				return true;
+			}
 
 			if (Handle->bIsOpenAndAvailableForClosing)
 			{
 				UnLink(Handle);
-				return;
+				return true;
 			}
 		}
 
@@ -99,14 +97,26 @@ public:
 		{
 			FreeHandles();
 		}
-		// can do this out of the lock, in case it's slow
-		PlatformReopenFile(Handle);
-	}
 
-	void TrackEndRead(FRegisteredFileHandle* Handle)
-	{
+		// can do this out of the lock, in case it's slow
+		bool bSuccess = PlatformReopenFile(Handle);
+
+		if (!bSuccess)
 		{
 			FScopeLock Lock(&LockSection);
+			--Handle->ReadRequestCount;
+		}
+
+		return bSuccess;
+	}
+
+	// TrackEndRead should only be called if TrackStartRead succeeded
+	void TrackEndRead(FRegisteredFileHandle* Handle)
+	{
+		FScopeLock Lock(&LockSection);
+
+		if (--Handle->ReadRequestCount == 0)
+		{
 			LinkToTail(Handle);
 		}
 	}
@@ -120,7 +130,7 @@ private:
 
 	void FreeHandles()
 	{
-		// do we need to make room for a file handle? this assumes that the critical section is already locked
+		// do we need to make room for a file handle?
 		while (HandlesCurrentlyInUse.GetValue() > MaxOpenHandles)
 		{
 			FRegisteredFileHandle* ToBeClosed = nullptr;
@@ -136,12 +146,11 @@ private:
 			}
 			else
 			{
-				FPlatformMisc::LowLevelOutputDebugString(TEXT("Spinning because we are actively reading from more file handles than we have possible handles.\r\n"));
+				FPlatformMisc::LowLevelOutputDebugString(TEXT("FFileHandleRegistry: Spinning because we are actively reading from more file handles than we have possible handles.\r\n"));
 				FPlatformProcess::SleepNoStats(.1f);
 			}
 		}
 	}
-
 
 	void LinkToTail(FRegisteredFileHandle* Handle)
 	{
@@ -215,10 +224,10 @@ private:
 	// critical section to protect the below arrays
 	FCriticalSection LockSection;
 
-	int32 MaxOpenHandles;
+	int32 MaxOpenHandles = 0;
 
-	FRegisteredFileHandle* OpenAndAvailableForClosingHead;
-	FRegisteredFileHandle* OpenAndAvailableForClosingTail;
+	FRegisteredFileHandle* OpenAndAvailableForClosingHead = nullptr;
+	FRegisteredFileHandle* OpenAndAvailableForClosingTail = nullptr;
 
 	FThreadSafeCounter HandlesCurrentlyInUse;
 };

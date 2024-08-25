@@ -372,7 +372,7 @@ namespace AutomationTool
 			this.Manifests = InParams.Manifests;
             this.CreateChunkInstall = InParams.CreateChunkInstall;
 			this.SkipEncryption = InParams.SkipEncryption;
-			this.UnrealExe = InParams.UnrealExe;
+			this.SpecifiedUnrealExe = InParams.SpecifiedUnrealExe;
 			this.NoDebugInfo = InParams.NoDebugInfo;
 			this.SeparateDebugInfo = InParams.SeparateDebugInfo;
 			this.MapFile = InParams.MapFile;
@@ -395,13 +395,13 @@ namespace AutomationTool
 			this.GetFile = InParams.GetFile;
 			this.IterativeDeploy = InParams.IterativeDeploy;
 			this.IgnoreCookErrors = InParams.IgnoreCookErrors;
+			this.KeepFileOpenLog = InParams.KeepFileOpenLog;
 			this.FastCook = InParams.FastCook;
 			this.Devices = InParams.Devices;
 			this.DeviceNames = InParams.DeviceNames;
 			this.ServerDevice = InParams.ServerDevice;
             this.NullRHI = InParams.NullRHI;
 			this.WriteBackMetadataToAssetRegistry = InParams.WriteBackMetadataToAssetRegistry;
-			this.RetainStagedDirectory = InParams.RetainStagedDirectory;
             this.FakeClient = InParams.FakeClient;
             this.EditorTest = InParams.EditorTest;
             this.RunAutomationTests = InParams.RunAutomationTests;
@@ -430,6 +430,7 @@ namespace AutomationTool
 			this.PackageEncryptionKeyFile = InParams.PackageEncryptionKeyFile;
 			this.Prereqs = InParams.Prereqs;
 			this.AppLocalDirectory = InParams.AppLocalDirectory;
+			this.CustomDeploymentHandler = InParams.CustomDeploymentHandler;
 			this.NoBootstrapExe = InParams.NoBootstrapExe;
             this.Prebuilt = InParams.Prebuilt;
             this.RunTimeoutSeconds = InParams.RunTimeoutSeconds;
@@ -443,6 +444,8 @@ namespace AutomationTool
 			this.TraceHost = InParams.TraceHost;
 			this.TraceFile = InParams.TraceFile;
 			this.SessionLabel = InParams.SessionLabel;
+			this.ProjectDescriptor = InParams.ProjectDescriptor;
+			this.Upload = InParams.Upload;
 		}
 
 		/// <summary>
@@ -556,6 +559,7 @@ namespace AutomationTool
 			bool? GenerateOptimizationData = null,
 			bool? Prereqs = null,
 			string AppLocalDirectory = null,
+			string CustomDeploymentHandler = null,
 			bool? NoBootstrapExe = null,
             bool? SignedPak = null,
 			bool? PakAlignForMemoryMapping = null,
@@ -598,6 +602,7 @@ namespace AutomationTool
 			bool? IterativeDeploy = null,
 			bool? FastCook = null,
 			bool? IgnoreCookErrors = null,
+			bool? KeepFileOpenLog = null,
 			bool? CodeSign = null,
 			bool? TreatNonShippingBinariesAsDebugFiles = null,
 			bool? UseExtraFlavor = null,
@@ -610,9 +615,9 @@ namespace AutomationTool
 			string TraceFile = null,
 			string SessionLabel = null,
 			ParamList<string> InMapsToRebuildLightMaps = null,
-            ParamList<string> InMapsToRebuildHLOD = null,
-            ParamList<string> TitleID = null,
-            bool? RetainStagedDirectory = null
+			ParamList<string> InMapsToRebuildHLOD = null,
+			ParamList<string> TitleID = null,
+			string Upload = null
 			)
 		{
 			//
@@ -620,6 +625,12 @@ namespace AutomationTool
 			//
 
 			this.RawProjectPath = RawProjectPath;
+			try
+			{
+				this.ProjectDescriptor = ProjectDescriptor.FromFile(RawProjectPath);
+			}
+			catch { this.ProjectDescriptor = new ProjectDescriptor(); }
+
 			if (DirectoriesToCook != null)
 			{
 				this.DirectoriesToCook = DirectoriesToCook;
@@ -711,7 +722,8 @@ namespace AutomationTool
 				}
 				else
 				{
-					List<PluginInfo> CandidatePlugins = Plugins.ReadAvailablePlugins(Unreal.EngineDirectory, DirectoryReference.FromFile(RawProjectPath), null);
+					List<PluginInfo> CandidatePlugins = Plugins.ReadAvailablePlugins(Unreal.EngineDirectory,
+						DirectoryReference.FromFile(RawProjectPath), AdditionalPluginDirectories);
 					PluginInfo DLCPlugin = CandidatePlugins.FirstOrDefault(x => String.Equals(x.Name, DLCName, StringComparison.InvariantCultureIgnoreCase));
 					if (DLCPlugin == null)
 					{
@@ -793,6 +805,10 @@ namespace AutomationTool
 			this.Compressed = GetParamValueIfNotSpecified(Command, Compressed, this.Compressed, "compressed");
 			this.ForceUncompressed = GetParamValueIfNotSpecified(Command, ForceUncompressed, this.ForceUncompressed, "ForceUncompressed");
 			this.AdditionalPakOptions = ParseParamValueIfNotSpecified(Command, AdditionalPakOptions, "AdditionalPakOptions");
+			if (!string.IsNullOrEmpty(this.NoZenAutoLaunch))
+			{
+				this.AdditionalPakOptions += string.Format(" -NoZenAutoLaunch={0}", this.NoZenAutoLaunch);
+			}
 			this.AdditionalIoStoreOptions = ParseParamValueIfNotSpecified(Command, AdditionalIoStoreOptions, "AdditionalIoStoreOptions");
 			this.ForceOodleDllVersion = ParseParamValueIfNotSpecified(Command, ForceOodleDllVersion, "ForceOodleDllVersion");
 			this.IterativeCooking = GetParamValueIfNotSpecified(Command, IterativeCooking, this.IterativeCooking, new string[] { "iterativecooking", "iterate" });
@@ -844,7 +860,7 @@ namespace AutomationTool
 			this.OptionalFileStagingDirectory = ParseParamValueIfNotSpecified(Command, OptionalFileStagingDirectory, "optionalfilestagingdirectory", String.Empty, true);
 			this.OptionalFileInputDirectory = ParseParamValueIfNotSpecified(Command, OptionalFileInputDirectory, "optionalfileinputdirectory", String.Empty, true);
 			this.CookerSupportFilesSubdirectory = ParseParamValueIfNotSpecified(Command, CookerSupportFilesSubdirectory, "CookerSupportFilesSubdirectory", String.Empty, true);
-			this.bCodeSign = GetOptionalParamValueIfNotSpecified(Command, CodeSign, CommandUtils.IsBuildMachine, "CodeSign", "NoCodeSign");
+			this.bCodeSign = GetOptionalParamValueIfNotSpecified(Command, CodeSign, IsEpicBuildMachine(), "CodeSign", "NoCodeSign");
 			this.bTreatNonShippingBinariesAsDebugFiles = GetParamValueIfNotSpecified(Command, TreatNonShippingBinariesAsDebugFiles, false, "TreatNonShippingBinariesAsDebugFiles");
 			this.bUseExtraFlavor = GetParamValueIfNotSpecified(Command, UseExtraFlavor, false, "UseExtraFlavor");
 			this.Manifests = GetParamValueIfNotSpecified(Command, Manifests, this.Manifests, "manifests");
@@ -865,6 +881,7 @@ namespace AutomationTool
 			this.PackageEncryptionKeyFile = ParseParamValueIfNotSpecified(Command, PackageEncryptionKeyFile, "packageencryptionkeyfile", null);
 			this.Prereqs = GetParamValueIfNotSpecified(Command, Prereqs, this.Prereqs, "prereqs");
 			this.AppLocalDirectory = ParseParamValueIfNotSpecified(Command, AppLocalDirectory, "applocaldirectory", String.Empty, true);
+			this.CustomDeploymentHandler = ParseParamValueIfNotSpecified(Command, CustomDeploymentHandler, "customdeployment", String.Empty, true );
 			this.NoBootstrapExe = GetParamValueIfNotSpecified(Command, NoBootstrapExe, this.NoBootstrapExe, "nobootstrapexe");
             this.Prebuilt = GetParamValueIfNotSpecified(Command, Prebuilt, this.Prebuilt, "prebuilt");
             if (this.Prebuilt)
@@ -927,6 +944,7 @@ namespace AutomationTool
 			this.IterativeDeploy = GetParamValueIfNotSpecified(Command, IterativeDeploy, this.IterativeDeploy, new string[] {"iterativedeploy", "iterate" } );
 			this.FastCook = GetParamValueIfNotSpecified(Command, FastCook, this.FastCook, "FastCook");
 			this.IgnoreCookErrors = GetParamValueIfNotSpecified(Command, IgnoreCookErrors, this.IgnoreCookErrors, "IgnoreCookErrors");
+			this.KeepFileOpenLog = GetParamValueIfNotSpecified(Command, KeepFileOpenLog, this.KeepFileOpenLog, "KeepFileOpenLog");
 
             string DeviceString = ParseParamValueIfNotSpecified(Command, Device, "device", String.Empty).Trim(new char[] { '\"' });
             if(DeviceString == "")
@@ -964,7 +982,7 @@ namespace AutomationTool
             this.RunAutomationTest = ParseParamValueIfNotSpecified(Command, RunAutomationTest, "RunAutomationTest");
             this.RunAutomationTests = this.RunAutomationTest != "" || GetParamValueIfNotSpecified(Command, RunAutomationTests, this.RunAutomationTests, "RunAutomationTests");
             this.SkipServer = GetParamValueIfNotSpecified(Command, SkipServer, this.SkipServer, "skipserver");
-			this.UnrealExe = ParseParamValueIfNotSpecified(Command, UnrealExe, "unrealexe", "UnrealEditor-Cmd.exe", ObsoleteSpecifiedValue: UE4Exe, ObsoleteParamName: "ue4exe");
+			this.SpecifiedUnrealExe = ParseParamValueIfNotSpecified(Command, UnrealExe, "unrealexe", null, ObsoleteSpecifiedValue: UE4Exe, ObsoleteParamName: "ue4exe");
 			this.Unattended = GetParamValueIfNotSpecified(Command, Unattended, this.Unattended, "unattended");
 			this.DeviceUsername = ParseParamValueIfNotSpecified(Command, DeviceUsername, "deviceuser", String.Empty);
 			this.DevicePassword = ParseParamValueIfNotSpecified(Command, DevicePassword, "devicepass", String.Empty);
@@ -972,7 +990,6 @@ namespace AutomationTool
 			this.UbtArgs = ParseParamValueIfNotSpecified(Command, UbtArgs, "ubtargs", String.Empty);
 			this.AdditionalPackageOptions = ParseParamValueIfNotSpecified(Command, AdditionalPackageOptions, "AdditionalPackageOptions", String.Empty);
 			this.WriteBackMetadataToAssetRegistry = ParseParamValueIfNotSpecified(Command, WriteBackMetadataToAssetRegistry, "WriteBackMetadataToAssetRegistry", String.Empty);
-			this.RetainStagedDirectory = GetParamValueIfNotSpecified(Command, RetainStagedDirectory, this.RetainStagedDirectory, "RetainStagedDirectory");
 
 			string SpecifiedArchString, ServerArchString, EditorArchString, ClientArchString, ProgramArchString;
 			SpecifiedArchString = ParseParamValueIfNotSpecified(Command, SpecifiedArchitecture, "specifiedarchitecture", null);
@@ -1029,7 +1046,9 @@ namespace AutomationTool
 				this.SessionLabel += "=" + SessionLabel;	
 			}
 
-				if (ClientConfigsToBuild == null)
+			this.Upload = Command.ParseParamValue("upload");
+
+			if (ClientConfigsToBuild == null)
 			{
 				if (Command != null)
 				{
@@ -1315,6 +1334,12 @@ namespace AutomationTool
 			return ConfigValue;
 		}
 
+		static bool IsEpicBuildMachine()
+		{
+			return CommandUtils.IsBuildMachine 
+				&& FileReference.Exists(FileReference.Combine(Unreal.EngineDirectory, "Restricted", "NotForLicensees", "Build", "EpicInternal.txt"));
+		}
+
 		/// <summary>
 		/// Shared: Full path to the .uproject file
 		/// </summary>
@@ -1568,7 +1593,35 @@ namespace AutomationTool
 		public string CookerSupportFilesSubdirectory;
 		
 		[Help("unrealexe=ExecutableName", "Name of the Unreal Editor executable, i.e. -unrealexe=UnrealEditor.exe")]
-		public string UnrealExe;
+		private string SpecifiedUnrealExe = null;
+
+		public string UnrealExe
+		{
+			get
+			{
+				if (SpecifiedUnrealExe == null)
+				{
+					SpecifiedUnrealExe = "UnrealEditor-Cmd.exe";
+					if (CodeBasedUprojectPath != null)
+					{
+						FileReference ReceiptLocation = TargetReceipt.GetDefaultPath(CodeBasedUprojectPath.Directory, EditorTargets[0], HostPlatform.Platform, UnrealTargetConfiguration.Development, null);
+						TargetReceipt Receipt;
+						if (!TargetReceipt.TryRead(ReceiptLocation, out Receipt))
+						{
+							throw new AutomationException($"Missing {ReceiptLocation} receipt. Editor needs to be built first.");
+						}
+						SpecifiedUnrealExe = Receipt.LaunchCmd.FullName;
+					}
+				}
+
+				return SpecifiedUnrealExe;
+			}
+			set 
+			{
+				// allow code override
+				SpecifiedUnrealExe = value; 
+			}
+		}
 
 		/// <summary>
 		/// Shared: true if this build is archived, command line: -archive
@@ -1966,6 +2019,12 @@ namespace AutomationTool
 		public bool IgnoreCookErrors { private set; get; }
 
 		/// <summary>
+		/// Cook: Commandline: -fileopenlog
+		/// </summary>
+		[Help("KeepFileOpenLog", "Keeps a log of all files opened, commandline: -fileopenlog")]
+		public bool KeepFileOpenLog { private set; get; } = true;
+
+		/// <summary>
 		/// Stage: Commandline: -nodebuginfo
 		/// </summary>
 		[Help("nodebuginfo", "do not copy debug files to the stage")]
@@ -2021,6 +2080,11 @@ namespace AutomationTool
 		/// Stage: Optional callback that a build script can use to finalize a deployment context before it is applied
 		/// </summary>
 		public Action<ProjectParams, DeploymentContext> FinalizeDeploymentContextCallback = null;
+
+		/// <summary>
+		/// Name of the custom deployment handler to change how the build packaged, staged and deployed - for example, when packaging for a specific game store
+		/// </summary>
+		public string CustomDeploymentHandler { get; set; }
 
 		/// <summary>
 		/// On Windows, adds an executable to the root of the staging directory which checks for prerequisites being 
@@ -2187,9 +2251,6 @@ namespace AutomationTool
         [Help("WriteBackMetadataToAssetRegistry", "Passthru to iostore staging, see IoStoreUtilities.cpp")]
         public string WriteBackMetadataToAssetRegistry;
 
-        [Help("RetainStagedDirectory", "If set, retain the staged directory for platforms that modify the I/O store containers for deployment. This is necessary for using the reference container for patch preventing on such platforms.")]
-        public bool RetainStagedDirectory;
-
         /// <summary>
         /// Run:adds ?fake to the server URL
         /// </summary>
@@ -2320,9 +2381,13 @@ namespace AutomationTool
 		[Help("sessionlabel", "A label to pass to analytics")]
 		public string SessionLabel { get; set; }
 
+		[Help("upload", "Arguments for uploading on demand content")]
+		public string Upload { get; set; }
+
 		private List<SingleTargetProperties> DetectedTargets;
 		private Dictionary<UnrealTargetPlatform, ConfigHierarchy> LoadedEngineConfigs;
 		private Dictionary<UnrealTargetPlatform, ConfigHierarchy> LoadedGameConfigs;
+		private ProjectDescriptor ProjectDescriptor;
 
 		private List<String> TargetNamesOfType(TargetType DesiredType)
 		{
@@ -2739,7 +2804,53 @@ namespace AutomationTool
 			get { return ProjectUtils.GetShortProjectName(RawProjectPath); }
 		}
 
-  		/// <summary>
+		/// <summary>
+		/// AdditionalPluginDirectories from the project.uproject file
+		/// </summary>
+		public List<DirectoryReference> AdditionalPluginDirectories
+		{
+			get { return ProjectDescriptor.AdditionalPluginDirectories; }
+		}
+
+		/// <summary>
+		/// Get the relative path to the DLC plugin's cooked output from the deployment
+		/// root of the DLC. e.g. <ProjectName>\Plugins\<PluginName> for plugins under the Project's plugin
+		/// directories.
+		/// </summary>
+		public string FindPluginRelativePathFromPlatformCookDir(FileReference PluginFile,
+			DirectoryReference ProjectRoot, DirectoryReference EngineRoot, DirectoryReference LocalRoot, string ShortProjectName)
+		{
+			if (DLCOverrideCookedSubDir != null)
+			{
+				return DLCOverrideCookedSubDir;
+			}
+
+			foreach (DirectoryReference AdditionalPluginDir in AdditionalPluginDirectories)
+			{
+				if (PluginFile.IsUnderDirectory(AdditionalPluginDir))
+				{
+					// This is a plugin that lives outside of the Engine/Plugins or Game/Plugins directory so needs to be remapped for staging/packaging
+					// The deployment path for plugins in AdditionalPluginDirectories is RemappedPlugins\PluginName
+					return String.Format("RemappedPlugins/{0}", PluginFile.GetFileNameWithoutExtension());
+				}
+			}
+
+			DirectoryReference DLCRoot = PluginFile.Directory;
+			if (DLCRoot.IsUnderDirectory(EngineRoot))
+			{
+				return Path.Combine("Engine", DLCRoot.MakeRelativeTo(EngineRoot));
+			}
+			else if (DLCRoot.IsUnderDirectory(ProjectRoot))
+			{
+				return Path.Combine(ShortProjectName, DLCRoot.MakeRelativeTo(ProjectRoot));
+			}
+			else
+			{
+				return DLCRoot.MakeRelativeTo(LocalRoot);
+			}
+		}
+
+		/// <summary>
 		/// True if this project contains source code.
 		/// </summary>	
 		public bool IsCodeBasedProject
@@ -2987,7 +3098,7 @@ namespace AutomationTool
 
 			if (Stage && !SkipStage && !Cook && !CookOnTheFly && !IsProgramTarget)
 			{
-				throw new AutomationException("Only cooked builds or programs can be staged, use -cook or -cookonthefly.");
+				throw new AutomationException("Only cooked builds or programs can be staged, use -cook, -cookonthefly or -skipcook.");
 			}
 
 			if (Manifests && !Cook && !Stage && !Pak)
@@ -3183,7 +3294,6 @@ namespace AutomationTool
 				Logger.LogDebug("ForcePackageData={ForcePackageData}", ForcePackageData);
 				Logger.LogDebug("NullRHI={NullRHI}", NullRHI);
 				Logger.LogDebug("WriteBackMetadataToAssetRegistry={WriteBackMetadataToAssetRegistry}", WriteBackMetadataToAssetRegistry);
-				Logger.LogDebug("RetainStagedDirectory={RetainStagedDirectory}", RetainStagedDirectory);
 				Logger.LogDebug("FakeClient={FakeClient}", FakeClient);
                 Logger.LogDebug("EditorTest={EditorTest}", EditorTest);
                 Logger.LogDebug("RunAutomationTests={RunAutomationTests}", RunAutomationTests);

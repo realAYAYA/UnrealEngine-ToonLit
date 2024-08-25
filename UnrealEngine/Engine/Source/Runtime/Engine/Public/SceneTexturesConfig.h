@@ -41,6 +41,7 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FMobileSceneTextureUniformParameters, ENGIN
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneColorTexture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, SceneColorTextureSampler)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, SceneDepthTextureArray)
 	SHADER_PARAMETER_SAMPLER(SamplerState, SceneDepthTextureSampler)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ScenePartialDepthTexture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, ScenePartialDepthTextureSampler)
@@ -55,6 +56,7 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FMobileSceneTextureUniformParameters, ENGIN
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferCTexture)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferDTexture)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthAuxTexture)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, SceneDepthAuxTextureArray)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, LocalLightTextureA)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, LocalLightTextureB)
 	SHADER_PARAMETER_SAMPLER(SamplerState, GBufferATextureSampler)
@@ -72,6 +74,8 @@ END_SHADER_PARAMETER_STRUCT()
 extern ENGINE_API FSceneTextureShaderParameters GetSceneTextureShaderParameters(TRDGUniformBufferRef<FSceneTextureUniformParameters> UniformBuffer);
 
 extern ENGINE_API FSceneTextureShaderParameters GetSceneTextureShaderParameters(TRDGUniformBufferRef<FMobileSceneTextureUniformParameters> UniformBuffer);
+
+extern ENGINE_API void GetSceneColorFormatAndCreateFlags(ERHIFeatureLevel::Type FeatureLevel, bool bRequiresAlphaChannel, ETextureCreateFlags ExtraSceneColorCreateFlags, uint32 NumSamples, bool bMemorylessMSAA, EPixelFormat& SceneColorFormat, ETextureCreateFlags& SceneColorCreateFlags);
 
 enum class ESceneTextureExtracts : uint32
 {
@@ -121,6 +125,7 @@ struct FSceneTexturesConfig
 		: bRequireMultiView{}
 		, bIsUsingGBuffers{}
 		, bKeepDepthContent{ 1 }
+		, bRequiresDepthAux{}
 		, bPreciseDepthAux{}
 		, bSamplesCustomStencil{}
 		, bMemorylessMSAA{}
@@ -188,6 +193,9 @@ struct FSceneTexturesConfig
 	// (Mobile) True if the platform should write depth content back to memory.
 	uint32 bKeepDepthContent : 1;
 
+	// (Mobile) True if platform requires SceneDepthAux target
+	uint32 bRequiresDepthAux : 1;
+	
 	// (Mobile) True if SceneDepthAux should use a precise pixel format
 	uint32 bPreciseDepthAux : 1;
 

@@ -222,7 +222,7 @@ void* FGPUDefragAllocator::Allocate(int64 AllocationSize, int32 Alignment, TStat
 	check(IsAligned(AllocatedChunk->Base, Alignment));
 
 	MemoryTrace_Alloc((uint64)AllocatedChunk->Base, AllocationSize, Alignment);
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, AllocatedChunk->Base, AllocationSize));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, AllocatedChunk->Base, AllocationSize));
 
 	return AllocatedChunk->Base;
 }
@@ -1198,7 +1198,7 @@ void FGPUDefragAllocator::SetStaticMemoryPrivileges()
 		if (Block.SyncIndex >= CompletedSyncIndex)
 		{
 			PlatformSetStaticMemoryPrivileges(Block);
-			BlocksToUnProtect.RemoveAtSwap(i, 1, false);
+			BlocksToUnProtect.RemoveAtSwap(i, 1, EAllowShrinking::No);
 		}
 	}	
 }

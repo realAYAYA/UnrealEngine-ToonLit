@@ -6,6 +6,10 @@
 #include "WorldPartition/WorldPartitionLog.h"
 #include "WorldPartition/WorldPartitionEditorHash.h"
 #include "WorldPartition/WorldPartitionRuntimeCell.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
+#include "GameFramework/PlayerController.h"
+#include "Engine/Engine.h"
 #include "Algo/AnyOf.h"
 
 #include "Commandlets/Commandlet.h"
@@ -14,6 +18,7 @@
 #if WITH_EDITOR
 #include "Misc/RedirectCollector.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
 #include "Modules/ModuleManager.h"
 #endif
 
@@ -45,6 +50,24 @@ namespace FWorldPartitionHelpersPrivate
 	}
 }
 
+void FWorldPartitionHelpers::ServerExecConsoleCommand(UWorld* InWorld, const FString& InConsoleCommandName, const TArray<FString>& InArgs)
+{
+#if !UE_BUILD_SHIPPING && !WITH_EDITOR
+	if (InWorld && InWorld->IsGameWorld() && InWorld->IsNetMode(NM_Client))
+	{
+		if (APlayerController* PC = GEngine->GetFirstLocalPlayerController(InWorld))
+		{
+			TArray<FString> CmdList;
+			CmdList.Add(InConsoleCommandName);
+			CmdList.Append(InArgs);
+			FString Cmd = FString::Join(CmdList, TEXT(" "));
+			// Use ServerExecRPC instead of ServerExec to avoid any truncation
+			PC->ServerExecRPC(Cmd);
+		}
+	}
+#endif
+}
+
 #if WITH_EDITOR
 
 bool FWorldPartitionHelpers::IsActorDescClassCompatibleWith(const FWorldPartitionActorDesc* ActorDesc, const UClass* Class)
@@ -71,24 +94,26 @@ bool FWorldPartitionHelpers::IsActorDescClassCompatibleWith(const FWorldPartitio
 	return ActorBaseClass->IsChildOf(Class);
 }
 
-void FWorldPartitionHelpers::ForEachIntersectingActorDesc(UWorldPartition* WorldPartition, const FBox& Box, TSubclassOf<AActor> ActorClass, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Func)
+void FWorldPartitionHelpers::ForEachIntersectingActorDescInstance(UWorldPartition* WorldPartition, const FBox& Box, TSubclassOf<AActor> ActorClass, TFunctionRef<bool(const FWorldPartitionActorDescInstance*)> Func)
 {
-	WorldPartition->EditorHash->ForEachIntersectingActor(Box, [&ActorClass, Func](const FWorldPartitionActorDesc* ActorDesc)
+	bool bProcessNextActors = true;
+
+	WorldPartition->EditorHash->ForEachIntersectingActor(Box, [&ActorClass, Func, &bProcessNextActors](const FWorldPartitionActorDescInstance* ActorDescInstance)
 	{
-		if (IsActorDescClassCompatibleWith(ActorDesc, ActorClass))
+		if (bProcessNextActors && IsActorDescClassCompatibleWith(ActorDescInstance->GetActorDesc(), ActorClass))
 		{
-			Func(ActorDesc);
+			bProcessNextActors = Func(ActorDescInstance);
 		}
 	});
 }
 
-void FWorldPartitionHelpers::ForEachActorDesc(UWorldPartition* WorldPartition, TSubclassOf<AActor> ActorClass, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Func)
+void FWorldPartitionHelpers::ForEachActorDescInstance(UWorldPartition* WorldPartition, TSubclassOf<AActor> ActorClass, TFunctionRef<bool(const FWorldPartitionActorDescInstance*)> Func)
 {
-	for (FActorDescContainerCollection::TConstIterator<> ActorDescIterator(WorldPartition); ActorDescIterator; ++ActorDescIterator)
+	for (FActorDescContainerInstanceCollection::TConstIterator<> Iterator(WorldPartition); Iterator; ++Iterator)
 	{
-		if (IsActorDescClassCompatibleWith(*ActorDescIterator, ActorClass))
+		if (IsActorDescClassCompatibleWith(Iterator->GetActorDesc(), ActorClass))
 		{
-			if (!Func(*ActorDescIterator))
+			if (!Func(*Iterator))
 			{
 				return;
 			}
@@ -105,11 +130,11 @@ namespace WorldPartitionHelpers
 			return;
 		}
 
-		if (const FWorldPartitionActorDesc* ActorDesc = WorldPartition->GetActorDesc(ActorGuid))
+		if (const FWorldPartitionActorDescInstance* ActorDescInstance = WorldPartition->GetActorDescInstance(ActorGuid))
 		{
 			InOutActorReferences.Emplace(ActorGuid);
 
-			for (FGuid ReferenceGuid : ActorDesc->GetReferences())
+			for (FGuid ReferenceGuid : ActorDescInstance->GetReferences())
 			{
 				LoadReferencesInternal(WorldPartition, ReferenceGuid, InOutActorReferences);
 			}
@@ -131,30 +156,13 @@ FWorldPartitionHelpers::FForEachActorWithLoadingParams::FForEachActorWithLoading
 	, ActorClasses({ AActor::StaticClass() })
 {}
 
-void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldPartition, TSubclassOf<AActor> ActorClass, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Func, TFunctionRef<void()> OnReleasingActorReferences, bool bGCPerActor)
-{
-	FForEachActorWithLoadingParams Params;
-	Params.ActorClasses = { ActorClass };
-	Params.OnPreGarbageCollect = [&OnReleasingActorReferences]() { OnReleasingActorReferences(); };
-	ForEachActorWithLoading(WorldPartition, Func, Params);
-}
-
-void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldPartition, const TArray<FGuid>& ActorGuids, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Func, TFunctionRef<void()> OnReleasingActorReferences, bool bGCPerActor)
-{
-	TSet<FGuid> ActorGuidsSet(ActorGuids);
-	FForEachActorWithLoadingParams Params;
-	Params.FilterActorDesc = [&ActorGuidsSet](const FWorldPartitionActorDesc* ActorDesc) -> bool { return ActorGuidsSet.Contains(ActorDesc->GetGuid());	};
-	Params.OnPreGarbageCollect = [&OnReleasingActorReferences]() { OnReleasingActorReferences(); };	
-	ForEachActorWithLoading(WorldPartition, Func, Params);
-}
-
-void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldPartition, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Func, const FForEachActorWithLoadingParams& Params)
+void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldPartition, TFunctionRef<bool(const FWorldPartitionActorDescInstance*)> Func, const FForEachActorWithLoadingParams& Params)
 {
 	FForEachActorWithLoadingResult Result;
 	ForEachActorWithLoading(WorldPartition, Func, Params, Result);
 }
 
-void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldPartition, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Func, const FForEachActorWithLoadingParams& Params, FForEachActorWithLoadingResult& Result)
+void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldPartition, TFunctionRef<bool(const FWorldPartitionActorDescInstance*)> Func, const FForEachActorWithLoadingParams& Params, FForEachActorWithLoadingResult& Result)
 {
 	check(Result.ActorReferences.IsEmpty());
 	auto CallGarbageCollect = [&Params, &Result]()
@@ -168,16 +176,16 @@ void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldParti
 		DoCollectGarbage();
 	};
 
-	auto ForEachActorWithLoadingImpl = [&](const FWorldPartitionActorDesc* ActorDesc)
+	auto ForEachActorWithLoadingImpl = [&](const FWorldPartitionActorDescInstance* ActorDescInstance)
 	{
-		if (Algo::AnyOf(Params.ActorClasses, [ActorDesc](UClass* ActorClass) { return IsActorDescClassCompatibleWith(ActorDesc, ActorClass); }))
+		if (Algo::AnyOf(Params.ActorClasses, [ActorDescInstance](UClass* ActorClass) { return IsActorDescClassCompatibleWith(ActorDescInstance->GetActorDesc(), ActorClass); }))
 		{
-			if (!Params.FilterActorDesc || Params.FilterActorDesc(ActorDesc))
+			if (!Params.FilterActorDesc || Params.FilterActorDesc(ActorDescInstance->GetActorDesc()))
 			{
-				WorldPartitionHelpers::LoadReferences(WorldPartition, ActorDesc->GetGuid(), Result.ActorReferences);
+				WorldPartitionHelpers::LoadReferences(WorldPartition, ActorDescInstance->GetGuid(), Result.ActorReferences);
 
-				FWorldPartitionReference ActorReference(WorldPartition, ActorDesc->GetGuid());
-				if (!Func(ActorReference.Get()))
+				FWorldPartitionReference ActorReference(WorldPartition, ActorDescInstance->GetGuid());
+				if (!Func(*ActorReference))
 				{
 					return false;
 				}
@@ -194,9 +202,9 @@ void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldParti
 
 	if (Params.ActorGuids.IsEmpty())
 	{
-		for (FActorDescContainerCollection::TConstIterator<> ActorDescIterator(WorldPartition); ActorDescIterator; ++ActorDescIterator)
+		for (FActorDescContainerInstanceCollection::TConstIterator<> ActorDescInstanceIterator(WorldPartition); ActorDescInstanceIterator; ++ActorDescInstanceIterator)
 		{
-			if (const FWorldPartitionActorDesc* ActorDesc = *ActorDescIterator)
+			if (const FWorldPartitionActorDescInstance* ActorDesc = *ActorDescInstanceIterator)
 			{
 				if (!ForEachActorWithLoadingImpl(ActorDesc))
 				{
@@ -210,7 +218,7 @@ void FWorldPartitionHelpers::ForEachActorWithLoading(UWorldPartition* WorldParti
 	{
 		for (const FGuid& ActorGuid : Params.ActorGuids)
 		{
-			if (const FWorldPartitionActorDesc* ActorDesc = WorldPartition->GetActorDesc(ActorGuid))
+			if (const FWorldPartitionActorDescInstance* ActorDesc = WorldPartition->GetActorDescInstance(ActorGuid))
 			{
 				if (!ForEachActorWithLoadingImpl(ActorDesc))
 				{
@@ -306,87 +314,46 @@ bool FWorldPartitionHelpers::ConvertRuntimePathToEditorPath(const FSoftObjectPat
 
 bool FWorldPartitionHelpers::FixupRedirectedAssetPath(FSoftObjectPath& InOutSoftObjectPath)
 {
-	if (InOutSoftObjectPath.IsNull())
-	{
-		// Empty path, no redirect
-		return true;
-	}
-
-	// Check GRedirectCollector first for faster fixup
-	FSoftObjectPath FoundRedirection = GRedirectCollector.GetAssetPathRedirection(InOutSoftObjectPath.GetWithoutSubPath());
-	if (!FoundRedirection.IsNull())
-	{
-		InOutSoftObjectPath.SetPath(FoundRedirection.GetAssetPath(), InOutSoftObjectPath.GetSubPathString());
-		return true;
-	}
-
-	if (InOutSoftObjectPath.GetAssetName().IsEmpty())
-	{
-		// A package name. No need to ask the asset registry for assets, it wont find any
-		return true;
-	}
-
-	const FAssetData* AssetData;
-	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-
-	FTopLevelAssetPath AssetPath = InOutSoftObjectPath.GetAssetPath();
-
-	for (;;)
-	{
-		TArray<FAssetData> Assets;
-		AssetRegistry.ScanFilesSynchronous({ AssetPath.GetPackageName().ToString() }, /*bForceRescan*/false);
-		AssetRegistry.GetAssetsByPackageName(AssetPath.GetPackageName(), Assets, /*bIncludeOnlyOnDiskAssets*/true);
-
-		if (!Assets.Num())
-		{
-			UE_LOG(LogWorldPartition, Warning, TEXT("Failed to find assets for asset path '%s'"), *AssetPath.ToString());
-			return false;
-		}
-
-		AssetData = Assets.FindByPredicate([&AssetPath](const FAssetData& AssetData)
-		{
-			return (AssetData.ToSoftObjectPath().GetAssetPath() == AssetPath);
-		});
-
-		if (!AssetData)
-		{
-			UE_LOG(LogWorldPartition, Warning, TEXT("Failed to find asset for asset path '%s'"), *AssetPath.ToString());
-			return false;
-		}
-
-		if (!AssetData->IsRedirector())
-		{
-			break;
-		}
-
-		FString DestinationObjectPath;
-		if (!AssetData->GetTagValue(TEXT("DestinationObject"), DestinationObjectPath))
-		{
-			UE_LOG(LogWorldPartition, Warning, TEXT("Failed to follow redirector for '%s'"), *AssetPath.ToString());
-			return false;
-		}
-
-		// Update asset path
-		AssetPath = FTopLevelAssetPath(DestinationObjectPath);
-	}
-
-	InOutSoftObjectPath.SetPath(AssetPath, InOutSoftObjectPath.GetSubPathString());
-
+	UAssetRegistryHelpers::FixupRedirectedAssetPath(InOutSoftObjectPath);
 	return true;
 }
 
 bool FWorldPartitionHelpers::FixupRedirectedAssetPath(FName& InOutAssetPath)
 {
-	FSoftObjectPath SoftObjectPath(InOutAssetPath.ToString());
-	if (FixupRedirectedAssetPath(SoftObjectPath))
-	{
-		InOutAssetPath = FName(*SoftObjectPath.ToString());
-		return true;
-	}
-
-	return false;
+	UAssetRegistryHelpers::FixupRedirectedAssetPath(InOutAssetPath);
+	return true;
 }
 
+TMap<FGuid, AActor*> FWorldPartitionHelpers::GetLoadedActorsForLevel(const ULevel* InLevel)
+{
+	TMap<FGuid, AActor*> Result;
+	ForEachObjectWithOuter(InLevel, [&Result](UObject* Object)
+	{
+		if (AActor* Actor = Cast<AActor>(Object))
+		{
+			if (!Actor->IsTemplate() && Actor->GetActorGuid().IsValid())
+			{
+				Result.Add(Actor->GetActorGuid(), Actor);
+			}
+		}
+	});
+	return MoveTemp(Result);
+}
+
+TMap<FGuid, AActor*> FWorldPartitionHelpers::GetRegisteredActorsForLevel(const ULevel* InLevel)
+{
+	TMap<FGuid, AActor*> Result;
+	Algo::TransformIf(InLevel->Actors, Result, 
+		[](const AActor* Actor)
+		{
+			return IsValid(Actor);
+		}, 
+		[](AActor* Actor)
+		{
+			return TPair<FGuid, AActor*>(Actor->GetActorGuid(), Actor);
+		});
+	return MoveTemp(Result);
+}
 #endif // #if WITH_EDITOR
 
 bool FWorldPartitionHelpers::ConvertEditorPathToRuntimePath(const FSoftObjectPath& InPath, FSoftObjectPath& OutPath)

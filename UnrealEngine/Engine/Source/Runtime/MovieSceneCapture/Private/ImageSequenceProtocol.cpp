@@ -131,7 +131,7 @@ void UImageSequenceProtocol::ProcessFrame(FCapturedFrameData Frame)
 	if (Format == EImageFormat::PNG)
 	{
 		// Always write full alpha for PNGs
-		ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColor>(255));
+		ImageTask->AddPreProcessorToSetAlphaOpaque();
 	}
 
 	switch (Format)

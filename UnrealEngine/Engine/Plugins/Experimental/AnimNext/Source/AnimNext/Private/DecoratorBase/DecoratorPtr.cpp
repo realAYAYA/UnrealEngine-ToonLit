@@ -1,20 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DecoratorBase/DecoratorPtr.h"
+
+#include "DecoratorBase/ExecutionContext.h"
 #include "DecoratorBase/NodeInstance.h"
 
 namespace UE::AnimNext
 {
-	FDecoratorPtr::FDecoratorPtr(FNodeInstance* NodeInstance, uint32 DecoratorIndex_)
-		: PackedPointerAndFlags(NodeInstance != nullptr ? reinterpret_cast<uintptr_t>(NodeInstance) : 0)
-		, DecoratorIndex(static_cast<uint8>(DecoratorIndex_))
+	FDecoratorPtr::FDecoratorPtr(FNodeInstance* InNodeInstance, uint32 InDecoratorIndex)
+		: PackedPointerAndFlags(InNodeInstance != nullptr ? reinterpret_cast<uintptr_t>(InNodeInstance) : 0)
+		, DecoratorIndex(InDecoratorIndex)
 	{
-		check((reinterpret_cast<uintptr_t>(NodeInstance) & FLAGS_MASK) == 0);	// Make sure we have enough alignment
-		check(DecoratorIndex == DecoratorIndex_);	// Make sure we didn't truncate
+		check((reinterpret_cast<uintptr_t>(InNodeInstance) & FLAGS_MASK) == 0);	// Make sure we have enough alignment
+		check(DecoratorIndex <= MAX_uint8);	// Make sure we don't truncate
 
-		if (NodeInstance != nullptr)
+		if (InNodeInstance != nullptr)
 		{
-			NodeInstance->AddReference();
+			InNodeInstance->AddReference();
 		}
 	}
 
@@ -41,17 +43,17 @@ namespace UE::AnimNext
 		DecoratorPtr.DecoratorIndex = 0;
 	}
 
-	FDecoratorPtr::FDecoratorPtr(FNodeInstance* NodeInstance, EFlags Flags, uint32 DecoratorIndex_)
-		: PackedPointerAndFlags(NodeInstance != nullptr ? (reinterpret_cast<uintptr_t>(NodeInstance) | Flags) : 0)
-		, DecoratorIndex(static_cast<uint8>(DecoratorIndex_))
+	FDecoratorPtr::FDecoratorPtr(FNodeInstance* InNodeInstance, EFlags InFlags, uint32 InDecoratorIndex)
+		: PackedPointerAndFlags(InNodeInstance != nullptr ? (reinterpret_cast<uintptr_t>(InNodeInstance) | InFlags) : 0)
+		, DecoratorIndex(InDecoratorIndex)
 	{
-		check((reinterpret_cast<uintptr_t>(NodeInstance) & FLAGS_MASK) == 0);	// Make sure we have enough alignment
-		check(DecoratorIndex == DecoratorIndex_);	// Make sure we didn't truncate
+		check((reinterpret_cast<uintptr_t>(InNodeInstance) & FLAGS_MASK) == 0);	// Make sure we have enough alignment
+		check(DecoratorIndex <= MAX_uint8);	// Make sure we don't truncate
 
 		// Only increment the reference count if we aren't a weak handle
-		if (NodeInstance != nullptr && (Flags & IS_WEAK_BIT) == 0)
+		if (InNodeInstance != nullptr && (InFlags & IS_WEAK_BIT) == 0)
 		{
-			NodeInstance->AddReference();
+			InNodeInstance->AddReference();
 		}
 	}
 
@@ -68,20 +70,13 @@ namespace UE::AnimNext
 		// The new handle will remain weak
 		if (!DecoratorPtr.IsWeak())
 		{
-			if (FNodeInstance* Node = DecoratorPtr.GetNodeInstance())
+			if (FNodeInstance* NewNode = DecoratorPtr.GetNodeInstance())
 			{
-				Node->AddReference();
+				NewNode->AddReference();
 			}
 		}
 
-		// Only decrement the reference count if we aren't a weak handle
-		if (!IsWeak())
-		{
-			if (FNodeInstance* Node = GetNodeInstance())
-			{
-				Node->ReleaseReference();
-			}
-		}
+		Reset();
 
 		PackedPointerAndFlags = DecoratorPtr.PackedPointerAndFlags;
 		DecoratorIndex = DecoratorPtr.DecoratorIndex;
@@ -99,17 +94,25 @@ namespace UE::AnimNext
 
 	void FDecoratorPtr::Reset()
 	{
-		// Only decrement the reference count if we aren't a weak handle
+		// Only decrement the reference count if we aren't a weak handle and if we are valid
 		if (!IsWeak())
 		{
 			if (FNodeInstance* Node = GetNodeInstance())
 			{
-				Node->ReleaseReference();
+				FExecutionContext Context(Node->GetOwner());
+				Context.ReleaseNodeInstance(*this);
 			}
 		}
 
 		PackedPointerAndFlags = 0;
 		DecoratorIndex = 0;
+	}
+
+	FWeakDecoratorPtr::FWeakDecoratorPtr(FNodeInstance* InNodeInstance, uint32 InDecoratorIndex)
+		: NodeInstance(InNodeInstance)
+		, DecoratorIndex(InDecoratorIndex)
+	{
+		check(DecoratorIndex <= MAX_uint8);	// Make sure we don't truncate
 	}
 
 	void FWeakDecoratorPtr::Reset()

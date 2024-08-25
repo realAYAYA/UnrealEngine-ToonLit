@@ -114,6 +114,14 @@ struct FAnalyticsEventAttribute;
  *												This can remove lengthy connection steps from the process init phase and then only connect
  *												if we actually need that service. Note that if this is true then the connection can come from
  *												any thread, so custom backend code will need to take that into account. [Default=false]
+ * DisableLazyInitIfInteractive [bool]			When true 'LazyInitConnections' will be forced to false if slate is enabled. This exists because
+ *												some backends can show slate dialogs when their initial connection fails to prompt for the 
+ *												correct login values. When 'LazyInitConnections' is true, this request can come on any thread and
+ *												trying to marshal the slate request to the gamethread can often introduce thread locks. Setting
+ *												both this and 'LazyInitConnections' to true will allow tools that do not use slate to initialize
+ *												the VA connections on use, but force tools that can display the slate dialog to initialized 
+ *												during preinit on the game thread so that the dialog can be shown. Note that this only overrides
+												the setting of 'LazyInitConnections' via the config file, not cvar, cmdline or code [Default=false]
  * UseLegacyErrorHandling [bool]:				Controls how we deal with errors encountered when pulling payloads. When true a failed payload 
  *												pull will return an error and allow the process to carry on (the original error handling logic)
  *												and when false a dialog will be displayed to the user warning them about the failed pull and 
@@ -127,6 +135,17 @@ struct FAnalyticsEventAttribute;
  *												before it was pulled from a backend later in the hierarchy. Can be used to try and skip
  *												expensive existence checks, or if a backend is in a bad state where it believes it has the payload
  *												but is unable to actually return the data. [Default=false]
+ * UnattendedRetryCount [int32]:				How many times the process should retry pulling payloads after a failure is encountered if the
+												process is unattended. Usually when a payload pull fails we ask the user to try and fix the issue
+												and retry, but in unattended mode we just log an error and terminate the process. In some cases
+												such as build machines with unreliable internet it is possible that the process could recover in
+												which case setting this value might help. Zero or negative values will disable the system. 
+												Note: If many pulls are occurring at the same time on many threads a very short network outage might
+												spawn many errors in which case we try to group these errors into a single 'try' so 32 errors on 32
+												threads would not immediately blow past a retry count of 30 for example. [Default=0]
+ * UnattendedRetryTimer [int32]					If 'UnattendedRetryCount' is set to a positive value then this value sets how long (in seconds)
+ *												the process should wait after a failure is encountered before retrying the pull. Depending on the
+												likely cause of the failure you may want to set this value to several minutes. [Default=0]
  */
 
 namespace UE::Virtualization
@@ -235,7 +254,7 @@ private:
 		AcceptFailedPayloads
 	};
 
-	ErrorHandlingResult OnPayloadPullError(FStringView BackendErrors);
+	ErrorHandlingResult OnPayloadPullError(const FPullRequestCollection& Requests, FStringView BackendErrors) const;
 	
 	bool ShouldVirtualizeAsset(const UObject* Owner) const;
 
@@ -265,6 +284,9 @@ private:
 
 	/** Determines if the default filtering behavior is to virtualize a payload or not */
 	bool ShouldVirtualizeAsDefault() const;
+
+	/** Returns if the process will attempt to retry a failed pull when the process is unattended mode */
+	bool ShouldRetryWhenUnattended() const;
 
 	void BroadcastEvent(TConstArrayView<FPullRequest> Ids, ENotification Event);
 	
@@ -323,6 +345,13 @@ private:
 
 	/** Optional url used to augment connection failure error messages */
 	static FString ConnectionHelpUrl;
+
+	/** The number of times to retry pulling when errors are encountered in an unattended process, values <0 disable the system */
+	int32 UnattendedRetryCount = 0;
+
+	/** The how long (in seconds) to wait after payload pulling errors before retrying. Does nothing if 'UnattendedRetryCount' is disabled */
+	int32 UnattendedRetryTimer = 0;
+
 private:
 
 	/** The name of the current project */
@@ -351,6 +380,9 @@ private:
 
 	/** Our notification Event */
 	FOnNotification NotificationEvent;
+
+	/** Track how many times we've displayed a message about failed payload pulls since the last successful pull (only used in unattended mode)*/
+	mutable std::atomic<int32> UnattendedFailureMsgCount = 0;
 
 	// Members after this point at used for debugging operations only!
 

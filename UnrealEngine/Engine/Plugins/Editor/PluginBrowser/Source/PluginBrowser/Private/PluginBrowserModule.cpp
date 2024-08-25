@@ -1,20 +1,29 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "PluginBrowserModule.h"
-#include "SPluginBrowser.h"
+
+#include "Algo/AnyOf.h"
+#include "ContentBrowserModule.h"
 #include "Features/IModularFeatures.h"
 #include "Features/EditorFeatures.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Interfaces/IPluginManager.h"
+#include "Interfaces/IMainFrameModule.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/NamePermissionList.h"
+#include "Misc/PathViews.h"
+#include "PropertyEditorModule.h"
+#include "PluginActions.h"
+#include "PluginDescriptorEditor.h"
 #include "PluginMetadataObject.h"
 #include "PluginStyle.h"
-#include "PropertyEditorModule.h"
-#include "Widgets/Docking/SDockTab.h"
 #include "SNewPluginWizard.h"
-#include "Interfaces/IMainFrameModule.h"
+#include "SPluginBrowser.h"
+#include "ToolMenu.h"
+#include "ToolMenus.h"
+#include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Notifications/SNotificationList.h"
-#include "Framework/Notifications/NotificationManager.h"
-#include "Misc/ConfigCacheIni.h"
-#include "Interfaces/IPluginManager.h"
-#include "PluginDescriptorEditor.h"
 
 #define LOCTEXT_NAMESPACE "PluginsEditor"
 
@@ -80,6 +89,8 @@ void FPluginBrowserModule::StartupModule()
 	// Register a callback to check for new plugins on startup
 	IMainFrameModule& MainFrameModule = FModuleManager::LoadModuleChecked<IMainFrameModule>(TEXT("MainFrame"));
 	MainFrameModule.OnMainFrameCreationFinished().AddRaw(this, &FPluginBrowserModule::OnMainFrameLoaded);
+	
+	AddContentBrowserMenuExtensions();
 }
 
 void FPluginBrowserModule::ShutdownModule()
@@ -99,6 +110,147 @@ void FPluginBrowserModule::ShutdownModule()
 
 	// Unregister our feature
 	IModularFeatures::Get().UnregisterModularFeature( EditorFeatures::PluginsEditor, this );
+}
+
+static void CreatePluginMenu(UToolMenu* Menu, TSharedRef<IPlugin> Plugin)
+{
+	UContentBrowserDataMenuContext_FolderMenu* Context = Menu->FindContext<UContentBrowserDataMenuContext_FolderMenu>();
+	
+	FToolMenuSection& Section = Menu->FindOrAddSection("PluginMenu");
+	Section.AddMenuEntry(
+		"EditPluginProperties",
+		LOCTEXT("PluginContextMenu.EditPlugin", "Edit"),
+		LOCTEXT("PluginContextMenu.EditPlugin.ToolTip", "Edit this plugin's properties."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Edit"),
+		FExecuteAction::CreateLambda([Plugin](){
+			FPluginBrowserModule::Get().OpenPluginEditor(Plugin, {}, {});
+		})	
+	);
+
+	Section.AddMenuEntry(
+		"PackagePlugin",
+		LOCTEXT("PluginContextMenu.PackagePlugin", "Package"),
+		LOCTEXT("PluginContextMenu.PackagePlugin.ToolTip", "Package this plugin for distribution"),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Package"),
+		FExecuteAction::CreateLambda([Plugin](){
+			PluginActions::PackagePlugin(Plugin, {});
+		})	
+	);
+
+	if (FPluginBrowserModule::Get().OnLaunchReferenceViewerDelegate().IsBound())
+	{
+		Section.AddMenuEntry(
+			"PluginReferenceViewer",
+			LOCTEXT("PluginContextMenu.ReferenceViewer", "Reference Viewer"),
+			LOCTEXT("PluginContextMenu.ReferenceViewer.ToolTip", "Open the plugin reference viewer showing references to and from this plugin"),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "ContentBrowser.ReferenceViewer"),
+			FExecuteAction::CreateLambda([Plugin](){
+				FPluginBrowserModule::Get().OnLaunchReferenceViewerDelegate().Execute(Plugin);
+			})	
+		);
+	}
+
+	const FPluginDescriptor& Descriptor = Plugin->GetDescriptor();
+	if (Descriptor.SupportURL.StartsWith(TEXT("http://")))
+	{
+		Section.AddMenuEntry(
+			"PluginSupport",
+			LOCTEXT("PluginContextMenu.Support", "Support"),
+			LOCTEXT("PluginContextMenu.Support.ToolTip", "Open the plugin's online support URL"),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Comment"),
+			FExecuteAction::CreateLambda([Plugin](){
+				const FPluginDescriptor& Descriptor = Plugin->GetDescriptor();
+				if (Descriptor.SupportURL.StartsWith(TEXT("http://")))
+				{
+					FPlatformProcess::LaunchURL(*Descriptor.SupportURL, nullptr, nullptr);
+				}
+			})	
+		);
+	}
+	
+	if (Descriptor.DocsURL.StartsWith(TEXT("http://")))
+	{	
+		Section.AddMenuEntry(
+			"PluginDocumentation",
+			LOCTEXT("PluginContextMenu.Documentation", "Documentation"),
+			LOCTEXT("PluginContextMenu.Documentation.ToolTip", "Open the plugin's online support URL."),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Documentation"),
+			FExecuteAction::CreateLambda([Plugin](){
+				const FPluginDescriptor& Descriptor = Plugin->GetDescriptor();
+				if (Descriptor.DocsURL.StartsWith(TEXT("http://")))
+				{
+					FPlatformProcess::LaunchURL(*Descriptor.DocsURL, nullptr, nullptr);
+				}
+			})	
+		);
+	}
+	
+	if (Descriptor.CreatedBy.IsEmpty() == false && Descriptor.CreatedByURL.StartsWith(TEXT("http://")))
+	{
+		Section.AddMenuEntry(
+			"PluginVendor",
+			LOCTEXT("PluginContextMenu.Vendor", "Vendor"),
+			LOCTEXT("PluginContextMenu.Vendor.ToolTip", "Visit the plugin vendor's website."),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.OpenInBrowser"),
+			FExecuteAction::CreateLambda([Plugin](){
+				const FPluginDescriptor& Descriptor = Plugin->GetDescriptor();
+				if (!Descriptor.CreatedBy.IsEmpty() && Descriptor.CreatedByURL.StartsWith(TEXT("http://")))
+				{
+					FPlatformProcess::LaunchURL(*Descriptor.CreatedByURL, nullptr, nullptr);
+				}
+			})	
+		);
+	}
+}
+
+void AddPluginMenuToContextMenu(UToolMenu* InMenu, const TSharedPtr<IPlugin>& Plugin, FName AddToSection)
+{
+	FToolMenuSection &Section = InMenu->FindOrAddSection(AddToSection);
+	Section.AddSubMenu("Plugin",
+	   LOCTEXT("ContentBrowserPluginMenuName", "Plugin"),
+	   LOCTEXT("ContentBrowserPluginMenuTooltip", "Plugin Actions"),
+	   FNewToolMenuDelegate::CreateStatic(&CreatePluginMenu, Plugin.ToSharedRef()),
+	   false,
+	   FSlateIcon(FPluginStyle::Get()->GetStyleSetName(), "Plugins.TabIcon"));
+}
+
+void FPluginBrowserModule::AddContentBrowserMenuExtensions()
+{
+	if (UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("ContentBrowser.FolderContextMenu"))
+	{
+		FToolMenuSection& Section = Menu->AddDynamicSection(TEXT("DynamicSection_Plugins"), FNewToolMenuDelegate::CreateLambda([](UToolMenu* InMenu)
+		{
+			UContentBrowserDataMenuContext_FolderMenu* Context = InMenu->FindContext<UContentBrowserDataMenuContext_FolderMenu>();
+			// Only show the menu if there is a single item selected as most commands don't work nicely for multiple plugins 
+			if (Context->SelectedItems.Num() == 1 && Context->SelectedItems[0].IsInPlugin())
+			{
+				FNameBuilder ItemPath{Context->SelectedItems[0].GetInternalPath()};
+				FStringView PluginName = FPathViews::GetMountPointNameFromPath(ItemPath.ToView());
+				if (TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(PluginName))
+				{
+					AddPluginMenuToContextMenu(InMenu, Plugin, "Section");
+				}
+			}
+		}));
+	}
+	
+	if (UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("ContentBrowser.AssetContextMenu"))
+	{
+		FToolMenuSection& Section = Menu->AddDynamicSection(TEXT("DynamicSection_Plugins"), FNewToolMenuDelegate::CreateLambda([](UToolMenu* InMenu)
+		{
+			UContentBrowserDataMenuContext_FileMenu* Context = InMenu->FindContext<UContentBrowserDataMenuContext_FileMenu>();
+			// Only show the menu if there is a single item selected as most commands don't work nicely for multiple plugins 
+			if (Context->SelectedItems.Num() == 1 && Context->SelectedItems[0].IsInPlugin())
+			{
+				FNameBuilder ItemPath{Context->SelectedItems[0].GetInternalPath()};
+				FStringView PluginName = FPathViews::GetMountPointNameFromPath(ItemPath.ToView());
+				if (TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(PluginName))
+				{
+					AddPluginMenuToContextMenu(InMenu, Plugin, "AssetContextExploreMenuOptions");
+				}
+			}
+		}));
+	}
 }
 
 void FPluginBrowserModule::RegisterPluginTemplate(TSharedRef<FPluginTemplateDescription> Template)
@@ -194,7 +346,10 @@ TSharedRef<SDockTab> FPluginBrowserModule::SpawnPluginCreatorTab(const FSpawnTab
 void FPluginBrowserModule::OnMainFrameLoaded(TSharedPtr<SWindow> InRootWindow, bool bIsRunningStartupDialog)
 {
 	// Show a popup notification that allows the user to enable any new plugins
-	if(!bIsRunningStartupDialog && NewlyInstalledPlugins.Num() > 0 && !PluginBrowserTab.IsValid())
+	if(!bIsRunningStartupDialog 
+		&& NewlyInstalledPlugins.Num() > 0
+		&& !PluginBrowserTab.IsValid()
+		&& FGlobalTabmanager::Get()->GetTabPermissionList()->PassesFilter(PluginsEditorTabName))
 	{
 		FNotificationInfo Info(LOCTEXT("NewPluginsPopupTitle", "New plugins are available"));
 		Info.bFireAndForget = true;

@@ -25,6 +25,8 @@
 #include "WorldPartition/DataLayer/DataLayerManager.h"
 #include "WorldPartition/DataLayer/DataLayerUtils.h"
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
 #include "ScopedTransaction.h"
 
 template <typename ItemType> class STableRow;
@@ -49,6 +51,7 @@ private:
 	EVisibility GetTypeTextVisibility() const;
 	const FSlateBrush* GetIcon() const;
 	FText GetIconTooltip() const;
+	FSlateColor GetIconColor() const;
 	FSlateColor GetForegroundColor() const;
 	bool OnVerifyItemLabelChanged(const FText& InLabel, FText& OutErrorMessage);
 	void OnLabelCommitted(const FText& InLabel, ETextCommit::Type InCommitInfo);
@@ -88,7 +91,7 @@ bool FDataLayerTreeItem::GetVisibility() const
 bool FDataLayerTreeItem::ShouldShowVisibilityState() const
 {
 	const UDataLayerInstance* DataLayerInstancePtr = DataLayerInstance.Get();
-	const AWorldDataLayers* OuterWorldDataLayers = DataLayerInstancePtr ? DataLayerInstancePtr->GetOuterWorldDataLayers() : nullptr;
+	const AWorldDataLayers* OuterWorldDataLayers = DataLayerInstancePtr ? DataLayerInstancePtr->GetDirectOuterWorldDataLayers() : nullptr;
 	const bool bIsSubWorldDataLayers = OuterWorldDataLayers && OuterWorldDataLayers->IsSubWorldDataLayers();
 	return DataLayerInstancePtr && !DataLayerInstancePtr->IsReadOnly() && !bIsSubWorldDataLayers;
 }
@@ -185,7 +188,7 @@ void SDataLayerTreeLabel::Construct(const FArguments& InArgs, FDataLayerTreeItem
 				SNew(SImage)
 				.Image(this, &SDataLayerTreeLabel::GetIcon)
 				.ToolTipText(this, &SDataLayerTreeLabel::GetIconTooltip)
-				.ColorAndOpacity(FSlateColor::UseForeground())
+				.ColorAndOpacity(this, &SDataLayerTreeLabel::GetIconColor)
 			]
 		]
 		+ SHorizontalBox::Slot()
@@ -201,10 +204,21 @@ void SDataLayerTreeLabel::Construct(const FArguments& InArgs, FDataLayerTreeItem
 		.VAlign(VAlign_Center)
 		[
 			SNew(SImage)
-			.Visibility_Lambda([this] { return (DataLayerPtr.IsValid() && DataLayerPtr->IsLocked() && !DataLayerPtr->IsReadOnly() && !DataLayerPtr->GetWorld()->IsPlayInEditor()) ? EVisibility::Visible : EVisibility::Collapsed; })
+			.Visibility_Lambda([this] { return (DataLayerPtr.IsValid() && DataLayerPtr->IsReadOnly() && DataLayerPtr->GetWorld() && !DataLayerPtr->GetWorld()->IsPlayInEditor()) ? EVisibility::Visible : EVisibility::Collapsed; })
 			.ColorAndOpacity(FSlateColor::UseForeground())
 			.Image(FAppStyle::GetBrush(TEXT("PropertyWindow.Locked")))
-			.ToolTipText(LOCTEXT("LockedRuntimeDataLayerEditing", "Locked editing. (To allow editing, in Data Layer Outliner, go to Advanced -> Allow Runtime Data Layer Editing)"))
+			.ToolTipText_Lambda([this]
+			{
+				if (const UDataLayerInstance* DataLayerInstance = DataLayerPtr.Get())
+				{
+					FText Reason;
+					if (DataLayerInstance->IsReadOnly(&Reason))
+					{
+						return FText::Format(LOCTEXT("ReadOnlyDataLayerInstance", "{0}"), Reason);
+					}
+				}
+				return FText::GetEmpty();
+			})
 		]
 	];
 }
@@ -253,7 +267,7 @@ FText SDataLayerTreeLabel::GetDisplayText() const
 	FText SuffixText = FText::GetEmpty();
 	if (!bInEditingMode)
 	{
-		if (DataLayerInstance && DataLayerInstance->IsRuntime() && DataLayerInstance->GetWorld()->IsPlayInEditor())
+		if (DataLayerInstance && DataLayerInstance->IsRuntime() && DataLayerInstance->GetWorld() && DataLayerInstance->GetWorld()->IsPlayInEditor())
 		{
 			SuffixText = FText::Format(LOCTEXT("DataLayerRuntimeState", " ({0})"), FTextStringHelper::CreateFromBuffer(GetDataLayerRuntimeStateName(DataLayerInstance->GetEffectiveRuntimeState())));
 		}
@@ -322,8 +336,26 @@ const FSlateBrush* SDataLayerTreeLabel::GetIcon() const
 
 FText SDataLayerTreeLabel::GetIconTooltip() const
 {
-	const UDataLayerInstance* DataLayer = DataLayerPtr.Get();
-	return DataLayer ? (DataLayer->IsRuntime() ? FText(LOCTEXT("RuntimeDataLayer", "Runtime Data Layer")) : FText(LOCTEXT("EditorDataLayer", "Editor Data Layer"))) : FText();
+	if (const UDataLayerInstance* DataLayerInstance = DataLayerPtr.Get())
+	{
+		if (DataLayerInstance->IsA<UExternalDataLayerInstance>())
+		{
+			return FText(LOCTEXT("ExternalDataLayer", "External Data Layer"));
+		}
+		if (DataLayerInstance->IsRuntime())
+		{
+			return FText(LOCTEXT("RuntimeDataLayer", "Runtime Data Layer"));
+		}
+		return FText(LOCTEXT("EditorDataLayer", "Editor Data Layer"));
+	}
+	return FText();
+}
+
+FSlateColor SDataLayerTreeLabel::GetIconColor() const
+{
+	const UDataLayerInstance* DataLayerInstance = DataLayerPtr.Get();
+	const UExternalDataLayerInstance* ExternalDataLayerInstance = DataLayerInstance ? DataLayerInstance->GetRootExternalDataLayerInstance() : nullptr;
+	return ExternalDataLayerInstance ? UExternalDataLayerAsset::EditorUXColor : FSlateColor::UseForeground();
 }
 
 FSlateColor SDataLayerTreeLabel::GetForegroundColor() const
@@ -334,36 +366,33 @@ FSlateColor SDataLayerTreeLabel::GetForegroundColor() const
 	}
 
 	const UDataLayerInstance* DataLayerInstance = DataLayerPtr.Get();
-	if (DataLayerInstance)
+	if (!DataLayerInstance || !DataLayerInstance->GetWorld())
 	{
-		if (DataLayerInstance->GetWorld()->IsPlayInEditor())
+		return FLinearColor(0.2f, 0.2f, 0.25f);
+	}
+	if (DataLayerInstance->GetWorld()->IsPlayInEditor())
+	{
+		if (DataLayerInstance->IsRuntime())
 		{
-			if (DataLayerInstance->IsRuntime())
+			EDataLayerRuntimeState State = DataLayerInstance->GetEffectiveRuntimeState();
+			switch (State)
 			{
-				EDataLayerRuntimeState State = DataLayerInstance->GetEffectiveRuntimeState();
-				switch (State)
-				{
-				case EDataLayerRuntimeState::Activated:
-					return FColorList::LimeGreen;
-				case EDataLayerRuntimeState::Loaded:
-					return FColorList::NeonBlue;
-				case EDataLayerRuntimeState::Unloaded:
-					return FColorList::DarkSlateGrey;
-				}
-			}
-			else
-			{
-				return FSceneOutlinerCommonLabelData::DarkColor;
+			case EDataLayerRuntimeState::Activated:
+				return FColorList::LimeGreen;
+			case EDataLayerRuntimeState::Loaded:
+				return FColorList::NeonBlue;
+			case EDataLayerRuntimeState::Unloaded:
+				return FColorList::DarkSlateGrey;
 			}
 		}
-		else if (DataLayerInstance->IsLocked())
+		else
 		{
 			return FSceneOutlinerCommonLabelData::DarkColor;
 		}
 	}
-	if (!DataLayerInstance || !DataLayerInstance->GetWorld())
+	else if (DataLayerInstance->IsReadOnly())
 	{
-		return FLinearColor(0.2f, 0.2f, 0.25f);
+		return FSceneOutlinerCommonLabelData::DarkColor;
 	}
 	if (IsInActorEditorContext())
 	{

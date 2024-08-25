@@ -12,7 +12,33 @@
 #include "CableComponentStats.h"
 #include "DynamicMeshBuilder.h"
 #include "StaticMeshResources.h"
+#include "RayTracingInstance.h"
 #include "SceneInterface.h"
+
+DEFINE_RENDER_COMMAND_PIPE(Cable, ERenderCommandPipeFlags::None);
+
+static TAutoConsoleVariable<int32> CVarRayTracingCableMeshes(
+	TEXT("r.RayTracing.Geometry.Cable"),
+	1,
+	TEXT("Include Cable meshes in ray tracing effects (default = 1 (cable meshes enabled in ray tracing))"));
+
+static TAutoConsoleVariable<int32> CVarRayTracingCableMeshesWPO(
+	TEXT("r.RayTracing.Geometry.Cable.WPO"),
+	1,
+	TEXT("World position offset evaluation for cable meshes with EvaluateWPO enabled in ray tracing effects.\n")
+	TEXT(" 0: Cable meshes with world position offset visible in ray tracing, WPO evaluation disabled.\n")
+	TEXT(" 1: Cable meshes with world position offset visible in ray tracing, WPO evaluation enabled (default).\n")
+);
+
+static TAutoConsoleVariable<int32> CVarRayTracingCableMeshesWPOCulling(
+	TEXT("r.RayTracing.Geometry.Cable.WPO.Culling"),
+	1,
+	TEXT("Enable culling for WPO evaluation for cable meshes in ray tracing (default = 1 (Culling enabled))"));
+
+static TAutoConsoleVariable<float> CVarRayTracingCableMeshesWPOCullingRadius(
+	TEXT("r.RayTracing.Geometry.Cable.WPO.CullingRadius"),
+	12000.0f, // 120 m
+	TEXT("Do not evaluate world position offset for cable meshes outside of this radius in ray tracing effects (default = 12000 (120m))"));
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CableComponent)
 
@@ -68,12 +94,9 @@ public:
 		, NumSides(Component->NumSides)
 		, TileMaterial(Component->TileMaterial)
 	{
-		VertexBuffers.InitWithDummyData(&VertexFactory, GetRequiredVertexCount());
+		VertexBuffers.InitWithDummyData(&UE::RenderCommandPipe::Cable, &VertexFactory, GetRequiredVertexCount());
 
 		IndexBuffer.NumIndices = GetRequiredIndexCount();
-
-		// Enqueue initialization of render resource
-		BeginInitResource(&IndexBuffer);
 
 		// Grab material
 		Material = Component->GetMaterial(0);
@@ -81,6 +104,46 @@ public:
 		{
 			Material = UMaterial::GetDefaultMaterial(MD_Surface);
 		}
+
+#if RHI_RAYTRACING
+		bSupportRayTracing = IsRayTracingEnabled();
+		bDynamicRayTracingGeometry = false;
+		bNeedsDynamicRayTracingGeometries = false;
+		
+		bNeedsToUpdateRayTracingCache = true;
+
+		if (IsRayTracingAllowed() && bSupportRayTracing)
+		{
+			const bool bWantsRayTracingWPO = MaterialRelevance.bUsesWorldPositionOffset;
+
+			if (bWantsRayTracingWPO)
+			{
+				bDynamicRayTracingGeometry = true;
+				bNeedsDynamicRayTracingGeometries = true;
+			}
+		}
+#endif
+
+		ENQUEUE_RENDER_COMMAND(InitCableResources)(UE::RenderCommandPipe::Cable,
+			[this] (FRHICommandList& RHICmdList)
+		{
+			IndexBuffer.InitResource(RHICmdList);
+
+#if RHI_RAYTRACING
+
+			if (bSupportRayTracing)
+			{
+				FRayTracingGeometry& RayTracingGeometry = StaticRayTracingGeometry;
+				UpdateRayTracingGeometry_RenderingThread(RayTracingGeometry, RHICmdList);
+			}
+
+			if (IsRayTracingAllowed() && bNeedsDynamicRayTracingGeometries)
+			{
+				check(bDynamicRayTracingGeometry);
+				CreateDynamicRayTracingGeometries(RHICmdList);
+			}
+#endif
+		});
 	}
 
 	virtual ~FCableSceneProxy()
@@ -90,6 +153,11 @@ public:
 		VertexBuffers.ColorVertexBuffer.ReleaseResource();
 		IndexBuffer.ReleaseResource();
 		VertexFactory.ReleaseResource();
+
+#if RHI_RAYTRACING
+		StaticRayTracingGeometry.ReleaseResource();
+		DynamicRayTracingGeometry.ReleaseResource();
+#endif
 	}
 
 	int32 GetRequiredVertexCount() const
@@ -229,8 +297,48 @@ public:
 			FMemory::Memcpy(IndexBufferData, &Indices[0], Indices.Num() * sizeof(int32));
 			RHICmdList.UnlockBuffer(IndexBuffer.IndexBufferRHI);
 
+#if RHI_RAYTRACING
+			if (bSupportRayTracing && CVarRayTracingCableMeshes.GetValueOnRenderThread() != 0)
+			{
+				FRayTracingGeometry& RayTracingGeometry = StaticRayTracingGeometry;
+				if (RayTracingGeometry.IsValid())
+				{
+					RayTracingGeometry.ReleaseResource();
+					UpdateRayTracingGeometry_RenderingThread(RayTracingGeometry, RHICmdList);
+					bNeedsToUpdateRayTracingCache = true;
+				}
+			}
+#endif
+
 			delete NewDynamicData;
 			NewDynamicData = NULL;
+		}
+	}
+
+	virtual void DrawStaticElements(FStaticPrimitiveDrawInterface* PDI) override
+	{
+		checkSlow(IsInParallelRenderingThread());
+
+		if (!HasViewDependentDPG())
+		{
+			FMeshBatch Mesh;
+			Mesh.VertexFactory = &VertexFactory;
+			Mesh.MaterialRenderProxy = Material->GetRenderProxy();
+			Mesh.ReverseCulling = IsLocalToWorldDeterminantNegative();
+			Mesh.Type = PT_TriangleList;
+			Mesh.DepthPriorityGroup = SDPG_World;
+			Mesh.MeshIdInPrimitive = 0;
+			Mesh.LODIndex = 0;
+			Mesh.SegmentIndex = 0;
+
+			FMeshBatchElement& BatchElement = Mesh.Elements[0];
+			BatchElement.IndexBuffer = &IndexBuffer;
+			BatchElement.FirstIndex = 0;
+			BatchElement.NumPrimitives = GetRequiredIndexCount() / 3;
+			BatchElement.MinVertexIndex = 0;
+			BatchElement.MaxVertexIndex = GetRequiredVertexCount();
+
+			PDI->DrawMesh(Mesh, FLT_MAX);
 		}
 	}
 
@@ -278,7 +386,7 @@ public:
 				bOutputVelocity |= AlwaysHasVelocity();
 
 				FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Collector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-				DynamicPrimitiveUniformBuffer.Set(GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), true, bHasPrecomputedVolumetricLightmap, bOutputVelocity);
+				DynamicPrimitiveUniformBuffer.Set(Collector.GetRHICommandList(), GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), true, bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
 				BatchElement.PrimitiveUniformBufferResource = &DynamicPrimitiveUniformBuffer.UniformBuffer;
 
 				BatchElement.FirstIndex = 0;
@@ -308,7 +416,35 @@ public:
 		Result.bRenderInMainPass = ShouldRenderInMainPass();
 		Result.bUsesLightingChannels = GetLightingChannelMask() != GetDefaultLightingChannelMask();
 		Result.bTranslucentSelfShadow = bCastVolumetricTranslucentShadow;
-		Result.bDynamicRelevance = true;
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
+		if (
+#if !(UE_BUILD_SHIPPING) || WITH_EDITOR
+			IsRichView(*View->Family) ||
+			View->Family->EngineShowFlags.Collision ||
+			View->Family->EngineShowFlags.Bounds ||
+			View->Family->EngineShowFlags.VisualizeInstanceUpdates ||
+#endif
+#if WITH_EDITOR
+			(IsSelected() && View->Family->EngineShowFlags.VertexColors) ||
+			(IsSelected() && View->Family->EngineShowFlags.PhysicalMaterialMasks) ||
+#endif
+			// Force down dynamic rendering path if invalid lightmap settings, so we can apply an error material in DrawRichMesh
+			(bAllowStaticLighting && HasStaticLighting() && !HasValidSettingsForStaticLighting()) ||
+			HasViewDependentDPG()
+			)
+		{
+			Result.bDynamicRelevance = true;
+		}
+		else
+		{
+			Result.bStaticRelevance = true;
+
+#if WITH_EDITOR
+			//only check these in the editor
+			Result.bEditorVisualizeLevelInstanceRelevance = IsEditingLevelInstanceChild();
+			Result.bEditorStaticSelectionRelevance = (IsSelected() || IsHovered());
+#endif
+		}
 
 		MaterialRelevance.SetPrimitiveViewRelevance(Result);
 
@@ -320,6 +456,161 @@ public:
 	virtual uint32 GetMemoryFootprint( void ) const override { return( sizeof( *this ) + GetAllocatedSize() ); }
 
 	uint32 GetAllocatedSize( void ) const { return( FPrimitiveSceneProxy::GetAllocatedSize() ); }
+
+#if RHI_RAYTRACING
+	virtual void GetDynamicRayTracingInstances(FRayTracingMaterialGatheringContext& Context, TArray<FRayTracingInstance>& OutRayTracingInstances) override
+	{
+		if (CVarRayTracingCableMeshes.GetValueOnRenderThread() == 0)
+		{
+			return;
+		}
+
+		if (!ensureMsgf(IsRayTracingRelevant(),
+			TEXT("GetDynamicRayTracingInstances() is only expected to be called for scene proxies that are compatible with ray tracing. ")
+			TEXT("RT-relevant primitive gathering code in FDeferredShadingSceneRenderer may be wrong.")))
+		{
+			return;
+		}
+
+		bool bEvaluateWPO = bDynamicRayTracingGeometry && CVarRayTracingCableMeshesWPO.GetValueOnRenderThread() == 1;
+		
+		if (bEvaluateWPO && CVarRayTracingCableMeshesWPOCulling.GetValueOnRenderThread() > 0)
+		{
+			const FVector ViewCenter = Context.ReferenceView->ViewMatrices.GetViewOrigin();
+			const FVector MeshCenter = GetBounds().Origin;
+			const float CullingRadius = CVarRayTracingCableMeshesWPOCullingRadius.GetValueOnRenderThread();
+			const float BoundingRadius = GetBounds().SphereRadius;
+
+			if (FVector(ViewCenter - MeshCenter).Size() > (CullingRadius + BoundingRadius))
+			{
+				bEvaluateWPO = false;
+			}
+		}
+		
+		if (!bEvaluateWPO)
+		{
+			if (!StaticRayTracingGeometry.IsValid())
+			{
+				return;
+			}
+		}
+
+		FRayTracingGeometry& Geometry = bEvaluateWPO ? DynamicRayTracingGeometry : StaticRayTracingGeometry;
+
+		if (Geometry.Initializer.TotalPrimitiveCount <= 0)
+		{
+			return;
+		}
+
+		FRayTracingInstance& RayTracingInstance = OutRayTracingInstances.AddDefaulted_GetRef();
+
+		const int32 NumRayTracingMaterialEntries = 1;
+
+		if (bNeedsToUpdateRayTracingCache)
+		{
+			CachedRayTracingMaterials.Reset();
+			CachedRayTracingMaterials.Reserve(NumRayTracingMaterialEntries);
+
+			FMeshBatch& MeshBatch = CachedRayTracingMaterials.AddDefaulted_GetRef();
+
+			MeshBatch.VertexFactory = &VertexFactory;
+			MeshBatch.MaterialRenderProxy = Material->GetRenderProxy();
+			MeshBatch.SegmentIndex = 0;
+			MeshBatch.ReverseCulling = IsLocalToWorldDeterminantNegative();
+			MeshBatch.Type = PT_TriangleList;
+			MeshBatch.DepthPriorityGroup = SDPG_World;
+			MeshBatch.bCanApplyViewModeOverrides = false;
+			MeshBatch.CastRayTracedShadow = IsShadowCast(Context.ReferenceView);
+			MeshBatch.DepthPriorityGroup = GetStaticDepthPriorityGroup();
+
+			FMeshBatchElement& BatchElement = MeshBatch.Elements[0];
+			BatchElement.IndexBuffer = &IndexBuffer;
+
+			bool bHasPrecomputedVolumetricLightmap;
+			FMatrix PreviousLocalToWorld;
+			int32 SingleCaptureIndex;
+			bool bOutputVelocity;
+			GetScene().GetPrimitiveUniformShaderParameters_RenderThread(GetPrimitiveSceneInfo(), bHasPrecomputedVolumetricLightmap, PreviousLocalToWorld, SingleCaptureIndex, bOutputVelocity);
+			bOutputVelocity |= AlwaysHasVelocity();
+
+			FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Context.RayTracingMeshResourceCollector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
+			DynamicPrimitiveUniformBuffer.Set(Context.RHICmdList, GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), ReceivesDecals(), bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
+			BatchElement.PrimitiveUniformBufferResource = &DynamicPrimitiveUniformBuffer.UniformBuffer;
+			BatchElement.FirstIndex = 0;
+			BatchElement.NumPrimitives = GetRequiredIndexCount() / 3;
+			BatchElement.MinVertexIndex = 0;
+			BatchElement.MaxVertexIndex = GetRequiredVertexCount();
+
+
+			RayTracingInstance.MaterialsView = MakeArrayView(CachedRayTracingMaterials);
+			bNeedsToUpdateRayTracingCache = false;
+		}
+		else
+		{
+			RayTracingInstance.MaterialsView = MakeArrayView(CachedRayTracingMaterials);
+
+			// Skip computing the mask and flags in the renderer since we are using cached values.
+			RayTracingInstance.bInstanceMaskAndFlagsDirty = false;
+		}
+
+		RayTracingInstance.Geometry = &Geometry;
+		const FMatrix& ThisLocalToWorld = GetLocalToWorld();
+		RayTracingInstance.InstanceTransformsView = MakeArrayView(&ThisLocalToWorld, 1);
+
+		if (bEvaluateWPO && VertexFactory.GetType()->SupportsRayTracingDynamicGeometry())
+		{
+			// Use the shared vertex buffer - needs to be updated every frame
+			FRWBuffer* VertexBuffer = nullptr;
+
+			const uint32 VertexCount = VertexBuffers.PositionVertexBuffer.GetNumVertices() + 1;
+
+			Context.DynamicRayTracingGeometriesToUpdate.Add(
+				FRayTracingDynamicGeometryUpdateParams
+				{
+					CachedRayTracingMaterials, // TODO: this copy can be avoided if FRayTracingDynamicGeometryUpdateParams supported array views
+					false,
+					(uint32)VertexCount,
+					uint32((SIZE_T)VertexCount * sizeof(FVector3f)),
+					Geometry.Initializer.TotalPrimitiveCount,
+					&Geometry,
+					VertexBuffer,
+					true
+				}
+			);
+		}
+
+		check(CachedRayTracingMaterials.Num() == RayTracingInstance.GetMaterials().Num());
+		checkf(RayTracingInstance.Geometry->Initializer.Segments.Num() == CachedRayTracingMaterials.Num(), TEXT("Segments/Materials mismatch. Number of segments: %d. Number of Materials: %d."),
+			RayTracingInstance.Geometry->Initializer.Segments.Num(),
+			CachedRayTracingMaterials.Num());
+	}
+
+	virtual bool HasRayTracingRepresentation() const override { return bSupportRayTracing; }
+	virtual bool IsRayTracingRelevant() const override { return true; }
+	virtual bool IsRayTracingStaticRelevant() const override { return false; }
+
+	void UpdateRayTracingGeometry_RenderingThread(FRayTracingGeometry& RayTracingGeometry, FRHICommandListBase& RHICmdList)
+	{
+		FRayTracingGeometryInitializer Initializer;
+		static const FName DebugName("FCableSceneProxy");
+		static int32 DebugNumber = 0;
+		Initializer.DebugName = FDebugName(DebugName, DebugNumber++);
+		Initializer.IndexBuffer = IndexBuffer.IndexBufferRHI;
+		Initializer.TotalPrimitiveCount = IndexBuffer.NumIndices / 3;
+		Initializer.GeometryType = RTGT_Triangles;
+		Initializer.bFastBuild = true;
+		Initializer.bAllowUpdate = false;
+
+		FRayTracingGeometrySegment Segment;
+		Segment.VertexBuffer = VertexBuffers.PositionVertexBuffer.VertexBufferRHI;
+		Segment.NumPrimitives = Initializer.TotalPrimitiveCount;
+		Segment.MaxVertices = VertexBuffers.PositionVertexBuffer.GetNumVertices();
+		Initializer.Segments.Add(Segment);
+
+		RayTracingGeometry.SetInitializer(Initializer);
+		RayTracingGeometry.InitResource(RHICmdList);
+	}
+#endif
 
 private:
 
@@ -337,6 +628,32 @@ private:
 	int32 NumSides;
 
 	float TileMaterial;
+
+#if RHI_RAYTRACING
+	void CreateDynamicRayTracingGeometries(FRHICommandListBase& RHICmdList)
+	{
+		FRayTracingGeometryInitializer Initializer = StaticRayTracingGeometry.Initializer;
+		for (FRayTracingGeometrySegment& Segment : Initializer.Segments)
+		{
+			Segment.VertexBuffer = nullptr;
+		}
+		Initializer.bAllowUpdate = true;
+		Initializer.bFastBuild = true;
+		Initializer.Type = ERayTracingGeometryInitializerType::Rendering;
+
+		DynamicRayTracingGeometry.SetInitializer(MoveTemp(Initializer));
+		DynamicRayTracingGeometry.InitResource(RHICmdList);
+	}
+
+	bool bSupportRayTracing : 1;
+	bool bDynamicRayTracingGeometry : 1;
+	bool bNeedsDynamicRayTracingGeometries : 1;
+	bool bNeedsToUpdateRayTracingCache : 1;
+
+	FRayTracingGeometry StaticRayTracingGeometry;
+	FRayTracingGeometry DynamicRayTracingGeometry;
+	TArray<FMeshBatch> CachedRayTracingMaterials;
+#endif
 };
 
 
@@ -364,10 +681,6 @@ UCableComponent::UCableComponent( const FObjectInitializer& ObjectInitializer )
 	CableGravityScale = 1.f;
 
 	SetCollisionProfileName(UCollisionProfile::PhysicsActor_ProfileName);
-
-#if WITH_EDITOR
-	bWantsOnUpdateTransform = true;
-#endif
 }
 
 FPrimitiveSceneProxy* UCableComponent::CreateSceneProxy()
@@ -383,19 +696,29 @@ int32 UCableComponent::GetNumMaterials() const
 void UCableComponent::OnRegister()
 {
 	Super::OnRegister();
-	
-	InitParticles();
-}
 
-#if WITH_EDITOR
-void UCableComponent::OnUpdateTransform(EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport)
-{
-	Super::OnUpdateTransform(UpdateTransformFlags, Teleport);
+	const int32 NumParticles = NumSegments+1;
 
-	InitParticles();
-	UpdateBounds();
+	Particles.Reset();
+	Particles.AddUninitialized(NumParticles);
+
+	FVector CableStart, CableEnd;
+	GetEndPositions(CableStart, CableEnd);
+
+	const FVector Delta = CableEnd - CableStart;
+
+	for(int32 ParticleIdx=0; ParticleIdx<NumParticles; ParticleIdx++)
+	{
+		FCableParticle& Particle = Particles[ParticleIdx];
+
+		const float Alpha = (float)ParticleIdx/(float)NumSegments;
+		const FVector InitialPosition = CableStart + (Alpha * Delta);
+
+		Particle.Position = InitialPosition;
+		Particle.OldPosition = InitialPosition;
+		Particle.bFree = true; // default to free, will be fixed if desired in TickComponent
+	}
 }
-#endif
 
 void UCableComponent::VerletIntegrate(float InSubstepTime, const FVector& Gravity)
 {
@@ -449,31 +772,6 @@ static FORCEINLINE void SolveDistanceConstraint(FCableParticle& ParticleA, FCabl
 	else if(ParticleB.bFree)
 	{
 		ParticleB.Position -= VectorCorrection;
-	}
-}
-
-void UCableComponent::InitParticles()
-{
-	const int32 NumParticles = NumSegments+1;
-
-	Particles.Reset();
-	Particles.AddUninitialized(NumParticles);
-
-	FVector CableStart, CableEnd;
-	GetEndPositions(CableStart, CableEnd);
-
-	const FVector Delta = CableEnd - CableStart;
-
-	for(int32 ParticleIdx=0; ParticleIdx<NumParticles; ParticleIdx++)
-	{
-		FCableParticle& Particle = Particles[ParticleIdx];
-
-		const float Alpha = (float)ParticleIdx/(float)NumSegments;
-		const FVector InitialPosition = CableStart + (Alpha * Delta);
-
-		Particle.Position = InitialPosition;
-		Particle.OldPosition = InitialPosition;
-		Particle.bFree = true; // default to free, will be fixed if desired in TickComponent
 	}
 }
 
@@ -727,7 +1025,7 @@ void UCableComponent::CreateRenderState_Concurrent(FRegisterComponentContext* Co
 {
 	Super::CreateRenderState_Concurrent(Context);
 
-	SendRenderDynamicData_Concurrent();
+	FRegisterComponentContext::SendRenderDynamicData(Context, this);
 }
 
 void UCableComponent::ApplyWorldOffset(const FVector & InOffset, bool bWorldShift)
@@ -759,8 +1057,8 @@ void UCableComponent::SendRenderDynamicData_Concurrent()
 
 		// Enqueue command to send to render thread
 		FCableSceneProxy* CableSceneProxy = (FCableSceneProxy*)SceneProxy;
-		ENQUEUE_RENDER_COMMAND(FSendCableDynamicData)(
-			[CableSceneProxy, DynamicData](FRHICommandListImmediate& RHICmdList)
+		ENQUEUE_RENDER_COMMAND(FSendCableDynamicData)(UE::RenderCommandPipe::Cable,
+			[CableSceneProxy, DynamicData](FRHICommandListBase& RHICmdList)
 		{
 			CableSceneProxy->SetDynamicData_RenderThread(RHICmdList, DynamicData);
 		});

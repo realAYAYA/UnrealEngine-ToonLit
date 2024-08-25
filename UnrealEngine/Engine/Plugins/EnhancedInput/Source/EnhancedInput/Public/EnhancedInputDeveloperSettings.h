@@ -25,6 +25,14 @@ struct FDefaultContextSetting
 	/** The prioirty that should be given to this mapping context when it is added */
 	UPROPERTY(EditAnywhere, Config, Category = "Input")
 	int32 Priority = 0;
+
+	/** If true, then this IMC will be applied immediately when the EI subsystem is ready */
+	UPROPERTY(EditAnywhere, Config, Category = "Input")
+	bool bAddImmediately = true;
+	
+	/** If true, then this IMC will be registered with the User Input Settings (if one is available) immediately when the Enhanced Input subsystem starts. */
+	UPROPERTY(EditAnywhere, Config, Category = "Input")
+	bool bRegisterWithUserSettings = false;
 };
 
 /** Developer settings for Enhanced Input */

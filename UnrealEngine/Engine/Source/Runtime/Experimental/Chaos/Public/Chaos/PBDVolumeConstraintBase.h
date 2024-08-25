@@ -20,15 +20,15 @@ class FPBDVolumeConstraintBase
 		FSolverVec3 Com = FSolverVec3(0.);
 		for (uint32 i = 0; i < InParticles.Size(); ++i)
 		{
-			Com += InParticles.X(i);
+			Com += InParticles.GetX(i);
 		}
 		Com /= (FSolverReal)InParticles.Size();
 		RefVolume = (FSolverReal)0.;
 		for (const TVec3<int32>& Constraint : Constraints)
 		{
-			const FSolverVec3& P1 = InParticles.X(Constraint[0]);
-			const FSolverVec3& P2 = InParticles.X(Constraint[1]);
-			const FSolverVec3& P3 = InParticles.X(Constraint[2]);
+			const FSolverVec3& P1 = InParticles.GetX(Constraint[0]);
+			const FSolverVec3& P2 = InParticles.GetX(Constraint[1]);
+			const FSolverVec3& P3 = InParticles.GetX(Constraint[2]);
 			RefVolume += GetVolume(P1, P2, P3, Com);
 		}
 		RefVolume /= (FSolverReal)9.;
@@ -44,11 +44,11 @@ class FPBDVolumeConstraintBase
 		FSolverReal WlDenom = (FSolverReal)0.;
 		for (uint32 i = 0; i < InParticles.Size(); ++i)
 		{
-			WlDenom += (InParticles.P(i) - InParticles.X(i)).Size();
+			WlDenom += (InParticles.P(i) - InParticles.GetX(i)).Size();
 		}
 		for (uint32 i = 0; i < InParticles.Size(); ++i)
 		{
-			const FSolverReal Wl = (InParticles.P(i) - InParticles.X(i)).Size() / WlDenom;
+			const FSolverReal Wl = (InParticles.P(i) - InParticles.GetX(i)).Size() / WlDenom;
 			W[i] = OneMinusAlpha * Wl + Alpha * Wg;
 		}
 		return W;

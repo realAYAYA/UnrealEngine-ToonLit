@@ -63,6 +63,7 @@
 #include "Insights/ViewModels/RegionsTimingTrack.h"
 #include "Insights/ViewModels/ThreadTimingTrack.h"
 #include "Insights/ViewModels/TimeFilterValueConverter.h"
+#include "Insights/ViewModels/TimerFilters.h"
 #include "Insights/ViewModels/TimeRulerTrack.h"
 #include "Insights/ViewModels/TimingEventSearch.h"
 #include "Insights/ViewModels/TimingGraphTrack.h"
@@ -73,9 +74,9 @@
 #include "Insights/Widgets/STimingProfilerWindow.h"
 #include "Insights/Widgets/STimingViewTrackList.h"
 #include "Insights/Widgets/SQuickFind.h"
+#include "Insights/ViewModels/ThreadTrackEvent.h"
 
 #include <limits>
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -83,7 +84,7 @@
 
 #define INSIGHTS_ACTIVATE_BENCHMARK 0
 
-// start auto generated ids from a big number (MSB set to 1) to avoid collisions with ids for gpu/cpu tracks based on 32bit timeline index
+// start auto generated ids from a big number (MSB set to 1) to avoid collisions with ids for GPU/CPU tracks based on 32bit timeline index
 uint64 FBaseTimingTrack::IdGenerator = (1ULL << 63);
 
 uint32 STimingView::TimingViewId = 0;
@@ -105,7 +106,6 @@ STimingView::STimingView()
 	, TimeRulerTrack(MakeShared<FTimeRulerTrack>())
 	, DefaultTimeMarker(MakeShared<Insights::FTimeMarker>())
 	, MarkersTrack(MakeShared<FMarkersTimingTrack>())
-	, GraphTrack(MakeShared<FTimingGraphTrack>())
 	, bAllowPanningOnScreenEdges(false)
 	, DPIScaleFactor(1.0f)
 	, EdgeFrameCountX(0)
@@ -117,7 +117,6 @@ STimingView::STimingView()
 	DefaultTimeMarker->SetName(TEXT(""));
 	DefaultTimeMarker->SetColor(FLinearColor(0.85f, 0.5f, 0.03f, 0.5f));
 
-	GraphTrack->SetName(TEXT("Main Graph"));
 
 	IModularFeatures::Get().RegisterModularFeature(Insights::TimingViewExtenderFeatureName, FrameSharedState.Get());
 	IModularFeatures::Get().RegisterModularFeature(Insights::TimingViewExtenderFeatureName, ThreadTimingSharedState.Get());
@@ -158,6 +157,9 @@ STimingView::~STimingView()
 void STimingView::Construct(const FArguments& InArgs, FName InViewName)
 {
 	ViewName = InViewName;
+
+	GraphTrack = MakeShared<FTimingGraphTrack>(SharedThis(this));
+	GraphTrack->SetName(TEXT("Main Graph"));
 
 	FSlimHorizontalToolBarBuilder LeftToolbar(nullptr, FMultiBoxCustomization::None);
 	LeftToolbar.SetStyle(&FInsightsStyle::Get(), "SecondaryToolbar");
@@ -529,6 +531,8 @@ void STimingView::Tick(const FGeometry& AllottedGeometry, const double InCurrent
 	TickStopwatch.Start();
 
 	LLM_SCOPE_BYTAG(Insights);
+
+	UpdateFilters();
 
 	ThisGeometry = AllottedGeometry;
 
@@ -1083,6 +1087,16 @@ void STimingView::Tick(const FGeometry& AllottedGeometry, const double InCurrent
 
 	Viewport.ResetDirtyFlags();
 
+	if (bBringSelectedEventIntoViewVerticallyOnNextTick && SelectedEvent.IsValid())
+	{
+		if (SelectedEvent->GetTrack()->GetLocation() == ETimingTrackLocation::Scrollable)
+		{
+			BringScrollableTrackIntoView(*SelectedEvent->GetTrack());
+		}
+	}
+
+	bBringSelectedEventIntoViewVerticallyOnNextTick = false;
+
 	TickStopwatch.Stop();
 	TickDurationHistory.AddValue(TickStopwatch.AccumulatedTime);
 }
@@ -1498,7 +1512,7 @@ int32 STimingView::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 		for (int32 LineIndex = 0; LineIndex < OverscrollLineCount; ++LineIndex)
 		{
 			const float Opacity = OverscrollLeft * static_cast<float>(OverscrollLineCount - LineIndex) / static_cast<float>(OverscrollLineCount);
-			DrawContext.DrawBox(LineIndex * OverscrollLineSize, OverscrollLineY, OverscrollLineSize, OverscrollLineH, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
+			DrawContext.DrawBox(static_cast<float>(LineIndex) * OverscrollLineSize, OverscrollLineY, OverscrollLineSize, OverscrollLineH, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
 		}
 	}
 	if (OverscrollRight > 0.0f)
@@ -1508,7 +1522,7 @@ int32 STimingView::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 		for (int32 LineIndex = 0; LineIndex < OverscrollLineCount; ++LineIndex)
 		{
 			const float Opacity = OverscrollRight * static_cast<float>(OverscrollLineCount - LineIndex) / static_cast<float>(OverscrollLineCount);
-			DrawContext.DrawBox(ViewWidth - (1 + LineIndex) * OverscrollLineSize, OverscrollLineY, OverscrollLineSize, OverscrollLineH, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
+			DrawContext.DrawBox(ViewWidth - static_cast<float>(1 + LineIndex) * OverscrollLineSize, OverscrollLineY, OverscrollLineSize, OverscrollLineH, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
 		}
 	}
 	if (OverscrollTop > 0.0f)
@@ -1517,7 +1531,7 @@ int32 STimingView::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 		for (int32 LineIndex = 0; LineIndex < OverscrollLineCount; ++LineIndex)
 		{
 			const float Opacity = OverscrollTop * static_cast<float>(OverscrollLineCount - LineIndex) / static_cast<float>(OverscrollLineCount);
-			DrawContext.DrawBox(0.0f, OverscrollLineY + LineIndex * OverscrollLineSize, ViewWidth, OverscrollLineSize, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
+			DrawContext.DrawBox(0.0f, OverscrollLineY + static_cast<float>(LineIndex) * OverscrollLineSize, ViewWidth, OverscrollLineSize, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
 		}
 	}
 	if (OverscrollBottom > 0.0f)
@@ -1526,7 +1540,7 @@ int32 STimingView::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 		for (int32 LineIndex = 0; LineIndex < OverscrollLineCount; ++LineIndex)
 		{
 			const float Opacity = OverscrollBottom * static_cast<float>(OverscrollLineCount - LineIndex) / static_cast<float>(OverscrollLineCount);
-			DrawContext.DrawBox(0.0f, OverscrollLineY - (1 + LineIndex) * OverscrollLineSize, ViewWidth, OverscrollLineSize, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
+			DrawContext.DrawBox(0.0f, OverscrollLineY - static_cast<float>(1 + LineIndex) * OverscrollLineSize, ViewWidth, OverscrollLineSize, WhiteBrush, FLinearColor(1.0f, 0.1f, 0.1f, Opacity));
 		}
 	}
 
@@ -1541,7 +1555,7 @@ int32 STimingView::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 		const float DbgDY = MaxFontCharHeight;
 
 		const float DbgW = 320.0f;
-		const float DbgH = DbgDY * 9 + 3.0f;
+		const float DbgH = DbgDY * 9.0f + 3.0f;
 		const float DbgX = ViewWidth - DbgW - 20.0f;
 		float DbgY = Viewport.GetPosY() + Viewport.GetTopOffset() + 10.0f;
 
@@ -2175,6 +2189,11 @@ FReply STimingView::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerE
 				// Select the hovered timing event (if any).
 				SelectHoveredTimingTrack();
 				SelectHoveredTimingEvent();
+
+				if (MouseEvent.GetModifierKeys().IsShiftDown())
+				{
+					ToggleGraphSeries(HoveredEvent);
+				}
 
 				// When clicking on an empty space...
 				if (!SelectedEvent.IsValid())
@@ -3445,7 +3464,7 @@ void STimingView::SelectTimeInterval(double IntervalStartTime, double IntervalDu
 	SelectionStartTime = IntervalStartTime;
 	SelectionEndTime = IntervalStartTime + IntervalDuration;
 
-	if (GetFrameTypeToSnapTo() != ETraceFrameType::TraceFrameType_Count)
+	if (GetFrameTypeToSnapTo() != ETraceFrameType::TraceFrameType_Count && IsInTimingProfiler())
 	{
 		SnapToFrameBound(SelectionStartTime, SelectionEndTime);
 	}
@@ -3820,7 +3839,7 @@ void STimingView::SelectHoveredTimingTrack()
 
 void STimingView::SelectHoveredTimingEvent()
 {
-	SelectTimingEvent(HoveredEvent, true);
+	SelectTimingEvent(HoveredEvent, true, false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3854,7 +3873,7 @@ void STimingView::SelectTimingTrack(const TSharedPtr<FBaseTimingTrack> InTrack, 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void STimingView::SelectTimingEvent(const TSharedPtr<const ITimingEvent> InEvent, bool bBringEventIntoView)
+void STimingView::SelectTimingEvent(const TSharedPtr<const ITimingEvent> InEvent, bool bBringEventIntoViewHorizontally, bool bBringEventIntoViewVertically)
 {
 	if (SelectedEvent != InEvent)
 	{
@@ -3863,13 +3882,31 @@ void STimingView::SelectTimingEvent(const TSharedPtr<const ITimingEvent> InEvent
 		if (SelectedEvent.IsValid())
 		{
 			LastSelectionType = ESelectionType::TimingEvent;
-			if (bBringEventIntoView)
+			if (bBringEventIntoViewHorizontally)
 			{
 				BringIntoView(SelectedEvent->GetStartTime(), SelectedEvent->GetEndTime());
+			}
+			if (bBringEventIntoViewVertically)
+			{
+				bBringSelectedEventIntoViewVerticallyOnNextTick = true;
+				// We need the layout to be calculated in one frame, no animations, otherwise the event might not be in view at the end of the animation.
+				Viewport.AddDirtyFlags(ETimingTrackViewportDirtyFlags::VLayoutChanged);
 			}
 		}
 
 		OnSelectedTimingEventChanged();
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimingView::ToggleGraphSeries(const TSharedPtr<const ITimingEvent> InEvent)
+{
+	if(InEvent.Get() && InEvent.Get()->Is<FThreadTrackEvent>() && IsInTimingProfiler())
+	{
+		const FThreadTrackEvent& TrackEvent = InEvent.Get()->As<FThreadTrackEvent>();
+
+		FTimingProfilerManager::Get()->ToggleTimingViewMainGraphEventSeries(TrackEvent.GetTimerId());
 	}
 }
 
@@ -4161,13 +4198,13 @@ TSharedRef<SWidget> STimingView::MakeCompactAutoScrollOptionsMenu()
 			.Value_Lambda([this] { return AutoScrollFrameAlignment; })
 			+ SSegmentedControl<int32>::Slot(-1)
 			.Text(LOCTEXT("None", "None"))
-			.ToolTip(LOCTEXT("AutoScrollNoFrameAlignment_Tooltip", "Disables the frame alignment (when autoscrolling)."))
+			.ToolTip(LOCTEXT("AutoScrollNoFrameAlignment_Tooltip", "Disables the frame alignment (when auto-scrolling)."))
 			+ SSegmentedControl<int32>::Slot((int32)TraceFrameType_Game)
 			.Text(LOCTEXT("Game", "Game"))
-			.ToolTip(LOCTEXT("AutoScrollNoFrameAlignment_Tooltip", "Disables the frame alignment (when autoscrolling)."))
+			.ToolTip(LOCTEXT("AutoScrollNoFrameAlignment_Tooltip", "Disables the frame alignment (when auto-scrolling)."))
 			+ SSegmentedControl<int32>::Slot((int32)TraceFrameType_Rendering)
 			.Text(LOCTEXT("Rendering", "Rendering"))
-			.ToolTip(LOCTEXT("AutoScrollAlignWithGameFrames_Tooltip", "Aligns the viewport's center position with the start time of a Game frame (when autoscrolling)."))
+			.ToolTip(LOCTEXT("AutoScrollAlignWithGameFrames_Tooltip", "Aligns the viewport's center position with the start time of a Game frame (when auto-scrolling)."))
 		);
 
 		CreateCompactMenuLine(MenuBuilder,
@@ -4194,13 +4231,13 @@ TSharedRef<SWidget> STimingView::MakeCompactAutoScrollOptionsMenu()
 				.Value_Lambda([this] { return AutoScrollViewportOffsetPercent; })
 				+ SSegmentedControl<double>::Slot(-0.1)
 				.Text(LOCTEXT("AutoScrollViewportOffset-10", "-10%"))
-				.ToolTip(LOCTEXT("AutoScrollViewportOffset-10_Tooltip", "Sets the viewport offset to -10% (i.e. backward) of the viewport's width (when autoscrolling).\nAvoids flickering as the end of the session will be outside of the viewport."))
+				.ToolTip(LOCTEXT("AutoScrollViewportOffset-10_Tooltip", "Sets the viewport offset to -10% (i.e. backward) of the viewport's width (when auto-scrolling).\nAvoids flickering as the end of the session will be outside of the viewport."))
 				+ SSegmentedControl<double>::Slot(0.0)
 				.Text(LOCTEXT("AutoScrollViewportOffset0", "0"))
-				.ToolTip(LOCTEXT("AutoScrollViewportOffset0_Tooltip", "Sets the viewport offset to 0 (when autoscrolling).\nThe right side of the viewport will correspond to the current session time."))
+				.ToolTip(LOCTEXT("AutoScrollViewportOffset0_Tooltip", "Sets the viewport offset to 0 (when auto-scrolling).\nThe right side of the viewport will correspond to the current session time."))
 				+ SSegmentedControl<double>::Slot(+0.1)
 				.Text(LOCTEXT("AutoScrollViewportOffset+10", "+10%"))
-				.ToolTip(LOCTEXT("AutoScrollViewportOffset+10_Tooltip", "Sets the viewport offset to +10% (i.e. forward) of the viewport's width (when autoscrolling).\nAllows 10% empty space on the right side of the viewport."))
+				.ToolTip(LOCTEXT("AutoScrollViewportOffset+10_Tooltip", "Sets the viewport offset to +10% (i.e. forward) of the viewport's width (when auto-scrolling).\nAllows 10% empty space on the right side of the viewport."))
 			]
 		);
 
@@ -4256,7 +4293,7 @@ TSharedRef<SWidget> STimingView::MakeAutoScrollOptionsMenu()
 	{
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("AutoScrollNoFrameAlignment", "None"),
-			LOCTEXT("AutoScrollNoFrameAlignment_Tooltip", "Disables the frame alignment (when autoscrolling)."),
+			LOCTEXT("AutoScrollNoFrameAlignment_Tooltip", "Disables the frame alignment (when auto-scrolling)."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &STimingView::SetAutoScrollFrameAlignment, -1),
 				FCanExecuteAction(),
@@ -4267,7 +4304,7 @@ TSharedRef<SWidget> STimingView::MakeAutoScrollOptionsMenu()
 
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("AutoScrollAlignWithGameFrames", "Game Frames"),
-			LOCTEXT("AutoScrollAlignWithGameFrames_Tooltip", "Aligns the viewport's center position with the start time of a Game frame (when autoscrolling)."),
+			LOCTEXT("AutoScrollAlignWithGameFrames_Tooltip", "Aligns the viewport's center position with the start time of a Game frame (when auto-scrolling)."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &STimingView::SetAutoScrollFrameAlignment, (int32)TraceFrameType_Game),
 				FCanExecuteAction(),
@@ -4278,7 +4315,7 @@ TSharedRef<SWidget> STimingView::MakeAutoScrollOptionsMenu()
 
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("AutoScrollAlignWithRenderingFrames", "Rendering Frames"),
-			LOCTEXT("AutoScrollAlignWithRenderingFrames_Tooltip", "Aligns the viewport's center position with the start time of a Rendering frame (when autoscrolling)."),
+			LOCTEXT("AutoScrollAlignWithRenderingFrames_Tooltip", "Aligns the viewport's center position with the start time of a Rendering frame (when auto-scrolling)."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &STimingView::SetAutoScrollFrameAlignment, (int32)TraceFrameType_Rendering),
 				FCanExecuteAction(),
@@ -4293,7 +4330,7 @@ TSharedRef<SWidget> STimingView::MakeAutoScrollOptionsMenu()
 	{
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("AutoScrollViewportOffset-10", "-10%"),
-			LOCTEXT("AutoScrollViewportOffset-10_Tooltip", "Sets the viewport offset to -10% (i.e. backward) of the viewport's width (when autoscrolling).\nAvoids flickering as the end of the session will be outside of the viewport."),
+			LOCTEXT("AutoScrollViewportOffset-10_Tooltip", "Sets the viewport offset to -10% (i.e. backward) of the viewport's width (when auto-scrolling).\nAvoids flickering as the end of the session will be outside of the viewport."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &STimingView::SetAutoScrollViewportOffset, -0.1),
 				FCanExecuteAction(),
@@ -4304,7 +4341,7 @@ TSharedRef<SWidget> STimingView::MakeAutoScrollOptionsMenu()
 
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("AutoScrollViewportOffset0", "0"),
-			LOCTEXT("AutoScrollViewportOffset0_Tooltip", "Sets the viewport offset to 0 (when autoscrolling).\nThe right side of the viewport will correspond to the current session time."),
+			LOCTEXT("AutoScrollViewportOffset0_Tooltip", "Sets the viewport offset to 0 (when auto-scrolling).\nThe right side of the viewport will correspond to the current session time."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &STimingView::SetAutoScrollViewportOffset, 0.0),
 				FCanExecuteAction(),
@@ -4315,7 +4352,7 @@ TSharedRef<SWidget> STimingView::MakeAutoScrollOptionsMenu()
 
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("AutoScrollViewportOffset+10", "+10%"),
-			LOCTEXT("AutoScrollViewportOffset+10_Tooltip", "Sets the viewport offset to +10% (i.e. forward) of the viewport's width (when autoscrolling).\nAllows 10% empty space on the right side of the viewport."),
+			LOCTEXT("AutoScrollViewportOffset+10_Tooltip", "Sets the viewport offset to +10% (i.e. forward) of the viewport's width (when auto-scrolling).\nAllows 10% empty space on the right side of the viewport."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &STimingView::SetAutoScrollViewportOffset, +0.1),
 				FCanExecuteAction(),
@@ -4345,7 +4382,7 @@ TSharedRef<SWidget> STimingView::MakeAutoScrollOptionsMenu()
 				.OnTextChanged_Lambda([this](const FText& InText) { SetAutoScrollViewportOffset(atof(TCHAR_TO_ANSI(*InText.ToString())) * 0.01); })
 			],
 			NAME_None,
-			LOCTEXT("AutoScrollViewportOffsetCustom_Tooltip", "Sets a custom value for the viewport offset as percent from viewport's width (when autoscrolling)."),
+			LOCTEXT("AutoScrollViewportOffsetCustom_Tooltip", "Sets a custom value for the viewport offset as percent from viewport's width (when auto-scrolling)."),
 			EUserInterfaceActionType::RadioButton
 		);
 	}
@@ -4816,8 +4853,19 @@ void STimingView::CreateCpuThreadTrackColoringModeMenu(FMenuBuilder& MenuBuilder
 			EUserInterfaceActionType::RadioButton
 		);
 		MenuBuilder.AddMenuEntry(
+			LOCTEXT("CpuThreadTrackColoringMode_BySourceFile", "By Source File"),
+			LOCTEXT("CpuThreadTrackColoringMode_BySourceFile_Desc", "Assign a color to CPU/GPU timing events based on their source file."),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateSP(this, &STimingView::SetCpuThreadTrackColoringMode, Insights::ETimingEventsColoringMode::BySourceFile),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateSP(this, &STimingView::CheckCpuThreadTrackColoringMode, Insights::ETimingEventsColoringMode::BySourceFile)),
+			NAME_None,
+			EUserInterfaceActionType::RadioButton
+		);
+		MenuBuilder.AddMenuEntry(
 			LOCTEXT("CpuThreadTrackColoringMode_ByDuration", "By Duration"),
-			LOCTEXT("CpuThreadTrackColoringMode_ByDuration_Desc", "Assign a color to CPU/GPU timing events based on their duration (inclusive time).\n\t≥ 10ms : red\n\t≥ 1ms : yellow\n\t≥ 100μs : green\n\t≥ 10μs : cyan\n\t≥ 1μs : blue\n\t< 1μs : grey"),
+			LOCTEXT("CpuThreadTrackColoringMode_ByDuration_Desc", "Assign a color to CPU/GPU timing events based on their duration (inclusive time).\n\t≥ 10ms : red\n\t≥ 1ms : yellow\n\t≥ 100μs : green\n\t≥ 10μs : cyan\n\t≥ 1μs : blue\n\t< 1μs : gray"),
 			FSlateIcon(),
 			FUIAction(
 				FExecuteAction::CreateSP(this, &STimingView::SetCpuThreadTrackColoringMode, Insights::ETimingEventsColoringMode::ByDuration),
@@ -4943,20 +4991,8 @@ void STimingView::QuickFind_Execute()
 			nullptr,
 			FFilterService::Get()->GetIntegerOperators()));
 
-		TSharedPtr<TArray<TSharedPtr<IFilterOperator>>> EventNameFilterOperators = MakeShared<TArray<TSharedPtr<IFilterOperator>>>();
-		EventNameFilterOperators->Add(StaticCastSharedRef<IFilterOperator>(MakeShared<FFilterOperator<int64>>(EFilterOperator::Eq, TEXT("Is"), [](int64 lhs, int64 rhs) { return lhs == rhs; })));
-		TSharedRef<FFilterWithSuggestions> TimerNameFilter = MakeShared<FFilterWithSuggestions>(
-			static_cast<int32>(EFilterField::TimerName),
-			LOCTEXT("TimerName", "Timer Name"),
-			LOCTEXT("TimerName", "Timer Name"),
-			EFilterDataType::StringInt64Pair,
-			MakeShared<FEventNameFilterValueConverter>(),
-			EventNameFilterOperators);
-		TimerNameFilter->SetCallback([this](const FString& Text, TArray<FString>& OutSuggestions)
-		{
-			this->PopulateTimerNameSuggestionList(Text, OutSuggestions);
-		});
-		NewFilterConfigurator->Add(TimerNameFilter);
+		NewFilterConfigurator->Add(MakeShared<FTimerNameFilter>());
+		NewFilterConfigurator->Add(MakeShared<FMetadataFilter>());
 
 		for (Insights::ITimingViewExtender* Extender : GetExtenders())
 		{
@@ -5109,7 +5145,8 @@ void STimingView::FindPrevEvent()
 	Params.FilterExecutor = QuickFindVm->GetFilterConfigurator();
 	Params.SearchDirection = FTimingEventSearchParameters::ESearchDirection::Backward;
 
-	EnumerateFilteredTracks(QuickFindVm->GetFilterConfigurator(), [&Params, &BestMatchEvent](TSharedPtr<FBaseTimingTrack>& Track)
+	TSharedPtr<const FBaseTimingTrack> PriorityTrack = SelectedEvent.IsValid() ? SelectedEvent->GetTrack().ToSharedPtr() : nullptr;
+	EnumerateFilteredTracks(QuickFindVm->GetFilterConfigurator(), PriorityTrack, [&Params, &BestMatchEvent](TSharedPtr<const FBaseTimingTrack> Track)
 	{
 		if (!Track->IsVisible())
 		{
@@ -5161,7 +5198,8 @@ void STimingView::FindNextEvent()
 	FTimingEventSearchParameters Params(StartTime, std::numeric_limits<double>::max(), ETimingEventSearchFlags::StopAtFirstMatch, EventFilter);
 	Params.FilterExecutor = QuickFindVm->GetFilterConfigurator();
 
-	EnumerateFilteredTracks(QuickFindVm->GetFilterConfigurator(), [&Params, &BestMatchEvent](TSharedPtr<FBaseTimingTrack>& Track)
+	TSharedPtr<const FBaseTimingTrack> PriorityTrack = SelectedEvent.IsValid() ? SelectedEvent->GetTrack().ToSharedPtr() : nullptr;
+	EnumerateFilteredTracks(QuickFindVm->GetFilterConfigurator(), PriorityTrack, [&Params, &BestMatchEvent](TSharedPtr<const FBaseTimingTrack> Track)
 	{
 		if (!Track->IsVisible())
 		{
@@ -5218,6 +5256,7 @@ void STimingView::FilterAllTracks()
 {
 	LLM_SCOPE_BYTAG(Insights);
 	FilterConfigurator = MakeShared<Insights::FFilterConfigurator>(*QuickFindVm->GetFilterConfigurator());
+
 	for (auto& Entry : AllTracks)
 	{
 		Entry.Value->SetFilterConfigurator(FilterConfigurator);
@@ -5286,12 +5325,34 @@ void STimingView::PopulateTimerNameSuggestionList(const FString& Text, TArray<FS
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void STimingView::EnumerateFilteredTracks(TSharedPtr<Insights::FFilterConfigurator> InFilterConfigurator, EnumerateFilteredTracksCallback Callback)
+void STimingView::EnumerateFilteredTracks(TSharedPtr<Insights::FFilterConfigurator> InFilterConfigurator, TSharedPtr<const FBaseTimingTrack> PriorityTrack, EnumerateFilteredTracksCallback Callback)
 {
+	using namespace Insights;
+
 	Insights::FFilterContext FilterContext;
 	FilterContext.AddFilterData(static_cast<int32>(EFilterField::TrackName), FString());
+
+	// Call the callback for the PriorityTrack first if it passes the filters.
+	// This is an optimization because in many cases, the next/prev event will be on the same track
+	// and searching this one first will potentially avoid searching all events on other tracks.
+	uint64 SkipId = std::numeric_limits<uint64>::max();
+	if (PriorityTrack.IsValid())
+	{
+		SkipId = PriorityTrack->GetId();
+		FilterContext.SetFilterData(static_cast<int32>(EFilterField::TrackName), PriorityTrack->GetName());
+		if (InFilterConfigurator->ApplyFilters(FilterContext))
+		{
+			Callback(PriorityTrack);
+		}
+	}
+
 	for (auto& Entry : AllTracks)
 	{
+		if (Entry.Value->GetId() == SkipId)
+		{
+			continue;
+		}
+
 		FilterContext.SetFilterData(static_cast<int32>(EFilterField::TrackName), Entry.Value->GetName());
 		if (InFilterConfigurator->ApplyFilters(FilterContext))
 		{
@@ -5316,6 +5377,72 @@ ETraceFrameType STimingView::GetFrameTypeToSnapTo()
 
 	// TraceFrameType_Count is the Instance mode.
 	return ETraceFrameType::TraceFrameType_Count;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimingView::SelectEventInstance(uint32 TimerId, ESelectEventType Type, bool bUseSelection)
+{
+	SelectTimingEvent(nullptr, false, false);
+
+	double IntervalStart = 0.0f;
+	double IntervalEnd = std::numeric_limits<double>::infinity();
+
+	if (bUseSelection && SelectionEndTime > SelectionStartTime)
+	{
+		IntervalStart = SelectionStartTime;
+		IntervalEnd = SelectionEndTime;
+	}
+
+	TSharedPtr<const ITimingEvent> TimingEvent;
+
+	if (Type == ESelectEventType::Min)
+	{
+		TimingEvent = ThreadTimingSharedState->FindMinEventInstance(TimerId, IntervalStart, IntervalEnd);
+	}
+	else if (Type == ESelectEventType::Max)
+	{
+		TimingEvent = ThreadTimingSharedState->FindMaxEventInstance(TimerId, IntervalStart, IntervalEnd);
+	}
+
+	if (TimingEvent.IsValid())
+	{
+		SelectTimingEvent(TimingEvent, true, true);
+	}
+	else
+	{
+		FMessageLog ReportMessageLog(FTimingProfilerManager::Get()->GetLogListingName());
+		ReportMessageLog.Error(LOCTEXT("NoEventInstanceFound", "No event instance found!"));
+		ReportMessageLog.Notify();
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimingView::UpdateFilters()
+{
+	if (!bUpdateFilters)
+	{
+		return;
+	}
+
+	if (FInsightsManager::Get()->IsAnalysisComplete())
+	{
+		// This will be the final update.
+		bUpdateFilters = false;
+	}
+
+	if (FilterConfigurator.IsValid())
+	{
+		FilterConfigurator->Update();
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool STimingView::IsInTimingProfiler()
+{
+	return GetName() == FInsightsManagerTabs::TimingProfilerTabId;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

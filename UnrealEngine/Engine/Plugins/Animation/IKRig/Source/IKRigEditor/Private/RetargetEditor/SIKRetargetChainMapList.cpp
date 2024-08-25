@@ -421,9 +421,9 @@ bool SIKRetargetChainMapList::IsChainMapEnabled() const
 		return false; 
 	}
 	
-	if (RetargeterController->GetAsset()->GetTargetIKRig())
+	if (const UIKRigDefinition* IKRig = RetargeterController->GetAsset()->GetIKRig(ERetargetSourceOrTarget::Target))
 	{
-		const TArray<FBoneChain>& Chains = RetargeterController->GetAsset()->GetTargetIKRig()->GetRetargetChains();
+		const TArray<FBoneChain>& Chains = IKRig->GetRetargetChains();
 		return Chains.Num() > 0;
 	}
 

@@ -26,7 +26,7 @@ namespace Sequencer
 
 class FSequenceModel;
 
-class FLayerBarModel
+class SEQUENCER_API FLayerBarModel
 	: public FViewModel
 	, public FLinkedOutlinerExtension
 	, public ITrackLaneExtension

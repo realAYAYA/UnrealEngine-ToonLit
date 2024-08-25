@@ -32,6 +32,7 @@ public:
 	// UObject overrides.
 	void BeginDestroy() override;
 #if WITH_EDITOR
+	void PreEditChange(FProperty* Property) override;
 	void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	// ~END UObject overrides.
@@ -74,8 +75,9 @@ public:
 	 * In morph based models each quality level defines how many morph targets are active at most.
 	 * @param InQualityLevel The quality level to switch to.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MLDeformer")
-	void SetQualityLevel(int32 InQualityLevel)					{ QualityLevel = FMath::Max<int32>(InQualityLevel, 0); }
+	UE_DEPRECATED(5.4, "This function will be removed.")
+	UFUNCTION(meta = (DeprecatedFunction, DeprecationMessage = "SetQualityLevel has been deprecated."))
+	void SetQualityLevel(int32 InQualityLevel)					{}
 
 	/** 
 	 * The quality level of the deformer. A value of 0 is the highest quality, 1 is a step lower, etc.
@@ -85,8 +87,9 @@ public:
 	 * In morph based models each quality level defines how many morph targets are active at most.
 	 * @param InQualityLevel The quality level to switch to.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MLDeformer")
-	int32 GetQualityLevel() const								{ return QualityLevel; }
+	UE_DEPRECATED(5.4, "This function will be removed.")
+	UFUNCTION(meta = (DeprecatedFunction, DeprecationMessage = "GetQualityLevel has been deprecated."))
+	int32 GetQualityLevel() const								{ return 0; }
 
 	/**
 	 * Get the ML Deformer asset that is used by this component.
@@ -118,6 +121,7 @@ public:
 	 * The instance is responsible for running inference and feeding the neural network with inputs.
 	 * @return A pointer to the model instance object.
 	 */
+	UFUNCTION(BlueprintCallable, Category = "MLDeformer")
 	UMLDeformerModelInstance* GetModelInstance() const			{ return ModelInstance; }
 
 	/**
@@ -133,6 +137,15 @@ public:
 	void UpdateSkeletalMeshComponent();
 
 	/**
+	 * Get the final weight that is used when applying the ML Deformer.
+	 * Some console command might override the weight that was set to this component. This method will
+	 * return the real weight that will be applied, after console command modifications are applied as well.
+	 * So this is the actual final weight used on the ML Deformer.
+	 * @return The ML Deformer weight value that is used to deform the mesh, where 0 means it is not doing any deformations and 1 means it is fully active.
+	 */
+	float GetFinalMLDeformerWeight() const;
+
+	/**
 	 * Suppress logging warnings about mesh deformers not being set.
 	 * A warning is logged when an ML Deformer is used that requires a deformer graph, but the skeletal mesh has no deformer graph setup.
 	 * @param bSuppress Set to true to silent warnings about deformer graphs not being set, while the active ML Model needs one.
@@ -144,17 +157,28 @@ public:
 	 * Get the performance counter that measures how much time is spent inside the Tick function.
 	 */
 	const UE::MLDeformer::FMLDeformerPerfCounter& GetTickPerfCounter() const	{ return TickPerfCounter; }
+
+	TObjectPtr<AActor> GetDebugActor() const					{ return DebugActor; }
+	void SetDebugActor(TObjectPtr<AActor> Actor)				{ DebugActor = Actor; }
 #endif
 
 	// Get property names.
 	static FName GetDeformerAssetPropertyName()					{ return GET_MEMBER_NAME_CHECKED(UMLDeformerComponent, DeformerAsset); }
 	static FName GetWeightPropertyName()						{ return GET_MEMBER_NAME_CHECKED(UMLDeformerComponent, Weight); }
-	static FName GetQualityLevelPropertyName()					{ return GET_MEMBER_NAME_CHECKED(UMLDeformerComponent, QualityLevel); }
+
+	UE_DEPRECATED(5.4, "This function will be removed.")
+	static FName GetQualityLevelPropertyName()					{ return GET_MEMBER_NAME_CHECKED(UMLDeformerComponent, QualityLevel_DEPRECATED); }
 
 protected:
 	// AActorComponent overrides.
 	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	// ~END AActorComponent overrides.
+
+	/** Set the ML Deformer weight. */
+	virtual void SetWeightInternal(const float NormalizedWeightValue);
+
+	/** Set the ML Deformer asset. */
+	virtual void SetDeformerAssetInternal(UMLDeformerAsset* const InDeformerAsset);
 
 	/** 
 	 * Initialize the component. 
@@ -164,40 +188,32 @@ protected:
 	 */
 	void Init();
 
-	/** Bind to the MLDeformerModel's NeuralNetworkModifyDelegate. */
-	UE_DEPRECATED(5.2, "This method will be removed.")
-	void AddNeuralNetworkModifyDelegate() {}
-
-	/** Unbind from the MLDeformerModel's NeuralNetworkModifyDelegate. */
-	UE_DEPRECATED(5.2, "This method will be removed.")
-	void RemoveNeuralNetworkModifyDelegate() {}
-
 	UE_DEPRECATED(5.3, "This method will be removed.")
-	void AddReleaseModelInstancesDelegate();
+	void AddReleaseModelInstancesDelegate() {}
 	
 	UE_DEPRECATED(5.3, "This method will be removed.")
-	void RemoveReleaseModelInstancesDelegate();
+	void RemoveReleaseModelInstancesDelegate() {}
 
 	void BindDelegates();
 	void UnbindDelegates();
-
 	void ReleaseModelInstance();
-
-	/** Set the ML Deformer weight. */
-	virtual void SetWeightInternal(const float NormalizedWeightValue);
-
-	/** Set the ML Deformer asset. */
-	virtual void SetDeformerAssetInternal(UMLDeformerAsset* const InDeformerAsset);
-
+	
 #if WITH_EDITOR
 	/** Reset the tick cycle counters. */
-	void ResetTickCycleCounters();
+	UE_DEPRECATED(5.4, "This method will be removed")
+	void ResetTickCycleCounters() {}
 #endif
 
 protected:
 #if WITH_EDITOR
 	/** The performance counter that measures timing of the Tick function. */
 	UE::MLDeformer::FMLDeformerPerfCounter TickPerfCounter;
+
+	/**
+	 * The actor we are currently debugging. This can be used to copy over specific information from another actor, such as copying over external morph target weights.
+	 * When set to a nullptr, then we're not debugging. This actor most likely is inside another UWorld.
+	 */
+	TObjectPtr<AActor> DebugActor;
 #endif
 
 	/** Render command fence that let's us wait for all other commands to finish. */
@@ -208,7 +224,7 @@ protected:
 	 * This can be a nullptr. When it is a nullptr then it will internally try to find the first skeletal mesh component on the actor.
 	 * You can see this as an override. You can specify this override through the SetupComponent function.
 	 */
-	TObjectPtr<USkeletalMeshComponent> SkelMeshComponent = nullptr;
+	TObjectPtr<USkeletalMeshComponent> SkelMeshComponent;
 
 	/** DelegateHandle for NeuralNetwork modification. This has been deprecated. */
 	UE_DEPRECATED(5.3, "This member has been deprecated.")
@@ -222,7 +238,7 @@ protected:
 
 	/** The deformer asset to use. */
 	UPROPERTY(EditAnywhere, DisplayName = "ML Deformer Asset", Category = "ML Deformer")
-	TObjectPtr<UMLDeformerAsset> DeformerAsset = nullptr;
+	TObjectPtr<UMLDeformerAsset> DeformerAsset;
 
 	/** How active is this deformer? Can be used to blend it in and out. */
 	UPROPERTY(EditAnywhere, Category = "ML Deformer", meta = (ClampMin = "0.0", ClampMax = "1.0"))
@@ -235,10 +251,10 @@ protected:
 	 * level 3 will be used in this case, which represents the lowest available quality.
 	 * In morph based models each quality level defines how many morph targets are active at most.
 	 */
-	UPROPERTY(EditAnywhere, Category = "ML Deformer", meta = (ClampMin = "0"))
-	int32 QualityLevel = 0;
+	UPROPERTY()
+	int32 QualityLevel_DEPRECATED = 0;
 
 	/** The deformation model instance. This is used to perform the runtime updates and run the inference. */
 	UPROPERTY(Transient)
-	TObjectPtr<UMLDeformerModelInstance> ModelInstance = nullptr;
+	TObjectPtr<UMLDeformerModelInstance> ModelInstance;
 };

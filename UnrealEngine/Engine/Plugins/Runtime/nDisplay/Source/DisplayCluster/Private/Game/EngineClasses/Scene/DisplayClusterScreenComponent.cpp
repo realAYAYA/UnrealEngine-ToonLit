@@ -22,19 +22,18 @@ UDisplayClusterScreenComponent::UDisplayClusterScreenComponent(const FObjectInit
 	SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	SetVisibility(false);
 	SetHiddenInGame(true);
+	SetCastShadow(false);
 
 #if WITH_EDITOR
 	if (GIsEditor)
 	{
 		SetVisibility(true);
 	}
-
-	SetCastShadow(false);
+#endif
 
 	bVisibleInReflectionCaptures = false;
 	bVisibleInRayTracing = false;
 	bVisibleInRealTimeSkyCaptures = false;
-#endif
 
 	// Default screen size
 	SetScreenSize(FVector2D(100.f, 56.25f));

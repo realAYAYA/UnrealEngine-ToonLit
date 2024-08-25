@@ -3,6 +3,11 @@
 #include "../Common.ush"
 #include "../ShaderPrint.ush"
 #include "GlobalDistanceFieldShared.ush"
+#include "GlobalDistanceFieldUpdate.ush"
+
+#ifndef THREADGROUP_SIZE
+#define THREADGROUP_SIZE 0
+#endif
 
 StructuredBuffer<uint> GlobalDistanceFieldPageFreeListAllocatorBuffer;
 uint GlobalDistanceFieldMaxPageNum;
@@ -15,6 +20,20 @@ StructuredBuffer<uint> PageStatsBuffer;
 Texture3D<uint> PageTableCombinedTexture;
 Texture3D PageAtlasTexture;
 SamplerState DistanceFieldSampler;
+
+Buffer<uint> PageComposeIndirectArgBuffer;
+
+[numthreads(1, 1, 1)]
+void GlobalDistanceFieldAccumulateUpdatedPagesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	if (all(DispatchThreadId.xyz == 0))
+	{
+		InterlockedAdd(RWPageStatsBuffer[2], PageComposeIndirectArgBuffer[0] / GLOBAL_DISTANCE_FIELD_PAGE_GROUP_NUM);
+	}
+}
 
 [numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, THREADGROUP_SIZE)]
 void GlobalDistanceFieldPageStatsCS(
@@ -102,5 +121,10 @@ void GlobalDistanceFieldDebugCS(
 
 		Print(Context, TEXT(" Empty "));
 		Print(Context, PageStatsBuffer[1]);
+		Newline(Context);
+
+		Print(Context, TEXT(" Updated  "), FontOrange);
+		Print(Context, PageStatsBuffer[2], FontOrange);
+		Newline(Context);
 	}
 }

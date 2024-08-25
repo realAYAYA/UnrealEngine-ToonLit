@@ -8,7 +8,8 @@
 #include "ScopedTransaction.h"
 #include "SmartObjectDefinition.h"
 #include "SmartObjectAnnotation.h"
-
+#include "SmartObjectViewModel.h"
+#include "Misc/EnumerateRange.h"
 
 #define LOCTEXT_NAMESPACE "SmartObjectAssetToolkit"
 
@@ -21,10 +22,13 @@ FSmartObjectAssetEditorViewportClient::FSmartObjectAssetEditorViewportClient(con
 
 	// Set if the grid will be drawn
 	DrawHelper.bDrawGrid = GetDefault<USmartObjectAssetEditorSettings>()->bShowGridByDefault;
+	DrawHelper.bDrawWorldBox = false;
 }
 
 FSmartObjectAssetEditorViewportClient::~FSmartObjectAssetEditorViewportClient()
 {
+	RemoveViewModelDelegates();
+	
 	if (ScopedTransaction != nullptr)
 	{
 		delete ScopedTransaction;
@@ -41,7 +45,7 @@ void FSmartObjectAssetEditorViewportClient::Draw(const FSceneView* View, FPrimit
 		// Draw slots and annotations.
 		if (const USmartObjectDefinition* Definition = SmartObjectDefinition.Get())
 		{
-			UE::SmartObjects::Editor::Draw(*Definition, Selection, FTransform::Identity, *View, *PDI, *PreviewScene->GetWorld(), PreviewActor.Get());
+			UE::SmartObject::Editor::Draw(*Definition, GetSelection(), FTransform::Identity, *View, *PDI, *PreviewScene->GetWorld(), PreviewActor.Get());
 		}
 
 		// Draw the object origin.
@@ -57,7 +61,7 @@ void FSmartObjectAssetEditorViewportClient::DrawCanvas(FViewport& InViewport, FS
 	// Draw slots and annotations.
 	if (const USmartObjectDefinition* Definition = SmartObjectDefinition.Get())
 	{
-		UE::SmartObjects::Editor::DrawCanvas(*Definition, Selection, FTransform::Identity, View, Canvas, *PreviewScene->GetWorld(), PreviewActor.Get());
+		UE::SmartObject::Editor::DrawCanvas(*Definition, GetSelection(), FTransform::Identity, View, Canvas, *PreviewScene->GetWorld(), PreviewActor.Get());
 	}
 }
 
@@ -65,6 +69,11 @@ void FSmartObjectAssetEditorViewportClient::ProcessClick(FSceneView& View, HHitP
 {
 	FEditorViewportClient::ProcessClick(View, HitProxy, Key, Event, HitX, HitY);
 
+	if (!ViewModel.IsValid())
+	{
+		return;
+	}
+	
 	if (Key == EKeys::LeftMouseButton)
 	{
 		bool bClickHandled = false;
@@ -72,28 +81,27 @@ void FSmartObjectAssetEditorViewportClient::ProcessClick(FSceneView& View, HHitP
 		{
 			const FViewportClick Click(&View, this, Key, Event, HitX, HitY);
 
-			if (HitProxy->IsA(HSmartObjectSlotProxy::StaticGetType()))
+			if (HitProxy->IsA(HSmartObjectItemProxy::StaticGetType()))
 			{
-				const HSmartObjectSlotProxy* SlotProxy = static_cast<HSmartObjectSlotProxy*>(HitProxy);
-				const UE::SmartObjects::Editor::FSelectedItem HitItem(SlotProxy->SlotID, SlotProxy->AnnotationIndex);
+				const HSmartObjectItemProxy* SlotProxy = static_cast<HSmartObjectItemProxy*>(HitProxy);
+				const FGuid HitItem = SlotProxy->ItemID;
 
 				if (IsCtrlPressed())
 				{
 					// Toggle selection
-					if (Selection.Contains(HitItem))
+					if (ViewModel->IsSelected(HitItem))
 					{
-						Selection.Remove(HitItem);
+						ViewModel->RemoveFromSelection(HitItem);
 					}
 					else
 					{
-						Selection.AddUnique(HitItem);
+						ViewModel->AddToSelection(HitItem);
 					}
 				}
 				else
 				{
 					// Set selection
-					Selection.Reset();
-					Selection.Add(HitItem);
+					ViewModel->SetSelection({ HitItem });
 				}
 
 				bClickHandled = true;
@@ -102,7 +110,7 @@ void FSmartObjectAssetEditorViewportClient::ProcessClick(FSceneView& View, HHitP
 
 		if (!bClickHandled)
 		{
-			Selection.Reset();
+			ViewModel->ResetSelection();
 		}
 	}
 }
@@ -116,33 +124,37 @@ FVector FSmartObjectAssetEditorViewportClient::GetWidgetLocation() const
 	}
 	
 	FVector Result = FVector::ZeroVector; 
-	
+
+	if (!ViewModel.IsValid())
+	{
+		return Result;
+	}
+
 	const USmartObjectDefinition* Definition = SmartObjectDefinition.Get();
 	if (Definition != nullptr)
 	{
 		int32 NumSlots = 0;
 		FVector AccumulatedSlotLocation = FVector::ZeroVector;
 		const FTransform OwnerLocalToWorld = FTransform::Identity;
-		const TConstArrayView<FSmartObjectSlotDefinition> Slots = Definition->GetSlots();
+		const TConstArrayView<FSmartObjectSlotDefinition> SlotDefinitions = Definition->GetSlots();
 		
-		for (int32 Index = 0; Index < Slots.Num(); ++Index)
+		for (int32 Index = 0; Index < SlotDefinitions.Num(); ++Index)
 		{
 			const FTransform SlotTransform = Definition->GetSlotWorldTransform(Index, OwnerLocalToWorld);
 
-			const FSmartObjectSlotDefinition& Slot = Slots[Index];
+			const FSmartObjectSlotDefinition& SlotDefinition = SlotDefinitions[Index];
 
-			if (Selection.Contains(UE::SmartObjects::Editor::FSelectedItem(Slot.ID)))
+			if (ViewModel->IsSelected(SlotDefinition.ID))
 			{
 				AccumulatedSlotLocation += SlotTransform.GetLocation();
 				NumSlots++;
 			}
 
-			for (int32 AnnotationIndex = 0; AnnotationIndex < Slot.Data.Num(); AnnotationIndex++)
+			for (TConstEnumerateRef<const FSmartObjectDefinitionDataProxy> DataProxy : EnumerateRange(SlotDefinition.DefinitionData))
 			{
-				const FInstancedStruct& Data = Slot.Data[AnnotationIndex];
-				if (const FSmartObjectSlotAnnotation* Annotation = Data.GetPtr<FSmartObjectSlotAnnotation>())
+				if (const FSmartObjectSlotAnnotation* Annotation = DataProxy->Data.GetPtr<FSmartObjectSlotAnnotation>())
 				{
-					if (Selection.Contains(UE::SmartObjects::Editor::FSelectedItem(Slot.ID, AnnotationIndex)))
+					if (ViewModel->IsSelected(DataProxy->ID))
 					{
 						if (Annotation->HasTransform())
 						{
@@ -179,30 +191,31 @@ ECoordSystem FSmartObjectAssetEditorViewportClient::GetWidgetCoordSystemSpace() 
 
 UE::Widget::EWidgetMode FSmartObjectAssetEditorViewportClient::GetWidgetMode() const
 {
+	if (!ViewModel.IsValid())
+	{
+		return UE::Widget::EWidgetMode::WM_None;
+	}
+
 	bool bIsWidgetValid = false;
 
 	const USmartObjectDefinition* Definition = SmartObjectDefinition.Get();
 	if (Definition != nullptr)
 	{
-		const FTransform OwnerLocalToWorld = FTransform::Identity;
-		const TConstArrayView<FSmartObjectSlotDefinition> Slots = Definition->GetSlots();
+		const TConstArrayView<FSmartObjectSlotDefinition> SlotDefinitions = Definition->GetSlots();
 
-		for (int32 Index = 0; Index < Slots.Num() && !bIsWidgetValid; ++Index)
+		for (const FSmartObjectSlotDefinition& SlotDefinition : SlotDefinitions)
 		{
-			const FSmartObjectSlotDefinition& Slot = Slots[Index];
-
-			if (Selection.Contains(UE::SmartObjects::Editor::FSelectedItem(Slot.ID)))
+			if (ViewModel->IsSelected(SlotDefinition.ID))
 			{
 				bIsWidgetValid = true;
 				break;
 			}
 
-			for (int32 AnnotationIndex = 0; AnnotationIndex < Slot.Data.Num(); AnnotationIndex++)
+			for (const FSmartObjectDefinitionDataProxy& DataProxy : SlotDefinition.DefinitionData)
 			{
-				const FInstancedStruct& Data = Slot.Data[AnnotationIndex];
-				if (const FSmartObjectSlotAnnotation* Annotation = Data.GetPtr<FSmartObjectSlotAnnotation>())
+				if (const FSmartObjectSlotAnnotation* Annotation = DataProxy.Data.GetPtr<FSmartObjectSlotAnnotation>())
 				{
-					if (Selection.Contains(UE::SmartObjects::Editor::FSelectedItem(Slot.ID, AnnotationIndex)))
+					if (ViewModel->IsSelected(DataProxy.ID))
 					{
 						if (Annotation->HasTransform())
 						{
@@ -211,6 +224,11 @@ UE::Widget::EWidgetMode FSmartObjectAssetEditorViewportClient::GetWidgetMode() c
 						}
 					}
 				}
+			}
+
+			if (bIsWidgetValid)
+			{
+				break;
 			}
 		}
 	}
@@ -289,6 +307,11 @@ bool FSmartObjectAssetEditorViewportClient::InputWidgetDelta(FViewport* InViewpo
 		return false;
 	}
 
+	if (!ViewModel.IsValid())
+	{
+		return false;
+	}
+
 	Definition->SetFlags(RF_Transactional);
 	Definition->Modify();
 
@@ -300,15 +323,15 @@ bool FSmartObjectAssetEditorViewportClient::InputWidgetDelta(FViewport* InViewpo
 	if (bIsManipulating && CurrentAxis != EAxisList::None)
 	{
 		const FTransform OwnerLocalToWorld = FTransform::Identity;
-		const TArrayView<FSmartObjectSlotDefinition> Slots = Definition->GetMutableSlots();
+		const TArrayView<FSmartObjectSlotDefinition> SlotDefinitions = Definition->GetMutableSlots();
 		
 		for (int32 Index = 0; Index < Definition->GetSlots().Num(); ++Index)
 		{
-			FSmartObjectSlotDefinition& Slot = Slots[Index];
+			FSmartObjectSlotDefinition& SlotDefinition = SlotDefinitions[Index];
 			const FTransform SlotTransform = Definition->GetSlotWorldTransform(Index, OwnerLocalToWorld);
 			
 			// Do not move annotations if slot is selected, or else, the annotation will get the adjustment in double (assumes annotations are generally relative to slot).
-			if (Selection.Contains(UE::SmartObjects::Editor::FSelectedItem(Slot.ID)))
+			if (ViewModel->IsSelected(SlotDefinition.ID))
 			{
 				FVector SlotDrag = Drag;
 				if (!Rot.IsZero())
@@ -321,45 +344,39 @@ bool FSmartObjectAssetEditorViewportClient::InputWidgetDelta(FViewport* InViewpo
 						SlotDrag += RotatedSlotOffset - SlotOffset;
 					}
 				}
-
 				check(OwnerLocalToWorld.EqualsNoScale(FTransform::Identity));
 				if (!SlotDrag.IsZero())
 				{
-					Slot.Offset += FVector3f(SlotDrag);
+					SlotDefinition.Offset += FVector3f(SlotDrag);
 				}
-
 				if (!Rot.IsZero())
 				{
-					Slot.Rotation += FRotator3f(Rot);
-					Slot.Rotation.Normalize();
+					SlotDefinition.Rotation += FRotator3f(Rot);
+					SlotDefinition.Rotation.Normalize();
 				}
 			}
 			else
 			{
-				for (int32 AnnotationIndex = 0; AnnotationIndex < Slot.Data.Num(); AnnotationIndex++)
+				for (FSmartObjectDefinitionDataProxy& DataProxy : SlotDefinition.DefinitionData)
 				{
-					FInstancedStruct& Data = Slot.Data[AnnotationIndex];
-					if (FSmartObjectSlotAnnotation* Annotation = Data.GetMutablePtr<FSmartObjectSlotAnnotation>())
+					if (FSmartObjectSlotAnnotation* Annotation = DataProxy.Data.GetMutablePtr<FSmartObjectSlotAnnotation>())
 					{
-						if (Selection.Contains(UE::SmartObjects::Editor::FSelectedItem(Slot.ID, AnnotationIndex)))
+						if (ViewModel->IsSelected(DataProxy.ID))
 						{
-							if (Annotation->HasTransform())
+							const FTransform AnnotationTransform = Annotation->GetAnnotationWorldTransform(SlotTransform);
+							FVector AnnotationDrag = Drag;
+							if (!Rot.IsZero())
 							{
-								const FTransform AnnotationTransform = Annotation->GetAnnotationWorldTransform(SlotTransform);
-								FVector AnnotationDrag = Drag;
-								if (!Rot.IsZero())
+								// Rotate around gizmo pivot
+								const FVector AnnotationOffset = AnnotationTransform.GetTranslation() - CachedWidgetLocation;
+								if (!AnnotationOffset.IsNearlyZero())
 								{
-									// Rotate around gizmo pivot
-									const FVector AnnotationOffset = AnnotationTransform.GetTranslation() - CachedWidgetLocation;
-									if (!AnnotationOffset.IsNearlyZero())
-									{
-										const FVector RotatedSlotOffset = Rot.RotateVector(AnnotationOffset);
-										AnnotationDrag += RotatedSlotOffset - AnnotationOffset;
-									}
+									const FVector RotatedSlotOffset = Rot.RotateVector(AnnotationOffset);
+									AnnotationDrag += RotatedSlotOffset - AnnotationOffset;
 								}
-
-								Annotation->AdjustWorldTransform(SlotTransform, AnnotationDrag, Rot);
 							}
+
+							Annotation->AdjustWorldTransform(SlotTransform, AnnotationDrag, Rot);
 						}
 					}
 				}
@@ -370,6 +387,34 @@ bool FSmartObjectAssetEditorViewportClient::InputWidgetDelta(FViewport* InViewpo
 	}
 	
 	return bResult;
+}
+
+void FSmartObjectAssetEditorViewportClient::RemoveViewModelDelegates()
+{
+	if (ViewModel.IsValid()
+		&& SelectionChangedHandle.IsValid())
+	{
+		ViewModel->GetOnSelectionChanged().Remove(SelectionChangedHandle);
+	}
+	
+	SelectionChangedHandle.Reset();
+}
+
+void FSmartObjectAssetEditorViewportClient::SetViewModel(TSharedPtr<FSmartObjectViewModel> InViewModel)
+{
+	RemoveViewModelDelegates();
+	
+	ViewModel = InViewModel;
+
+	if (ViewModel)
+	{
+		SelectionChangedHandle = ViewModel->GetOnSelectionChanged().AddRaw(this, &FSmartObjectAssetEditorViewportClient::HandleSelectionChanged);
+	}
+}
+
+void FSmartObjectAssetEditorViewportClient::HandleSelectionChanged(TConstArrayView<FGuid> Selection)
+{
+	RedrawAllViewportsIntoThisScene();
 }
 
 void FSmartObjectAssetEditorViewportClient::SetSmartObjectDefinition(USmartObjectDefinition& InDefinition)
@@ -454,6 +499,15 @@ FBox FSmartObjectAssetEditorViewportClient::GetPreviewBounds() const
 
 	const FBoxSphereBounds DefaultBounds(FSphere(FVector::ZeroVector, 100.f));
 	return Bounds.IsValid() ? FBoxSphereBounds(Bounds).GetBox() : DefaultBounds.GetBox();
+}
+
+TConstArrayView<FGuid> FSmartObjectAssetEditorViewportClient::GetSelection() const
+{
+	if (ViewModel.IsValid())
+	{
+		return ViewModel->GetSelection();
+	}
+	return {};
 }
 
 #undef LOCTEXT_NAMESPACE

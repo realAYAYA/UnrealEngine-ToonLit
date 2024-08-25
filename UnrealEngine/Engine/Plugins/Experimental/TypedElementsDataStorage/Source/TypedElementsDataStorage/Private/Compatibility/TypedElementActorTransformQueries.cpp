@@ -7,7 +7,7 @@
 #include "Elements/Framework/TypedElementQueryBuilder.h"
 #include "MassActorSubsystem.h"
 
-void UTypedElementActorTransformFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const
+void UTypedElementActorTransformFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage)
 {
 	RegisterActorAddTransformColumn(DataStorage);
 	RegisterActorLocalTransformToColumn(DataStorage);
@@ -30,11 +30,12 @@ void UTypedElementActorTransformFactory::RegisterActorAddTransformColumn(ITypedE
 				const AActor* ActorInstance = Actor.Get();
 				if (ActorInstance != nullptr && ActorInstance->GetRootComponent())
 				{
-					Context.AddColumns<FTypedElementLocalTransformColumn>(Row);
+					Context.AddColumn(Row, FTypedElementLocalTransformColumn{ .Transform = ActorInstance->GetActorTransform() });
 				}
 			}
 		)
 		.Where()
+			.All<FTypedElementSyncFromWorldTag>()
 			.None<FTypedElementLocalTransformColumn>()
 		.Compile()
 	);
@@ -64,7 +65,7 @@ void UTypedElementActorTransformFactory::RegisterActorLocalTransformToColumn(ITy
 			}
 		)
 		.Where()
-			.All<FTypedElementSyncFromWorldTag>()
+			.Any<FTypedElementSyncFromWorldTag, FTypedElementSyncFromWorldInteractiveTag>()
 		.Compile()
 	);
 }

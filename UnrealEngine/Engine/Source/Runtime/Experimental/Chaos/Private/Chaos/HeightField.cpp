@@ -3,6 +3,7 @@
 #include "Chaos/HeightField.h"
 #include "Chaos/Collision/ContactPoint.h"
 #include "Chaos/Collision/ContactPointsMiscShapes.h"
+#include "Chaos/Collision/MeshContactGenerator.h"
 #include "Chaos/Collision/TriangleOverlap.h"
 #include "Chaos/Collision/PBDCollisionConstraint.h"
 #include "Chaos/CollisionOneShotManifolds.h"
@@ -873,6 +874,15 @@ namespace Chaos
 		}
 
 		return TNumericLimits<uint8>::Max();
+	}
+
+	uint8 Chaos::FHeightField::GetMaterialIndexAt(const FVec2& InGridLocationLocal) const
+	{
+		const FVec2 ClampledGridLocationLocal = FlatGrid.Clamp(InGridLocationLocal);
+		TVec2<int32> CellCoord = FlatGrid.Cell(ClampledGridLocationLocal);
+
+		const int32 Index = CellCoord[1] * (GeomData.NumCols - 1) + CellCoord[0];
+		return GetMaterialIndex(Index);
 	}
 
 	uint8 Chaos::FHeightField::GetMaterialIndex(int32 InX, int32 InY) const
@@ -1938,6 +1948,7 @@ namespace Chaos
 				{
 					InnerMTD->Penetration = Penetration;
 					InnerMTD->Normal = TriangleNormal;
+					InnerMTD->Position = ClosestA;
 				}
 				return true;
 			}
@@ -1956,7 +1967,7 @@ namespace Chaos
 			const VectorRegister4Float Offset = VectorCross(AB, AC);
 
 			FTriangleRegister TriangleConvex(A, B, C);
-			return GJKIntersectionSameSpaceSimd(TriangleConvex, QueryGeom, Thickness, Offset);
+			return GJKIntersectionSameSpaceSimd(TriangleConvex, QueryGeom, Thickness, VectorNormalizeSafe(Offset, GlobalVectorConstants::Float1000));
 		};
 
 		bool bResult = false;
@@ -1978,6 +1989,7 @@ namespace Chaos
 			{
 				OutMTD->Normal = FVec3(0);
 				OutMTD->Penetration = TNumericLimits<FReal>::Lowest();
+				OutMTD->Position = FVec3(0);
 				FVec3 Points[4];
 				FAABB3 CellBounds;
 				for (const TVec2<int32>& Cell : Intersections)
@@ -2507,4 +2519,103 @@ namespace Chaos
 
 		return OutPhi;
 	}
+
+	bool FHeightField::GetOverlappingCellRange(const FAABB3& QueryBounds, TVec2<int32>& OutCellBegin, TVec2<int32>& OutCellEnd) const
+	{
+		// Calculate the square cell range that overlaps the input query bounds (which is in local space)
+		const FBounds2D HeightfieldFlatBounds = GetFlatBounds();
+		FVec2 Scale2D(GeomData.Scale[0], GeomData.Scale[1]);
+		FBounds2D GridQueryBounds;
+		GridQueryBounds.Min = FVec2(QueryBounds.Min()[0], QueryBounds.Min()[1]);
+		GridQueryBounds.Max = FVec2(QueryBounds.Max()[0], QueryBounds.Max()[1]);
+		GridQueryBounds = FBounds2D::FromPoints(HeightfieldFlatBounds.Clamp(GridQueryBounds.Min) / Scale2D, HeightfieldFlatBounds.Clamp(GridQueryBounds.Max) / Scale2D);
+		OutCellBegin = FlatGrid.Cell(GridQueryBounds.Min);
+		OutCellEnd = FlatGrid.Cell(GridQueryBounds.Max);
+		OutCellEnd[0] += 1;
+		OutCellEnd[1] += 1;
+
+		// @todo(chaos): this should return false if QueryBounds does not overlap the heightfield
+		return true;
+	}
+
+	void FHeightField::CollectTriangles(const FAABB3& QueryBounds, const FRigidTransform3& QueryTransform, const FAABB3& ObjectBounds, Private::FMeshContactGenerator& Collector) const
+	{
+		TVec2<int32> CellBegin, CellEnd;
+		if (!GetOverlappingCellRange(QueryBounds, CellBegin, CellEnd))
+		{
+			return;
+		}
+
+		// Tell the collector how many triangles to expect
+		const int32 NumCells = (CellEnd[0] - CellBegin[0]) * (CellEnd[1] - CellBegin[1]);
+		Collector.BeginCollect(2 * NumCells);
+
+		FVec3 Points[4];
+		FTriangle Triangles[2];
+		const bool bStandardWinding = ((GeomData.Scale.X * GeomData.Scale.Y * GeomData.Scale.Z) >= FReal(0));
+
+		// Visit all the cells in stored order
+		for (int32 CellX = CellBegin[0]; CellX < CellEnd[0]; ++CellX)
+		{
+			for (int32 CellY = CellBegin[1]; CellY < CellEnd[1]; ++CellY)
+			{
+				const int32 CellVertexIndex = CellY * GeomData.NumCols + CellX;	// First vertex in cell
+				const int32 CellIndex = CellY * (GeomData.NumCols - 1) + CellX;
+
+				// Check for holes and skip checking if we'll never collide
+				if (GeomData.MaterialIndices.IsValidIndex(CellIndex) && GeomData.MaterialIndices[CellIndex] == TNumericLimits<uint8>::Max())
+				{
+					continue;
+				}
+
+				// The triangle is solid so proceed to test it
+				FAABB3 CellBounds;
+				GeomData.GetPointsAndBoundsScaled(CellVertexIndex, Points, CellBounds);
+
+				// Perform a 3D bounds check now in local space
+				if (CellBounds.Intersects(QueryBounds))
+				{
+					// Transform points into the space of the query
+					// @todo(chaos): duplicate work here when we overlap lots of cells. We could generate the transformed verts for the full query once...
+					Points[0] = QueryTransform.TransformPositionNoScale(Points[0]);
+					Points[1] = QueryTransform.TransformPositionNoScale(Points[1]);
+					Points[2] = QueryTransform.TransformPositionNoScale(Points[2]);
+					Points[3] = QueryTransform.TransformPositionNoScale(Points[3]);
+
+					// Perform a 3D bounds check in object space
+					FAABB3 ObjectCellBounds = FAABB3::FromPoints(Points[0], Points[1], Points[2], Points[3]);
+
+					if (ObjectBounds.Intersects(ObjectCellBounds))
+					{
+						// @todo(chaos): utility function for this
+						const int32 VertexIndex0 = CellVertexIndex;
+						const int32 VertexIndex1 = CellVertexIndex + 1;
+						const int32 VertexIndex2 = CellVertexIndex + GeomData.NumCols;
+						const int32 VertexIndex3 = CellVertexIndex + GeomData.NumCols + 1;
+
+						const int32 FaceIndex0 = CellIndex * 2 + 0;
+						const int32 FaceIndex1 = CellIndex * 2 + 1;
+
+						if (bStandardWinding)
+						{
+							Triangles[0] = FTriangle(Points[0], Points[1], Points[3]);
+							Triangles[1] = FTriangle(Points[0], Points[3], Points[2]);
+							Collector.AddTriangle(Triangles[0], FaceIndex0, VertexIndex0, VertexIndex1, VertexIndex3);
+							Collector.AddTriangle(Triangles[1], FaceIndex1, VertexIndex0, VertexIndex3, VertexIndex2);
+						}
+						else
+						{
+							Triangles[0] = FTriangle(Points[0], Points[3], Points[1]);
+							Triangles[1] = FTriangle(Points[0], Points[2], Points[3]);
+							Collector.AddTriangle(Triangles[0], FaceIndex0, VertexIndex0, VertexIndex3, VertexIndex1);
+							Collector.AddTriangle(Triangles[1], FaceIndex1, VertexIndex0, VertexIndex2, VertexIndex3);
+						}
+					}
+				}
+			}
+		}
+
+		Collector.EndCollect();
+	}
+
 }

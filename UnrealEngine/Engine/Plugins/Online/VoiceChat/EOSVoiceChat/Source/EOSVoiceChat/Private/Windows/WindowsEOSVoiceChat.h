@@ -4,7 +4,7 @@
 
 #include "EOSVoiceChat.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 class FWindowsEOSVoiceChat : public FEOSVoiceChat
 {
@@ -18,4 +18,4 @@ protected:
 
 using FPlatformEOSVoiceChat = FWindowsEOSVoiceChat;
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

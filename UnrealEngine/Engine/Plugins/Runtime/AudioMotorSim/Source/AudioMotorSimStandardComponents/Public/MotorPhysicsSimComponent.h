@@ -46,6 +46,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Resistance")
 	float ClutchedForceModifier = 1.f;
+
+	// how much more quickly the engine decelerates off-throttle while clutched
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Resistance")
+	float ClutchedDecelScale = 1.f;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Resistance")
 	float EngineGearRatio = 50.f;

@@ -1,108 +1,56 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "OnlineAsyncTaskGooglePlayLogin.h"
+#include "GooglePlayGamesWrapper.h"
 #include "OnlineSubsystemGooglePlay.h"
-#include "AndroidRuntimeSettings.h"
 
-THIRD_PARTY_INCLUDES_START
-#include "gpg/builder.h"
-#include "gpg/debug.h"
-#include "gpg/types.h"
-THIRD_PARTY_INCLUDES_END
-
-FOnlineAsyncTaskGooglePlayLogin::FOnlineAsyncTaskGooglePlayLogin(
-	FOnlineSubsystemGooglePlay* InSubsystem,
-	int InPlayerId,
-	const FOnCompletedDelegate& InDelegate)
-	: FOnlineAsyncTaskGooglePlayAuthAction(InSubsystem)
-	, PlayerId(InPlayerId)
-	, Status(gpg::AuthStatus::ERROR_NOT_AUTHORIZED)
-	, Delegate(InDelegate)
+FOnlineAsyncTaskGooglePlayLogin::FOnlineAsyncTaskGooglePlayLogin(FOnlineSubsystemGooglePlay* InSubsystem, const FString& InAuthCodeClientId, bool InForceRefreshToken)
+	: FOnlineAsyncTaskBasic(InSubsystem)
+	, AuthCodeClientId(InAuthCodeClientId)
+	, ForceRefreshToken(InForceRefreshToken)
+	, ReceivedPlayerNetId(FUniqueNetIdGooglePlay::EmptyId())
 {
 }
 
-void FOnlineAsyncTaskGooglePlayLogin::Start_OnTaskThread()
+void FOnlineAsyncTaskGooglePlayLogin::Tick()
 {
-	UE_LOG_ONLINE(Log, TEXT("FOnlineAsyncTaskGooglePlayLogin::Start_OnTaskThread"));
-
-	// If we haven't created a GameServices object yet, do so.
-	if (Subsystem->GameServicesPtr.get() == nullptr)
+	if ( !bStarted)
 	{
-		UE_LOG_ONLINE(Log, TEXT("FOnlineAsyncTaskGooglePlayLogin::Start_OnTaskThread initializing game services"));
-		// Store the Subsystem pointer locally so that the OnAuthActionFinished lambda can capture it
-		FOnlineSubsystemGooglePlay* LocalSubsystem = Subsystem;
-
-		auto DefaultSettings = GetDefault<UAndroidRuntimeSettings>();
-
-		if (DefaultSettings->bEnableSnapshots)
-		{
-			Subsystem->GameServicesPtr = gpg::GameServices::Builder()
-				.SetDefaultOnLog(gpg::LogLevel::VERBOSE)
-				.SetOnAuthActionStarted([](gpg::AuthOperation Op) {
-					UE_LOG_ONLINE(Log, TEXT("GPG OnAuthActionStarted: %s"), *FString(DebugString(Op).c_str()));
-				})
-				.SetOnAuthActionFinished([LocalSubsystem](gpg::AuthOperation Op, gpg::AuthStatus LocalStatus) {
-					UE_LOG_ONLINE(Log, TEXT("GPG OnAuthActionFinished: %s, AuthStatus: %s"),
-						*FString(DebugString(Op).c_str()),
-						*FString(DebugString(LocalStatus).c_str()));
-					LocalSubsystem->OnAuthActionFinished(Op, LocalStatus);
-				})
-				.EnableSnapshots()
-				.Create(Subsystem->PlatformConfiguration);
-		}
-		else
-		{
-			Subsystem->GameServicesPtr = gpg::GameServices::Builder()
-				.SetDefaultOnLog(gpg::LogLevel::VERBOSE)
-				.SetOnAuthActionStarted([](gpg::AuthOperation Op) {
-					UE_LOG_ONLINE(Log, TEXT("GPG OnAuthActionStarted: %s"), *FString(DebugString(Op).c_str()));
-				})
-				.SetOnAuthActionFinished([LocalSubsystem](gpg::AuthOperation Op, gpg::AuthStatus LocalStatus) {
-					UE_LOG_ONLINE(Log, TEXT("GPG OnAuthActionFinished: %s, AuthStatus: %s"),
-						*FString(DebugString(Op).c_str()),
-						*FString(DebugString(LocalStatus).c_str()));
-					LocalSubsystem->OnAuthActionFinished(Op, LocalStatus);
-				})
-				.Create(Subsystem->PlatformConfiguration);
-		}
-	}
-	else if(Subsystem->GameServicesPtr->IsAuthorized())
-	{
-		UE_LOG_ONLINE(Log, TEXT("FOnlineAsyncTaskGooglePlayLogin::Start_OnTaskThread already authorized"));
-		// We have a GameServices object and the user is authorized, nothing else to do.
-		Status = gpg::AuthStatus::VALID;
-		bWasSuccessful = true;
-		bIsComplete = true;
-	}
-	else
-	{
-		UE_LOG_ONLINE(Log, TEXT("FOnlineAsyncTaskGooglePlayLogin::Start_OnTaskThread not authorized"));
-		// We have created the GameServices object but the user isn't authorized.
-		bWasSuccessful = false;
-		bIsComplete = true;
+		bStarted = true;
+		bWasSuccessful = Subsystem->GetGooglePlayGamesWrapper().Login(this, AuthCodeClientId, ForceRefreshToken); 
+		bIsComplete = !bWasSuccessful;
 	}
 }
 
 void FOnlineAsyncTaskGooglePlayLogin::Finalize()
 {
-	UE_LOG_ONLINE(Log, TEXT("FOnlineAsyncTaskGooglePlayLogin: Finalize."));
-	// Async task manager owns the task and is responsible for cleaning it up.
-	Subsystem->CurrentLoginTask = nullptr;
+	FOnlineIdentityGooglePlayPtr IdentityInt = Subsystem->GetIdentityGooglePlay();
+	FUniqueNetIdPtr CurrentNetId = IdentityInt->GetUniquePlayerId(0);
+	bWasLoggedIn = CurrentNetId && CurrentNetId->IsValid();
+	if (bWasSuccessful)
+	{
+		IdentityInt->SetIdentityData(ReceivedPlayerNetId, MoveTemp(ReceivedDisplayName), MoveTemp(ReceivedAuthCode));
+	}
+	else
+	{
+		IdentityInt->ClearIdentity();
+	}
 }
 
 void FOnlineAsyncTaskGooglePlayLogin::TriggerDelegates()
 {
-	UE_LOG_ONLINE(Log, TEXT("FOnlineAsyncTaskGooglePlayLogin: TriggerDelegates. %d"), WasSuccessful());
-	Delegate.ExecuteIfBound();
+	FOnlineIdentityGooglePlayPtr IdentityInt = Subsystem->GetIdentityGooglePlay();
+	IdentityInt->TriggerOnLoginCompleteDelegates(0, bWasSuccessful, *ReceivedPlayerNetId, TEXT(""));
+	if (!bWasLoggedIn)
+	{
+		IdentityInt->TriggerOnLoginStatusChangedDelegates(0, ELoginStatus::NotLoggedIn, ELoginStatus::LoggedIn, *ReceivedPlayerNetId);
+		IdentityInt->TriggerOnLoginChangedDelegates(0);
+	}
 }
 
-void FOnlineAsyncTaskGooglePlayLogin::OnAuthActionFinished(gpg::AuthOperation InOp, gpg::AuthStatus InStatus)
+void FOnlineAsyncTaskGooglePlayLogin::SetLoginData(FString&& PlayerId, FString&& DisplayName, FString&& AuthCode)
 {
-	UE_LOG_ONLINE(Log, TEXT("FOnlineAsyncTaskGooglePlayLogin::OnAuthActionFinished %d %d"), (int32)InOp, (int32)Status);
-	if (InOp == gpg::AuthOperation::SIGN_IN)
-	{
-		Status = InStatus;
-		bWasSuccessful = Status == gpg::AuthStatus::VALID;
-		bIsComplete = true;
-	}
+	ReceivedPlayerNetId = FUniqueNetIdGooglePlay::Create(MoveTemp(PlayerId));
+	ReceivedDisplayName = MoveTemp(DisplayName);
+	ReceivedAuthCode = MoveTemp(AuthCode);
 }

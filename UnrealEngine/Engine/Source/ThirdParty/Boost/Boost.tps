@@ -3,7 +3,7 @@
   <Name>Boost</Name>
   <Location>Engine/Source/ThirdParty/Boost</Location>
   <Function>The Boost project provides free peer-reviewed portable C++ source libraries. It is a core component of the software specification for the VFX reference platform.</Function>
-  <Eula>https://github.com/boostorg/boost/blob/boost-1.80.0/LICENSE_1_0.txt</Eula>
+  <Eula>https://github.com/boostorg/boost/blob/boost-1.82.0/LICENSE_1_0.txt</Eula>
   <RedistributeTo>
     <EndUserGroup>Licensees</EndUserGroup>
     <EndUserGroup>Git</EndUserGroup>

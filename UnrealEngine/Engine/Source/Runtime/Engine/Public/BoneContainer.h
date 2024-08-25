@@ -14,8 +14,6 @@
 #include "Animation/AnimBulkCurves.h"
 
 class USkeletalMesh;
-class USkeleton;
-class USkeletalMesh;
 struct FBoneContainer;
 struct FSkeletonRemapping;
 struct FBlendedCurve;
@@ -163,6 +161,27 @@ struct FCompactPoseBoneIndexReverseIterator
 	FCompactPoseBoneIndex operator*() const { return FCompactPoseBoneIndex(Index); }
 };
 
+struct FRetargetSourceCachedDataKey
+{
+	FTopLevelAssetPath SourceSkeletonPath;
+	FName SourceRetargetName;
+ 
+	FRetargetSourceCachedDataKey(const UObject* Skeleton, const FName& InSourceRetargetName)
+		: SourceSkeletonPath(Skeleton)
+		, SourceRetargetName(InSourceRetargetName)
+	{
+	}
+ 
+	bool operator==(const FRetargetSourceCachedDataKey& Other) const
+	{
+		return SourceSkeletonPath == Other.SourceSkeletonPath && SourceRetargetName == Other.SourceRetargetName;
+	}
+	friend uint32 GetTypeHash(const FRetargetSourceCachedDataKey& Obj)
+	{
+		return HashCombine(GetTypeHash(Obj.SourceSkeletonPath), GetTypeHash(Obj.SourceRetargetName));
+	}
+};
+
 /**
 * This is a native transient structure.
 * Contains:
@@ -234,15 +253,15 @@ public:
 
 	ENGINE_API FBoneContainer();
 
-	ENGINE_API FBoneContainer(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& InCurveFilterSettings, UObject& InAsset);
+	ENGINE_API FBoneContainer(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& InCurveFilterSettings, UObject& InAsset);
 	
-	ENGINE_API void InitializeTo(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& InCurveFilterSettings, UObject& InAsset);
+	ENGINE_API void InitializeTo(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& InCurveFilterSettings, UObject& InAsset);
 	
 	UE_DEPRECATED(5.3, "Please use the constructor that takes a FCurveFilterSettings.")
-	ENGINE_API FBoneContainer(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset);
+	ENGINE_API FBoneContainer(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset);
 
 	UE_DEPRECATED(5.3, "Please use InitializeTo that takes a FCurveFilterSettings.")
-	ENGINE_API void InitializeTo(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset);
+	ENGINE_API void InitializeTo(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset);
 
 	/** Resets the container and reclaims all allocated memory but preserve the serial number. */
 	ENGINE_API void Reset();
@@ -679,7 +698,7 @@ private:
 	 * Runtime cached data for retargeting from a specific RetargetSource to this current SkelMesh LOD.
 	 * @todo: We could also cache this once per skelmesh per lod, rather than creating it at runtime for each skelmesh instance.
 	 */
-	mutable TMap<FName, FRetargetSourceCachedData> RetargetSourceCachedDataLUT;
+	mutable TMap<FRetargetSourceCachedDataKey, FRetargetSourceCachedData> RetargetSourceCachedDataLUT;
 
 	/** Initialize FBoneContainer. */
 	ENGINE_API void Initialize(const UE::Anim::FCurveFilterSettings& CurveFilterSettings);

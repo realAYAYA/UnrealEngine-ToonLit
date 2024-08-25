@@ -16,11 +16,11 @@ struct FProgram;
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
-	class ASTOpConstantString : public ASTOp
+	class ASTOpConstantString final : public ASTOp
 	{
 	public:
 		//!
-		string value;
+		FString value;
 
 	public:
 		OP_TYPE GetOpType() const override { return OP_TYPE::ST_CONSTANT; }

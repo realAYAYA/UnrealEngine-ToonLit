@@ -9,6 +9,14 @@
 #include "Engine/Console.h"
 #include "ConsoleSettings.h"
 #include "PixelStreamingPeerConnection.h"
+#include "UnrealClient.h"
+
+// Complete the defintion for IPixelStreamingStats.h
+IPixelStreamingStats& IPixelStreamingStats::Get()
+{
+	IPixelStreamingStats* Stats = UE::PixelStreaming::FStats::Get();
+	return *Stats;
+}
 
 namespace UE::PixelStreaming
 {
@@ -23,26 +31,16 @@ namespace UE::PixelStreaming
 		return Instance;
 	}
 
-	void FStats::AddWebRTCStatsSource(IStatsSource* InStatsSource)
-	{
-		FScopeLock Lock(&WebRTCStatsSourceListCS);
-		WebRTCStatsSourceList.Add(InStatsSource);
-	}
-
-	void FStats::RemoveWebRTCStatsSource(IStatsSource* InStatsSource)
-	{
-		FScopeLock Lock(&WebRTCStatsSourceListCS);
-		WebRTCStatsSourceList.Remove(InStatsSource);
-	}
-
 	FStats::FStats()
 	{
 		checkf(Instance == nullptr, TEXT("There should only ever been one PixelStreaming stats object."));
 		UConsole::RegisterConsoleAutoCompleteEntries.AddRaw(this, &FStats::UpdateConsoleAutoComplete);
 	}
 
-	void FStats::StorePeerStat(FPixelStreamingPlayerId PlayerId, FStatData Stat)
+	void FStats::StorePeerStat(FPixelStreamingPlayerId PlayerId, FName StatCategory, FStatData Stat)
 	{
+		FName& StatName = Stat.Alias.IsSet() ? Stat.Alias.GetValue() : Stat.StatName;
+
 		bool Updated = false;
 		{
 			FScopeLock Lock(&PeerStatsCS);
@@ -54,27 +52,29 @@ namespace UE::PixelStreaming
 			}
 			else
 			{
-				Updated = PeerStats[PlayerId].StoreStat(Stat);
+				Updated = PeerStats[PlayerId].StoreStat(StatCategory, Stat);
 			}
 		}
 
 		if (Updated)
 		{
-			FireStatChanged(PlayerId, Stat.StatName, Stat.StatValue);
+			if (Stat.ShouldGraph())
+			{
+				GraphValue(StatName, Stat.StatValue, 60, 0, Stat.StatValue * 10.0f, 0);
+			}
+
+			// If a stat has an alias, use that as the storage key, otherwise use its display name
+			FireStatChanged(PlayerId, StatName, Stat.StatValue);
 		}
 	}
 
-	bool FStats::QueryPeerStat(FPixelStreamingPlayerId PlayerId, FName StatToQuery, double& OutValue) const
+	bool FStats::QueryPeerStat(FPixelStreamingPlayerId PlayerId, FName StatCategory, FName StatToQuery, double& OutValue) const
 	{
 		FScopeLock Lock(&PeerStatsCS);
 
 		if (const FPeerStats* SinglePeerStats = PeerStats.Find(PlayerId))
 		{
-			if (const FRenderableStat* StoredStat = SinglePeerStats->StoredStats.Find(StatToQuery))
-			{
-				OutValue = StoredStat->Stat.StatValue;
-				return true;
-			}
+			return SinglePeerStats->GetStat(StatCategory, StatToQuery, OutValue);
 		}
 
 		return false;
@@ -123,52 +123,61 @@ namespace UE::PixelStreaming
 	{
 		bool bUpdated = false;
 
+		// If a stat has an alias, use that as the storage key, otherwise use its display name
+		FName& StatName = Stat.Alias.IsSet() ? Stat.Alias.GetValue() : Stat.StatName;
+
+		if (Stat.ShouldGraph())
+		{
+			GraphValue(StatName, Stat.StatValue, 60, 0, Stat.StatValue, 0);
+		}
+
 		{
 			FScopeLock Lock(&ApplicationStatsCS);
 
-			if (ApplicationStats.Contains(Stat.StatName))
+			if (ApplicationStats.Contains(StatName))
 			{
-				FRenderableStat* RenderableStat = ApplicationStats.Find(Stat.StatName);
+				FStoredStat* StoredStat = ApplicationStats.Find(StatName);
 
-				if (Stat.bSmooth && RenderableStat->Stat.StatValue != 0)
+				if (Stat.bSmooth && StoredStat->Stat.StatValue != 0)
 				{
 					const int MaxSamples = 60;
-					RenderableStat->Stat.NumSamples = FGenericPlatformMath::Min(MaxSamples, RenderableStat->Stat.NumSamples + 1);
-					if (RenderableStat->Stat.NumSamples < MaxSamples)
+					StoredStat->Stat.NumSamples = FGenericPlatformMath::Min(MaxSamples, StoredStat->Stat.NumSamples + 1);
+					if (StoredStat->Stat.NumSamples < MaxSamples)
 					{
-						RenderableStat->Stat.LastEMA = CalcMA(RenderableStat->Stat.LastEMA, RenderableStat->Stat.NumSamples - 1, Stat.StatValue);
+						StoredStat->Stat.LastEMA = CalcMA(StoredStat->Stat.LastEMA, StoredStat->Stat.NumSamples - 1, Stat.StatValue);
 					}
 					else
 					{
-						RenderableStat->Stat.LastEMA = CalcEMA(RenderableStat->Stat.LastEMA, RenderableStat->Stat.NumSamples - 1, Stat.StatValue);
+						StoredStat->Stat.LastEMA = CalcEMA(StoredStat->Stat.LastEMA, StoredStat->Stat.NumSamples - 1, Stat.StatValue);
 					}
-					RenderableStat->Stat.StatValue = RenderableStat->Stat.LastEMA;
+					StoredStat->Stat.StatValue = StoredStat->Stat.LastEMA;
 					bUpdated = true;
 				}
 				else
 				{
-					bUpdated = RenderableStat->Stat.StatValue != Stat.StatValue;
-					RenderableStat->Stat.StatValue = Stat.StatValue;
+					bUpdated = StoredStat->Stat.StatValue != Stat.StatValue;
+					StoredStat->Stat.StatValue = Stat.StatValue;
 				}
 
-				if (bUpdated)
+				if (bUpdated && StoredStat->Renderable.IsSet())
 				{
-					FText TextToDisplay = FText::FromString(FString::Printf(TEXT("%s: %.*f"), *Stat.StatName.ToString(), Stat.NDecimalPlacesToPrint, RenderableStat->Stat.StatValue));
-					RenderableStat->CanvasItem.Text = TextToDisplay;
+					FText TextToDisplay = FText::FromString(FString::Printf(TEXT("%s: %.*f"), *Stat.StatName.ToString(), Stat.NDecimalPlacesToPrint, StoredStat->Stat.StatValue));
+					StoredStat->Renderable.GetValue().Text = TextToDisplay;
 				}
 			}
 			else
 			{
 				FText TextToDisplay = FText::FromString(FString::Printf(TEXT("%s: %.*f"), *Stat.StatName.ToString(), Stat.NDecimalPlacesToPrint, Stat.StatValue));
+				FStoredStat StoredStat(Stat);
 
-				FRenderableStat RenderableStat{
-					Stat,
-					FCanvasTextItem(FVector2D(0, 0), TextToDisplay, FSlateFontInfo(FSlateFontInfo(UEngine::GetSmallFont(), 12)), FLinearColor(0, 1, 0))
-				};
+				if (Stat.ShouldDisplayText())
+				{
+					FCanvasTextItem Text = FCanvasTextItem(FVector2D(0, 0), TextToDisplay, FSlateFontInfo(FSlateFontInfo(UEngine::GetSmallFont(), 12)), FLinearColor(0, 1, 0));
+					Text.EnableShadow(FLinearColor::Black);
+					StoredStat.Renderable = Text;
+				}
 
-				RenderableStat.CanvasItem.EnableShadow(FLinearColor::Black);
-
-				ApplicationStats.Add(RenderableStat.Stat.StatName, RenderableStat);
+				ApplicationStats.Add(StatName, StoredStat);
 				bUpdated = true;
 			}
 		}
@@ -224,11 +233,16 @@ namespace UE::PixelStreaming
 
 				for (auto& ApplicationStatEntry : ApplicationStats)
 				{
-					FRenderableStat& StatToDraw = ApplicationStatEntry.Value;
-					StatToDraw.CanvasItem.Position.X = X;
-					StatToDraw.CanvasItem.Position.Y = Y;
-					Canvas->DrawItem(StatToDraw.CanvasItem);
-					Y += StatToDraw.CanvasItem.DrawnSize.Y;
+					FStoredStat& StatToDraw = ApplicationStatEntry.Value;
+					if (!StatToDraw.Renderable.IsSet())
+					{
+						continue;
+					}
+					FCanvasTextItem& Text = StatToDraw.Renderable.GetValue();
+					Text.Position.X = X;
+					Text.Position.Y = Y;
+					Canvas->DrawItem(Text);
+					Y += Text.DrawnSize.Y;
 				}
 			}
 
@@ -237,14 +251,14 @@ namespace UE::PixelStreaming
 			// increment X now we are done drawing application stats
 			X += 435;
 
-			// TMap<FPixelStreamingPlayerId, FPeerStats> PeerStats;
 			{
 				FScopeLock Lock(&PeerStatsCS);
 
+				// <FPixelStreamingPlayerId, FPeerStats>
 				for (auto& EachPeerEntry : PeerStats)
 				{
 					FPeerStats& SinglePeerStats = EachPeerEntry.Value;
-					if (SinglePeerStats.StoredStats.Num() == 0)
+					if (SinglePeerStats.GetStatGroups().Num() == 0)
 					{
 						continue;
 					}
@@ -257,13 +271,36 @@ namespace UE::PixelStreaming
 					Canvas->DrawItem(SinglePeerStats.PlayerIdCanvasItem);
 					Y += SinglePeerStats.PlayerIdCanvasItem.DrawnSize.Y;
 
-					for (auto& NameStatKeyVal : SinglePeerStats.StoredStats)
+					// <FName, FStatGroup>
+					for (auto& StatGroupEntry : SinglePeerStats.GetStatGroups())
 					{
-						FRenderableStat& Stat = NameStatKeyVal.Value;
-						Stat.CanvasItem.Position.X = X;
-						Stat.CanvasItem.Position.Y = Y;
-						Canvas->DrawItem(Stat.CanvasItem);
-						Y += Stat.CanvasItem.DrawnSize.Y;
+						const FStatGroup& StatGroup = StatGroupEntry.Value;
+
+						// Draw StatGroup category name
+						{
+							const FCanvasTextItem& Text = StatGroup.CategoryCanvasItem;
+							FCanvasTextItem& NonConstText = const_cast<FCanvasTextItem&>(Text);
+							NonConstText.Position.X = X;
+							NonConstText.Position.Y = Y;
+							Canvas->DrawItem(NonConstText);
+							Y += NonConstText.DrawnSize.Y;
+						}
+
+						// Draw the stat value
+						for (auto& StatEntry : StatGroup.GetStoredStats())
+						{
+							const FStoredStat& Stat = StatEntry.Value;
+							if (!Stat.Renderable.IsSet())
+							{
+								continue;
+							}
+							const FCanvasTextItem& Text = Stat.Renderable.GetValue();
+							FCanvasTextItem& NonConstText = const_cast<FCanvasTextItem&>(Text);
+							NonConstText.Position.X = X;
+							NonConstText.Position.Y = Y;
+							Canvas->DrawItem(NonConstText);
+							Y += NonConstText.DrawnSize.Y;
+						}
 					}
 
 					// Each peer's stats gets its own column
@@ -287,7 +324,11 @@ namespace UE::PixelStreaming
 
 	int32 FStats::OnRenderGraphs(UWorld* World, FViewport* Viewport, FCanvas* Canvas, int32 X, int32 Y, const FVector* ViewLocation, const FRotator* ViewRotation)
 	{
-		FVector2D GraphPos{ 0, 0 };
+		checkf(IsInGameThread(), TEXT("FStats::OnRenderGraphs must be called from the gamethread."));
+
+		static const int XOffset = 50;
+		static const int YOffset = 50;
+		FVector2D GraphPos{ XOffset, YOffset };
 		FVector2D GraphSize{ 200, 200 };
 		float GraphSpacing = 5;
 
@@ -295,10 +336,10 @@ namespace UE::PixelStreaming
 		{
 			Graph.Draw(Canvas, GraphPos, GraphSize);
 			GraphPos.X += GraphSize.X + GraphSpacing;
-			if (GraphPos.X > Canvas->GetParentCanvasSize().X)
+			if ((GraphPos.X + GraphSize.X) > Canvas->GetRenderTarget()->GetSizeXY().X)
 			{
 				GraphPos.Y += GraphSize.Y + GraphSpacing;
-				GraphPos.X = 0;
+				GraphPos.X = XOffset;
 			}
 		}
 
@@ -309,10 +350,10 @@ namespace UE::PixelStreaming
 			Tile.Size = GraphSize;
 			Tile.Draw(Canvas);
 			GraphPos.X += GraphSize.X + GraphSpacing;
-			if (GraphPos.X > Canvas->GetParentCanvasSize().X)
+			if ((GraphPos.X + GraphSize.X) > Canvas->GetRenderTarget()->GetSizeXY().X)
 			{
 				GraphPos.Y += GraphSize.Y + GraphSpacing;
-				GraphPos.X = 0;
+				GraphPos.X = XOffset;
 			}
 		}
 
@@ -338,22 +379,21 @@ namespace UE::PixelStreaming
 
 	void FStats::Tick(float DeltaTime)
 	{
+		RTCStatsPolledDelta += DeltaTime;
+
 		// Note (Luke): If we want more metrics from WebRTC there is also the histogram counts.
 		// For example:
 		// RTC_HISTOGRAM_COUNTS("WebRTC.Video.NacksSent", nacks_sent, 1, 100000, 100);
 		// webrtc::metrics::Histogram* Hist1 = webrtc::metrics::HistogramFactoryGetCounts("WebRTC.Video.NacksSent", 0, 100000, 100);
 		// Will require calling webrtc::metrics::Enable();
 
-		// we dispatch this to the signalling thread because the poll call gets executed on the signalling thread
-		// but the signalling thread might be waiting on this mutex lock because its deleting a peer and removing
-		// the stats source. That can result in a deadlock. Ideally this should probably be handled better.
-		FPixelStreamingPeerConnection::PostSignalingTask([this]() {
-			FScopeLock Lock(&WebRTCStatsSourceListCS);
-			for (auto& Source : WebRTCStatsSourceList)
-			{
-				Source->PollWebRTCStats();
-			}
-		});
+		// We only poll WebRTC stats every 1s as this matches chrome://webrtc-internals
+		// and more frequency does not seem useful as these stats are mostly used for visual inspection
+		if (RTCStatsPolledDelta > 1.0f)
+		{
+			OnStatsPolled.Broadcast();
+			RTCStatsPolledDelta = 0;
+		}
 
 		PollPixelStreamingSettings();
 
@@ -368,6 +408,22 @@ namespace UE::PixelStreaming
 		}
 	}
 
+	void FStats::RemoveAllPeerStats()
+	{
+		FScopeLock LockPeers(&PeerStatsCS);
+		PeerStats.Empty();
+	}
+
+	void FStats::ExecStatPS()
+	{
+		// Intetionally empty, registering this function is mostly about getting the stat comment to show up in autocomplete
+	}
+
+	void FStats::ExecStatPSGraphs()
+	{
+		// Intetionally empty, registering this function is mostly about getting the stat comment to show up in autocomplete
+	}
+
 	void FStats::RegisterEngineHooks()
 	{
 		GAreScreenMessagesEnabled = true;
@@ -379,11 +435,25 @@ namespace UE::PixelStreaming
 		UEngine::FEngineStatToggle ToggleStatFunc = UEngine::FEngineStatToggle::CreateRaw(this, &FStats::OnToggleStats);
 		GEngine->AddEngineStat(StatName, StatCategory, StatDescription, RenderStatFunc, ToggleStatFunc, false);
 
+		// We register this console command so we get autocomplete on `Stat PixelStreaming`
+		IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("Stat PixelStreaming"),
+			TEXT("Stats for the Pixel Streaming plugin and its peers."),
+			FConsoleCommandDelegate::CreateRaw(this, &FStats::ExecStatPS),
+			ECVF_Default);
+
 		const FName GraphName("STAT_PixelStreamingGraphs");
 		const FText GraphDescription(FText::FromString("Pixel Streaming graphs showing frame pipeline timings."));
 		UEngine::FEngineStatRender RenderGraphFunc = UEngine::FEngineStatRender::CreateRaw(this, &FStats::OnRenderGraphs);
 		UEngine::FEngineStatToggle ToggleGraphFunc = UEngine::FEngineStatToggle::CreateRaw(this, &FStats::OnToggleGraphs);
 		GEngine->AddEngineStat(GraphName, StatCategory, GraphDescription, RenderGraphFunc, ToggleGraphFunc, false);
+
+		// We register this console command so we get autocomplete on `Stat PixelStreamingGraphs`
+		IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("Stat PixelStreamingGraphs"),
+			TEXT("Draws stats graphs for the Pixel Streaming plugin."),
+			FConsoleCommandDelegate::CreateRaw(this, &FStats::ExecStatPSGraphs),
+			ECVF_Default);
 
 		bool StatsEnabled = Settings::CVarPixelStreamingOnScreenStats.GetValueOnAnyThread();
 		if (StatsEnabled)
@@ -403,26 +473,31 @@ namespace UE::PixelStreaming
 	}
 
 	//
-	// ---------------- PixelStreamingPeerStats ---------------------------
-	// Stats specific to a particular peer, as opposed to the entire app.
+	// ---------------- FStatGroup ---------------------------
+	// A collection of stats grouped together by a category name
 	//
-
-	bool FPeerStats::StoreStat(FStatData StatToStore)
+	bool FStatGroup::StoreStat(FStatData& StatToStore)
 	{
 		bool bUpdated = false;
 
-		if (!StoredStats.Contains(StatToStore.StatName))
+		// If a stat has an alias, use that as the storage key, otherwise use its display name
+		FName& StatName = StatToStore.Alias.IsSet() ? StatToStore.Alias.GetValue() : StatToStore.StatName;
+
+		if (!StoredStats.Contains(StatName))
 		{
-			FText TextToDisplay = FText::FromString(FString::Printf(TEXT("%s: %.*f"), *StatToStore.StatName.ToString(), StatToStore.NDecimalPlacesToPrint, StatToStore.StatValue));
+			FStoredStat NewStat(StatToStore);
 
-			FRenderableStat RenderableStat{
-				StatToStore,
-				FCanvasTextItem(FVector2D(0, 0), TextToDisplay, FSlateFontInfo(FSlateFontInfo(UEngine::GetSmallFont(), 12)), FLinearColor(0, 1, 0))
-			};
+			// If we are displaying the stat, add a renderable for it
+			if (StatToStore.ShouldDisplayText())
+			{
+				FText TextToDisplay = FText::FromString(FString::Printf(TEXT("%s: %.*f"), *StatToStore.StatName.ToString(), StatToStore.NDecimalPlacesToPrint, StatToStore.StatValue));
+				FCanvasTextItem Text = FCanvasTextItem(FVector2D(0, 0), TextToDisplay, FSlateFontInfo(FSlateFontInfo(UEngine::GetSmallFont(), 12)), FLinearColor(0, 1, 0));
+				Text.EnableShadow(FLinearColor::Black);
+				NewStat.Renderable = Text;
+			}
 
-			RenderableStat.CanvasItem.EnableShadow(FLinearColor::Black);
-
-			StoredStats.Add(StatToStore.StatName, RenderableStat);
+			// Actually store the stat
+			StoredStats.Add(StatName, NewStat);
 
 			// first time this stat has been stored, so we also need to sort our stats so they render in consistent order
 			StoredStats.KeySort([](const FName& A, const FName& B) {
@@ -435,44 +510,94 @@ namespace UE::PixelStreaming
 		{
 			// We already have this stat, so just update it
 
-			FRenderableStat* RenderableStat = StoredStats.Find(StatToStore.StatName);
-			if (!RenderableStat)
+			FStoredStat* StoredStat = StoredStats.Find(StatName);
+			if (!StoredStat)
 			{
 				return false;
 			}
 
-			if (RenderableStat->Stat.bSmooth && RenderableStat->Stat.StatValue != 0)
+			if (StoredStat->Stat.bSmooth && StoredStat->Stat.StatValue != 0)
 			{
 				const int MaxSamples = 60;
-				RenderableStat->Stat.NumSamples = FGenericPlatformMath::Min(MaxSamples, RenderableStat->Stat.NumSamples + 1);
-				if (RenderableStat->Stat.NumSamples < MaxSamples)
-					RenderableStat->Stat.LastEMA = CalcMA(RenderableStat->Stat.LastEMA, RenderableStat->Stat.NumSamples - 1, StatToStore.StatValue);
+				StoredStat->Stat.NumSamples = FGenericPlatformMath::Min(MaxSamples, StoredStat->Stat.NumSamples + 1);
+				if (StoredStat->Stat.NumSamples < MaxSamples)
+				{
+					StoredStat->Stat.LastEMA = CalcMA(StoredStat->Stat.LastEMA, StoredStat->Stat.NumSamples - 1, StatToStore.StatValue);
+				}
 				else
-					RenderableStat->Stat.LastEMA = CalcEMA(RenderableStat->Stat.LastEMA, RenderableStat->Stat.NumSamples - 1, StatToStore.StatValue);
-				RenderableStat->Stat.StatValue = RenderableStat->Stat.LastEMA;
+				{
+					StoredStat->Stat.LastEMA = CalcEMA(StoredStat->Stat.LastEMA, StoredStat->Stat.NumSamples - 1, StatToStore.StatValue);
+				}
+				StoredStat->Stat.StatValue = StoredStat->Stat.LastEMA;
 				bUpdated = true;
 			}
 			else
 			{
-				bUpdated = RenderableStat->Stat.StatValue != StatToStore.StatValue;
-				RenderableStat->Stat.StatValue = StatToStore.StatValue;
+				bUpdated = StoredStat->Stat.StatValue != StatToStore.StatValue;
+				StoredStat->Stat.StatValue = StatToStore.StatValue;
 			}
 
 			if (!bUpdated)
 			{
 				return false;
 			}
-			else
+			else if (StoredStat->Stat.ShouldDisplayText() && StoredStat->Renderable.IsSet())
 			{
-				FText TextToDisplay = FText::FromString(FString::Printf(TEXT("%s: %.*f"), *StatToStore.StatName.ToString(), StatToStore.NDecimalPlacesToPrint, RenderableStat->Stat.StatValue));
-				RenderableStat->CanvasItem.Text = TextToDisplay;
+				FText TextToDisplay = FText::FromString(FString::Printf(TEXT("%s: %.*f"), *StatToStore.StatName.ToString(), StatToStore.NDecimalPlacesToPrint, StoredStat->Stat.StatValue));
+				StoredStat->Renderable.GetValue().Text = TextToDisplay;
 			}
 			return bUpdated;
 		}
 	}
 
+	//
+	// ---------------- FPeerStats ---------------------------
+	// Stats specific to a particular peer, as opposed to the entire app.
+	//
+
+	bool FPeerStats::StoreStat(FName StatCategory, FStatData& StatToStore)
+	{
+		if (!StatGroups.Contains(StatCategory))
+		{
+			StatGroups.Add(StatCategory, FStatGroup(StatCategory));
+		}
+		return StatGroups[StatCategory].StoreStat(StatToStore);
+	}
+
+	bool UE::PixelStreaming::FPeerStats::GetStat(FName StatCategory, FName StatToQuery, double& OutValue) const
+	{
+		const FStatGroup* Group = GetStatGroups().Find(StatCategory);
+		if (!Group)
+		{
+			return false;
+		}
+		const FStoredStat* StoredStat = Group->GetStoredStats().Find(StatToQuery);
+		if (!StoredStat)
+		{
+			return false;
+		}
+		OutValue = StoredStat->Stat.StatValue;
+		return true;
+	}
+
 	void FStats::GraphValue(FName InName, float Value, int InSamples, float InMinRange, float InMaxRange, float InRefValue)
 	{
+		if (IsInGameThread())
+		{
+			GraphValue_GameThread(InName, Value, InSamples, InMinRange, InMaxRange, InRefValue);
+		}
+		else
+		{
+			AsyncTask(ENamedThreads::Type::GameThread, [this, InName, Value, InSamples, InMinRange, InMaxRange, InRefValue]() {
+				GraphValue_GameThread(InName, Value, InSamples, InMinRange, InMaxRange, InRefValue);
+			});
+		}
+	}
+
+	void FStats::GraphValue_GameThread(FName InName, float Value, int InSamples, float InMinRange, float InMaxRange, float InRefValue)
+	{
+		checkf(IsInGameThread(), TEXT("FStats::GraphValue_GameThread must be called from the gamethread."));
+
 		if (!Graphs.Contains(InName))
 		{
 			auto& Graph = Graphs.Add(InName, FDebugGraph(InName, InSamples, InMinRange, InMaxRange, InRefValue));
@@ -492,11 +617,11 @@ namespace UE::PixelStreaming
 		return DeltaMs;
 	}
 
-	double FStats::AddTimeDeltaStat(uint64 Cycles1, uint64 Cycles2, const FString& Label)
+	double FStats::AddTimeDeltaStat(uint64 Millis1, uint64 Millis2, const FString& Label)
 	{
-		const uint64 MaxCycles = FGenericPlatformMath::Max(Cycles1, Cycles2);
-		const uint64 MinCycles = FGenericPlatformMath::Min(Cycles1, Cycles2);
-		const double DeltaMs = FPlatformTime::ToMilliseconds64(MaxCycles - MinCycles) * ((Cycles1 > Cycles2) ? 1.0 : -1.0);
+		const uint64 MaxMillis = FGenericPlatformMath::Max(Millis1, Millis2);
+		const uint64 MinMillis = FGenericPlatformMath::Min(Millis1, Millis2);
+		const double DeltaMs = (MaxMillis - MinMillis) * ((Millis1 > Millis2) ? 1.0 : -1.0);
 		const FStatData TimeData{ FName(*Label), DeltaMs, 2, true };
 		StoreApplicationStat(TimeData);
 		return DeltaMs;
@@ -526,6 +651,21 @@ namespace UE::PixelStreaming
 
 	void FStats::AddCanvasTile(FName Name, const FCanvasTileItem& Tile)
 	{
+		if (IsInGameThread())
+		{
+			AddCanvasTile_GameThread(Name, Tile);
+		}
+		else
+		{
+			AsyncTask(ENamedThreads::GameThread, [this, Name, Tile]() {
+				AddCanvasTile_GameThread(Name, Tile);
+			});
+		}
+	}
+
+	void FStats::AddCanvasTile_GameThread(FName Name, const FCanvasTileItem& Tile)
+	{
+		checkf(IsInGameThread(), TEXT("FStats::AddCanvasTile_GameThread must be called from the gamethread."));
 		Tiles.FindOrAdd(Name, Tile);
 	}
 } // namespace UE::PixelStreaming

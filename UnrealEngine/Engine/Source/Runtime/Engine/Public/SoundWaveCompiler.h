@@ -1,14 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
-#include "CoreMinimal.h"
 #include "UObject/WeakObjectPtr.h"
 #include "Containers/Set.h"
-#include "AssetCompilingManager.h"
-#include "AsyncCompilationHelpers.h"
+#include "IAssetCompilingManager.h"
 
 #if WITH_EDITOR
 
+class FAsyncCompilationNotification;
 class USoundWave;
 class FQueuedThreadPool;
 enum class EQueuedWorkPriority : uint8;
@@ -97,7 +96,13 @@ private:
 	TArray<USoundWave*> GatherPendingSoundWaves();
 
 	/** Notification for the amount of pending sound wave compilations */
-	FAsyncCompilationNotification Notification;
+	TUniquePtr<FAsyncCompilationNotification> Notification;
 };
 
+#endif
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "CoreMinimal.h"
+#include "AssetCompilingManager.h"
+#include "AsyncCompilationHelpers.h"
 #endif

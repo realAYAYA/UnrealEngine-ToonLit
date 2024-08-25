@@ -21,7 +21,6 @@
 #include "Misc/Optional.h"
 #include "Templates/UniquePtr.h"
 #include "Templates/IsConstructible.h"
-#include "Templates/AndOrNot.h"
 
 class FText;
 class FTextHistory;
@@ -72,6 +71,22 @@ enum class ETextIdenticalModeFlags : uint8
 	LexicalCompareInvariants = 1<<1,
 };
 ENUM_CLASS_FLAGS(ETextIdenticalModeFlags);
+
+enum class ETextFormatFlags : uint8
+{
+	/** No special behavior */
+	None = 0,
+
+	/**
+	 * Set to evaluate argument modifiers when formatting text
+	 * Unset to print the literal argument modifier syntax into the result
+	 */
+	EvaluateArgumentModifiers = 1<<0,
+
+	/** Default formatting flags */
+	Default = EvaluateArgumentModifiers,
+};
+ENUM_CLASS_FLAGS(ETextFormatFlags);
 
 enum class ETextPluralType : uint8
 {
@@ -275,27 +290,27 @@ public:
 	 * Construct an instance from an FText.
 	 * The text will be immediately compiled. 
 	 */
-	CORE_API FTextFormat(const FText& InText);
+	CORE_API FTextFormat(const FText& InText, ETextFormatFlags InFormatFlags = ETextFormatFlags::Default);
 
 	/**
 	 * Construct an instance from an FText and custom format pattern definition.
 	 * The text will be immediately compiled.
 	 */
-	CORE_API FTextFormat(const FText& InText, FTextFormatPatternDefinitionConstRef InCustomPatternDef);
+	CORE_API FTextFormat(const FText& InText, FTextFormatPatternDefinitionConstRef InCustomPatternDef, ETextFormatFlags InFormatFlags = ETextFormatFlags::Default);
 
 	/**
 	 * Construct an instance from an FString.
 	 * The string will be immediately compiled.
 	 */
-	static CORE_API FTextFormat FromString(const FString& InString);
-	static CORE_API FTextFormat FromString(FString&& InString);
+	static CORE_API FTextFormat FromString(const FString& InString, ETextFormatFlags InFormatFlags = ETextFormatFlags::Default);
+	static CORE_API FTextFormat FromString(FString&& InString, ETextFormatFlags InFormatFlags = ETextFormatFlags::Default);
 
 	/**
 	 * Construct an instance from an FString and custom format pattern definition.
 	 * The string will be immediately compiled.
 	 */
-	static CORE_API FTextFormat FromString(const FString& InString, FTextFormatPatternDefinitionConstRef InCustomPatternDef);
-	static CORE_API FTextFormat FromString(FString&& InString, FTextFormatPatternDefinitionConstRef InCustomPatternDef);
+	static CORE_API FTextFormat FromString(const FString& InString, FTextFormatPatternDefinitionConstRef InCustomPatternDef, ETextFormatFlags InFormatFlags = ETextFormatFlags::Default);
+	static CORE_API FTextFormat FromString(FString&& InString, FTextFormatPatternDefinitionConstRef InCustomPatternDef, ETextFormatFlags InFormatFlags = ETextFormatFlags::Default);
 
 	/**
 	 * Test to see whether this instance contains valid compiled data.
@@ -325,6 +340,11 @@ public:
 	CORE_API EExpressionType GetExpressionType() const;
 
 	/**
+	 * Get the format flags being used.
+	 */
+	CORE_API ETextFormatFlags GetFormatFlags() const;
+
+	/**
 	 * Get the format pattern definition being used.
 	 */
 	CORE_API FTextFormatPatternDefinitionConstRef GetPatternDefinition() const;
@@ -345,7 +365,7 @@ private:
 	 * Construct an instance from an FString.
 	 * The string will be immediately compiled.
 	 */
-	CORE_API FTextFormat(FString&& InString, FTextFormatPatternDefinitionConstRef InCustomPatternDef);
+	CORE_API FTextFormat(FString&& InString, FTextFormatPatternDefinitionConstRef InCustomPatternDef, ETextFormatFlags InFormatFlags);
 
 	/** Cached compiled expression data */
 	TSharedRef<FTextFormatData, ESPMode::ThreadSafe> TextFormatData;
@@ -362,11 +382,12 @@ public:
 public:
 
 	CORE_API FText();
+	
 	FText(const FText&) = default;
-	FText(FText&&) = default;
-
 	FText& operator=(const FText&) = default;
-	FText& operator=(FText&&) = default;
+	
+	CORE_API FText(FText&& Other);
+	CORE_API FText& operator=(FText&& Other);
 
 	/**
 	 * Generate an FText that represents the passed number in the current culture
@@ -590,7 +611,7 @@ public:
 	template <typename... ArgTypes>
 	static FORCEINLINE FText Format(FTextFormat Fmt, ArgTypes... Args)
 	{
-		static_assert(TAnd<TIsConstructible<FFormatArgumentValue, ArgTypes>...>::Value, "Invalid argument type passed to FText::Format");
+		static_assert((TIsConstructible<FFormatArgumentValue, ArgTypes>::Value && ...), "Invalid argument type passed to FText::Format");
 		static_assert(sizeof...(Args) > 0, "FText::Format expects at least one non-format argument"); // we do this to ensure that people don't call Format for no good reason
 
 		// We do this to force-select the correct overload, because overload resolution will cause compile
@@ -652,7 +673,7 @@ public:
 	template <typename... ArgTypes>
 	static FORCEINLINE FText Join(const FText& Delimiter, ArgTypes... Args)
 	{
-		static_assert(TAnd<TIsConstructible<FFormatArgumentValue, ArgTypes>...>::Value, "Invalid argument type passed to FText::Join");
+		static_assert((TIsConstructible<FFormatArgumentValue, ArgTypes>::Value && ...), "Invalid argument type passed to FText::Join");
 		static_assert(sizeof...(Args) > 0, "FText::Join expects at least one non-format argument"); // we do this to ensure that people don't call Join for no good reason
 
 		return Join(Delimiter, FFormatOrderedArguments{ MoveTemp(Args)... });
@@ -745,11 +766,12 @@ public:
 #endif
 
 private:
-	/** Special constructor used to create StaticEmptyText without also allocating a history object */
-	enum class EInitToEmptyString : uint8 { Value };
-	CORE_API explicit FText( EInitToEmptyString );
-
-	CORE_API explicit FText( TSharedRef<ITextData, ESPMode::ThreadSafe> InTextData );
+	template <typename HistoryType, typename = decltype(ImplicitConv<ITextData*>((HistoryType*)nullptr))>
+	explicit FText( TRefCountPtr<HistoryType>&& InTextData )
+		: TextData(MoveTemp(InTextData))
+		, Flags(0)
+	{
+	}
 
 	CORE_API explicit FText( FString&& InSourceString );
 
@@ -786,7 +808,7 @@ private:
 
 private:
 	/** The internal shared data for this FText */
-	TSharedRef<ITextData, ESPMode::ThreadSafe> TextData;
+	TRefCountPtr<ITextData> TextData;
 
 	/** Flags with various information on what sort of FText this is */
 	uint32 Flags;
@@ -1108,7 +1130,7 @@ private:
 	static uint16 GetLocalHistoryRevisionForText(const FText& InText);
 
 	/** A pointer to the text data for the FText that we took a snapshot of (used for an efficient pointer compare) */
-	TSharedPtr<ITextData, ESPMode::ThreadSafe> TextDataPtr;
+	TRefCountPtr<ITextData> TextDataPtr;
 
 	/** The localized string of the text when we took the snapshot (if any) */
 	FTextConstDisplayStringPtr LocalizedStringPtr;
@@ -1136,8 +1158,6 @@ public:
 	static CORE_API FTextId GetTextId(const FText& Text);
 	static CORE_API const FString* GetSourceString(const FText& Text);
 	static CORE_API const FString& GetDisplayString(const FText& Text);
-	UE_DEPRECATED(5.0, "GetSharedDisplayString is no longer guaranteed to return a valid result and should NOT be used! If you wanted to get the text ID, use FTextInspector::GetTextId instead. If you wanted a key for unique text instances, use FTextInspector::GetSharedDataId instead.")
-	static CORE_API FTextConstDisplayStringPtr GetSharedDisplayString(const FText& Text);
 	static CORE_API bool GetTableIdAndKey(const FText& Text, FName& OutTableId, FString& OutKey);
 	static CORE_API bool GetTableIdAndKey(const FText& Text, FName& OutTableId, FTextKey& OutKey);
 	static CORE_API uint32 GetFlags(const FText& Text);
@@ -1251,7 +1271,7 @@ public:
 	template <typename... ArgTypes>
 	FORCEINLINE void AppendLineFormat(FTextFormat Pattern, ArgTypes... Args)
 	{
-		static_assert(TAnd<TIsConstructible<FFormatArgumentValue, ArgTypes>...>::Value, "Invalid argument type passed to FTextBuilder::AppendLineFormat");
+		static_assert((TIsConstructible<FFormatArgumentValue, ArgTypes>::Value && ...), "Invalid argument type passed to FTextBuilder::AppendLineFormat");
 		static_assert(sizeof...(Args) > 0, "FTextBuilder::AppendLineFormat expects at least one non-format argument"); // we do this to ensure that people don't call AppendLineFormat for no good reason
 
 		BuildAndAppendLine(FText::Format(MoveTemp(Pattern), FFormatOrderedArguments{ MoveTemp(Args)... }));
@@ -1265,7 +1285,12 @@ public:
 	/**
 	 * Check to see if the builder has any data.
 	 */
-	CORE_API bool IsEmpty();
+	CORE_API bool IsEmpty() const;
+
+	/**
+	 * Returns the number of lines.
+	 */
+	CORE_API int32 GetNumLines() const;
 
 	/**
 	 * Build the current set of input into a FText.

@@ -9,7 +9,7 @@
 #include "DatasmithMaxExporterDefines.h"
 #include "DatasmithMaxHelper.h"
 #include "DatasmithMaxLogger.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxWriter.h"
 #include "DatasmithSceneExporter.h"
 #include "DatasmithSceneFactory.h"
@@ -38,7 +38,7 @@ FMaxLightCoordinateConversionParams::FMaxLightCoordinateConversionParams(INode* 
 	if (ObjState.obj != nullptr && ObjState.obj->SuperClassID() == LIGHT_CLASS_ID)
 	{
 		bIsLight = true;
-		bIsCoronaLight = FDatasmithMaxSceneParser::GetLightClass(LightNode) == EMaxLightClass::CoronaLight;
+		bIsCoronaLight = FDatasmithMaxSceneHelper::GetLightClass(LightNode) == EMaxLightClass::CoronaLight;
 		LightShape = Shape;
 	}
 }
@@ -279,7 +279,7 @@ void FDatasmithMaxSceneExporter::ExportAnimation( TSharedRef< IDatasmithLevelSeq
 
 TSharedPtr< IDatasmithLightActorElement > FDatasmithMaxSceneExporter::CreateLightElementForNode(INode* Node, const TCHAR* Name)
 {
-	EMaxLightClass LightClass = FDatasmithMaxSceneParser::GetLightClass(Node);
+	EMaxLightClass LightClass = FDatasmithMaxSceneHelper::GetLightClass(Node);
 	if (LightClass == EMaxLightClass::Unknown)
 	{
 		return TSharedPtr< IDatasmithLightActorElement >();
@@ -666,7 +666,7 @@ bool FDatasmithMaxSceneExporter::ParseTransformAnimation(INode* ParentNode, INod
 
 bool FDatasmithMaxSceneExporter::ParseLight(DatasmithMaxDirectLink::FLightNodeConverter& Converter, INode* Node, TSharedRef< IDatasmithLightActorElement > LightElement, TSharedRef< IDatasmithScene > DatasmithScene)
 {
-	EMaxLightClass LightClass = FDatasmithMaxSceneParser::GetLightClass(Node);
+	EMaxLightClass LightClass = FDatasmithMaxSceneHelper::GetLightClass(Node);
 	if (LightClass == EMaxLightClass::Unknown)
 	{
 		return false;

@@ -45,9 +45,14 @@ public:
 		return DataSize - BytePosition;
 	}
 
+	uint32 GetBitPosition() const
+	{
+		return BitPosition;
+	}
+
 	uint64 GetRemainingBits() const
 	{
-		return GetRemainingByteLength() * 8 + (BitPosition ? 8 - BitPosition : 0);
+		return GetRemainingByteLength() * 8 - BitPosition;
 	}
 
 	bool GetAlignedBytes(uint8* To, uint64 nBytes)
@@ -65,6 +70,10 @@ public:
 	void SkipBytes(uint64 nBytes)
 	{
 		BytePosition += nBytes;
+		if (BytePosition > DataSize)
+		{
+			BytePosition = DataSize;
+		}
 	}
 
 	void SkipBits(uint64 nBits)
@@ -75,17 +84,34 @@ public:
 
 	uint32 GetBits(uint64 nBits)
 	{
-		uint32 rv = PeekBits(nBits);
-		uint32 bp = BitPosition + nBits;
-		BytePosition += bp >> 3;
-		BitPosition = bp & 7;
-		return rv;
+		if (nBits == 0)
+		{
+			return 0;
+		}
+		else if (nBits > GetRemainingBits())
+		{
+			BytePosition = DataSize;
+			BitPosition = 0;
+			return 0;
+		}
+		else
+		{
+			uint32 rv = PeekBits(nBits);
+			uint32 bp = BitPosition + nBits;
+			BytePosition += bp >> 3;
+			BitPosition = bp & 7;
+			return rv;
+		}
 	}
 
 	uint32 PeekBits(uint64 nBits)
 	{
 		checkf(nBits <= 32, TEXT("This function can return at most 32 bits!"));
 		if (nBits == 0)
+		{
+			return 0;
+		}
+		else if (nBits > GetRemainingBits())
 		{
 			return 0;
 		}

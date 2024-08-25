@@ -29,15 +29,26 @@ public:
 	virtual void Synchronize() = 0;
 
 protected:
+	
+	/** Initializes dynamic barrier on the primary node. */
+	virtual bool InitializeBarrier(const FString& SyncInstanceId);
+	
 	/** Synchronizes calling thread at the barrier. */
 	void SyncThreadOnBarrier();
 
 	/** Returns media device ID being synchronized */
 	FString GetMediaDeviceId() const;
 
+	/** Returns barrier client created for this sync policy */
+	IDisplayClusterGenericBarriersClient* const GetBarrierClient() const;
+
+	/** Get Barrier ID for this sync policy */
+	const FString& GetBarrierId() const;
+
+	/** Get thread marker for this sync policy */
+	const FString& GetThreadMarker() const;
+
 private:
-	/** Initializes dynamic barrier on the primary node. */
-	bool InitializeBarrier(const FString& SyncInstanceId);
 
 	/** Releases dynamic barrier on the primary node. */
 	void ReleaseBarrier();
@@ -73,7 +84,7 @@ private:
 	FString ThreadMarker;
 
 	/** Barrier sync client. */
-	TUniquePtr<IDisplayClusterGenericBarriersClient> EthernetBarrierClient;
+	TUniquePtr<IDisplayClusterGenericBarriersClient, FDisplayClusterGenericBarriersClientDeleter> EthernetBarrierClient;
 };
 
 /*

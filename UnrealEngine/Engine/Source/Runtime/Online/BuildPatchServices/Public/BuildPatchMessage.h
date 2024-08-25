@@ -65,14 +65,29 @@ namespace BuildPatchServices
 		FString Uri;
 	};
 
+	// Flag for which Requests a message handler expects to receive, allows for internal implementation optimisation.
+	enum class EMessageRequests : uint32
+	{
+		// Does not respond to any requests - message listener only.
+		None = 0,
+		// Will respond to chunk URI requests.
+		ChunkUriRequest = 0x1,
+		// Further request types to follow in future.
+
+	};
+	ENUM_CLASS_FLAGS(EMessageRequests);
+
 	/**
 	 * Base class of a message handler, this should be inherited from and passed to an installer to receive messages that you want to handle.
 	 */
 	class FMessageHandler
 	{
 	public:
-		FMessageHandler() {}
-		virtual ~FMessageHandler() {}
+		FMessageHandler(EMessageRequests InMessageRequests)
+			: MessageRequests(InMessageRequests)
+		{}
+
+		virtual ~FMessageHandler() = default;
 
 		/**
 		 * Handles a chunk source event message.
@@ -92,12 +107,25 @@ namespace BuildPatchServices
 		 * @param OnResponse   The function to callback once the chunk has been found
 		 */
 		virtual bool HandleRequest(const FChunkUriRequest& Request, TFunction<void(FChunkUriResponse)> OnResponse) { return false; }
+
+		/**
+		 * @return the message request flags.
+		 */
+		EMessageRequests GetMessageRequests() const { return MessageRequests; }
+
+	private:
+		const EMessageRequests MessageRequests;
 	};
 
 	class FDefaultMessageHandler
 		: public FMessageHandler
 	{
 	public:
+		// Default constructor passes flags to always support all requests
+		FDefaultMessageHandler()
+			: FMessageHandler(static_cast<EMessageRequests>(0xFFFFFFFF))
+		{}
+
 		virtual bool HandleRequest(const FChunkUriRequest& Request, TFunction<void(FChunkUriResponse)> OnResponse) override
 		{
 			OnResponse({ Request.CloudDirectory / Request.RelativePath });

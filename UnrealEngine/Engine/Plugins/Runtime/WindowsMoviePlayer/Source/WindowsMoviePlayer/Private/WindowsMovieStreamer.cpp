@@ -793,7 +793,7 @@ STDMETHODIMP FSampleGrabberCallback::OnProcessSample(REFGUID MajorMediaType, DWO
 {
 	if (VideoSampleReady.GetValue() == 0)
 	{
-		TextureData.SetNum(SampleSize, false);
+		TextureData.SetNum(SampleSize, EAllowShrinking::No);
 		if (SampleSize > 0)
 		{
 			FMemory::Memcpy(TextureData.GetData(), SampleBuffer, SampleSize);

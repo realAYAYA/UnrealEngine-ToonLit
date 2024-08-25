@@ -31,7 +31,7 @@ void UDataprepAsset::PostLoad()
 
 			while(Producers_DEPRECATED.Num() > 0)
 			{
-				if(Inputs->AddAssetProducer( Producers_DEPRECATED.Pop(false) ) == INDEX_NONE)
+				if(Inputs->AddAssetProducer( Producers_DEPRECATED.Pop(EAllowShrinking::No) ) == INDEX_NONE)
 				{
 					// #ueent_todo Log message a producer was not properly restored
 				}

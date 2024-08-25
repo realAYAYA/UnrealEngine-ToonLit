@@ -105,28 +105,23 @@ inline void FLogScope::EnterNoSync(uint32 Uid, uint32 Size)
 	memcpy(Header - 1, &Uid16, sizeof(Uid16)); /* FEventHeader::Uid */
 }
 
-
-
 ////////////////////////////////////////////////////////////////////////////////
-template </*bMaybeHasAux*/>
-inline void TLogScope<false>::operator += (const FLogScope&) const
+template <bool bMaybeHasAux>
+inline void TLogScope<bMaybeHasAux>::operator += (const FLogScope&) const
 {
-	Commit();
+	if constexpr (bMaybeHasAux)
+	{
+		FWriteBuffer* LatestBuffer = Writer_GetBuffer();
+		LatestBuffer->Cursor[0] = uint8(EKnownEventUids::AuxDataTerminal << EKnownEventUids::_UidShift);
+		LatestBuffer->Cursor++;
+
+		Commit(LatestBuffer);
+	}
+	else
+	{
+		Commit();
+	}
 }
-
-////////////////////////////////////////////////////////////////////////////////
-template </*bMaybeHasAux*/>
-inline void TLogScope<true>::operator += (const FLogScope&) const
-{
-	FWriteBuffer* LatestBuffer = Writer_GetBuffer();
-	LatestBuffer->Cursor[0] = uint8(EKnownEventUids::AuxDataTerminal << EKnownEventUids::_UidShift);
-	LatestBuffer->Cursor++;
-
-	Commit(LatestBuffer);
-}
-
-
-
 
 ////////////////////////////////////////////////////////////////////////////////
 inline FScopedLogScope::~FScopedLogScope()
@@ -206,7 +201,9 @@ FORCENOINLINE auto FLogScope::ScopedEnter()
 	uint8 EnterUid = uint8(EKnownEventUids::EnterScope << EKnownEventUids::_UidShift);
 
 	FWriteBuffer* Buffer = Writer_GetBuffer();
-	if (UNLIKELY(int32((uint8*)Buffer - Buffer->Cursor) < int32(sizeof(EnterUid))))
+	constexpr int32 EventHeaderSize = (EventType::EventFlags & FEventInfo::Flag_NoSync) != 0 ? sizeof(FEventHeader) : sizeof(FEventHeaderSync);
+	constexpr int32 RequiredSize = sizeof(EnterUid) + EventHeaderSize + EventType::GetSize();
+	if (UNLIKELY(int32((uint8*)Buffer - Buffer->Cursor) < RequiredSize))
 	{
 		Buffer = Writer_NextBuffer();
 	}
@@ -226,7 +223,9 @@ FORCENOINLINE auto FLogScope::ScopedStampedEnter()
 	uint64 Stamp;
 
 	FWriteBuffer* Buffer = Writer_GetBuffer();
-	if (UNLIKELY(int32((uint8*)Buffer - Buffer->Cursor) < int32(sizeof(Stamp))))
+	constexpr int32 EventHeaderSize = (EventType::EventFlags & FEventInfo::Flag_NoSync) != 0 ? sizeof(FEventHeader) : sizeof(FEventHeaderSync);
+	constexpr int32 RequiredSize = sizeof(Stamp) + EventHeaderSize + EventType::GetSize();
+	if (UNLIKELY(int32((uint8*)Buffer - Buffer->Cursor) < RequiredSize))
 	{
 		Buffer = Writer_NextBuffer();
 	}

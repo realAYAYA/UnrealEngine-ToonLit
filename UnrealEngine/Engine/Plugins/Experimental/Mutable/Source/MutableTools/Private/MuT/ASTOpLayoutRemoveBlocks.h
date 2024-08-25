@@ -12,7 +12,7 @@ namespace mu
 {
 	struct FProgram;
 	
-	class ASTOpLayoutRemoveBlocks : public ASTOp
+	class ASTOpLayoutRemoveBlocks final : public ASTOp
 	{
 	public:
 

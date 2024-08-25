@@ -3,16 +3,18 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
 using Horde.Server.Server;
-using Horde.Server.Streams;
 using Horde.Server.Utilities;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
-using Microsoft.Extensions.Options;
 using OpenTelemetry.Trace;
 
 namespace Horde.Server.Jobs.TestData
@@ -24,7 +26,7 @@ namespace Horde.Server.Jobs.TestData
 	{
 		internal interface ITestExpire
 		{
-			DateTime? LastSeenUtc { get; }		
+			DateTime? LastSeenUtc { get; }
 		}
 
 		class TestMetaDocument : ITestMeta, ITestExpire
@@ -120,7 +122,7 @@ namespace Horde.Server.Jobs.TestData
 
 			public TestDocument(string name, List<TestMetaId> meta, string? suiteName = null, string? displayName = null)
 			{
-				Id = TestId.GenerateNewId();				
+				Id = TestId.GenerateNewId();
 				Name = name;
 				Metadata = meta;
 				SuiteName = suiteName;
@@ -239,7 +241,7 @@ namespace Horde.Server.Jobs.TestData
 			[BsonRequired, BsonId]
 			public TestRefId Id { get; set; }
 
-			[BsonRequired,BsonElement("sid")]
+			[BsonRequired, BsonElement("sid")]
 			public StreamId StreamId { get; set; }
 
 			[BsonRequired, BsonElement("m")]
@@ -257,7 +259,7 @@ namespace Horde.Server.Jobs.TestData
 
 			[BsonIgnoreIfNull, BsonElement("o")]
 			public TestOutcome? Outcome { get; set; }
-			
+
 			// --- Suite tests			
 			[BsonIgnoreIfNull, BsonElement("suid")]
 			public TestSuiteId? SuiteId { get; set; }
@@ -278,7 +280,7 @@ namespace Horde.Server.Jobs.TestData
 			public JobId? JobId { get; set; }
 
 			[BsonIgnoreIfNull, BsonElement("stepid")]
-			public SubResourceId? StepId { get; set; }
+			public JobStepId? StepId { get; set; }
 
 			private TestDataRefDocument()
 			{
@@ -336,7 +338,7 @@ namespace Horde.Server.Jobs.TestData
 			public StreamId StreamId { get; set; }
 			public TemplateId TemplateRefId { get; set; }
 			public JobId JobId { get; set; }
-			public SubResourceId StepId { get; set; }
+			public JobStepId StepId { get; set; }
 			public int Change { get; set; }
 			public string Key { get; set; }
 			public BsonDocument Data { get; set; }
@@ -397,15 +399,10 @@ namespace Horde.Server.Jobs.TestData
 		readonly Tracer _tracer;
 		readonly ILogger _logger;
 
-
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		/// <param name="mongoService"></param>
-		/// <param name="tracer"></param>
-		/// <param name="logger"></param>
-		/// <param name="settings"></param>
-		public TestDataCollection(MongoService mongoService, Tracer tracer, ILogger<TestDataCollection> logger, IOptionsMonitor<ServerSettings> settings)
+		public TestDataCollection(MongoService mongoService, Tracer tracer, ILogger<TestDataCollection> logger)
 		{
 			_tracer = tracer;
 			_logger = logger;
@@ -416,7 +413,7 @@ namespace Horde.Server.Jobs.TestData
 			_testDataDocuments = mongoService.GetCollection<TestDataDocument>("TestData", indexes);
 
 			List<MongoIndex<TestMetaDocument>> metaIndexes = new List<MongoIndex<TestMetaDocument>>();
-			metaIndexes.Add(keys => keys.Ascending(x => x.ProjectName).Ascending(x => x.Platforms).Ascending(x => x.Configurations).Ascending(x => x.BuildTargets).Ascending(x => x.RHI));
+			metaIndexes.Add(keys => keys.Ascending(x => x.ProjectName));
 			_testMeta = mongoService.GetCollection<TestMetaDocument>("TestData.MetaV2", metaIndexes);
 
 			List<MongoIndex<TestDocument>> testIndexes = new List<MongoIndex<TestDocument>>();
@@ -439,19 +436,8 @@ namespace Horde.Server.Jobs.TestData
 
 		}
 
-		/// <summary>
-		/// Gets test data refs
-		/// </summary>
-		/// <param name="streamIds"></param>
-		/// <param name="metaIds"></param>
-		/// <param name="testIds"></param>
-		/// <param name="suiteIds"></param>
-		/// <param name="minCreateTime"></param>
-		/// <param name="maxCreateTime"></param>
-		/// <param name="minChange"></param>
-		/// <param name="maxChange"></param>
-		/// <returns></returns>
-		public async Task<List<ITestDataRef>> FindTestRefs(StreamId[] streamIds, TestMetaId[]? metaIds = null, TestId[]? testIds = null, TestSuiteId[]? suiteIds = null, DateTime? minCreateTime = null, DateTime? maxCreateTime = null, int? minChange = null, int? maxChange = null)
+		/// <inheritdoc/>
+		public async Task<IReadOnlyList<ITestDataRef>> FindTestRefsAsync(StreamId[] streamIds, TestMetaId[]? metaIds = null, TestId[]? testIds = null, TestSuiteId[]? suiteIds = null, DateTime? minCreateTime = null, DateTime? maxCreateTime = null, int? minChange = null, int? maxChange = null, CancellationToken cancellationToken = default)
 		{
 
 			FilterDefinition<TestDataRefDocument> filter = FilterDefinition<TestDataRefDocument>.Empty;
@@ -476,7 +462,7 @@ namespace Horde.Server.Jobs.TestData
 				filter &= filterBuilder.In(x => x.Metadata, metaIds);
 			}
 
-			if ((testIds != null && testIds.Length> 0) && (suiteIds != null && suiteIds.Length > 0))
+			if ((testIds != null && testIds.Length > 0) && (suiteIds != null && suiteIds.Length > 0))
 			{
 				filter &= filterBuilder.Or(filterBuilder.And(filterBuilder.Ne(x => x.TestId, null), filterBuilder.In(x => (TestId)x.TestId!, testIds)),
 										   filterBuilder.And(filterBuilder.Ne(x => x.SuiteId, null), filterBuilder.In(x => (TestSuiteId)x.SuiteId!, suiteIds)));
@@ -504,10 +490,10 @@ namespace Horde.Server.Jobs.TestData
 			}
 
 			List<TestDataRefDocument> results;
-			
-			using (TelemetrySpan _ = _tracer.StartActiveSpan($"{nameof(TestDataCollection)}.{nameof(FindTestRefs)}"))
+
+			using (TelemetrySpan _ = _tracer.StartActiveSpan($"{nameof(TestDataCollection)}.{nameof(FindTestRefsAsync)}"))
 			{
-				results = await _testRefs.Find(filter).ToListAsync();
+				results = await _testRefs.Find(filter).ToListAsync(cancellationToken);
 			}
 
 			return results.ConvertAll<ITestDataRef>(x => x);
@@ -515,7 +501,7 @@ namespace Horde.Server.Jobs.TestData
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<ITestData>> AddAsync(IJob job, IJobStep step, (string key, BsonDocument value)[] data)
+		public async Task<IReadOnlyList<ITestData>> AddAsync(IJob job, IJobStep step, (string key, BsonDocument value)[] data, CancellationToken cancellationToken = default)
 		{
 			// detailed test data
 			List<TestDataDocument> documents = new List<TestDataDocument>();
@@ -523,31 +509,30 @@ namespace Horde.Server.Jobs.TestData
 			{
 				(string key, BsonDocument document) = data[i];
 				documents.Add(new TestDataDocument(job, step, key, document));
-				
 			}
 
-			await _testDataDocuments.InsertManyAsync(documents);
+			await _testDataDocuments.InsertManyAsync(documents, null, cancellationToken);
 
 			try
 			{
-				await AddTestReportData(job, step, documents);
+				await AddTestReportDataAsync(job, step, documents, cancellationToken);
 			}
 			catch (Exception ex)
 			{
 				_logger.LogWarning(ex, "Exception while adding test data  report, jobId: {JobId} stepId: {StepId}", job.Id, step.Id);
 			}
 
-			return documents.ConvertAll<ITestData>(x => x); ;
+			return documents;
 		}
 
 		/// <inheritdoc/>
-		public async Task<ITestData?> GetAsync(ObjectId id)
+		public async Task<ITestData?> GetAsync(ObjectId id, CancellationToken cancellationToken)
 		{
-			return await _testDataDocuments.Find<TestDataDocument>(x => x.Id == id).FirstOrDefaultAsync();
+			return await _testDataDocuments.Find<TestDataDocument>(x => x.Id == id).FirstOrDefaultAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<ITestData>> FindAsync(StreamId? streamId, int? minChange, int? maxChange, JobId? jobId, SubResourceId? stepId, string? key = null, int index = 0, int count = 10)
+		public async Task<IReadOnlyList<ITestData>> FindAsync(StreamId? streamId, int? minChange, int? maxChange, JobId? jobId, JobStepId? stepId, string? key = null, int index = 0, int count = 10, CancellationToken cancellationToken = default)
 		{
 			FilterDefinition<TestDataDocument> filter = FilterDefinition<TestDataDocument>.Empty;
 			if (streamId != null)
@@ -577,18 +562,17 @@ namespace Horde.Server.Jobs.TestData
 
 			SortDefinition<TestDataDocument> sort = Builders<TestDataDocument>.Sort.Ascending(x => x.StreamId).Descending(x => x.Change);
 
-			List<TestDataDocument> results = await _testDataDocuments.Find(filter).Sort(sort).Skip(index).Limit(count).ToListAsync();
-			return results.ConvertAll<ITestData>(x => x);
+			return await _testDataDocuments.Find(filter).Sort(sort).Skip(index).Limit(count).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task DeleteAsync(ObjectId id)
+		public async Task DeleteAsync(ObjectId id, CancellationToken cancellationToken = default)
 		{
-			await _testDataDocuments.DeleteOneAsync<TestDataDocument>(x => x.Id == id);
+			await _testDataDocuments.DeleteOneAsync<TestDataDocument>(x => x.Id == id, cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<ITestDataDetails>> FindTestDetails(TestRefId[] ids)
+		public async Task<IReadOnlyList<ITestDataDetails>> FindTestDetailsAsync(TestRefId[] ids, CancellationToken cancellationToken = default)
 		{
 			FilterDefinitionBuilder<TestDataDetailsDocument> filterBuilder = Builders<TestDataDetailsDocument>.Filter;
 			FilterDefinition<TestDataDetailsDocument> filter = FilterDefinition<TestDataDetailsDocument>.Empty;
@@ -602,12 +586,11 @@ namespace Horde.Server.Jobs.TestData
 				filter &= filterBuilder.In(x => x.Id, ids);
 			}
 
-			List<TestDataDetailsDocument> results = await _testDetails.Find(filter).ToListAsync();
-			return results.ConvertAll<ITestDataDetails>(x => x);
+			return await _testDetails.Find(filter).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<ITestMeta>> FindTestMeta(string[]? projectNames = null, string[]? platforms = null, string[]? configurations = null, string[]? buildTargets = null, string? rhi = null, string? variation = null, TestMetaId[]? metaIds = null)
+		public async Task<IReadOnlyList<ITestMeta>> FindTestMetaAsync(string[]? projectNames = null, string[]? platforms = null, string[]? configurations = null, string[]? buildTargets = null, string? rhi = null, string? variation = null, TestMetaId[]? metaIds = null, CancellationToken cancellationToken = default)
 		{
 			FilterDefinitionBuilder<TestMetaDocument> filterBuilder = Builders<TestMetaDocument>.Filter;
 			FilterDefinition<TestMetaDocument> filter = FilterDefinition<TestMetaDocument>.Empty;
@@ -682,36 +665,32 @@ namespace Horde.Server.Jobs.TestData
 				filter &= filterBuilder.Eq(x => x.Variation, variation);
 			}
 
-			List<TestMetaDocument> result = await _testMeta.Find(filter).ToListAsync();
-
-			return result.ConvertAll<ITestMeta>(x => x);			
+			return await _testMeta.Find(filter).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<ITest>> FindTests(TestId[] testIds)
+		public async Task<IReadOnlyList<ITest>> FindTestsAsync(TestId[] testIds, CancellationToken cancellationToken = default)
 		{
-			List<TestDocument> results = await _tests.Find(Builders<TestDocument>.Filter.In(x => x.Id, testIds)).ToListAsync();
-			return results.ConvertAll<ITest>(x => x);
+			return await _tests.Find(Builders<TestDocument>.Filter.In(x => x.Id, testIds)).ToListAsync(cancellationToken);
 
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<ITestSuite>> FindTestSuites(TestSuiteId[] suiteIds)
+		public async Task<IReadOnlyList<ITestSuite>> FindTestSuitesAsync(TestSuiteId[] suiteIds, CancellationToken cancellationToken = default)
 		{
-			List<TestSuiteDocument> results = await _testSuites.Find(Builders<TestSuiteDocument>.Filter.In(x => x.Id, suiteIds)).ToListAsync();
-			return results.ConvertAll<ITestSuite>(x => x);
+			return await _testSuites.Find(Builders<TestSuiteDocument>.Filter.In(x => x.Id, suiteIds)).ToListAsync(cancellationToken);
 
 		}
 
-		private async Task<List<TestDocument>> FindTests(bool? suiteTests = null, string[]? projectNames = null, string[]? testNames = null, string[]? suiteNames = null, TestMetaId[]? metaIds = null, TestId[]? testIds = null)
+		private async Task<List<TestDocument>> FindTestsAsync(bool? suiteTests = null, string[]? projectNames = null, string[]? testNames = null, string[]? suiteNames = null, TestMetaId[]? metaIds = null, TestId[]? testIds = null, CancellationToken cancellationToken = default)
 		{
-			List<ITestMeta> metaData = new List<ITestMeta>();
+			IReadOnlyList<ITestMeta> metaData = Array.Empty<ITestMeta>();
 
 			if ((projectNames != null && projectNames.Length > 0) || (metaIds != null && metaIds.Length > 0))
 			{
-				metaData = await FindTestMeta(projectNames, metaIds: metaIds);
+				metaData = await FindTestMetaAsync(projectNames, metaIds: metaIds, cancellationToken: cancellationToken);
 			}
-			
+
 			TestMetaId[] queryIds = metaData.Select(x => x.Id).ToArray();
 
 			FilterDefinitionBuilder<TestDocument> filterBuilder = Builders<TestDocument>.Filter;
@@ -751,7 +730,7 @@ namespace Horde.Server.Jobs.TestData
 				{
 					filter &= filterBuilder.In(x => x.Id, testIds);
 				}
-			}			
+			}
 			if (suiteTests == false)
 			{
 				filter &= filterBuilder.Eq(x => x.SuiteName, null);
@@ -773,16 +752,16 @@ namespace Horde.Server.Jobs.TestData
 				}
 			}
 
-			return await _tests.Find(filter).ToListAsync();
+			return await _tests.Find(filter).ToListAsync(cancellationToken);
 		}
 
-		private async Task<List<TestSuiteDocument>> FindTestSuites(string[] suiteNames, TestMetaId[]? metaIds = null, string[]? projectNames = null)
+		private async Task<List<TestSuiteDocument>> FindTestSuitesAsync(string[] suiteNames, TestMetaId[]? metaIds = null, string[]? projectNames = null, CancellationToken cancellationToken = default)
 		{
-			List<ITestMeta> metaData = new List<ITestMeta>();
+			IReadOnlyList<ITestMeta> metaData = Array.Empty<ITestMeta>();
 
 			if ((projectNames != null && projectNames.Length > 0) || (metaIds != null && metaIds.Length > 0))
 			{
-				metaData = await FindTestMeta(projectNames, metaIds: metaIds);
+				metaData = await FindTestMetaAsync(projectNames, metaIds: metaIds, cancellationToken: cancellationToken);
 			}
 
 			TestMetaId[] queryIds = metaData.Select(x => x.Id).ToArray();
@@ -811,21 +790,20 @@ namespace Horde.Server.Jobs.TestData
 				filter &= filterBuilder.In(x => x.Name, suiteNames);
 			}
 
-			return await _testSuites.Find(filter).ToListAsync();
+			return await _testSuites.Find(filter).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<ITestStream>> FindTestStreams(StreamId[] streamIds)
+		public async Task<IReadOnlyList<ITestStream>> FindTestStreamsAsync(StreamId[] streamIds, CancellationToken cancellationToken)
 		{
-			List<TestStreamDocument> results  = await _testStreams.Find(Builders<TestStreamDocument>.Filter.In(x => x.StreamId, streamIds)).ToListAsync();
-			return results.ConvertAll<ITestStream>(x => x);
+			return await _testStreams.Find(Builders<TestStreamDocument>.Filter.In(x => x.StreamId, streamIds)).ToListAsync(cancellationToken);
 		}
 
-		async Task AddTestRef(TestDataRefDocument testRef)
+		async Task AddTestRefAsync(TestDataRefDocument testRef, CancellationToken cancellationToken)
 		{
 			StreamId streamId = testRef.StreamId;
 
-			List<TestStreamDocument> streams = await _testStreams.Find(Builders<TestStreamDocument>.Filter.Eq(x => x.StreamId, streamId)).ToListAsync();
+			List<TestStreamDocument> streams = await _testStreams.Find(Builders<TestStreamDocument>.Filter.Eq(x => x.StreamId, streamId)).ToListAsync(cancellationToken);
 
 			if (streams.Count == 0)
 			{
@@ -840,7 +818,7 @@ namespace Horde.Server.Jobs.TestData
 					streamDoc.TestSuites.Add(testRef.SuiteId.Value);
 				}
 
-				await _testStreams.InsertOneAsync(streamDoc);
+				await _testStreams.InsertOneAsync(streamDoc, null, cancellationToken);
 			}
 			else
 			{
@@ -855,7 +833,7 @@ namespace Horde.Server.Jobs.TestData
 					{
 						streamDoc.Tests.Add(testRef.TestId.Value);
 						updates.Add(updateBuilder.Set(x => x.Tests, streamDoc.Tests));
-					}					
+					}
 				}
 
 				if (testRef.SuiteId != null)
@@ -870,11 +848,11 @@ namespace Horde.Server.Jobs.TestData
 				{
 					FilterDefinitionBuilder<TestStreamDocument> ebuilder = Builders<TestStreamDocument>.Filter;
 					FilterDefinition<TestStreamDocument> efilter = ebuilder.Eq(x => x.StreamId, streamDoc.StreamId);
-					await _testStreams.UpdateOneAsync(efilter, updateBuilder.Combine(updates));
+					await _testStreams.UpdateOneAsync(efilter, updateBuilder.Combine(updates), null, cancellationToken);
 
 				}
 			}
-			await _testRefs.InsertOneAsync(testRef);
+			await _testRefs.InsertOneAsync(testRef, null, cancellationToken);
 		}
 
 		/// <summary>
@@ -884,8 +862,9 @@ namespace Horde.Server.Jobs.TestData
 		/// <param name="job"></param>
 		/// <param name="step"></param>
 		/// <param name="testName"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		private async Task<ITestMeta?> AddTestMeta(Dictionary<string, string> metaData, IJob job, IJobStep step, string testName)
+		private async Task<ITestMeta?> AddTestMetaAsync(Dictionary<string, string> metaData, IJob job, IJobStep step, string testName, CancellationToken cancellationToken)
 		{
 			string? platform;
 			if (!metaData.TryGetValue("Platform", out platform))
@@ -923,11 +902,11 @@ namespace Horde.Server.Jobs.TestData
 
 			string? rhi;
 			metaData.TryGetValue("RHI", out rhi);
-			rhi = rhi ?? "default";
+			rhi ??= "default";
 
 			string? variation;
 			metaData.TryGetValue("Variation", out variation);
-			variation = variation ?? "default";
+			variation ??= "default";
 
 			TestMetaDocument meta = new TestMetaDocument(platforms, configurations, buildTargets, projectName, rhi, variation);
 
@@ -938,38 +917,38 @@ namespace Horde.Server.Jobs.TestData
 			filter &= filterBuilder.Eq(x => x.Platforms, meta.Platforms);
 			filter &= filterBuilder.Eq(x => x.BuildTargets, meta.BuildTargets);
 			filter &= filterBuilder.Eq(x => x.Configurations, meta.Configurations);
-			
-			TestMetaDocument? result = await _testMeta.Find(filter).FirstOrDefaultAsync();
+
+			TestMetaDocument? result = await _testMeta.Find(filter).FirstOrDefaultAsync(cancellationToken);
 
 			if (result == null)
 			{
 				result = meta;
-				await _testMeta.InsertOneAsync(result);
+				await _testMeta.InsertOneAsync(result, null, cancellationToken);
 			}
 			else
 			{
 				UpdateDefinitionBuilder<TestMetaDocument> updateBuilder = Builders<TestMetaDocument>.Update;
 				List<UpdateDefinition<TestMetaDocument>> updates = new List<UpdateDefinition<TestMetaDocument>>();
 				updates.Add(updateBuilder.Set(x => x.LastSeenUtc, DateTime.UtcNow));
-				await _testMeta.FindOneAndUpdateAsync(x => x.Id == result.Id, updateBuilder.Combine(updates));
+				await _testMeta.FindOneAndUpdateAsync(x => x.Id == result.Id, updateBuilder.Combine(updates), null, cancellationToken);
 			}
 
 			return result;
 
 		}
 
-		async Task<TestDocument?> AddOrUpdateTest(ITestMeta metaData, string testName, string? suiteName = null,  string? displayName = null)
+		async Task<TestDocument?> AddOrUpdateTestAsync(ITestMeta metaData, string testName, string? suiteName = null, string? displayName = null, CancellationToken cancellationToken = default)
 		{
 
 			List<TestDocument> tests;
 
 			if (suiteName != null)
 			{
-				tests = await FindTests(true, projectNames: new string[] { metaData.ProjectName }, testNames: new string[] { testName }, suiteNames: new string[] {suiteName});
+				tests = await FindTestsAsync(true, projectNames: new string[] { metaData.ProjectName }, testNames: new string[] { testName }, suiteNames: new string[] { suiteName }, cancellationToken: cancellationToken);
 			}
 			else
 			{
-				tests = await FindTests(false, projectNames: new string[] { metaData.ProjectName }, testNames: new string[] { testName });
+				tests = await FindTestsAsync(false, projectNames: new string[] { metaData.ProjectName }, testNames: new string[] { testName }, cancellationToken: cancellationToken);
 			}
 
 			if (tests.Count > 1)
@@ -981,8 +960,8 @@ namespace Horde.Server.Jobs.TestData
 
 			if (tests.Count == 0)
 			{
-				test = new TestDocument( testName, new List<TestMetaId>() { metaData.Id }, suiteName, displayName);
-				await _tests.InsertOneAsync(test);
+				test = new TestDocument(testName, new List<TestMetaId>() { metaData.Id }, suiteName, displayName);
+				await _tests.InsertOneAsync(test, null, cancellationToken);
 			}
 			else
 			{
@@ -1000,28 +979,27 @@ namespace Horde.Server.Jobs.TestData
 					updates.Add(updateBuilder.Set(x => x.Metadata, test.Metadata));
 				}
 
-				await _tests.FindOneAndUpdateAsync(x => x.Id == test.Id, updateBuilder.Combine(updates));
+				await _tests.FindOneAndUpdateAsync(x => x.Id == test.Id, updateBuilder.Combine(updates), null, cancellationToken);
 			}
 
 			return test;
 		}
 
-		private async Task<TestSuiteDocument?> AddOrUpdateTestSuite(string suiteName, ITestMeta metaData, List<TestId> testIds)
+		private async Task<TestSuiteDocument?> AddOrUpdateTestSuiteAsync(string suiteName, ITestMeta metaData, List<TestId> testIds, CancellationToken cancellationToken)
 		{
 			TestSuiteDocument? suite;
 
-			List<TestSuiteDocument> suiteTests = await FindTestSuites(suiteNames: new string[] { suiteName }, projectNames: new string[] {metaData.ProjectName});
+			List<TestSuiteDocument> suiteTests = await FindTestSuitesAsync(suiteNames: new string[] { suiteName }, projectNames: new string[] { metaData.ProjectName }, cancellationToken: cancellationToken);
 
 			if (suiteTests.Count > 1)
 			{
 				throw new Exception($"Duplicate tests found for MetaId: {metaData.Id}, SuiteName: {suiteName}, Count: {suiteTests.Count}");
 			}
 
-
 			if (suiteTests.Count == 0)
 			{
 				suite = new TestSuiteDocument(suiteName, new List<TestMetaId> { metaData.Id }, testIds);
-				await _testSuites.InsertOneAsync(suite);
+				await _testSuites.InsertOneAsync(suite, null, cancellationToken);
 			}
 			else
 			{
@@ -1046,14 +1024,14 @@ namespace Horde.Server.Jobs.TestData
 					updates.Add(updateBuilder.Set(x => x.Metadata, suite.Metadata));
 				}
 
-				await _testSuites.FindOneAndUpdateAsync(x => x.Id == suite.Id, updateBuilder.Combine(updates));
+				await _testSuites.FindOneAndUpdateAsync(x => x.Id == suite.Id, updateBuilder.Combine(updates), null, cancellationToken);
 
 			}
 
 			return suite;
 		}
 
-		async Task AddTestReportData(IJob job, IJobStep step, List<TestDataDocument> documents)
+		async Task AddTestReportDataAsync(IJob job, IJobStep step, List<TestDataDocument> documents, CancellationToken cancellationToken = default)
 		{
 
 			// do not add preflight to temporal data
@@ -1093,11 +1071,11 @@ namespace Horde.Server.Jobs.TestData
 					continue;
 				}
 
-				string type = value.AsString;				
+				string type = value.AsString;
 
 				if (type == "Simple Report")
 				{
-					await AddSimpleReportData(job, step, item.Id, testData);
+					await AddSimpleReportDataAsync(job, step, item.Id, testData, cancellationToken);
 					continue;
 				}
 
@@ -1114,16 +1092,16 @@ namespace Horde.Server.Jobs.TestData
 
 			if (sessions.Count > 0)
 			{
-				await AddTestSessionReportData(job, step, documents, sessions, tests);
+				await AddTestSessionReportDataAsync(job, step, documents, sessions, tests, cancellationToken);
 			}
 		}
 
 		/// <inheritdoc/>
-		public async Task PruneDataAsync()
+		public async Task PruneDataAsync(CancellationToken cancellationToken = default)
 		{
 
 			HashSet<TestMetaId> metaIds = new HashSet<TestMetaId>();
-			foreach (TestMetaId metaId in await (await _testMeta.DistinctAsync(x => x.Id, Builders<TestMetaDocument>.Filter.Empty)).ToListAsync())
+			foreach (TestMetaId metaId in await (await _testMeta.DistinctAsync(x => x.Id, Builders<TestMetaDocument>.Filter.Empty, null, cancellationToken)).ToListAsync(cancellationToken))
 			{
 				metaIds.Add(metaId);
 			}
@@ -1134,7 +1112,7 @@ namespace Horde.Server.Jobs.TestData
 			HashSet<TestId> testIds = new HashSet<TestId>();
 			HashSet<TestId> testDeletes = new HashSet<TestId>();
 			{
-				List<TestDocument> tests = await _tests.Find(Builders<TestDocument>.Filter.Empty).ToListAsync();
+				List<TestDocument> tests = await _tests.Find(Builders<TestDocument>.Filter.Empty).ToListAsync(cancellationToken);
 				foreach (TestDocument test in tests)
 				{
 					List<TestMetaId> metas = test.Metadata.Where(x => metaIds.Contains(x)).ToList();
@@ -1149,7 +1127,7 @@ namespace Horde.Server.Jobs.TestData
 						UpdateDefinitionBuilder<TestDocument> updateBuilder = Builders<TestDocument>.Update;
 						List<UpdateDefinition<TestDocument>> updates = new List<UpdateDefinition<TestDocument>>();
 						updates.Add(updateBuilder.Set(x => x.Metadata, metas));
-						await _tests.FindOneAndUpdateAsync(x => x.Id == test.Id, updateBuilder.Combine(updates));
+						await _tests.FindOneAndUpdateAsync(x => x.Id == test.Id, updateBuilder.Combine(updates), null, cancellationToken);
 					}
 
 					testIds.Add(test.Id);
@@ -1160,7 +1138,7 @@ namespace Horde.Server.Jobs.TestData
 			HashSet<TestSuiteId> suiteIds = new HashSet<TestSuiteId>();
 			HashSet<TestSuiteId> suiteDeletes = new HashSet<TestSuiteId>();
 			{
-				List<TestSuiteDocument> suites = await _testSuites.Find(Builders<TestSuiteDocument>.Filter.Empty).ToListAsync();
+				List<TestSuiteDocument> suites = await _testSuites.Find(Builders<TestSuiteDocument>.Filter.Empty).ToListAsync(cancellationToken);
 				foreach (TestSuiteDocument suite in suites)
 				{
 					List<TestMetaId> metas = suite.Metadata.Where(x => metaIds.Contains(x)).ToList();
@@ -1185,7 +1163,7 @@ namespace Horde.Server.Jobs.TestData
 							updates.Add(updateBuilder.Set(x => x.Tests, tests));
 						}
 
-						await _testSuites.FindOneAndUpdateAsync(x => x.Id == suite.Id, updateBuilder.Combine(updates));
+						await _testSuites.FindOneAndUpdateAsync(x => x.Id == suite.Id, updateBuilder.Combine(updates), null, cancellationToken);
 					}
 
 					suiteIds.Add(suite.Id);
@@ -1197,7 +1175,7 @@ namespace Horde.Server.Jobs.TestData
 				FilterDefinitionBuilder<TestDocument> filterBuilder = Builders<TestDocument>.Filter;
 				FilterDefinition<TestDocument> filter = filterBuilder.Empty;
 				filter &= filterBuilder.In(x => x.Id, testDeletes);
-				await _tests.DeleteManyAsync(filter);
+				await _tests.DeleteManyAsync(filter, cancellationToken);
 			}
 
 			if (suiteDeletes.Count > 0)
@@ -1205,7 +1183,7 @@ namespace Horde.Server.Jobs.TestData
 				FilterDefinitionBuilder<TestSuiteDocument> filterBuilder = Builders<TestSuiteDocument>.Filter;
 				FilterDefinition<TestSuiteDocument> filter = filterBuilder.Empty;
 				filter &= filterBuilder.In(x => x.Id, suiteDeletes);
-				await _testSuites.DeleteManyAsync(filter);
+				await _testSuites.DeleteManyAsync(filter, cancellationToken);
 			}
 
 			if (testDeletes.Count > 0 || suiteDeletes.Count > 0)
@@ -1217,7 +1195,7 @@ namespace Horde.Server.Jobs.TestData
 
 			// Update test streams
 			{
-				List<TestStreamDocument> testStreams = await _testStreams.Find(Builders<TestStreamDocument>.Filter.Empty).ToListAsync();
+				List<TestStreamDocument> testStreams = await _testStreams.Find(Builders<TestStreamDocument>.Filter.Empty).ToListAsync(cancellationToken);
 				foreach (TestStreamDocument stream in testStreams)
 				{
 					List<TestId> tests = stream.Tests.Where(x => testIds.Contains(x)).ToList();
@@ -1225,7 +1203,7 @@ namespace Horde.Server.Jobs.TestData
 
 					if (tests.Count == 0 && suites.Count == 0)
 					{
-						await _testStreams.DeleteOneAsync(x => x.Id == stream.Id);
+						await _testStreams.DeleteOneAsync(x => x.Id == stream.Id, cancellationToken);
 						testStreamsDeleted++;
 					}
 					else if (tests.Count != stream.Tests.Count || suites.Count != stream.TestSuites.Count)
@@ -1243,7 +1221,7 @@ namespace Horde.Server.Jobs.TestData
 							updates.Add(updateBuilder.Set(x => x.TestSuites, suites));
 						}
 
-						await _testStreams.FindOneAndUpdateAsync(x => x.Id == stream.Id, updateBuilder.Combine(updates));
+						await _testStreams.FindOneAndUpdateAsync(x => x.Id == stream.Id, updateBuilder.Combine(updates), null, cancellationToken);
 					}
 				}
 			}
@@ -1252,21 +1230,20 @@ namespace Horde.Server.Jobs.TestData
 			{
 				_logger.LogInformation("Pruned {TestStreamDeleteCount} test streams", testStreamsDeleted);
 			}
-
 		}
 
-		static async Task<long> ExpireCollection<DocType>(IMongoCollection<DocType> collection, DateTime expireTime) where DocType : ITestExpire
+		static async Task<long> ExpireCollectionAsync<DocType>(IMongoCollection<DocType> collection, DateTime expireTime, CancellationToken cancellationToken) where DocType : ITestExpire
 		{
 			FilterDefinitionBuilder<DocType> filterBuilder = Builders<DocType>.Filter;
 			FilterDefinition<DocType> filter = filterBuilder.Empty;
 			filter &= filterBuilder.Lte(x => x.LastSeenUtc!, expireTime);
-			DeleteResult result = await collection.DeleteManyAsync(filter);
+			DeleteResult result = await collection.DeleteManyAsync(filter, cancellationToken);
 
 			return result.DeletedCount;
 
 		}
 
-		async Task ExpireTestData(int retainMonths)
+		async Task ExpireTestDataAsync(int retainMonths, CancellationToken cancellationToken)
 		{
 			if (retainMonths <= 0)
 			{
@@ -1276,15 +1253,15 @@ namespace Horde.Server.Jobs.TestData
 			DateTime expireTime = DateTime.Now.AddMonths(-retainMonths);
 
 			// expire and prune root test data
-			long testsExpired = await ExpireCollection(_tests, expireTime);
-			long suitesExpired = await ExpireCollection(_testSuites, expireTime);
-			long metaExpired = await ExpireCollection(_testMeta, expireTime);
+			long testsExpired = await ExpireCollectionAsync(_tests, expireTime, cancellationToken);
+			long suitesExpired = await ExpireCollectionAsync(_testSuites, expireTime, cancellationToken);
+			long metaExpired = await ExpireCollectionAsync(_testMeta, expireTime, cancellationToken);
 
 			// Check whether we need to prune
 			if (testsExpired > 0 || suitesExpired > 0 || metaExpired > 0)
 			{
 				_logger.LogInformation("Expired {TestsExpired} tests, {SuitesExpired} suites, {MetaExpired} meta", testsExpired, suitesExpired, metaExpired);
-				await PruneDataAsync();
+				await PruneDataAsync(cancellationToken);
 			}
 
 			// expire test data documents
@@ -1294,7 +1271,7 @@ namespace Horde.Server.Jobs.TestData
 				FilterDefinition<TestDataDocument> filter = FilterDefinition<TestDataDocument>.Empty;
 				FilterDefinitionBuilder<TestDataDocument> filterBuilder = Builders<TestDataDocument>.Filter;
 				filter &= filterBuilder.Lte(x => x.Id!, dataExpireTime);
-				DeleteResult result = await _testDataDocuments.DeleteManyAsync(filter);
+				DeleteResult result = await _testDataDocuments.DeleteManyAsync(filter, null, cancellationToken);
 				if (result.DeletedCount > 0)
 				{
 					_logger.LogInformation("Expired {NumDeleted} test data documents", result.DeletedCount);
@@ -1308,7 +1285,7 @@ namespace Horde.Server.Jobs.TestData
 				FilterDefinition<TestDataRefDocument> filter = FilterDefinition<TestDataRefDocument>.Empty;
 				FilterDefinitionBuilder<TestDataRefDocument> filterBuilder = Builders<TestDataRefDocument>.Filter;
 				filter &= filterBuilder.Lte(x => x.Id!, refExpireTime);
-				DeleteResult result = await _testRefs.DeleteManyAsync(filter);
+				DeleteResult result = await _testRefs.DeleteManyAsync(filter, cancellationToken);
 				if (result.DeletedCount > 0)
 				{
 					_logger.LogInformation("Expired {NumDeleted} test ref documents", result.DeletedCount);
@@ -1320,33 +1297,31 @@ namespace Horde.Server.Jobs.TestData
 				FilterDefinition<TestDataDetailsDocument> filter = FilterDefinition<TestDataDetailsDocument>.Empty;
 				FilterDefinitionBuilder<TestDataDetailsDocument> filterBuilder = Builders<TestDataDetailsDocument>.Filter;
 				filter &= filterBuilder.Lte(x => x.Id!, refExpireTime);
-				DeleteResult result = await _testDetails.DeleteManyAsync(filter);
+				DeleteResult result = await _testDetails.DeleteManyAsync(filter, cancellationToken);
 				if (result.DeletedCount > 0)
 				{
 					_logger.LogInformation("Expired {NumDeleted} test detail documents", result.DeletedCount);
 				}
-
 			}
-
 		}
 
 		/// <inheritdoc/>
-		public async Task<bool> UpdateAsync(int retainMonths)
+		public async Task<bool> UpdateAsync(int retainMonths, CancellationToken cancellationToken)
 		{
-			await ExpireTestData(retainMonths);
+			await ExpireTestDataAsync(retainMonths, cancellationToken);
 
-			return true;		
+			return true;
 		}
 
 		/// <inheritdoc/>
-		public async Task UpgradeAsync()
+		public async Task UpgradeAsync(CancellationToken cancellationToken)
 		{
 			// Upgrade test meta data
 			{
 				FilterDefinition<TestMetaDocument> filter = Builders<TestMetaDocument>.Filter.Empty;
 				filter &= Builders<TestMetaDocument>.Filter.Where(x => x.Version == null || x.Version < TestMetaDocument.CurrentVersion);
 
-				List<TestMetaDocument> results = await _testMeta.Find(filter).ToListAsync();
+				List<TestMetaDocument> results = await _testMeta.Find(filter).ToListAsync(cancellationToken);
 
 				if (results.Count > 0)
 				{
@@ -1369,7 +1344,7 @@ namespace Horde.Server.Jobs.TestData
 							updates.Add(updateBuilder.Set(x => x.Variation, "default"));
 						}
 
-						await _testMeta.FindOneAndUpdateAsync(x => x.Id == meta.Id, updateBuilder.Combine(updates));
+						await _testMeta.FindOneAndUpdateAsync(x => x.Id == meta.Id, updateBuilder.Combine(updates), null, cancellationToken);
 					}
 				}
 			}
@@ -1379,7 +1354,7 @@ namespace Horde.Server.Jobs.TestData
 				FilterDefinition<TestDocument> filter = Builders<TestDocument>.Filter.Empty;
 				filter &= Builders<TestDocument>.Filter.Where(x => x.Version == null || x.Version < TestDocument.CurrentVersion);
 
-				List<TestDocument> results = await _tests.Find(filter).ToListAsync();
+				List<TestDocument> results = await _tests.Find(filter).ToListAsync(cancellationToken);
 
 				if (results.Count > 0)
 				{
@@ -1397,7 +1372,7 @@ namespace Horde.Server.Jobs.TestData
 						updates.Add(updateBuilder.Set(x => x.Version, TestDocument.CurrentVersion));
 						updates.Add(updateBuilder.Set(x => x.LastSeenUtc, DateTime.UtcNow));
 
-						await _tests.FindOneAndUpdateAsync(x => x.Id == test.Id, updateBuilder.Combine(updates));
+						await _tests.FindOneAndUpdateAsync(x => x.Id == test.Id, updateBuilder.Combine(updates), null, cancellationToken);
 					}
 				}
 			}
@@ -1407,7 +1382,7 @@ namespace Horde.Server.Jobs.TestData
 				FilterDefinition<TestSuiteDocument> filter = Builders<TestSuiteDocument>.Filter.Empty;
 				filter &= Builders<TestSuiteDocument>.Filter.Where(x => x.Version == null || x.Version < TestSuiteDocument.CurrentVersion);
 
-				List<TestSuiteDocument> results = await _testSuites.Find(filter).ToListAsync();
+				List<TestSuiteDocument> results = await _testSuites.Find(filter).ToListAsync(cancellationToken);
 
 				if (results.Count > 0)
 				{
@@ -1425,7 +1400,7 @@ namespace Horde.Server.Jobs.TestData
 						updates.Add(updateBuilder.Set(x => x.Version, TestSuiteDocument.CurrentVersion));
 						updates.Add(updateBuilder.Set(x => x.LastSeenUtc, DateTime.UtcNow));
 
-						await _testSuites.FindOneAndUpdateAsync(x => x.Id == suite.Id, updateBuilder.Combine(updates));
+						await _testSuites.FindOneAndUpdateAsync(x => x.Id == suite.Id, updateBuilder.Combine(updates), null, cancellationToken);
 					}
 				}
 			}
@@ -1471,7 +1446,7 @@ namespace Horde.Server.Jobs.TestData
 				public string State { get; set; } = String.Empty;
 				public string DeviceInstance { get; set; } = String.Empty;
 				public int Errors { get; set; } = 0;
-				public int Warnings { get; set; } = 0;				
+				public int Warnings { get; set; } = 0;
 			}
 
 			public string Type { get; set; } = String.Empty;
@@ -1491,7 +1466,7 @@ namespace Horde.Server.Jobs.TestData
 		}
 
 		class SimpleTestData
-		{			
+		{
 			public string TestName { get; set; } = String.Empty;
 			public string Description { get; set; } = String.Empty;
 			public string ReportCreatedOn { get; set; } = String.Empty;
@@ -1509,20 +1484,20 @@ namespace Horde.Server.Jobs.TestData
 			public Dictionary<string, string> Metadata { get; set; } = new Dictionary<string, string>();
 		}
 
-		async Task AddSimpleReportData(IJob job, IJobStep step, ObjectId testDataId, BsonDocument testDoc)
+		async Task AddSimpleReportDataAsync(IJob job, IJobStep step, ObjectId testDataId, BsonDocument testDoc, CancellationToken cancellationToken)
 		{
 			try
 			{
 				SimpleTestData testData = BsonSerializer.Deserialize<SimpleTestData>(testDoc);
 
-				ITestMeta? metaData = await AddTestMeta(testData.Metadata, job, step, testData.TestName);
+				ITestMeta? metaData = await AddTestMetaAsync(testData.Metadata, job, step, testData.TestName, cancellationToken);
 
 				if (metaData == null)
 				{
 					throw new Exception($"Unable to add or update simple test report for {testData.TestName}, unable to generate meta data");
 				}
 
-				TestDocument? test = await AddOrUpdateTest(metaData!, testData.TestName);
+				TestDocument? test = await AddOrUpdateTestAsync(metaData!, testData.TestName, cancellationToken: cancellationToken);
 
 				if (test == null)
 				{
@@ -1554,8 +1529,8 @@ namespace Horde.Server.Jobs.TestData
 					}
 				}
 
-				await AddTestRef(testRef);
-				await _testDetails.InsertOneAsync(new TestDataDetailsDocument(testRef.Id, new List<ObjectId> { testDataId }));
+				await AddTestRefAsync(testRef, cancellationToken);
+				await _testDetails.InsertOneAsync(new TestDataDetailsDocument(testRef.Id, new List<ObjectId> { testDataId }), null, cancellationToken);
 
 			}
 			catch (Exception ex)
@@ -1564,7 +1539,7 @@ namespace Horde.Server.Jobs.TestData
 			}
 		}
 
-		async Task AddTestSessionReportData(IJob job, IJobStep step, List<TestDataDocument> documents, List<AutomatedTestSessionData> sessions, List<UnrealAutomatedTestData> tests)
+		async Task AddTestSessionReportDataAsync(IJob job, IJobStep step, List<TestDataDocument> documents, List<AutomatedTestSessionData> sessions, List<UnrealAutomatedTestData> tests, CancellationToken cancellationToken)
 		{
 			HashSet<string> suites = new HashSet<string>();
 
@@ -1608,7 +1583,7 @@ namespace Horde.Server.Jobs.TestData
 						continue;
 					}
 
-					ITestMeta? metaData = await AddTestMeta(session.Metadata, job, step, "Automated Test Session");
+					ITestMeta? metaData = await AddTestMetaAsync(session.Metadata, job, step, "Automated Test Session", cancellationToken);
 
 					if (metaData == null)
 					{
@@ -1642,7 +1617,7 @@ namespace Horde.Server.Jobs.TestData
 								displayName = utest.TestDisplayName;
 							}
 
-							TestDocument? testDoc = await AddOrUpdateTest(metaData, test.Name, suite, displayName);
+							TestDocument? testDoc = await AddOrUpdateTestAsync(metaData, test.Name, suite, displayName, cancellationToken);
 
 							if (testDoc == null)
 							{
@@ -1658,7 +1633,7 @@ namespace Horde.Server.Jobs.TestData
 					// register test suite
 					if (suiteTestIds.Count > 0)
 					{
-						TestSuiteDocument? testSuite = await AddOrUpdateTestSuite(suite, metaData, suiteTestIds.ToList());
+						TestSuiteDocument? testSuite = await AddOrUpdateTestSuiteAsync(suite, metaData, suiteTestIds.ToList(), cancellationToken);
 
 						if (testSuite == null)
 						{
@@ -1714,7 +1689,7 @@ namespace Horde.Server.Jobs.TestData
 									if (!counted)
 									{
 										skipCount++;
-									}										
+									}
 									break;
 								case "Fail":
 									outcome = TestOutcome.Failure;
@@ -1725,7 +1700,7 @@ namespace Horde.Server.Jobs.TestData
 									break;
 							}
 
-							suiteTestData.Add(new SuiteTestData(document.Id, outcome, TimeSpan.FromSeconds(test.TimeElapseSec), test.TestUID, test.WarningCount != 0 ? test.WarningCount : null , test.ErrorCount != 0 ? test.ErrorCount : null));
+							suiteTestData.Add(new SuiteTestData(document.Id, outcome, TimeSpan.FromSeconds(test.TimeElapseSec), test.TestUID, test.WarningCount != 0 ? test.WarningCount : null, test.ErrorCount != 0 ? test.ErrorCount : null));
 						}
 
 						testRef.SuiteSkipCount = skipCount;
@@ -1734,8 +1709,8 @@ namespace Horde.Server.Jobs.TestData
 						testRef.SuiteSuccessCount = successCount;
 
 						// and add to collections
-						await AddTestRef(testRef);
-						await _testDetails.InsertOneAsync(new TestDataDetailsDocument(testRef.Id, documents.Select(x => x.Id).ToList(), suiteTestData));
+						await AddTestRefAsync(testRef, cancellationToken);
+						await _testDetails.InsertOneAsync(new TestDataDetailsDocument(testRef.Id, documents.Select(x => x.Id).ToList(), suiteTestData), null, cancellationToken);
 					}
 					else
 					{

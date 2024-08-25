@@ -2,8 +2,7 @@
 
 #pragma once
 #include "SceneViewExtension.h"
-
-class FDisplayClusterViewportManager;
+#include "Render/Viewport/Configuration/DisplayClusterViewportConfiguration.h"
 
 #define DISPLAYCLUSTER_SCENE_VIEWPOINT_EXTENSION_PRIORITY -1
 
@@ -13,8 +12,8 @@ class FDisplayClusterViewportManager;
 class FDisplayClusterViewportManagerViewPointExtension : public FSceneViewExtensionBase
 {
 public:
-	FDisplayClusterViewportManagerViewPointExtension(const FAutoRegister& AutoRegister, const FDisplayClusterViewportManager* InViewportManager);
-	virtual ~FDisplayClusterViewportManagerViewPointExtension();
+	FDisplayClusterViewportManagerViewPointExtension(const FAutoRegister& AutoRegister, const TSharedRef<FDisplayClusterViewportConfiguration, ESPMode::ThreadSafe>& InConfiguration);
+	virtual ~FDisplayClusterViewportManagerViewPointExtension() = default;
 
 public:
 	//~ Begin ISceneViewExtension interface
@@ -40,21 +39,14 @@ protected:
 	virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const override;
 
 private:
-	/** Get viewport manager ptr. */
-	inline const FDisplayClusterViewportManager* GetViewportManager() const
-	{
-		return ViewportManagerWeakPtr.IsValid() ? ViewportManagerWeakPtr.Pin().Get() : nullptr;
-	}
-
 	/** True, if VE can be used at the moment. */
-	bool IsActive() const
-	{
-		return GetViewportManager() != nullptr && CurrentStereoViewIndex != INDEX_NONE;
-	}
+	bool IsActive() const;
+
+public:
+	// Configuration of the current cluster node
+	const TSharedRef<FDisplayClusterViewportConfiguration, ESPMode::ThreadSafe> Configuration;
 
 private:
-	TWeakPtr<const FDisplayClusterViewportManager, ESPMode::ThreadSafe> ViewportManagerWeakPtr;
-
 	// Current StereoViewIndex for rendered viewport
 	int32 CurrentStereoViewIndex = INDEX_NONE;
 };

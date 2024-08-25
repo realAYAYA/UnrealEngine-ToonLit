@@ -11,11 +11,11 @@
 class USDSTAGEEDITORVIEWMODELS_API FUsdIntegrationsViewModel
 {
 public:
-	void UpdateAttributes( const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath );
+	void UpdateAttributes(const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath);
 
 public:
-	TArray< TSharedPtr<UE::FUsdAttribute> > Attributes;
+	TArray<TSharedPtr<UE::FUsdAttribute>> Attributes;
 
 	FString PrimPath;
-    UE::FUsdStageWeak UsdStage;
+	UE::FUsdStageWeak UsdStage;
 };

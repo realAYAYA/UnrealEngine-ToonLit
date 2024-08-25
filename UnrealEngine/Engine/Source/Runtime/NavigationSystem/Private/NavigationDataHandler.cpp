@@ -3,7 +3,7 @@
 #include "NavigationDataHandler.h"
 #include "Engine/Level.h"
 #include "NavMesh/RecastNavMeshGenerator.h"
-
+#include "NavAreas/NavArea.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogNavOctree, Warning, All);
 
@@ -47,9 +47,13 @@ void FNavigationDataHandler::RemoveNavOctreeElementId(const FOctreeElementId2& E
 	if (ensure(OctreeController.IsValidElement(ElementId)))
 	{
 		const FNavigationOctreeElement& ElementData = OctreeController.NavOctree->GetElementById(ElementId);
-		const int32 DirtyFlag = UE::NavigationHelper::Private::GetDirtyFlag(UpdateFlags, ElementData.Data->GetDirtyFlag());
-		// mark area occupied by given actor as dirty
-		DirtyAreasController.AddArea(ElementData.Bounds.GetBox(), DirtyFlag, [&ElementData] { return ElementData.Data->SourceObject.Get(); }, nullptr, "Remove from navoctree");
+		// mark area occupied by given element as dirty except if explicitly set to skip this default behavior
+		if (!ElementData.Data->bShouldSkipDirtyAreaOnAddOrRemove)
+		{
+			const int32 DirtyFlag = UE::NavigationHelper::Private::GetDirtyFlag(UpdateFlags, ElementData.Data->GetDirtyFlag());
+			DirtyAreasController.AddArea(ElementData.Bounds.GetBox(), DirtyFlag, [&ElementData] { return ElementData.Data->SourceObject.Get(); }, nullptr, "Remove from navoctree");
+		}
+
 		OctreeController.NavOctree->RemoveNode(ElementId);
 	}
 }
@@ -96,7 +100,8 @@ FSetElementId FNavigationDataHandler::RegisterNavOctreeElement(UObject& ElementO
 			SetId = OctreeController.PendingOctreeUpdates.FindId(UpdateInfo);
 			if (SetId.IsValidId())
 			{
-				// make sure this request stays, in case it has been invalidated already
+				// make sure this request stays, in case it has been invalidated already and keep any dirty areas
+				UpdateInfo.ExplicitAreasToDirty = OctreeController.PendingOctreeUpdates[SetId].ExplicitAreasToDirty;
 				OctreeController.PendingOctreeUpdates[SetId] = UpdateInfo;
 			}
 			else
@@ -112,6 +117,7 @@ FSetElementId FNavigationDataHandler::RegisterNavOctreeElement(UObject& ElementO
 void FNavigationDataHandler::AddElementToNavOctree(const FNavigationDirtyElement& DirtyElement)
 {
 	check(OctreeController.NavOctree.IsValid());
+	LLM_SCOPE_BYTAG(NavigationOctree);
 
 	// handle invalidated requests first
 	if (DirtyElement.bInvalidRequest)
@@ -172,9 +178,17 @@ void FNavigationDataHandler::AddElementToNavOctree(const FNavigationDirtyElement
 		OctreeController.NavOctree->AddNode(ElementOwner, DirtyElement.NavInterface, ElementBounds, GeneratedData);
 	}
 
-	if (!GeneratedData.IsEmpty())
+	// mark area occupied by given element as dirty except if explicitly set to skip this default behavior
+	const int32 DirtyFlag = DirtyElement.FlagsOverride ? DirtyElement.FlagsOverride : GeneratedData.Data->GetDirtyFlag();
+	if (GeneratedData.Data->bShouldSkipDirtyAreaOnAddOrRemove)
 	{
-		const int32 DirtyFlag = DirtyElement.FlagsOverride ? DirtyElement.FlagsOverride : GeneratedData.Data->GetDirtyFlag();
+		if (DirtyElement.ExplicitAreasToDirty.Num() > 0)
+		{
+			DirtyAreasController.AddAreas(DirtyElement.ExplicitAreasToDirty, DirtyFlag, [&ElementOwner] { return ElementOwner; }, &DirtyElement, "Addition to navoctree");
+		}
+	}
+	else if (!GeneratedData.IsEmpty())
+	{
 		DirtyAreasController.AddArea(GeneratedData.Bounds.GetBox(), DirtyFlag, [&ElementOwner] { return ElementOwner; }, &DirtyElement, "Addition to navoctree");
 	}
 }
@@ -356,29 +370,50 @@ void FNavigationDataHandler::UpdateNavOctreeParentChain(UObject& ElementOwner, b
 	}
 }
 
-bool FNavigationDataHandler::UpdateNavOctreeElementBounds(UActorComponent& Comp, const FBox& NewBounds, const FBox& DirtyArea)
+bool FNavigationDataHandler::UpdateNavOctreeElementBounds(UObject& Object, const FBox& NewBounds, const TConstArrayView<FBox> DirtyAreas)
 {
-	const FOctreeElementId2* ElementId = OctreeController.GetObjectsNavOctreeId(Comp);
+	const FOctreeElementId2* ElementId = OctreeController.GetObjectsNavOctreeId(Object);
 	if (ElementId != nullptr && ensure(OctreeController.IsValidElement(*ElementId)))
 	{
 		OctreeController.NavOctree->UpdateNode(*ElementId, NewBounds);
 
-		// Add dirty area
-		if (DirtyArea.IsValid)
+		// Dirty areas
+		if (DirtyAreas.Num() > 0)
 		{
-			// Refresh ElementId since components may be stored in a different node after updating bounds
-			ElementId = OctreeController.GetObjectsNavOctreeId(Comp);
+			// Refresh ElementId since object may be stored in a different node after updating bounds
+			ElementId = OctreeController.GetObjectsNavOctreeId(Object);
 			if (ElementId != nullptr && ensure(OctreeController.IsValidElement(*ElementId)))
 			{
 				const FNavigationOctreeElement& ElementData = OctreeController.NavOctree->GetElementById(*ElementId);
-				DirtyAreasController.AddArea(DirtyArea, ElementData.Data->GetDirtyFlag(), [&Comp] { return &Comp; }, nullptr, "Bounds change");
+				DirtyAreasController.AddAreas(DirtyAreas, ElementData.Data->GetDirtyFlag(), [&Object] { return &Object; }, nullptr, "Bounds change");
 			}
 		}
 
 		return true;
 	}
 
+	// If dirty areas are provided we need to append them to a pending update since the object is not added yet.
+	// Not necessary for the bounds since they are not stored in the update but fetched when the update is processed.
+	if (DirtyAreas.Num() > 0)
+	{
+		const FSetElementId PendingElementId = OctreeController.PendingOctreeUpdates.FindId(FNavigationDirtyElement(&Object));
+		if (PendingElementId.IsValidId())
+		{
+			FNavigationDirtyElement& DirtyElement = OctreeController.PendingOctreeUpdates[PendingElementId];
+			if (!DirtyElement.bInvalidRequest)
+			{
+				DirtyElement.ExplicitAreasToDirty.Append(DirtyAreas);
+				return true;
+			}
+		}
+	}
+
 	return false;
+}
+
+bool FNavigationDataHandler::UpdateNavOctreeElementBounds(UObject& Object, const FBox& NewBounds, const FBox& DirtyArea)
+{
+	return UpdateNavOctreeElementBounds(Object, NewBounds,  TConstArrayView<FBox>{DirtyArea});
 }
 	
 void FNavigationDataHandler::FindElementsInNavOctree(const FBox& QueryBox, const FNavigationOctreeFilter& Filter, TArray<FNavigationOctreeElement>& Elements)

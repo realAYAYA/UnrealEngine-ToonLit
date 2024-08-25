@@ -10,8 +10,6 @@
 =============================================================================*/
 Texture2D		InputTexture;
 SamplerState	InputTextureSampler;
-float4x4		WorkingColorSpaceToInterchange;
-float4x4		InterchangeToWorkingColorSpace;
 float			Gamma;
 uint TransformAlpha;
 
@@ -31,11 +29,7 @@ uint TransformAlpha;
 
 float SafeRcp(float x)
 {
-	if (x > 0)
-	{
-		return rcp(x);
-	}
-	return 0;
+	return x > 0.0 ? rcp(x) : 0.0;
 }
 
 float4 InvertAlpha(float4 InColor)
@@ -74,16 +68,8 @@ void MainPS(in noperspective float4 InUVAndScreenPos : TEXCOORD0,
 		InputColor = Unpremultiply(InputColor);
 	}
 
-#if WORKING_COLOR_SPACE_TRANSFORM_TYPE == 1 // EOpenColorIOWorkingColorSpaceTransform::Source
-	InputColor.xyz = mul((float3x3)WorkingColorSpaceToInterchange, InputColor.xyz);
-#endif
-
 	// Apply main transform
 	OutColor = float4(OCIOConvert(InputColor).xyz, InputColor.w);
-
-#if WORKING_COLOR_SPACE_TRANSFORM_TYPE == 2 // EOpenColorIOWorkingColorSpaceTransform::Destination
-	OutColor.xyz = mul((float3x3)InterchangeToWorkingColorSpace, OutColor.xyz);
-#endif
 
 	if(TransformAlpha > 0)
 	{

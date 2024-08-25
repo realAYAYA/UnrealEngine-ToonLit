@@ -18,91 +18,91 @@ public:
 
 	void Fail(FString error);
 
-	UE_NODISCARD bool IsTrue(bool Condition);
-	UE_NODISCARD bool IsTrue(bool Condition, const char* FailureMessage);
-	UE_NODISCARD bool IsTrue(bool Condition, const TCHAR* FailureMessage);
-	UE_NODISCARD bool IsTrue(bool Condition, const FString& FailureMessage);
+	[[nodiscard]] bool IsTrue(bool Condition);
+	[[nodiscard]] bool IsTrue(bool Condition, const char* FailureMessage);
+	[[nodiscard]] bool IsTrue(bool Condition, const TCHAR* FailureMessage);
+	[[nodiscard]] bool IsTrue(bool Condition, const FString& FailureMessage);
 
-	UE_NODISCARD bool IsFalse(bool Condition);
-	UE_NODISCARD bool IsFalse(bool Condition, const char* FailureMessage);
-	UE_NODISCARD bool IsFalse(bool Condition, const TCHAR* FailureMessage);
-	UE_NODISCARD bool IsFalse(bool Condition, const FString& FailureMessage);
-
-	template <typename T>
-	UE_NODISCARD bool IsNull(const T& Ptr);
+	[[nodiscard]] bool IsFalse(bool Condition);
+	[[nodiscard]] bool IsFalse(bool Condition, const char* FailureMessage);
+	[[nodiscard]] bool IsFalse(bool Condition, const TCHAR* FailureMessage);
+	[[nodiscard]] bool IsFalse(bool Condition, const FString& FailureMessage);
 
 	template <typename T>
-	UE_NODISCARD bool IsNull(const T& Ptr, const char* FailureMessage);
+	[[nodiscard]] bool IsNull(const T& Ptr);
 
 	template <typename T>
-	UE_NODISCARD bool IsNull(const T& Ptr, const TCHAR* FailureMessage);
+	[[nodiscard]] bool IsNull(const T& Ptr, const char* FailureMessage);
 
 	template <typename T>
-	UE_NODISCARD bool IsNull(const T& Ptr, const FString& FailureMessage);
+	[[nodiscard]] bool IsNull(const T& Ptr, const TCHAR* FailureMessage);
 
 	template <typename T>
-	UE_NODISCARD bool IsNotNull(const T& Ptr);
+	[[nodiscard]] bool IsNull(const T& Ptr, const FString& FailureMessage);
 
 	template <typename T>
-	UE_NODISCARD bool IsNotNull(const T& Ptr, const char* FailureMessage);
+	[[nodiscard]] bool IsNotNull(const T& Ptr);
 
 	template <typename T>
-	UE_NODISCARD bool IsNotNull(const T& Ptr, const TCHAR* FailureMessage);
+	[[nodiscard]] bool IsNotNull(const T& Ptr, const char* FailureMessage);
 
 	template <typename T>
-	UE_NODISCARD bool IsNotNull(const T& Ptr, const FString& FailureMessage);
+	[[nodiscard]] bool IsNotNull(const T& Ptr, const TCHAR* FailureMessage);
+
+	template <typename T>
+	[[nodiscard]] bool IsNotNull(const T& Ptr, const FString& FailureMessage);
 
 	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreEqual(const TExpected& Expected, const TActual& Actual);
+	[[nodiscard]] bool AreEqual(const TExpected& Expected, const TActual& Actual);
 
 	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage);
+	[[nodiscard]] bool AreEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage);
 
 	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage);
+	[[nodiscard]] bool AreEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage);
 
 	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage);
+	[[nodiscard]] bool AreEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage);
 
-	UE_NODISCARD bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual);
+	[[nodiscard]] bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual);
 
-	UE_NODISCARD bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage);
+	[[nodiscard]] bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage);
 
-	UE_NODISCARD bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage);
+	[[nodiscard]] bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage);
 
-	UE_NODISCARD bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage);
-
-	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreNotEqual(const TExpected& Expected, const TActual& Actual);
+	[[nodiscard]] bool AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage);
 
 	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreNotEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage);
+	[[nodiscard]] bool AreNotEqual(const TExpected& Expected, const TActual& Actual);
 
 	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreNotEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage);
+	[[nodiscard]] bool AreNotEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage);
 
 	template <typename TExpected, typename TActual>
-	UE_NODISCARD bool AreNotEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage);
+	[[nodiscard]] bool AreNotEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage);
 
-	UE_NODISCARD bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual);
+	template <typename TExpected, typename TActual>
+	[[nodiscard]] bool AreNotEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage);
 
-	UE_NODISCARD bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage);
+	[[nodiscard]] bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual);
 
-	UE_NODISCARD bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage);
+	[[nodiscard]] bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage);
 
-	UE_NODISCARD bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage);
+	[[nodiscard]] bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage);
+
+	[[nodiscard]] bool AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage);
 
 	template <typename TExpected, typename TActual, typename TEpsilon>
-	UE_NODISCARD bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon);
+	[[nodiscard]] bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon);
 
 	template <typename TExpected, typename TActual, typename TEpsilon>
-	UE_NODISCARD bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const char* FailureMessage);
+	[[nodiscard]] bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const char* FailureMessage);
 
 	template <typename TExpected, typename TActual, typename TEpsilon>
-	UE_NODISCARD bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const TCHAR* FailureMessage);
+	[[nodiscard]] bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const TCHAR* FailureMessage);
 
 	template <typename TExpected, typename TActual, typename TEpsilon>
-	UE_NODISCARD bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const FString& FailureMessage);
+	[[nodiscard]] bool IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const FString& FailureMessage);
 
 };
 

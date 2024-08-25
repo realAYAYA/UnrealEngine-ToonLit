@@ -26,9 +26,8 @@ void FParamTypePropertyTypeCustomization::CustomizeHeader(TSharedRef<IPropertyHa
 			TArray<const void*> RawData;
 			PropertyHandle->AccessRawData(RawData);
 
-			if(RawData.Num() > 0)
+			if(RawData.Num() > 0 && RawData[0] != nullptr)
 			{
-				check(RawData[0] != nullptr);
 				const FAnimNextParamType& FirstType = *static_cast<const FAnimNextParamType*>(RawData[0]);
 				bool bMultipleValues = false;
 

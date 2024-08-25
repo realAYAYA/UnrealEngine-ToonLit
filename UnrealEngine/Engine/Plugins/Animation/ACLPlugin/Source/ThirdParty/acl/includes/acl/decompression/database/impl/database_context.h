@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 
 #include <cstdint>
@@ -32,6 +33,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	class database_streamer;
 
 	namespace acl_impl
@@ -39,7 +42,7 @@ namespace acl
 		// TODO: If we need to make the context smaller, we can use offsets for the bitsets instead of pointers
 		// from the clip_segment_headers base pointer. The bitsets also follow linearly in memory, we could store only
 		// one offset for the base, and index with the tier * desc.size
-		struct alignas(64) database_context_v0
+		struct database_context_v0
 		{
 			//														//   offsets
 			// Only member used to detect if we are initialized, must be first
@@ -61,9 +64,12 @@ namespace acl
 
 			iallocator* allocator;									//  40 |  72
 
-			uint8_t padding1[sizeof(void*) == 4 ? 84 : 40];			//  44 |  88
+			// Cached hash of the bound database instance
+			uint32_t db_hash;										//  44 |  88
 
-			//											Total size:	   128 | 128
+			uint8_t padding1[sizeof(void*) == 4 ? 16 : 36];			//  48 |  92
+
+			//											Total size:	    64 | 128
 
 			//////////////////////////////////////////////////////////////////////////
 
@@ -73,8 +79,11 @@ namespace acl
 			void reset() { db = nullptr; }
 		};
 
-		static_assert(sizeof(database_context_v0) == 128, "Unexpected size");
+		static_assert((sizeof(database_context_v0) % 64) == 0, "Unexpected size");
+		static_assert(offsetof(database_context_v0, db) == 0, "db pointer needs to be the first member, see initialize_v0");
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

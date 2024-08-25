@@ -20,10 +20,6 @@ public class IntelExtensionsFramework : ModuleRules
 
 			PublicSystemIncludePaths.Add(IncludeDir);
 			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDir, "igdext64.lib"));
-
-			PublicSystemLibraries.Add("shlwapi.lib");
-			PublicSystemLibraries.Add("setupapi.lib");
-			PublicSystemLibraries.Add("cfgmgr32.lib");
 		}
 		else
 		{

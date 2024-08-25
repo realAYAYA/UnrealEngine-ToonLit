@@ -9,6 +9,8 @@
 namespace MeshOperator
 {
 
+void FixNonManifoldMesh(FMeshDescription& MeshDescription);
+
 bool OrientMesh(FMeshDescription& MeshDescription);
 
 void RecomputeNullNormal(FMeshDescription& MeshDescription);

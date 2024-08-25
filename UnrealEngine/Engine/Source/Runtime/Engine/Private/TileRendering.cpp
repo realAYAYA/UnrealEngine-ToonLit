@@ -35,7 +35,7 @@ void FCanvasTileRendererItem::FTileVertexFactory::InitResource(FRHICommandListBa
 	VertexBuffers->StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(this, VertexData);
 	VertexBuffers->StaticMeshVertexBuffer.BindLightMapVertexBuffer(this, VertexData, 0);
 	VertexBuffers->ColorVertexBuffer.BindColorVertexBuffer(this, VertexData);
-	SetData(VertexData);
+	SetData(RHICmdList, VertexData);
 
 	FLocalVertexFactory::InitResource(RHICmdList);
 }
@@ -187,7 +187,7 @@ void FCanvasTileRendererItem::FRenderData::RenderTiles(
 		if (CurrentMeshBatch->BatchHitProxyId != Tile.HitProxyId)
 		{
 			// Flush the current batch before allocating a new one: 
-			GetRendererModule().DrawTileMesh(RenderContext, DrawRenderState, View, *CurrentMeshBatch, bIsHitTesting, CurrentMeshBatch->BatchHitProxyId);
+			GetRendererModule().DrawTileMesh(RenderContext, DrawRenderState, View, *CurrentMeshBatch, bIsHitTesting, CurrentMeshBatch->BatchHitProxyId, bUse128bitRT);
 
 			CurrentMeshBatch = AllocTileMeshBatch(RenderContext, Tile.HitProxyId);
 			CurrentMeshBatch->Elements[0].FirstIndex = CanvasTileIndexCount * TileIdx;
@@ -199,7 +199,7 @@ void FCanvasTileRendererItem::FRenderData::RenderTiles(
 
 	// Flush the final batch: 
 	check(CurrentMeshBatch != nullptr);
-	GetRendererModule().DrawTileMesh(RenderContext, DrawRenderState, View, *CurrentMeshBatch, bIsHitTesting, CurrentMeshBatch->BatchHitProxyId);
+	GetRendererModule().DrawTileMesh(RenderContext, DrawRenderState, View, *CurrentMeshBatch, bIsHitTesting, CurrentMeshBatch->BatchHitProxyId, bUse128bitRT);
 
 	AddPass(RenderContext.GraphBuilder, RDG_EVENT_NAME("ReleaseTileMesh"), [this](FRHICommandListImmediate&)
 	{
@@ -223,8 +223,7 @@ bool FCanvasTileRendererItem::Render_RenderThread(FCanvasRenderContext& RenderCo
 		CanvasRenderTarget,
 		nullptr,
 		FEngineShowFlags(ESFIM_Game))
-		.SetTime(Time)
-		.SetGammaCorrection(CanvasRenderTarget->GetDisplayGamma()));
+		.SetTime(Time));
 
 	const FIntRect ViewRect(FIntPoint(0, 0), CanvasRenderTarget->GetSizeXY());
 
@@ -268,8 +267,7 @@ bool FCanvasTileRendererItem::Render_GameThread(const FCanvas* Canvas, FCanvasRe
 			CanvasRenderTarget,
 			Canvas->GetScene(),
 			FEngineShowFlags(ESFIM_Game))
-			.SetTime(Time)
-			.SetGammaCorrection(CanvasRenderTarget->GetDisplayGamma()));
+			.SetTime(Time));
 
 		const FIntRect ViewRect(FIntPoint(0, 0), CanvasRenderTarget->GetSizeXY());
 

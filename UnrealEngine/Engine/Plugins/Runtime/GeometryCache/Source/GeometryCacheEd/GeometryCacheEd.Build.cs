@@ -24,5 +24,7 @@ public class GeometryCacheEd : ModuleRules
 				"NiagaraEditor"
 			}
 		);
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 	}
 }

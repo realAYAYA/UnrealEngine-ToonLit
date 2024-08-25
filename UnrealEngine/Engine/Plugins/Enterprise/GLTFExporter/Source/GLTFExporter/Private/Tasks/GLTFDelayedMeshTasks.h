@@ -74,3 +74,53 @@ private:
 	const int32 LODIndex;
 	FGLTFJsonMesh* JsonMesh;
 };
+
+
+class FGLTFDelayedSplineMeshTask : public FGLTFDelayedTask
+{
+public:
+
+	FGLTFDelayedSplineMeshTask(FGLTFConvertBuilder& Builder, FGLTFStaticMeshSectionConverter& MeshSectionConverter, const UStaticMesh& StaticMesh, const USplineMeshComponent& SplineMeshComponent, FGLTFMaterialArray Materials, int32 LODIndex, FGLTFJsonMesh* JsonMesh)
+		: FGLTFDelayedTask(EGLTFTaskPriority::Mesh)
+		, Builder(Builder)
+		, MeshSectionConverter(MeshSectionConverter)
+		, StaticMesh(StaticMesh)
+		, SplineMeshComponent(SplineMeshComponent)
+		, Materials(Materials)
+		, LODIndex(LODIndex)
+		, JsonMesh(JsonMesh)
+	{
+	}
+
+	virtual FString GetName() override;
+
+	virtual void Process() override;
+
+private:
+
+	FGLTFConvertBuilder& Builder;
+	FGLTFStaticMeshSectionConverter& MeshSectionConverter;
+	const UStaticMesh& StaticMesh;
+	const USplineMeshComponent& SplineMeshComponent;
+	const FGLTFMaterialArray Materials;
+	const int32 LODIndex;
+	FGLTFJsonMesh* JsonMesh;
+};
+
+class FGLTFDelayedLandscapeTask : public FGLTFDelayedTask
+{
+public:
+
+	FGLTFDelayedLandscapeTask(FGLTFConvertBuilder& Builder, const ULandscapeComponent& LandscapeComponent, FGLTFJsonMesh* JsonMesh, const UMaterialInterface& LandscapeMaterial);
+
+	virtual FString GetName() override;
+
+	virtual void Process() override;
+
+private:
+
+	FGLTFConvertBuilder& Builder;
+	const ULandscapeComponent& LandscapeComponent;
+	FGLTFJsonMesh* JsonMesh;
+	const UMaterialInterface& LandscapeMaterial;
+};

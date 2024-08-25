@@ -140,6 +140,11 @@ FOnAnimatablePropertyChanged& FSequencerObjectChangeListener::GetOnAnimatablePro
 	return PropertyChangedEventMap.FindOrAdd( PropertyKey );
 }
 
+FOnAnimatablePropertyChanged& FSequencerObjectChangeListener::GetOnAnimatablePropertyChanged(const FProperty* Property)
+{
+	return PropertyPathChangedEventMap.FindOrAdd(Property);
+}
+
 FOnPropagateObjectChanges& FSequencerObjectChangeListener::GetOnPropagateObjectChanges()
 {
 	return OnPropagateObjectChanges;
@@ -199,8 +204,13 @@ const FOnAnimatablePropertyChanged* FSequencerObjectChangeListener::FindProperty
 	// we check for flags on the outer property but must not use setter functions that would not know the index to set
 	const bool bCanApplyFunction = PropertyOrContainer == &Property;
 
-	const FOnAnimatablePropertyChanged* DelegatePtr = PropertyChangedEventMap.Find(PropertyKey);
-	if (DelegatePtr != nullptr)
+	// Early return if explicitly supported
+	if (const FOnAnimatablePropertyChanged* DelegatePtr = PropertyPathChangedEventMap.Find(&Property))
+	{
+		return DelegatePtr;
+	}
+
+	if (const FOnAnimatablePropertyChanged* DelegatePtr = PropertyChangedEventMap.Find(PropertyKey))
 	{
 		FString PropertyVarName = PropertyOrContainer->GetName();
 
@@ -264,28 +274,11 @@ bool FSequencerObjectChangeListener::CanKeyProperty(FCanKeyPropertyParams CanKey
 	return CanKeyProperty_Internal(CanKeyPropertyParams, Delegate, Property, PropertyPath);
 }
 
-const UStruct* FindPropertyOwner(const FPropertyPath& InProperyPath, const UClass* InObjectClass, const FProperty* ForProperty)
+bool FSequencerObjectChangeListener::CanKeyProperty(FCanKeyPropertyParams KeyPropertyParams, FPropertyPath& OutPropertyPath) const
 {
-	check(ForProperty);
-
-	bool bFoundProperty = false;
-	for (int32 Index = InProperyPath.GetNumProperties() - 1; Index >= 0; --Index)
-	{
-		FProperty* Property = InProperyPath.GetPropertyInfo(Index).Property.Get();
-		if (!bFoundProperty)
-		{
-			bFoundProperty = Property == ForProperty;
-			if (bFoundProperty)
-			{
-				return Property->GetOwnerStruct();
-			}
-		}
-		else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
-		{
-			return StructProperty->Struct;
-		}
-	}
-	return InObjectClass;
+	FProperty* Property = nullptr;
+	FOnAnimatablePropertyChanged Delegate;
+	return CanKeyProperty_Internal(KeyPropertyParams, Delegate, Property, OutPropertyPath);
 }
 
 bool FSequencerObjectChangeListener::CanKeyProperty_Internal(FCanKeyPropertyParams CanKeyPropertyParams, FOnAnimatablePropertyChanged& InOutDelegate, FProperty*& InOutProperty, FPropertyPath& InOutPropertyPath) const
@@ -312,7 +305,7 @@ bool FSequencerObjectChangeListener::CanKeyProperty_Internal(FCanKeyPropertyPara
 				continue;
 			}
 
-			const UStruct* PropertyOwner = FindPropertyOwner(CanKeyPropertyParams.PropertyPath, CanKeyPropertyParams.ObjectClass, Property);
+			const UStruct* PropertyOwner = CanKeyPropertyParams.FindPropertyOwner(Property);
 			if (!PropertyOwner)
 			{
 				continue;
@@ -334,6 +327,12 @@ bool FSequencerObjectChangeListener::CanKeyProperty_Internal(FCanKeyPropertyPara
 			// If there is a custom accessor for this specific property path, it is animatable (as long as there is a supported track editor registered for the property type)
 			if (UE::MovieScene::GlobalCustomAccessorExists(CanKeyPropertyParams.ObjectClass, InOutPropertyPath.ToString(TEXT("."))))
 			{
+				if (const FOnAnimatablePropertyChanged* DelegatePtr = PropertyPathChangedEventMap.Find(Property))
+				{
+					InOutProperty = Property;
+					InOutDelegate = *DelegatePtr;
+					return true;
+				}
 				if (const FOnAnimatablePropertyChanged* DelegatePtr = PropertyChangedEventMap.Find(PropertyKey))
 				{
 					InOutProperty = Property;

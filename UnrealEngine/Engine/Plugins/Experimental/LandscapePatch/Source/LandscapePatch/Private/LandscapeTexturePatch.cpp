@@ -79,6 +79,16 @@ namespace LandscapeTexturePatchLocals
 UTextureRenderTarget2D* ULandscapeTexturePatch::RenderLayer_Native(const FLandscapeBrushParameters& InParameters)
 {
 	using namespace UE::Landscape;
+
+	// If we're getting a RenderLayer_Native call, then we're inside some patch manager, and we
+	// expect our pointer to be properly initialized. This assumption could be violated if we
+	// were not consistent in saving both the manager and the patch. However the manager should
+	// be catching this case for us.
+	if (!ensure(PatchManager.IsValid()))
+	{
+		return InParameters.CombinedResult;
+	}
+
 	const bool bIsHeightmapTarget = InParameters.LayerType == ELandscapeToolTargetType::Heightmap;
 	const bool bIsWeightmapTarget = InParameters.LayerType == ELandscapeToolTargetType::Weightmap;
 	const bool bIsVisibilityLayerTarget = InParameters.LayerType == ELandscapeToolTargetType::Visibility;
@@ -101,7 +111,7 @@ UTextureRenderTarget2D* ULandscapeTexturePatch::RenderLayer_Native(const FLandsc
 		// Try to find the weight patch
 		ULandscapeWeightPatchTextureInfo* WeightPatchInfo = nullptr;
 
-		for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatchEntry : WeightPatches)
+		for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatchEntry : WeightPatches)
 		{
 			if ((bIsWeightmapTarget && (WeightPatchEntry->WeightmapLayerName == InParameters.WeightmapLayerName)) ||
 				(bIsVisibilityLayerTarget && WeightPatchEntry->bEditVisibilityLayer))
@@ -583,7 +593,7 @@ void ULandscapeTexturePatch::ReinitializeWeights()
 			}
 			else
 			{
-				for (TObjectPtr<ULandscapeWeightPatchTextureInfo> PatchInfo : FoundPatches)
+				for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& PatchInfo : FoundPatches)
 				{
 					PatchInfo->bReinitializeOnNextRender = true;
 				}
@@ -667,22 +677,22 @@ void ULandscapeTexturePatch::ReinitializeHeight(UTextureRenderTarget2D* InCombin
 
 		FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("LandscapeTexturePatchReinitializeHeight"));
 
-		FReinitializeLandscapePatchPS::FParameters* HeightmapResalmpleParams = GraphBuilder.AllocParameters<FReinitializeLandscapePatchPS::FParameters>();
+		FReinitializeLandscapePatchPS::FParameters* HeightmapResampleParams = GraphBuilder.AllocParameters<FReinitializeLandscapePatchPS::FParameters>();
 
 		FRDGTextureRef HeightmapSource = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Source->GetTexture2DRHI(), TEXT("ReinitializationSource")));
 		FRDGTextureSRVRef SourceSRV = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(HeightmapSource, 0));
-		HeightmapResalmpleParams->InSource = SourceSRV;
-		HeightmapResalmpleParams->InSourceSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp>::GetRHI();
-		HeightmapResalmpleParams->InPatchToSource = PatchToSource;
+		HeightmapResampleParams->InSource = SourceSRV;
+		HeightmapResampleParams->InSourceSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp>::GetRHI();
+		HeightmapResampleParams->InPatchToSource = PatchToSource;
 
 		FRDGTextureRef DestinationTexture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Destination->GetTexture2DRHI(), TEXT("ReinitializationDestination")));
 
 		if (OffsetToApply != 0)
 		{
 			FRDGTextureRef TemporaryDestination = GraphBuilder.CreateTexture(DestinationTexture->Desc, TEXT("LandscapeTextureHeightPatchInputCopy"));
-			HeightmapResalmpleParams->RenderTargets[0] = FRenderTargetBinding(TemporaryDestination, ERenderTargetLoadAction::ENoAction, /*InMipIndex = */0);
+			HeightmapResampleParams->RenderTargets[0] = FRenderTargetBinding(TemporaryDestination, ERenderTargetLoadAction::ENoAction, /*InMipIndex = */0);
 
-			FReinitializeLandscapePatchPS::AddToRenderGraph(GraphBuilder, HeightmapResalmpleParams);
+			FReinitializeLandscapePatchPS::AddToRenderGraph(GraphBuilder, HeightmapResampleParams);
 
 			FOffsetHeightmapPS::FParameters* OffsetParams = GraphBuilder.AllocParameters<FOffsetHeightmapPS::FParameters>();
 
@@ -695,8 +705,8 @@ void ULandscapeTexturePatch::ReinitializeHeight(UTextureRenderTarget2D* InCombin
 		}
 		else
 		{
-			HeightmapResalmpleParams->RenderTargets[0] = FRenderTargetBinding(DestinationTexture, ERenderTargetLoadAction::ENoAction, /*InMipIndex = */0);
-			FReinitializeLandscapePatchPS::AddToRenderGraph(GraphBuilder, HeightmapResalmpleParams);
+			HeightmapResampleParams->RenderTargets[0] = FRenderTargetBinding(DestinationTexture, ERenderTargetLoadAction::ENoAction, /*InMipIndex = */0);
+			FReinitializeLandscapePatchPS::AddToRenderGraph(GraphBuilder, HeightmapResampleParams);
 		}
 
 		GraphBuilder.Execute();
@@ -704,9 +714,19 @@ void ULandscapeTexturePatch::ReinitializeHeight(UTextureRenderTarget2D* InCombin
 
 	// The Modify() calls currently don't really help because we don't transact inside Render_Native. Maybe someday
 	// we'll add that ability (though it sounds messy).
-	HeightInternalData->GetInternalTexture()->Modify();
-	TemporaryNativeHeightCopy->UpdateTexture2D(HeightInternalData->GetInternalTexture(), ETextureSourceFormat::TSF_BGRA8);
-	HeightInternalData->GetInternalTexture()->UpdateResource();
+	UTexture2D* InternalTexture = HeightInternalData->GetInternalTexture();
+	InternalTexture->Modify();
+	FText ErrorMessage;
+	if (TemporaryNativeHeightCopy->UpdateTexture(InternalTexture, CTF_Default, /*InAlphaOverride = */nullptr, /*InTextureChangingDelegate =*/ [](UTexture*) {}, &ErrorMessage))
+	{
+		check(InternalTexture->Source.GetFormat() == ETextureSourceFormat::TSF_BGRA8);
+		InternalTexture->UpdateResource();
+	}
+	else
+	{
+		UE_LOG(LogLandscapePatch, Error, TEXT("Couldn't copy heightmap render target to internal texture: %s"), *ErrorMessage.ToString());
+	}
+	InternalTexture->UpdateResource();
 
 	if (IsValid(HeightInternalData->GetRenderTarget()))
 	{
@@ -823,7 +843,7 @@ bool ULandscapeTexturePatch::AffectsWeightmapLayer(const FName& InLayerName) con
 		return false;
 	}
 
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InLayerName)
 		{
@@ -855,7 +875,7 @@ bool ULandscapeTexturePatch::IsEnabled() const
 	{
 		return true;
 	}
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->SourceMode != ELandscapeTexturePatchSourceMode::None || WeightPatch->bReinitializeOnNextRender)
 		{
@@ -994,7 +1014,7 @@ void ULandscapeTexturePatch::SetResolution(FVector2D ResolutionIn)
 	};
 
 	ResizePatch(HeightSourceMode, HeightInternalData);
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (ensure(IsValid(WeightPatch)))
 		{
@@ -1278,7 +1298,7 @@ void ULandscapeTexturePatch::AddWeightPatch(const FName& WeightmapLayerName, ELa
 	using namespace LandscapeTexturePatchLocals;
 
 	// Try to modify an existing entry instead if possible
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == WeightmapLayerName)
 		{
@@ -1331,7 +1351,7 @@ void ULandscapeTexturePatch::RemoveAllWeightPatches()
 
 void ULandscapeTexturePatch::DisableAllWeightPatches()
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		WeightPatch->SetSourceMode(ELandscapeTexturePatchSourceMode::None);
 	}
@@ -1340,7 +1360,7 @@ void ULandscapeTexturePatch::DisableAllWeightPatches()
 TArray<FName> ULandscapeTexturePatch::GetAllWeightPatchLayerNames()
 {
 	TArray<FName> Names;
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName != NAME_None)
 		{
@@ -1353,7 +1373,7 @@ TArray<FName> ULandscapeTexturePatch::GetAllWeightPatchLayerNames()
 
 void ULandscapeTexturePatch::SetUseAlphaChannelForWeightPatch(const FName& InWeightmapLayerName, bool bUseAlphaChannel)
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1374,7 +1394,7 @@ void ULandscapeTexturePatch::SetWeightPatchSourceMode(const FName& InWeightmapLa
 #if WITH_EDITOR
 	using namespace LandscapeTexturePatchLocals;
 
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1392,7 +1412,7 @@ void ULandscapeTexturePatch::SetWeightPatchSourceMode(const FName& InWeightmapLa
 
 ELandscapeTexturePatchSourceMode ULandscapeTexturePatch::GetWeightPatchSourceMode(const FName& InWeightmapLayerName)
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1404,7 +1424,7 @@ ELandscapeTexturePatchSourceMode ULandscapeTexturePatch::GetWeightPatchSourceMod
 
 UTextureRenderTarget2D* ULandscapeTexturePatch::GetWeightPatchRenderTarget(const FName& InWeightmapLayerName)
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1416,7 +1436,7 @@ UTextureRenderTarget2D* ULandscapeTexturePatch::GetWeightPatchRenderTarget(const
 
 UTexture2D* ULandscapeTexturePatch::GetWeightPatchInternalTexture(const FName& InWeightmapLayerName)
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1434,7 +1454,7 @@ void ULandscapeTexturePatch::SetWeightPatchTextureAsset(const FName& InWeightmap
 		return;
 	}
 
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1449,7 +1469,7 @@ void ULandscapeTexturePatch::SetWeightPatchTextureAsset(const FName& InWeightmap
 
 void ULandscapeTexturePatch::SetWeightPatchBlendModeOverride(const FName& InWeightmapLayerName, ELandscapeTexturePatchBlendMode BlendModeIn)
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1462,7 +1482,7 @@ void ULandscapeTexturePatch::SetWeightPatchBlendModeOverride(const FName& InWeig
 
 void ULandscapeTexturePatch::ClearWeightPatchBlendModeOverride(const FName& InWeightmapLayerName)
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{
@@ -1474,7 +1494,7 @@ void ULandscapeTexturePatch::ClearWeightPatchBlendModeOverride(const FName& InWe
 
 void ULandscapeTexturePatch::SetEditVisibilityLayer(const FName& InWeightmapLayerName, const bool bEditVisibilityLayer)
 {
-	for (TObjectPtr<ULandscapeWeightPatchTextureInfo> WeightPatch : WeightPatches)
+	for (const TObjectPtr<ULandscapeWeightPatchTextureInfo>& WeightPatch : WeightPatches)
 	{
 		if (WeightPatch->WeightmapLayerName == InWeightmapLayerName)
 		{

@@ -80,6 +80,13 @@ public:
 	/** Called when a networked actor is being destroyed or no longer wants to replicate */
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& Actor, bool bWarnIfNotFound=true) PURE_VIRTUAL(UReplicationGraphNode::NotifyRemoveNetworkActor, return false; );
 
+	/**
+	 * If Net.RepGraph.HandleDynamicActorRename is enabled, this is called when a dynamic actor is changing its outer.
+	 * If the node maintains level information for actors, and if replicated actors may be renamed, the implementation needs to update its level info.
+	 * Returns true if the actor was found & updated.
+	 */
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& Actor, bool bWarnIfNotFound=true) PURE_VIRTUAL(UReplicationGraphNode::NotifyActorRenamed, return false; );
+
 	/** Called when world changes or when all subclasses should dump any persistent data/lists about replicated actors here. (The new/next world will be set before this is called) */
 	virtual void NotifyResetAllNetworkActors();
 	
@@ -187,6 +194,8 @@ public:
 	
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override;
 	
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override;
+
 	virtual void NotifyResetAllNetworkActors() override;
 	
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
@@ -270,6 +279,8 @@ public:
 	
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override;
 	
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override;
+
 	virtual void NotifyResetAllNetworkActors() override;
 	
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
@@ -438,6 +449,7 @@ public:
 
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool WarnIfNotFound) override;
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override;
 	virtual void NotifyResetAllNetworkActors() override;
 	virtual void VerifyActorReferencesInternal() override;
 
@@ -481,10 +493,12 @@ public:
 
 	virtual void NotifyAddNetworkActor(const FNewReplicatedActorInfo& ActorInfo) override { ensureMsgf(false, TEXT("UReplicationGraphNode_DormancyNode::NotifyAddNetworkActor not functional.")); }
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override { ensureMsgf(false, TEXT("UReplicationGraphNode_DormancyNode::NotifyRemoveNetworkActor not functional.")); return false; }
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override { ensureMsgf(false, TEXT("UReplicationGraphNode_DormancyNode::NotifyActorRenamed not functional.")); return false; }
 	virtual void NotifyResetAllNetworkActors() override;
 	
 	void AddDormantActor(const FNewReplicatedActorInfo& ActorInfo, FGlobalActorReplicationInfo& GlobalInfo);
 	void RemoveDormantActor(const FNewReplicatedActorInfo& ActorInfo, FGlobalActorReplicationInfo& ActorRepInfo);
+	void RenameDormantActor(const FRenamedReplicatedActorInfo& ActorInfo);
 
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
 
@@ -533,6 +547,9 @@ public:
 	void RemoveStaticActor(const FNewReplicatedActorInfo& ActorInfo, FGlobalActorReplicationInfo& ActorRepInfo, bool bWasAddedAsDormantActor);
 	void RemoveDynamicActor(const FNewReplicatedActorInfo& ActorInfo);
 
+	void RenameStaticActor(const FRenamedReplicatedActorInfo& ActorInfo, bool bWasAddedAsDormantActor);
+	void RenameDynamicActor(const FRenamedReplicatedActorInfo& ActorInfo);
+
 	// Allow graph to override function for creating the dynamic node in the cell
 	TFunction<UReplicationGraphNode*(UReplicationGraphNode_GridCell* Parent)> CreateDynamicNodeOverride;
 
@@ -569,6 +586,7 @@ public:
 
 	virtual void NotifyAddNetworkActor(const FNewReplicatedActorInfo& Actor) override;	
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override;
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& Actor, bool bWarnIfNotFound=true) override;
 	virtual void NotifyResetAllNetworkActors() override;
 	virtual void PrepareForReplication() override;
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
@@ -582,7 +600,10 @@ public:
 	void RemoveActor_Static(const FNewReplicatedActorInfo& ActorInfo);
 	void RemoveActor_Dynamic(const FNewReplicatedActorInfo& ActorInfo) { RemoveActorInternal_Dynamic(ActorInfo); }
 	void RemoveActor_Dormancy(const FNewReplicatedActorInfo& ActorInfo);
-	
+
+	void RenameActor_Static(const FRenamedReplicatedActorInfo& ActorInfo);
+	void RenameActor_Dynamic(const FRenamedReplicatedActorInfo& ActorInfo);
+	void RenameActor_Dormancy(const FRenamedReplicatedActorInfo& ActorInfo);
 
 	// Called if cull distance changes. Note the caller must update Global/Connection actor rep infos. This just changes cached state within this node
 	virtual void NotifyActorCullDistChange(AActor* Actor, FGlobalActorReplicationInfo& GlobalInfo, float OldDist);
@@ -755,6 +776,7 @@ public:
 
 	virtual void NotifyAddNetworkActor(const FNewReplicatedActorInfo& Actor) override { }
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override { return false; }
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& Actor, bool bWarnIfNotFound=true) override { return false; }
 	virtual void NotifyResetAllNetworkActors() override { }
 	virtual void PrepareForReplication() override;
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
@@ -870,6 +892,7 @@ public:
 
 	virtual void NotifyAddNetworkActor(const FNewReplicatedActorInfo& ActorInfo) override { }
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override { return false; }
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& Actor, bool bWarnIfNotFound=true) override { return false; }
 	virtual void NotifyResetAllNetworkActors() override { TearOffActors.Reset(); }
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
 	virtual void LogNode(FReplicationGraphDebugInfo& DebugInfo, const FString& NodeName) const override;
@@ -942,6 +965,7 @@ public:
 	virtual void NotifyActorFullyDormantForConnection(AActor* Actor, UNetConnection* Connection) override;
 	virtual void NotifyActorDormancyChange(AActor* Actor, ENetDormancy OldDormancyState) override;
 	virtual void NotifyDestructionInfoCreated(AActor* Actor, FActorDestructionInfo& DestructionInfo) override {}
+	virtual void NotifyActorRenamed(AActor* Actor, UObject* PreviousOuter, FName PreviousName) override;
 	virtual void SetRoleSwapOnReplicate(AActor* Actor, bool bSwapRoles) override;
 	virtual bool ProcessRemoteFunction(class AActor* Actor, UFunction* Function, void* Parameters, FOutParmRec* OutParms, FFrame* Stack, class UObject* SubObject) override;
 	virtual int32 ServerReplicateActors(float DeltaSeconds) override;
@@ -958,6 +982,9 @@ public:
 
 	/** Sets the global and connection-specific cull distance setting of this actor */
 	void SetAllCullDistanceSettingsForActor(const FActorRepListType& Actor, float CullDistanceSquared);
+
+	/** Debugging facility called when invalid actor is being detected on one of many replication paths. */
+	virtual void PrintGraphDebugInfo_OnInvalidActor() {}
 
 	// --------------------------------------------------------------
 
@@ -1038,7 +1065,7 @@ public:
 
 	virtual void ReplicateActorsForConnection(UNetConnection* NetConnection, FPerConnectionActorInfoMap& ConnectionActorInfoMap, UNetReplicationGraphConnection* ConnectionManager, const uint32 FrameNum);
 
-	int64 ReplicateSingleActor(AActor* Actor, FConnectionReplicationActorInfo& ActorInfo, FGlobalActorReplicationInfo& GlobalActorInfo, FPerConnectionActorInfoMap& ConnectionActorInfoMap, UNetReplicationGraphConnection& ConnectionManager, const uint32 FrameNum);
+	int64 ReplicateSingleActor(const FActorRepListType& Actor, FConnectionReplicationActorInfo& ActorInfo, FGlobalActorReplicationInfo& GlobalActorInfo, FPerConnectionActorInfoMap& ConnectionActorInfoMap, UNetReplicationGraphConnection& ConnectionManager, const uint32 FrameNum);
 	int64 ReplicateSingleActor_FastShared(AActor* Actor, FConnectionReplicationActorInfo& ConnectionData, FGlobalActorReplicationInfo& GlobalActorInfo, UNetReplicationGraphConnection& ConnectionManager, const uint32 FrameNum);
 
 	void UpdateActorChannelCloseFrameNum(AActor* Actor, FConnectionReplicationActorInfo& ConnectionData, const FGlobalActorReplicationInfo& GlobalData, const uint32 FrameNum, UNetConnection* NetConnection) const;
@@ -1087,6 +1114,9 @@ protected:
 
 	/** Sets the next timeout frame for the actors in the list along with their dependent actors */
 	void HandleStarvedActorList(const UNetReplicationGraphConnection& RepGraphConnection, const FPrioritizedRepList& List, int32 StartIdx, FPerConnectionActorInfoMap& ConnectionActorInfoMap, uint32 FrameNum);
+
+	/** Routes a rename/outer change to every global node. Subclasses will want a more direct routing function where possible. */
+	virtual void RouteRenameNetworkActorToNodes(const FRenamedReplicatedActorInfo& ActorInfo);
 
 	/** How long, in frames, without replicating before an actor channel is closed on a connection. This is a global value added to the individual actor's ActorChannelFrameTimeout */
 	uint32 GlobalActorChannelFrameNumTimeout;

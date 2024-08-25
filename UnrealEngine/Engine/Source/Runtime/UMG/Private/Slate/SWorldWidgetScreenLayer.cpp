@@ -150,10 +150,17 @@ void SWorldWidgetScreenLayer::Tick(const FGeometry& AllottedGeometry, const doub
 
 					if (bProjected)
 					{
-						const float ViewportDist = FVector::Dist(ProjectionData.ViewOrigin, WorldLocation);
-						const FVector2D RoundedPosition2D(FMath::RoundToInt(ScreenPosition2D.X), FMath::RoundToInt(ScreenPosition2D.Y));
+						const double ViewportDist = FVector::Dist(ProjectionData.ViewOrigin, WorldLocation);
+						const FVector2D RoundedPosition2D(FMath::RoundToDouble(ScreenPosition2D.X), FMath::RoundToDouble(ScreenPosition2D.Y));
+
+						// If the root widget has pixel snapping disabled, then don't pixel snap the screen coordinates either otherwise
+						// it'll always jump between pixels. This saves needing an explicit flag on the widget component, and is probably 
+						// a better delegation of responsibility anyway, since changing the widget type can change the snapping as it wants
+						bool bDisablePixelSnapping = Entry.Widget->GetPixelSnapping() == EWidgetPixelSnapping::Disabled;
+						const FVector2D ScreenPositionToUse = bDisablePixelSnapping ? ScreenPosition2D : RoundedPosition2D;
+						
 						FVector2D ViewportPosition2D;
-						USlateBlueprintLibrary::ScreenToViewport(PlayerController, RoundedPosition2D, ViewportPosition2D);
+						USlateBlueprintLibrary::ScreenToViewport(PlayerController, ScreenPositionToUse, OUT ViewportPosition2D);
 
 						const FVector ViewportPosition(ViewportPosition2D.X, ViewportPosition2D.Y, ViewportDist);
 
@@ -178,7 +185,7 @@ void SWorldWidgetScreenLayer::Tick(const FGeometry& AllottedGeometry, const doub
 								
 								if (GSlateWorldWidgetZOrder != 0)
 								{
-									CanvasSlot->SetZOrder(-ViewportPosition.Z);
+									CanvasSlot->SetZOrder(static_cast<float>(- ViewportPosition.Z));
 								}
 							}
 							else
@@ -190,7 +197,7 @@ void SWorldWidgetScreenLayer::Tick(const FGeometry& AllottedGeometry, const doub
 
 								if (GSlateWorldWidgetZOrder != 0)
 								{
-									CanvasSlot->SetZOrder(-ViewportPosition.Z);
+									CanvasSlot->SetZOrder(static_cast<float>( - ViewportPosition.Z));
 								}
 							}
 						}

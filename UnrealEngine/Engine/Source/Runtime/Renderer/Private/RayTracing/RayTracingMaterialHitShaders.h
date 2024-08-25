@@ -24,7 +24,7 @@ FRHIRayTracingShader* GetRayTracingDefaultHiddenShader(const FGlobalShaderMap* S
 class FRayTracingMeshProcessor
 {
 public:
-	RENDERER_API FRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext, const FScene* InScene, const FSceneView* InViewIfDynamicMeshCommand, FMeshPassProcessorRenderState InPassDrawRenderState, ERayTracingMeshCommandsMode InRayTracingMeshCommandsMode);
+	RENDERER_API FRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext, const FScene* InScene, const FSceneView* InViewIfDynamicMeshCommand, ERayTracingMeshCommandsMode InRayTracingMeshCommandsMode);
 	RENDERER_API virtual ~FRayTracingMeshProcessor();
 
 	RENDERER_API void AddMeshBatch(const FMeshBatch& RESTRICT MeshBatch, uint64 BatchElementMask, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy);
@@ -34,7 +34,6 @@ protected:
 	const FScene* Scene;
 	const FSceneView* ViewIfDynamicMeshCommand;
 	ERHIFeatureLevel::Type FeatureLevel;
-	FMeshPassProcessorRenderState PassDrawRenderState;
 	ERayTracingMeshCommandsMode RayTracingMeshCommandsMode;
 
 	RENDERER_API bool Process(
@@ -45,15 +44,14 @@ protected:
 		const FMaterial& RESTRICT MaterialResource,
 		const FUniformLightMapPolicy& RESTRICT LightMapPolicy);
 
-	template<typename PassShadersType, typename ShaderElementDataType>
+	template<typename RayTracingShaderType, typename ShaderElementDataType>
 	void BuildRayTracingMeshCommands(
 		const FMeshBatch& RESTRICT MeshBatch,
 		uint64 BatchElementMask,
 		const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy,
 		const FMaterialRenderProxy& RESTRICT MaterialRenderProxy,
 		const FMaterial& RESTRICT MaterialResource,
-		const FMeshPassProcessorRenderState& RESTRICT DrawRenderState,
-		PassShadersType PassShaders,
+		const TShaderRef<RayTracingShaderType>& RayTracingShader,
 		const ShaderElementDataType& ShaderElementData,
 		ERayTracingViewMaskMode MaskMode)
 	{
@@ -67,17 +65,16 @@ protected:
 
 		if (GRHISupportsRayTracingShaders)
 		{
-			SharedCommand.SetShaders(PassShaders.GetUntypedShaders());
+			SharedCommand.SetShader(RayTracingShader);
 		}
 
 		FVertexInputStreamArray VertexStreams;
 		VertexFactory->GetStreams(FeatureLevel, EVertexInputStreamType::Default, VertexStreams);
 
-		int32 DataOffset = 0;
-		if (PassShaders.RayTracingShader.IsValid())
+		if (RayTracingShader.IsValid())
 		{
-			FMeshDrawSingleShaderBindings ShaderBindings = SharedCommand.ShaderBindings.GetSingleShaderBindings(SF_RayHitGroup, DataOffset);
-			PassShaders.RayTracingShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, DrawRenderState, ShaderElementData, ShaderBindings);
+			FMeshDrawSingleShaderBindings ShaderBindings = SharedCommand.ShaderBindings.GetSingleShaderBindings(SF_RayHitGroup);
+			RayTracingShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, ShaderElementData, ShaderBindings);
 		}
 
 		const int32 NumElements = MeshBatch.Elements.Num();
@@ -89,11 +86,10 @@ protected:
 				const FMeshBatchElement& BatchElement = MeshBatch.Elements[BatchElementIndex];
 				FRayTracingMeshCommand& RayTracingMeshCommand = CommandContext->AddCommand(SharedCommand);
 
-				DataOffset = 0;
-				if (PassShaders.RayTracingShader.IsValid())
+				if (RayTracingShader.IsValid())
 				{
-					FMeshDrawSingleShaderBindings RayHitGroupShaderBindings = RayTracingMeshCommand.ShaderBindings.GetSingleShaderBindings(SF_RayHitGroup, DataOffset);
-					FMeshMaterialShader::GetElementShaderBindings(PassShaders.RayTracingShader, Scene, ViewIfDynamicMeshCommand, VertexFactory, EVertexInputStreamType::Default, FeatureLevel, PrimitiveSceneProxy, MeshBatch, BatchElement, ShaderElementData, RayHitGroupShaderBindings, VertexStreams);
+					FMeshDrawSingleShaderBindings RayHitGroupShaderBindings = RayTracingMeshCommand.ShaderBindings.GetSingleShaderBindings(SF_RayHitGroup);
+					FMeshMaterialShader::GetElementShaderBindings(RayTracingShader, Scene, ViewIfDynamicMeshCommand, VertexFactory, EVertexInputStreamType::Default, FeatureLevel, PrimitiveSceneProxy, MeshBatch, BatchElement, ShaderElementData, RayHitGroupShaderBindings, VertexStreams);
 				}
 
 				RayTracingMeshCommand.GeometrySegmentIndex = uint32(MeshBatch.SegmentIndex) + BatchElementIndex;

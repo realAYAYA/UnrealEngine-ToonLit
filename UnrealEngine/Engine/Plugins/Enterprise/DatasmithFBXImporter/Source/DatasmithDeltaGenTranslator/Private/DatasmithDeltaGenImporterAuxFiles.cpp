@@ -389,7 +389,7 @@ namespace DeltaGenAuxFiles
 			case EDeltaGenVarDataVariantSwitchType::Geometry:
 				{
 					VariantSwitch->Geometry.TargetNodes.AddZeroed(PropertyCount);
-					for (auto& prop: PropertyMap)
+					for (auto& prop: PropertyMap) //-V1078
 					{
 						// use name from var file for package variant names(sanitized only used for scene nodes)
 						VariantSwitch->Geometry.TargetNodes[prop.PropertyIndex] = TargetIDToSanitizedName[prop.TargetID];
@@ -399,7 +399,7 @@ namespace DeltaGenAuxFiles
 			case EDeltaGenVarDataVariantSwitchType::ObjectSet:
 				{
 					TargetNodeNameForProperties.SetNumZeroed(PropertyCount);
-					for (auto& prop: PropertyMap)
+					for (auto& prop: PropertyMap) //-V1078
 					{
 						TargetNodeNameForProperties[prop.PropertyIndex] = TargetIDToSanitizedName[prop.TargetID];
 					}
@@ -410,7 +410,7 @@ namespace DeltaGenAuxFiles
 			case EDeltaGenVarDataVariantSwitchType::Package:
 				{
 					VariantSwitch->Package.TargetVariantSets.AddZeroed(PropertyCount);
-					for (auto& prop: PropertyMap)
+					for (auto& prop: PropertyMap) //-V1078
 					{
 						// use name from var file for package variant names(sanitized only used for scene nodes)
 						VariantSwitch->Package.TargetVariantSets[prop.PropertyIndex] = TargetIDToName[prop.TargetID];
@@ -419,7 +419,7 @@ namespace DeltaGenAuxFiles
 				break;
 			case EDeltaGenVarDataVariantSwitchType::SwitchObject:
 				{
-					for (auto& prop: PropertyMap)
+					for (auto& prop: PropertyMap) //-V1078
 					{
 						if (prop.PropertyID == EDG_ActiveChild)
 						{

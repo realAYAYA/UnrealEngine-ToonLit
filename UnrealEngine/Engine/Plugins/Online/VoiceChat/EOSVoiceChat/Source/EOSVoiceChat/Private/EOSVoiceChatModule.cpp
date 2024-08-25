@@ -14,7 +14,7 @@ IMPLEMENT_MODULE(FEOSVoiceChatModule, EOSVoiceChat);
 
 void FEOSVoiceChatModule::StartupModule()
 {
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 	const FName EOSSharedModuleName = TEXT("EOSShared");
 	const FName EOSSDKManagerFeatureName = TEXT("EOSSDKManager");
 
@@ -35,12 +35,12 @@ void FEOSVoiceChatModule::StartupModule()
 
 	EOSObj = EOSFactory->CreateInstance();
 	IModularFeatures::Get().RegisterModularFeature(IVoiceChat::GetModularFeatureName(), EOSObj.Get());
-#endif
+#endif // WITH_EOSVOICECHAT
 }
 
 void FEOSVoiceChatModule::ShutdownModule()
 {
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 	if (EOSObj.IsValid())
 	{
 		IModularFeatures::Get().UnregisterModularFeature(IVoiceChat::GetModularFeatureName(), EOSObj.Get());
@@ -53,5 +53,5 @@ void FEOSVoiceChatModule::ShutdownModule()
 		IModularFeatures::Get().UnregisterModularFeature(FEOSVoiceChatFactory::GetModularFeatureName(), EOSFactory.Get());
 		EOSFactory.Reset();
 	}
-#endif
+#endif // WITH_EOSVOICECHAT
 }

@@ -6,14 +6,14 @@
 #include "MediaCapture.h"
 #include "MediaIOCoreModule.h"
 #include "ImagePixelData.h"
-#include "PostProcess/PostProcessing.h"
+#include "PostProcess/PostProcessMaterialInputs.h"
 #include "RenderGraphUtils.h"
 #include "RHI.h"
 #include "RHICommandList.h"
 #include "RHIResources.h"
 #include "SceneView.h"
 #include "ScreenPass.h"
-#include "PostProcess/PostProcessMaterialInputs.h"
+
 
 class FRDGTexture;
 
@@ -94,7 +94,7 @@ public:
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(MediaCaptureExtensionCallback);
 
-		FScreenPassTexture SceneColor = InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor);
+		FScreenPassTexture SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder, InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor));
 		check(SceneColor.IsValid());
 
 		if (FRDGTextureRef TextureRef = SceneColor.Texture)
@@ -106,24 +106,7 @@ public:
 			}
 		}
 
-		return ReturnUntouchedSceneColorForPostProcessing(InOutInputs);
-	}
-	
-	/** 
-	 * A helper function that extracts the right scene color texture, untouched, to be used further in post processing. 
-	 */
-	FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(const FPostProcessMaterialInputs& InOutInputs)
-	{
-		if (InOutInputs.OverrideOutput.IsValid())
-		{
-			return InOutInputs.OverrideOutput;
-		}
-		else
-		{
-			/** We don't want to modify scene texture in any way. We just want it to be passed back onto the next stage. */
-			FScreenPassTexture SceneTexture = const_cast<FScreenPassTexture&>(InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor]);
-			return SceneTexture;
-		}
+		return InOutInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 	}
 
 	bool IsValid() const

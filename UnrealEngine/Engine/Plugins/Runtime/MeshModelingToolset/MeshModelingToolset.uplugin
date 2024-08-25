@@ -54,6 +54,10 @@
 		{
 			"Name": "ProxyLODPlugin",
 			"Enabled": true
+		},
+		{
+			"Name": "PlanarCut",
+			"Enabled":  true
 		}
 	]
 }

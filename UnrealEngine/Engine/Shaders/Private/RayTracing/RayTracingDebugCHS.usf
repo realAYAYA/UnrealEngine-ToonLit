@@ -23,4 +23,12 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(RayTracingDebugMainCHS,
 	Payload.GeometryInstanceIndex = GetHitGroupUserData();
 	Payload.InstanceIndex = InstanceIndex();
 	Payload.GeometryIndex = 0; // GeometryIndex();
+	Payload.ScenePrimitiveIndex = ScenePrimitiveIndex;
+}
+
+RAY_TRACING_ENTRY_ANY_HIT(RayTracingDebugAHS,
+	FRayTracingDebugPayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	Payload.TriangleHitCountPerRay += 1;
 }

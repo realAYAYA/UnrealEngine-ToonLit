@@ -30,6 +30,12 @@ public:
 	/** Add Item at origin */
 	TSharedPtr< FUICommandInfo > AddNullItem;
 
+	/** Add Item at origin */
+	TSharedPtr< FUICommandInfo > AddConnectorItem;
+
+	/** Add Item at origin */
+	TSharedPtr< FUICommandInfo > AddSocketItem;
+
 	/** Duplicate currently selected items */
 	TSharedPtr< FUICommandInfo > DuplicateItem;
 
@@ -90,6 +96,9 @@ public:
 	/* Hide parents on filter */
 	TSharedPtr< FUICommandInfo > HideParentsWhenFiltering;
 
+	/* Show short names */
+	TSharedPtr< FUICommandInfo > ShowShortNames;
+
 	/* Show imported bones */
 	TSharedPtr< FUICommandInfo > ShowImportedBones;
 
@@ -107,6 +116,9 @@ public:
 
 	/* Show references */
 	TSharedPtr< FUICommandInfo > ShowReferences;
+
+	/* Show sockets */
+	TSharedPtr< FUICommandInfo > ShowSockets;
 
 	/** Toggle Shape Transform Edit*/
 	TSharedPtr< FUICommandInfo > ToggleControlShapeTransformEdit;

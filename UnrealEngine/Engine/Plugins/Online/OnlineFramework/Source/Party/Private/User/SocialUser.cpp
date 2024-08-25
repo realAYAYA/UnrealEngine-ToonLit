@@ -353,7 +353,7 @@ void USocialUser::TryBroadcastInitializationComplete()
 			}
 			else
 			{
-				ensureAlwaysMsgf(!IsLocalUser(), TEXT("%s LocalUser %s does not have UserInfo!"), ANSI_TO_TCHAR(__FUNCTION__), *ToDebugString());
+				//ensureAlwaysMsgf(!IsLocalUser(), TEXT("%s LocalUser %s does not have UserInfo!"), ANSI_TO_TCHAR(__FUNCTION__), *ToDebugString());
 				UE_LOG(LogParty, Warning, TEXT("%s User %s does not have UserInfo!"), ANSI_TO_TCHAR(__FUNCTION__), *ToDebugString());
 
 				// User is invalid with no open queries

@@ -19,11 +19,6 @@
 struct FAndroidPlatformProperties
 	: public FGenericPlatformProperties
 {
-	static FORCEINLINE const char* GetPhysicsFormat( )
-	{
-		return "PhysXGeneric";		//@todo android: physx format
-	}
-
 	static FORCEINLINE bool HasEditorOnlyData( )
 	{
 		return false;

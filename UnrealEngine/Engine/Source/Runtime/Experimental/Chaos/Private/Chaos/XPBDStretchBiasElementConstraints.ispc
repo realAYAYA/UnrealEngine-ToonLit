@@ -11,7 +11,7 @@ static inline varying float SafeDivide(const varying float Numerator, const vary
 }
 
 static void CalcConstraintsAndGrads(const FVector3f& P0, const FVector3f& P1, const FVector3f& P2, const FVector4f& DeltaUVInv,
-	const FVector2f& RestStretchLengths, const float WarpScale, const float WeftScale,
+	const FVector3f& RestStretchLengths, const float WarpScale, const float WeftScale,
 	float& Cu, float& Cv, float& Cs, 
 	FVector3f& GradCu1, FVector3f& GradCu2, FVector3f& GradCv1, FVector3f& GradCv2, FVector3f& GradCs1, FVector3f& GradCs2)
 {
@@ -31,7 +31,7 @@ static void CalcConstraintsAndGrads(const FVector3f& P0, const FVector3f& P1, co
 
 	Cu = DXDuLength - RestStretchLengths.V[0] * WeftScale;
 	Cv = DXDvLength - RestStretchLengths.V[1] * WarpScale;
-	Cs = VectorDot(DXDuNormalized, DXDvNormalized);
+	Cs = VectorDot(DXDuNormalized, DXDvNormalized) - RestStretchLengths.V[2];
 
 	GradCu1 = DXDuNormalized * DeltaUVInv.V[0];
 	GradCu2 = DXDuNormalized * DeltaUVInv.V[1];
@@ -71,7 +71,7 @@ static inline float CalcDLambda(const float StiffnessValue, const float Dt, cons
 
 export void ApplyXPBDStretchBiasConstraints(uniform FVector4f PandInvM[],
 									const uniform FIntVector Constraints[],
-									const uniform FVector2f RestStretchLengths[],
+									const uniform FVector3f RestStretchLengths[],
 									const uniform FVector4f DeltaUVInverses[],
 									const uniform FVector3f StiffnessScales[],
 									uniform FVector3f Lambdas[],
@@ -103,7 +103,7 @@ export void ApplyXPBDStretchBiasConstraints(uniform FVector4f PandInvM[],
 		UnzipPandInvM(PandInvM2, P2, M2);
 
 		const varying FVector4f DeltaUVInverse = VectorLoad(&DeltaUVInverses[extract(i,0)]);
-		const varying FVector2f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);
+		const varying FVector3f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);
 
 		varying float Cu, Cv, Cs;
 		varying FVector3f GradCu1, GradCu2, GradCv1, GradCv2, GradCs1, GradCs2;
@@ -143,7 +143,7 @@ export void ApplyXPBDStretchBiasConstraints(uniform FVector4f PandInvM[],
 export void ApplyXPBDStretchBiasConstraintsWithDamping(uniform FVector4f PandInvM[],
 									const uniform FVector3f X[],
 									const uniform FIntVector Constraints[],
-									const uniform FVector2f RestStretchLengths[],
+									const uniform FVector3f RestStretchLengths[],
 									const uniform FVector4f DeltaUVInverses[],
 									const uniform FVector3f StiffnessScales[],
 									uniform FVector3f Lambdas[],
@@ -176,7 +176,7 @@ export void ApplyXPBDStretchBiasConstraintsWithDamping(uniform FVector4f PandInv
 		UnzipPandInvM(PandInvM2, P2, M2);
 
 		const varying FVector4f DeltaUVInverse = VectorLoad(&DeltaUVInverses[extract(i,0)]);
-		const varying FVector2f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);
+		const varying FVector3f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);
 
 		varying float Cu, Cv, Cs;
 		varying FVector3f GradCu1, GradCu2, GradCv1, GradCv2, GradCs1, GradCs2;
@@ -228,7 +228,7 @@ export void ApplyXPBDStretchBiasConstraintsWithDamping(uniform FVector4f PandInv
 
 export void ApplyXPBDStretchBiasConstraintsWithMaps(uniform FVector4f PandInvM[],
 											const uniform FIntVector Constraints[],
-											const uniform FVector2f RestStretchLengths[],
+											const uniform FVector3f RestStretchLengths[],
 											const uniform FVector4f DeltaUVInverses[],
 											const uniform FVector3f StiffnessScales[],
 											uniform FVector3f Lambdas[],
@@ -277,7 +277,7 @@ export void ApplyXPBDStretchBiasConstraintsWithMaps(uniform FVector4f PandInvM[]
 		UnzipPandInvM(PandInvM2, P2, M2);
 
 		const varying FVector4f DeltaUVInverse = VectorLoad(&DeltaUVInverses[extract(i,0)]);
-		const varying FVector2f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);
+		const varying FVector3f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);
 		
 		#pragma ignore warning(perf)
 		const varying float WarpScale = WarpScaleTable[WarpScaleIndex];
@@ -330,7 +330,7 @@ export void ApplyXPBDStretchBiasConstraintsWithMaps(uniform FVector4f PandInvM[]
 export void ApplyXPBDStretchBiasConstraintsWithDampingAndMaps(uniform FVector4f PandInvM[],
 											const uniform FVector3f X[],
 											const uniform FIntVector Constraints[],
-											const uniform FVector2f RestStretchLengths[],
+											const uniform FVector3f RestStretchLengths[],
 											const uniform FVector4f DeltaUVInverses[],
 											const uniform FVector3f StiffnessScales[],
 											uniform FVector3f Lambdas[],
@@ -383,7 +383,7 @@ export void ApplyXPBDStretchBiasConstraintsWithDampingAndMaps(uniform FVector4f 
 		UnzipPandInvM(PandInvM2, P2, M2);
 
 		const varying FVector4f DeltaUVInverse = VectorLoad(&DeltaUVInverses[extract(i,0)]);
-		const varying FVector2f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);		
+		const varying FVector3f RestStretchLength = VectorLoad(&RestStretchLengths[extract(i,0)]);		
 		
 		#pragma ignore warning(perf)
 		const varying float WarpScale = WarpScaleTable[WarpScaleIndex];

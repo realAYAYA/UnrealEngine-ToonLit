@@ -178,45 +178,15 @@ FReply SGraphEditorImpl::OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent
 
 void SGraphEditorImpl::NotifyGraphChanged()
 {
-	FEdGraphEditAction DefaultAction;
-	OnGraphChanged(DefaultAction);
+	GetCurrentGraph()->NotifyGraphChanged();
 }
 
 void SGraphEditorImpl::OnGraphChanged(const FEdGraphEditAction& InAction)
 {
-	if ( !bIsActiveTimerRegistered )
+	const bool bWasAddAction = (InAction.Action & GRAPHACTION_AddNode) != 0;
+	if (bWasAddAction)
 	{
-		const UEdGraphSchema* Schema = EdGraphObj->GetSchema();
-		const bool bSchemaRequiresFullRefresh = Schema->ShouldAlwaysPurgeOnModification();
-
-		const bool bWasAddAction = (InAction.Action & GRAPHACTION_AddNode) != 0;
-		const bool bWasSelectAction = (InAction.Action & GRAPHACTION_SelectNode) != 0;
-		const bool bWasRemoveAction = (InAction.Action & GRAPHACTION_RemoveNode) != 0;
-		const bool bWasEditAction = (InAction.Action & GRAPHACTION_EditNode) != 0;
-
-		// If we did a 'default action' (or some other action not handled by SGraphPanel::OnGraphChanged
-		// or if we're using a schema that always needs a full refresh, then purge the current nodes
-		// and queue an update:
-		if (bSchemaRequiresFullRefresh || 
-			(!bWasAddAction && !bWasSelectAction && !bWasRemoveAction && !bWasEditAction) )
-		{
-			GraphPanel->PurgeVisualRepresentation();
-			// Trigger the refresh
-			bIsActiveTimerRegistered = true;
-			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateSP(this, &SGraphEditorImpl::TriggerRefresh));
-		}
-
-		if (bWasAddAction)
-		{
-			NumNodesAddedSinceLastPointerPosition++;
-		}
-		else if (bWasEditAction && !bSchemaRequiresFullRefresh)
-		{
-			for (const UEdGraphNode* Node : InAction.Nodes)
-			{
-				RefreshNode(const_cast<UEdGraphNode&>(*Node));
-			}
-		}
+		NumNodesAddedSinceLastPointerPosition++;
 	}
 }
 
@@ -660,7 +630,6 @@ void SGraphEditorImpl::Construct( const FArguments& InArgs )
 	OnNavigateHistoryForward = InArgs._OnNavigateHistoryForward;
 	OnNodeSpawnedByKeymap = InArgs._GraphEvents.OnNodeSpawnedByKeymap;
 
-	bIsActiveTimerRegistered = false;
 	NumNodesAddedSinceLastPointerPosition = 0;
 
 	// Make sure that the editor knows about what kinds
@@ -913,14 +882,6 @@ void SGraphEditorImpl::Tick( const FGeometry& AllottedGeometry, const double InC
 			FocusLockedEditorHere();
 		}
 	}
-}
-
-EActiveTimerReturnType SGraphEditorImpl::TriggerRefresh( double InCurrentTime, float InDeltaTime )
-{
-	GraphPanel->Update();
-
-	bIsActiveTimerRegistered = false;
-	return EActiveTimerReturnType::Stop;
 }
 
 void SGraphEditorImpl::OnClosedActionMenu()

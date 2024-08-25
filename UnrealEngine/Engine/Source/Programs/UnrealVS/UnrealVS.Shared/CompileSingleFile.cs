@@ -46,11 +46,13 @@ namespace UnrealVS
 			UnrealVSPackage.Instance.MenuCommandService.AddCommand(CompileSingleModuleButtonCommand);
 
 			CommandID CommandID4 = new CommandID(GuidList.UnrealVSCmdSet, CompileAndProfileSingleFileButtonID);
-			MenuCommand CompileAndProfileSingleFileButtonCommand = new MenuCommand(new EventHandler(CompileSingleFileButtonHandler), CommandID4);
+			var CompileAndProfileSingleFileButtonCommand = new OleMenuCommand(new EventHandler(CompileSingleFileButtonHandler), CommandID4);
+			CompileAndProfileSingleFileButtonCommand.BeforeQueryStatus += CompileSingleFileButtonCommand_BeforeQueryStatus;
 			UnrealVSPackage.Instance.MenuCommandService.AddCommand(CompileAndProfileSingleFileButtonCommand);
 
 			CommandID CommandID5 = new CommandID(GuidList.UnrealVSCmdSet, GenerateAssemblyFileButtonID);
-			MenuCommand GenerateAssemblyFileButtonCommand = new MenuCommand(new EventHandler(CompileSingleFileButtonHandler), CommandID5);
+			var GenerateAssemblyFileButtonCommand = new OleMenuCommand(new EventHandler(CompileSingleFileButtonHandler), CommandID5);
+			GenerateAssemblyFileButtonCommand.BeforeQueryStatus += CompileSingleFileButtonCommand_BeforeQueryStatus;
 			UnrealVSPackage.Instance.MenuCommandService.AddCommand(GenerateAssemblyFileButtonCommand);
 
 			// add sub menu for UBT commands
@@ -212,7 +214,21 @@ namespace UnrealVS
 			string FileToCompileExt = Path.GetExtension(FileToCompile);
 
 			string CompilingText;
-			string UBTArgument;
+			List<string> UBTArguments = new List<string>
+			{
+				"-WorkingDir=\"$(MSBuildProjectDirectory)\"",
+			};
+			if (bPreProcessOnly)
+			{
+				UBTArguments.Add("-NoXGE -NoSNDBS -NoFASTBuild");
+				UBTArguments.Add("-Preprocess");
+			}
+			else if (bGenerateAssembly)
+			{
+				UBTArguments.Add("-NoXGE -NoSNDBS -NoFASTBuild");
+				UBTArguments.Add("-WithAssembly");
+			}
+
 			if (bIsFile)
 			{
 				if (!ValidExtensions.Contains(FileToCompileExt.ToLowerInvariant()))
@@ -222,7 +238,7 @@ namespace UnrealVS
 				}
 
 				CompilingText = FileToCompile;
-				UBTArgument = $"-singlefile=\"{FileToCompile}";
+				UBTArguments.Add($"-SingleFile=\"{FileToCompile}\"");
 			}
 			else
 			{
@@ -230,9 +246,10 @@ namespace UnrealVS
 				if (ModuleName == null)
 				{
 					MessageBox.Show($"Can't find module for for {FileToCompile} to compile.", "Invalid Module", MessageBoxButtons.OK);
+					return true;
 				}
 				CompilingText = ModuleName;
-				UBTArgument = $"-Module=\"{ModuleName}";
+				UBTArguments.Add($"-Module=\"{ModuleName}\"");
 			}
 
 			// If there's already a build in progress, don't let another one start
@@ -258,15 +275,23 @@ namespace UnrealVS
 			DTE.Events.BuildEvents.OnBuildBegin += BuildEvents_OnBuildBegin;
 
 			// Create a delegate for handling output messages
-			string PPLine = String.Empty;
+			List<string> PreprocessedFiles = new List<string>();
+			List<string> AssemblyFiles = new List<string>();
 			void OutputHandler(object Sender, DataReceivedEventArgs Args) 
 			{ 
 				if (Args.Data != null) 
 				{ 
-					BuildOutputPane.OutputStringThreadSafe($"1>  {Args.Data}{Environment.NewLine}"); 
 					if (Args.Data.Contains("PreProcessPath:"))
 					{
-						PPLine = Args.Data;
+						PreprocessedFiles.Add(Args.Data.Replace("PreProcessPath:", "").Trim());
+					}
+					else if (Args.Data.Contains("AssemblyPath:"))
+					{
+						AssemblyFiles.Add(Args.Data.Replace("AssemblyPath:", "").Trim());
+					}
+					else
+					{
+						BuildOutputPane.OutputStringThreadSafe($"1>  {Args.Data}{Environment.NewLine}");
 					}
 				} 
 			}
@@ -290,43 +315,31 @@ namespace UnrealVS
 
 			string SolutionDir = Path.GetDirectoryName(UnrealVSPackage.Instance.SolutionFilepath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
 			// Get the build command line and escape any environment variables that we use
-			string BuildCommandLine = ActiveNMakeTool.BuildCommandLine;
-			BuildCommandLine = BuildCommandLine.Replace("$(SolutionDir)", SolutionDir);
-			BuildCommandLine = BuildCommandLine.Replace("$(ProjectName)", VCStartupProject.Name);
-			BuildCommandLine = BuildCommandLine.Replace("$(BuildBatchScript)", "..\\..\\Build\\BatchFiles\\Build.bat");
+			string BuildCommandLine = ActiveVCConfiguration.Evaluate(ActiveNMakeTool.BuildCommandLine);
+			string UBTArgument = ActiveVCConfiguration.Evaluate(string.Join(" ", UBTArguments));
+			string WorkingDirectory = ActiveVCConfiguration.Evaluate("$(MSBuildProjectDirectory)");
 
 			FileToCompileOriginalExt = FileToCompileExt;
-
-			string ExtraArgs = "";
-
-			if (bPreProcessOnly)
-			{
-				ExtraArgs = " -NoXGE -Preprocess ";
-			}
-			else if (bGenerateAssembly)
-			{
-				ExtraArgs = " -NOXGE -WithAssembly ";
-			}
 
 			// Spawn the new process
 			ChildProcess = new System.Diagnostics.Process();
 			ChildProcess.StartInfo.FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe");
-			ChildProcess.StartInfo.Arguments = $"/C \"{BuildCommandLine} {ExtraArgs} {UBTArgument}\"\"";
-			ChildProcess.StartInfo.WorkingDirectory = Path.GetDirectoryName(StartupProject.FullName);
+			ChildProcess.StartInfo.Arguments = $"/C \"{BuildCommandLine} {UBTArgument}\"";
+			ChildProcess.StartInfo.WorkingDirectory = WorkingDirectory;
 			ChildProcess.StartInfo.UseShellExecute = false;
 			ChildProcess.StartInfo.RedirectStandardOutput = true;
 			ChildProcess.StartInfo.RedirectStandardError = true;
 			ChildProcess.StartInfo.CreateNoWindow = true;
 			ChildProcess.OutputDataReceived += OutputHandler;
 			ChildProcess.ErrorDataReceived += OutputHandler;
-			if (bPreProcessOnly || bProfile)
+			if (bPreProcessOnly || bGenerateAssembly  || bProfile)
 			{
 				// add an event handler to respond to the exit of the preprocess request
 				// and open the generated file if it exists.
 				ChildProcess.EnableRaisingEvents = true;
-				ChildProcess.Exited += new EventHandler((s, e) => PreprocessExitHandler(PPLine, bProfile));
+				ChildProcess.Exited += new EventHandler((s, e) => PreprocessExitHandler(PreprocessedFiles, AssemblyFiles, bProfile));
 			}
-			
+
 			ChildProcess.Start();
 			ChildProcess.BeginOutputReadLine();
 			ChildProcess.BeginErrorReadLine();
@@ -334,7 +347,7 @@ namespace UnrealVS
 			return true;
 		}
 
-		private void PreprocessExitHandler(string PPLine, bool bIsProfiling)
+		private void PreprocessExitHandler(IEnumerable<string> PreprocessedFiles, IEnumerable<string> AssemblyFiles, bool bIsProfiling)
 		{
 			if (bIsProfiling)
 			{
@@ -346,14 +359,20 @@ namespace UnrealVS
 			}
 
 			// not all compile actions support pre-process - check it exists
-			if (PPLine.Contains("PreProcessPath:"))
+			foreach (string PreprocessedFile in PreprocessedFiles)
 			{
-				string PPFullPath = PPLine.Replace("PreProcessPath:", "").Trim();
-
 				ThreadHelper.JoinableTaskFactory.Run(async () =>
 				{
 					await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-					OpenPreprocessedFile(PPFullPath);
+					OpenPreprocessedFile(PreprocessedFile);
+				});
+			}
+			foreach (string AssemblyFile in AssemblyFiles)
+			{
+				ThreadHelper.JoinableTaskFactory.Run(async () =>
+				{
+					await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+					OpenAssemblyFile(AssemblyFile);
 				});
 			}
 		}
@@ -361,11 +380,6 @@ namespace UnrealVS
 		private void OpenPreprocessedFile(string PPFullPath)
 		{
 			ThreadHelper.ThrowIfNotOnUIThread();
-
-			IVsOutputWindowPane BuildOutputPane = UnrealVSPackage.Instance.GetOutputPane();
-			DTE DTE = UnrealVSPackage.Instance.DTE;
-
-			BuildOutputPane.OutputStringThreadSafe($"1>  PPFullPath: {PPFullPath}{Environment.NewLine}");
 
 			if (File.Exists(PPFullPath))
 			{
@@ -377,7 +391,17 @@ namespace UnrealVS
 
 				File.Copy(PPFullPath, RenamedFile, true /*overwrite*/);
 
-				DTE.ExecuteCommand("File.OpenFile", $"\"{RenamedFile}\"");
+				UnrealVSPackage.Instance.DTE.ExecuteCommand("File.OpenFile", $"\"{RenamedFile}\"");
+			}
+		}
+
+		private void OpenAssemblyFile(string AsmFullPath)
+		{
+			ThreadHelper.ThrowIfNotOnUIThread();
+
+			if (File.Exists(AsmFullPath))
+			{
+				UnrealVSPackage.Instance.DTE.ExecuteCommand("File.OpenFile", $"\"{AsmFullPath}\"");
 			}
 		}
 

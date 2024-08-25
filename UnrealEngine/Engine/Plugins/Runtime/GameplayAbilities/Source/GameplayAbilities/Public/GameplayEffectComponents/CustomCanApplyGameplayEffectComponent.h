@@ -8,7 +8,7 @@
 #include "CustomCanApplyGameplayEffectComponent.generated.h"
 
 /** Handles configuration of a CustomApplicationRequirement function to see if this GameplayEffect should apply */
-UCLASS()
+UCLASS(DisplayName="Custom Can Apply This Effect")
 class GAMEPLAYABILITIES_API UCustomCanApplyGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()

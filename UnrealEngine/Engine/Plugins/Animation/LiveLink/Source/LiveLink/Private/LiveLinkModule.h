@@ -33,6 +33,15 @@ public:
 	virtual FLiveLinkMessageBusDiscoveryManager& GetMessageBusDiscoveryManager() override { return *DiscoveryManager; }
 #endif
 	virtual TSharedPtr<FSlateStyleSet> GetStyle() override { return StyleSet; }
+
+	virtual FDelegateHandle RegisterMessageBusSourceFilter(const FOnLiveLinkShouldDisplaySource& SourceFilter) override;
+	virtual void UnregisterMessageBusSourceFilter(FDelegateHandle Handle) override;
+
+	virtual const TMap<FDelegateHandle, FOnLiveLinkShouldDisplaySource>& GetSourceFilters() const override
+	{
+		return RegisteredSourceFilters;
+	}
+
 	//~ End ILiveLinkModule interface
 
 private:
@@ -51,4 +60,7 @@ private:
 	TUniquePtr<FLiveLinkHeartbeatEmitter> HeartbeatEmitter;
 	TUniquePtr<FLiveLinkMessageBusDiscoveryManager> DiscoveryManager;
 	TUniquePtr<FLiveLinkDebugCommand> LiveLinkDebugCommand;
+
+	// Filters registered externally used to filter what message bus sources should be displayed in the UI.
+	TMap<FDelegateHandle, FOnLiveLinkShouldDisplaySource> RegisteredSourceFilters;
 };

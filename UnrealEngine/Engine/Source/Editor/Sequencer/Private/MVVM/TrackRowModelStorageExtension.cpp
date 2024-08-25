@@ -10,7 +10,6 @@
 #include "Misc/AssertionMacros.h"
 #include "Misc/Optional.h"
 #include "MovieSceneTrack.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/TypeHash.h"
 
 namespace UE

@@ -1,11 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UObject/PropertyOptional.h"
+
 #include "Misc/Guid.h"
 #include "Serialization/CustomVersion.h"
 #include "String/LexFromString.h"
 #include "UObject/GarbageCollectionSchema.h"
+#include "UObject/LinkerLoad.h"
 #include "UObject/PropertyHelper.h"
+#include "UObject/PropertyTypeName.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOptionalProperty, Log, All);
 
@@ -33,9 +36,15 @@ struct FLegacyFOptionPropertyCustomVersion
 	{}
 };
 static FLegacyFOptionPropertyCustomVersion LegacyFOptionPropertyCustomVersion;
+static const FString InitString = TEXT("__INIT__");
 
 FOptionalProperty::FOptionalProperty(FFieldVariant InOwner, const FName& InName, EObjectFlags InObjectFlags)
 	: FProperty(InOwner, InName, InObjectFlags)
+{
+}
+
+FOptionalProperty::FOptionalProperty(FFieldVariant InOwner, const UECodeGen_Private::FGenericPropertyParams& Prop)
+	: Super(InOwner, (const UECodeGen_Private::FPropertyParamsBaseWithOffset&)Prop)
 {
 }
 
@@ -102,6 +111,11 @@ void FOptionalProperty::GetInnerFields(TArray<FField*>& OutFields)
 	ValueProperty->GetInnerFields(OutFields);
 }
 
+void FOptionalProperty::AddCppProperty(FProperty* Property)
+{
+	SetValueProperty(Property);
+}
+
 FString FOptionalProperty::GetCPPType(FString* ExtendedTypeText, uint32 CPPExportFlags) const
 {
 	checkSlow(ValueProperty);
@@ -121,12 +135,14 @@ FString FOptionalProperty::GetCPPMacroType(FString& ExtendedTypeText) const
 	return TEXT("TOPTIONAL");
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FString FOptionalProperty::GetCPPTypeForwardDeclaration() const
 {
 	// We assume that TOptional<> is globally known already and that we just need to make the value type known
 	checkSlow(ValueProperty);
 	return ValueProperty->GetCPPTypeForwardDeclaration();
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void FOptionalProperty::LinkInternal(FArchive& Ar)
 {
@@ -185,7 +201,8 @@ void FOptionalProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Data
 		
 		const void* ValueDefaults = Defaults ? GetValuePointerForReadIfSet(Defaults) : nullptr;
 
-		if (Slot.GetArchiveState().UseUnversionedPropertySerialization())
+		if (Slot.GetArchiveState().UseUnversionedPropertySerialization() ||
+			UnderlyingArchive.UEVer() >= EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
 		{
 			// Simply serialize the inner value if using unversioned property serialization.
 			void* ValueData = bIsLoading
@@ -203,6 +220,11 @@ void FOptionalProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Data
 			// Serialize the value's tag.
 			ValueSlot << ValueTag;
 
+			if (UE::FPropertyTypeName NewTypeName = ApplyRedirectsToPropertyType(ValueTag.GetType(), ValueProperty); !NewTypeName.IsEmpty())
+			{
+				ValueTag.SetType(NewTypeName);
+			}
+
 			// Deserialize/convert the value.
 			void* ValueData = MarkSetAndGetInitializedValuePointerToReplace(Data);
 
@@ -211,11 +233,15 @@ void FOptionalProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Data
 			switch (GetValueProperty()->ConvertFromType(ValueTag, ValueSlot, static_cast<uint8*>(ValueData), GetOwnerStruct(), static_cast<const uint8*>(ValueDefaults)))
 			{
 				case EConvertFromTypeResult::Converted:
+				case EConvertFromTypeResult::Serialized:
 					bSuccessfullyDeserialized = true;
 					break;
 				case EConvertFromTypeResult::UseSerializeItem:
-					GetValueProperty()->SerializeItem(ValueSlot, ValueData, ValueDefaults);
-					bSuccessfullyDeserialized = !UnderlyingArchive.IsCriticalError();
+					if (ValueTag.Type == GetValueProperty()->GetID())
+					{
+						ValueTag.SerializeTaggedProperty(ValueSlot, GetValueProperty(), (uint8*)ValueData, (const uint8*)ValueDefaults);
+						bSuccessfullyDeserialized = !UnderlyingArchive.IsCriticalError();
+					}
 					break;
 				case EConvertFromTypeResult::CannotConvert:
 					break;
@@ -247,7 +273,7 @@ void FOptionalProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Data
 			void* ValueData = GetValuePointerForReadOrReplace(Data);
 
 			// Construct and serialize a tag for the value.
-			FPropertyTag ValueTag(UnderlyingArchive, GetValueProperty(), 0, static_cast<uint8*>(ValueData), static_cast<const uint8*>(ValueDefaults));
+			FPropertyTag ValueTag(GetValueProperty(), 0, static_cast<uint8*>(ValueData));
 			ValueSlot << ValueTag;
 
 			// Serialize the value.
@@ -256,9 +282,7 @@ void FOptionalProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Data
 			
 			// If saving to a non-text archive, save the size of the serialized value so it can be skipped over on load if it's the wrong type.
 			const int64 ValueEndOffset = UnderlyingArchive.Tell();
-			const int64 ValueSize64 = ValueEndOffset - ValueStartOffset;
-			check(ValueSize64 >= 0 && ValueSize64 <= INT32_MAX);
-			ValueTag.Size = static_cast<int32>(ValueSize64);
+			ValueTag.Size = IntCastChecked<int32>(ValueEndOffset - ValueStartOffset);
 			if (ValueTag.Size > 0 && !UnderlyingArchive.IsTextFormat())
 			{
 				// The tag serialization set ValueTag.SizeOffset to the archive offset where a placeholder size field was serialized.
@@ -278,8 +302,33 @@ void FOptionalProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Data
 
 bool FOptionalProperty::NetSerializeItem(FArchive& Ar, UPackageMap* Map, void* Data, TArray<uint8>* MetaData /*= nullptr*/) const
 {
-	UE_LOG(LogOptionalProperty, Fatal, TEXT("Unsupported code path"));
-	return true;
+	bool bSuccess = true;
+	bool bIsLoading = Ar.IsLoading();
+
+	uint8 IsSetValue = IsSet(Data);
+	Ar.SerializeBits(&IsSetValue, 1);
+
+	if (IsSetValue > 0)
+	{
+		void* ValueData = bIsLoading
+			? MarkSetAndGetInitializedValuePointerToReplace(Data)
+			: GetValuePointerForReadOrReplace(Data);
+
+		// The NetSerializeItem code path is not supported by all property types and they will not be supported within replicated optionals yet either
+		bSuccess = ValueProperty->NetSerializeItem(Ar, Map, ValueData, MetaData);
+	}
+	
+	if (bIsLoading && (!bSuccess || !IsSetValue))
+	{
+		MarkUnset(Data);
+	}
+
+	return bSuccess;
+}
+
+bool FOptionalProperty::SupportsNetSharedSerialization() const
+{
+	return ValueProperty->SupportsNetSharedSerialization();
 }
 
 void FOptionalProperty::ExportText_Internal(FString& ValueStr, const void* ContainerOrPropertyPtr, EPropertyPointerType PropertyPointerType, const void* DefaultValue, UObject* Parent, int32 PortFlags, UObject* ExportRootScope) const
@@ -291,6 +340,14 @@ void FOptionalProperty::ExportText_Internal(FString& ValueStr, const void* Conta
 	if (const void* ValuePointer = GetValuePointerForReadIfSet(OptionalValuePointer))
 	{
 		ValueProperty->ExportTextItem_Direct(ValueStr, ValuePointer, DefaultValue ? GetValuePointerForReadIfSet(DefaultValue) : nullptr, Parent, PortFlags, ExportRootScope);
+
+		// If we got no value back from our ValueProperty's text export but we are SET (ie: an empty array, map, set, etc), 
+		// we set `__init__` to the exported text to so we know to do an initialize on importing (See ImportText_Internal).
+		if (ValueStr == TEXT("("))
+		{
+			ValueStr = InitString;
+			return;
+		}
 	}
 	ValueStr += TEXT(")");
 }
@@ -300,7 +357,21 @@ const TCHAR* FOptionalProperty::ImportText_Internal(const TCHAR* Buffer, void* C
 	checkSlow(ValueProperty);
 	void* Data = PointerToValuePtr(ContainerOrPropertyPtr, PropertyPointerType);
 
-	if (!Buffer || *Buffer++ != TCHAR('('))
+	if (!Buffer)
+	{
+		return nullptr;
+	}
+
+	// INIT
+	if (FString(Buffer) == InitString)
+	{
+		// We are set but have no text to import for our value property.
+		MarkUnset(Data);
+		MarkSetAndGetInitializedValuePointerToReplace(Data);
+		return Buffer;
+	}
+
+	if (*Buffer++ != TCHAR('('))
 	{
 		return nullptr;
 	}
@@ -388,6 +459,50 @@ int32 FOptionalProperty::GetMinAlignment() const
 
 EConvertFromTypeResult FOptionalProperty::ConvertFromType(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot, uint8* ContainerData, UStruct* DefaultsStruct, const uint8* DefaultsContainer)
 {
+	if (Slot.GetArchiveState().UEVer() >= EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
+	{
+		if (CanSerializeFromTypeName(Tag.GetType()))
+		{
+			return EConvertFromTypeResult::UseSerializeItem;
+		}
+
+		FPropertyTag ValueTag = Tag;
+		TOptional<FStructuredArchive::FSlot> MaybeValueSlot;
+		if (Tag.Type == NAME_OptionalProperty)
+		{
+			FStructuredArchive::FRecord Record = Slot.EnterRecord();
+			MaybeValueSlot = Record.TryEnterField(TEXT("Value"), /*bEnterForSaving*/ false);
+			if (!MaybeValueSlot)
+			{
+				MarkUnset(ContainerPtrToValuePtr<void>(ContainerData));
+				return EConvertFromTypeResult::Converted;
+			}
+			ValueTag.SetType(Tag.GetType().GetParameter(0));
+		}
+
+		FStructuredArchive::FSlot ValueSlot = MaybeValueSlot.Get(Slot);
+		uint8* ValueData = (uint8*)MarkSetAndGetInitializedValuePointerToReplace(ContainerPtrToValuePtr<void>(ContainerData));
+		switch (GetValueProperty()->ConvertFromType(ValueTag, ValueSlot, ValueData, nullptr, nullptr))
+		{
+		case EConvertFromTypeResult::Converted:
+			return EConvertFromTypeResult::Converted;
+		case EConvertFromTypeResult::Serialized:
+			return EConvertFromTypeResult::Serialized;
+		case EConvertFromTypeResult::CannotConvert:
+			return EConvertFromTypeResult::CannotConvert;
+		case EConvertFromTypeResult::UseSerializeItem:
+			if (ValueTag.Type == GetValueProperty()->GetID())
+			{
+				GetValueProperty()->SerializeItem(ValueSlot, ValueData);
+				return EConvertFromTypeResult::Serialized;
+			}
+			return EConvertFromTypeResult::CannotConvert;
+		default:
+			checkNoEntry();
+			return EConvertFromTypeResult::CannotConvert;
+		}
+	}
+
 	static const FName NAME_OptionProperty("OptionProperty");
 	if (Tag.Type != NAME_OptionProperty)
 	{
@@ -491,4 +606,57 @@ uint32 FOptionalProperty::GetValueTypeHashInternal(const void* Src) const
 	{
 		return 0;
 	}
+}
+
+bool FOptionalProperty::UseBinaryOrNativeSerialization(const FArchive& Ar) const
+{
+	if (Super::UseBinaryOrNativeSerialization(Ar))
+	{
+		return true;
+	}
+
+	const FProperty* LocalValueProperty = ValueProperty;
+	check(LocalValueProperty);
+	return LocalValueProperty->UseBinaryOrNativeSerialization(Ar);
+}
+
+bool FOptionalProperty::LoadTypeName(UE::FPropertyTypeName Type, const FPropertyTag* Tag)
+{
+	if (!Super::LoadTypeName(Type, Tag))
+	{
+		return false;
+	}
+
+	const UE::FPropertyTypeName ValueType = Type.GetParameter(0);
+	FField* Field = FField::TryConstruct(ValueType.GetName(), this, GetFName(), RF_NoFlags);
+	if (FProperty* Property = CastField<FProperty>(Field); Property && Property->LoadTypeName(ValueType, Tag))
+	{
+		ValueProperty = Property;
+		return true;
+	}
+	delete Field;
+	return false;
+}
+
+void FOptionalProperty::SaveTypeName(UE::FPropertyTypeNameBuilder& Type) const
+{
+	Super::SaveTypeName(Type);
+
+	const FProperty* LocalValueProperty = ValueProperty;
+	check(LocalValueProperty);
+	Type.BeginParameters();
+	LocalValueProperty->SaveTypeName(Type);
+	Type.EndParameters();
+}
+
+bool FOptionalProperty::CanSerializeFromTypeName(UE::FPropertyTypeName Type) const
+{
+	if (!Super::CanSerializeFromTypeName(Type))
+	{
+		return false;
+	}
+
+	const FProperty* LocalValueProperty = ValueProperty;
+	check(LocalValueProperty);
+	return LocalValueProperty->CanSerializeFromTypeName(Type.GetParameter(0));
 }

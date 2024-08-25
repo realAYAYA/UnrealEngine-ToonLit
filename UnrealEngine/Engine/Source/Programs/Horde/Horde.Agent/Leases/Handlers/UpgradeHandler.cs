@@ -1,15 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Logs;
 using Grpc.Core;
 using Horde.Agent.Services;
 using Horde.Agent.Utility;
@@ -29,16 +26,16 @@ namespace Horde.Agent.Leases.Handlers
 		}
 
 		/// <inheritdoc/>
-		public override async Task<LeaseResult> ExecuteAsync(ISession session, string leaseId, UpgradeTask task, CancellationToken cancellationToken)
+		public override async Task<LeaseResult> ExecuteAsync(ISession session, LeaseId leaseId, UpgradeTask task, ILogger localLogger, CancellationToken cancellationToken)
 		{
-			await using IServerLogger logger = _serverLoggerFactory.CreateLogger(session, task.LogId, null, null);
+			await using IServerLogger logger = _serverLoggerFactory.CreateLogger(session, LogId.Parse(task.LogId), localLogger, null);
 
 			string requiredVersion = task.SoftwareId;
 
 			// Check if we're running the right version
-			if (requiredVersion != null && requiredVersion != Program.Version)
+			if (requiredVersion != null && requiredVersion != AgentApp.Version)
 			{
-				logger.LogInformation("Upgrading from {CurrentVersion} to {TargetVersion}", Program.Version, requiredVersion);
+				logger.LogInformation("Upgrading from {CurrentVersion} to {TargetVersion}", AgentApp.Version, requiredVersion);
 
 				// Clear out the working directory
 				DirectoryReference upgradeDir = DirectoryReference.Combine(session.WorkingDir, "Upgrade");
@@ -50,12 +47,10 @@ namespace Horde.Agent.Leases.Handlers
 				using (IRpcClientRef<HordeRpc.HordeRpcClient> rpcClientRef = await session.RpcConnection.GetClientRefAsync<HordeRpc.HordeRpcClient>(cancellationToken))
 				using (AsyncServerStreamingCall<DownloadSoftwareResponse> cursor = rpcClientRef.Client.DownloadSoftware(new DownloadSoftwareRequest(requiredVersion), null, null, cancellationToken))
 				{
-					using (Stream outputStream = outputFile.Open(FileMode.Create))
+					await using Stream outputStream = outputFile.Open(FileMode.Create);
+					while (await cursor.ResponseStream.MoveNext(cancellationToken))
 					{
-						while (await cursor.ResponseStream.MoveNext(cancellationToken))
-						{
-							outputStream.Write(cursor.ResponseStream.Current.Data.Span);
-						}
+						outputStream.Write(cursor.ResponseStream.Current.Data.Span);
 					}
 				}
 
@@ -71,27 +66,58 @@ namespace Horde.Agent.Leases.Handlers
 				//				}
 
 				// Get the current process and assembly. This may be different if running through dotnet.exe rather than a native PE image.
-				FileReference assemblyFileName = new FileReference(Assembly.GetExecutingAssembly().Location);
-
-				StringBuilder arguments = new StringBuilder();
-
-				DirectoryReference targetDir = assemblyFileName.Directory;
-
-				// We were launched via an external application (presumably dotnet.exe). Do the same thing again.
-				FileReference newAssemblyFileName = FileReference.Combine(extractedDir, assemblyFileName.MakeRelativeTo(targetDir));
-				if (!FileReference.Exists(newAssemblyFileName))
-				{
-					logger.LogError("Unable to find {AgentExe} in extracted archive", newAssemblyFileName);
-					return LeaseResult.Failed;
-				}
-
+				DirectoryReference targetDir = new(AppContext.BaseDirectory);
 				StringBuilder currentArguments = new StringBuilder();
-				foreach (string arg in Program.Args)
+
+				foreach (string arg in AgentApp.Args)
 				{
 					currentArguments.AppendArgument(arg);
 				}
 
-				arguments.AppendArgument(newAssemblyFileName.FullName);
+				bool isUpdateSelfContained = !FileReference.Exists(FileReference.Combine(extractedDir, "HordeAgent.dll"));
+
+				StringBuilder arguments = new();
+				string executable;
+				if (AgentApp.IsSelfContained)
+				{
+					// Current running agent is packaged as a self-contained .NET application and assume incoming update is the same
+					if (!isUpdateSelfContained)
+					{
+						logger.LogError("Current running agent is packaged as a self-contained app, but incoming update is not");
+						return LeaseResult.Failed;
+					}
+
+					executable = "HordeAgent";
+					if (RuntimePlatform.IsWindows)
+					{
+						executable += ".exe";
+					}
+
+					executable = FileReference.Combine(extractedDir, executable).FullName;
+					if (!File.Exists(executable))
+					{
+						logger.LogError("Unable to find self-contained {AgentExe} in extracted archive", executable);
+						return LeaseResult.Failed;
+					}
+				}
+				else
+				{
+#pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file
+					FileReference assemblyFileName = new(Assembly.GetExecutingAssembly().Location);
+#pragma warning restore IL3000 // Avoid accessing Assembly file path when publishing as a single file
+
+					// New unpacked agent is not self-contained, launch the upgrade command via "dotnet" external executable
+					executable = "dotnet";
+					FileReference newAssemblyFileName = FileReference.Combine(extractedDir, assemblyFileName.MakeRelativeTo(targetDir));
+					if (!FileReference.Exists(newAssemblyFileName))
+					{
+						logger.LogError("Unable to find {AgentExe} in extracted archive", newAssemblyFileName);
+						return LeaseResult.Failed;
+					}
+
+					arguments.AppendArgument(newAssemblyFileName.FullName);
+				}
+
 				arguments.AppendArgument("Service");
 				arguments.AppendArgument("Upgrade");
 				arguments.AppendArgument("-ProcessId=", Environment.ProcessId.ToString());
@@ -99,7 +125,7 @@ namespace Horde.Agent.Leases.Handlers
 				arguments.AppendArgument("-Arguments=", currentArguments.ToString());
 
 				// Spawn the other process
-				SessionResult result = new SessionResult((logger, ctx) => RunUpgradeAsync("dotnet", arguments.ToString(), logger, ctx));
+				SessionResult result = new SessionResult((logger, ctx) => RunUpgradeAsync(executable, arguments.ToString(), logger, ctx));
 				return new LeaseResult(result);
 			}
 
@@ -121,7 +147,7 @@ namespace Horde.Agent.Leases.Handlers
 				process.StartInfo.UseShellExecute = false;
 				process.EnableRaisingEvents = true;
 
-				TaskCompletionSource<int> exitCodeSource = new TaskCompletionSource<int>();
+				TaskCompletionSource<int> exitCodeSource = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
 				process.Exited += (sender, args) => { exitCodeSource.SetResult(process.ExitCode); };
 
 				process.Start();

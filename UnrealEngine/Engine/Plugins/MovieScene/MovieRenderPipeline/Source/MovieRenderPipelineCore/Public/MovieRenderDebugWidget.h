@@ -19,3 +19,17 @@ public:
 	UFUNCTION(BlueprintImplementableEvent)
 	void OnInitializedForPipeline(UMoviePipeline* ForPipeline);
 };
+
+/**
+* C++ Base Class for the preview widget that is drawn onto the game viewport
+* (but not burned into the output files) that allow us to easily visualize
+* the current state of the pipeline. Used for Graph Based pipelines.
+*/
+UCLASS(Blueprintable, Abstract)
+class UMovieGraphRenderPreviewWidget : public UUserWidget
+{
+	GENERATED_BODY()
+public:
+	UFUNCTION(BlueprintImplementableEvent)
+	void OnInitializedForPipeline(UMovieGraphPipeline* InPipeline);
+};

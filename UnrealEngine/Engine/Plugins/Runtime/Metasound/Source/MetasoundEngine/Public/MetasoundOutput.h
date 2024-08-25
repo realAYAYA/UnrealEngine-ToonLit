@@ -164,5 +164,5 @@ class UMetasoundOutputBlueprintAccess final : public UBlueprintFunctionLibrary
 	UFUNCTION(BlueprintCallable, Category="MetaSoundOutput")
 	static bool IsTime(const FMetaSoundOutput& Output);
 	UFUNCTION(BlueprintCallable, Category="MetaSoundOutput")
-	static float GetTimeSeconds(const FMetaSoundOutput& Output, bool& Success);
+	static double GetTimeSeconds(const FMetaSoundOutput& Output, bool& Success);
 };

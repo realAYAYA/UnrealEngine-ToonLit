@@ -28,6 +28,13 @@ public:
 	static bool FromString(const FStringView InEncodedJsonWebToken, FJsonWebToken& OutJsonWebToken);
 
 	/**
+	 * Get raw JSON object for payload, allowing for custom claim parsing with FJsonSerializable classes.
+	 * 
+	 * @return reference to FJsonObject for the payload.
+	 */
+	const TSharedRef<FJsonObject>& GetPayload() const { return Payload; }
+
+	/**
 	 * Gets the type.
 	 *
 	 * @param OutValue The value to output on success.
@@ -98,6 +105,15 @@ public:
 	 * @return Whether the value exists and was successfully outputted.
 	 */
 	bool GetAudience(FString& OutValue) const;
+
+	/**
+	 * Get a custom claim by name.
+	 * 
+	 * @param InName The name of the claim.
+	 * @param OutValue The value to output on success.
+	 * @return Whether the claim exists and was successfully outputted.
+	 */
+	bool GetStringClaim(const FString& InName, FString& OutValue) const;
 
 	/**
 	 * Gets a claim by name.

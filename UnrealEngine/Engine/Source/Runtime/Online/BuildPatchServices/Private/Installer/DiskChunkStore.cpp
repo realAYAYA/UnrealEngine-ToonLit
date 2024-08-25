@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Installer/DiskChunkStore.h"
+#include "Installer/InstallerSharedContext.h"
 #include "HAL/ThreadSafeBool.h"
 #include "Containers/Union.h"
 #include "Containers/Queue.h"
@@ -44,22 +45,24 @@ namespace BuildPatchServices
 		bool IsExpectedChunk(IChunkDataAccess* ChunkDataAccess, const FGuid& ChunkId);
 
 	private:
-		IFileSystem* const FileSystem;
-		IChunkDataSerialization* const Serializer;
-		IDiskChunkStoreStat* const DiskChunkStoreStat;
+		IFileSystem* const FileSystem = nullptr;
+		IChunkDataSerialization* const Serializer = nullptr;
+		IDiskChunkStoreStat* const DiskChunkStoreStat = nullptr;
 		const FDiskChunkStoreConfig Configuration;
-		mutable FCriticalSection LostChunkCallbackCs;
+		FCriticalSection LostChunkCallbackCs;
 		TFunction<void(const FGuid&)> LostChunkCallback;
-		mutable FCriticalSection ThreadLockCs;
+		FCriticalSection ThreadLockCs;
 		FGuid LastGetId;
 		TUniquePtr<IChunkDataAccess> LastGetData;
 		TSet<FGuid> PlacedInStore;
-		FThreadSafeBool bShouldRun;
+		std::atomic<bool> bShouldRun = true;
 		FChunkQueue Queue;
-		FThreadSafeInt32 QueueNum;
-		FEvent* QueueTrigger;
+		std::atomic<int32> QueueNum = 0;
+		FEvent* QueueTrigger = nullptr;
+		TPromise<void> IoThreadPromise;
 		TFuture<void> IoThreadFuture;
-		FEvent* IoThreadTrigger;
+		IBuildInstallerThread* Thread = nullptr;
+		FEvent* IoThreadTrigger = nullptr;
 	};
 
 	FDiskChunkStore::FDiskChunkStore(IFileSystem* InFileSystem, IChunkDataSerialization* InSerializer, IDiskChunkStoreStat* InDiskChunkStoreStat, FDiskChunkStoreConfig InConfiguration)
@@ -67,21 +70,12 @@ namespace BuildPatchServices
 		, Serializer(InSerializer)
 		, DiskChunkStoreStat(InDiskChunkStoreStat)
 		, Configuration(MoveTemp(InConfiguration))
-		, LostChunkCallbackCs()
-		, LostChunkCallback(nullptr)
-		, ThreadLockCs()
-		, LastGetId()
-		, LastGetData(nullptr)
-		, PlacedInStore()
-		, bShouldRun(true)
-		, QueueNum(0)
+		, QueueTrigger(FPlatformProcess::GetSynchEventFromPool(true))
+		, IoThreadTrigger(FPlatformProcess::GetSynchEventFromPool(true))
 	{
-		QueueTrigger = FPlatformProcess::GetSynchEventFromPool(true);
-		IoThreadTrigger = FPlatformProcess::GetSynchEventFromPool(true);
-		IoThreadFuture = Async(EAsyncExecution::ThreadIfForkSafe, [this]()
-		{
-			return IoThread();
-		});
+		IoThreadFuture = IoThreadPromise.GetFuture();
+		Thread = Configuration.SharedContext->CreateThread();
+		Thread->RunTask([this]() { IoThread(); });
 	}
 
 	FDiskChunkStore::~FDiskChunkStore()
@@ -91,9 +85,15 @@ namespace BuildPatchServices
 		QueueTrigger->Trigger();
 		IoThreadTrigger->Trigger();
 		IoThreadFuture.Wait();
+
 		// Return events.
 		FPlatformProcess::ReturnSynchEventToPool(IoThreadTrigger);
 		FPlatformProcess::ReturnSynchEventToPool(QueueTrigger);
+
+		// Return thread.
+		Configuration.SharedContext->ReleaseThread(Thread);
+		Thread = nullptr;
+
 		// Clean up allocations left in the queue.
 		FQueuedChunk QueuedChunk;
 		while (Queue.Dequeue(QueuedChunk))
@@ -209,7 +209,7 @@ namespace BuildPatchServices
 		{
 			if (Queue.Dequeue(QueuedChunk))
 			{
-				QueueNum.Decrement();
+				QueueNum--;
 				QueueTrigger->Trigger();
 				if (QueuedChunk.HasSubtype<FQueuedChunkLoad>())
 				{
@@ -325,18 +325,20 @@ namespace BuildPatchServices
 		DumpWriter.Reset();
 		DumpReader.Reset();
 		FileSystem->DeleteFile(*DumpFilename);
+
+		IoThreadPromise.SetValue();
 	}
 
 	BuildPatchServices::FLoadFuture FDiskChunkStore::QueueLoadRequest(const FGuid& DataId)
 	{
-		while (QueueNum.GetValue() > Configuration.QueueSize && bShouldRun)
+		while (QueueNum > Configuration.QueueSize && bShouldRun)
 		{
 			// Wait 1 second max in case of abort.
 			static const uint32 WaitTime = 1000;
 			QueueTrigger->Wait(WaitTime);
 			QueueTrigger->Reset();
 		}
-		QueueNum.Increment();
+		QueueNum++;
 		TUniquePtr<FLoadPromise> PromisePtr(new FLoadPromise());
 		FLoadFuture Future = PromisePtr->GetFuture();
 		if (bShouldRun)
@@ -353,14 +355,14 @@ namespace BuildPatchServices
 
 	void FDiskChunkStore::QueueSaveRequest(const FGuid& DataId, TUniquePtr<IChunkDataAccess>&& ChunkData)
 	{
-		while (QueueNum.GetValue() > Configuration.QueueSize && bShouldRun)
+		while (QueueNum > Configuration.QueueSize && bShouldRun)
 		{
 			// Wait 1 second max in case of abort.
 			static const uint32 WaitTime = 1000;
 			QueueTrigger->Wait(WaitTime);
 			QueueTrigger->Reset();
 		}
-		QueueNum.Increment();
+		QueueNum++;
 		Queue.Enqueue(FQueuedChunk(FQueuedChunkSave(DataId, ChunkData.Release())));
 		IoThreadTrigger->Trigger();
 	}

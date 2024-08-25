@@ -93,13 +93,13 @@ struct FTransformToolOptions
 	float LowerBound = 0.f;
 
 	UPROPERTY(Transient, EditAnywhere, Category = ToolOptions)
-	float LeftBound = 0.f;
+	FFrameNumber LeftBound;
 
 	UPROPERTY(Transient, EditAnywhere, Category = ToolOptions)
-	float RightBound = 0.f;
+	FFrameNumber RightBound;
 
 	UPROPERTY(Transient, EditAnywhere, Category = ToolOptions)
-	float ScaleCenterX = 0.f;
+	FFrameNumber ScaleCenterX;
 
 	UPROPERTY(Transient, EditAnywhere, Category = ToolOptions)
 	float ScaleCenterY = 0.f;
@@ -209,5 +209,8 @@ private:
 
 	/** Modify the Falloff Weight by type of Interpolation */
 	double ModifyWeightByInterpType(double Weight) const;
+
+	/** Selection serial number, used to update the toolbox */
+	uint32 SelectionSerialNumber = 0;
 };
 

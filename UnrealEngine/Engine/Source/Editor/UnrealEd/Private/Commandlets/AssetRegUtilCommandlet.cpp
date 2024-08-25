@@ -470,7 +470,7 @@ bool UAssetRegUtilCommandlet::LoadOrderFile(const FString& OrderFilePath, TMap<F
 				return false;
 			}
 
-			Lines[Index].LeftInline(QuoteIndex + 1, false);
+			Lines[Index].LeftInline(QuoteIndex + 1, EAllowShrinking::No);
 			FString Name = Lines[Index].TrimQuotes();
 
 			OrderMap.Add(Name, OrderNumber);
@@ -504,7 +504,7 @@ bool UAssetRegUtilCommandlet::LoadOrderFiles(const FString& OrderFilePath, TSet<
 		if (Lines[EntryIndex].FindLastChar('"', QuoteIndex))
 		{
 			FString ReadNum = Lines[EntryIndex].RightChop(QuoteIndex + 1);
-			Lines[EntryIndex].LeftInline(QuoteIndex + 1, false);
+			Lines[EntryIndex].LeftInline(QuoteIndex + 1, EAllowShrinking::No);
 			//verify our expectations about the order, just in case something changes on the OpenOrder generation side
 			ReadNum.TrimStartInline();
 			if (ReadNum.IsNumeric())

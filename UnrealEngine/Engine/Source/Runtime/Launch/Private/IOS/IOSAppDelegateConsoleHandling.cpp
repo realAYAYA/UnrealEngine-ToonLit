@@ -99,7 +99,7 @@ extern bool GShowSplashScreen;
 			Ch.AddZeroed([ConsoleCommand length]+1);
 
 			FPlatformString::CFStringToTCHAR((CFStringRef)ConsoleCommand, Ch.GetData());
-			new(GEngine->DeferredCommands) FString(Ch.GetData());
+			GEngine->DeferredCommands.Add(FString(Ch.GetData()));
 		}
 #if !PLATFORM_TVOS
 		NSUInteger ExistingCommand = [self.ConsoleHistoryValues indexOfObjectPassingTest:

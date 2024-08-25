@@ -5,8 +5,10 @@
 #include "Containers/UnrealString.h"
 #include "Delegates/Delegate.h"
 #include "Delegates/DelegateCombinations.h"
+#include "HAL/IConsoleManager.h"
 #include "Styling/SlateTypes.h"
 #include "Templates/UniquePtr.h"
+
 
 #include "ConcertMessages.h"
 
@@ -17,7 +19,7 @@ enum class ERemoteCVarChangeType : uint8
 	Remove
 };
 
-DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnRemoteCVarChange, ERemoteCVarChangeType, FString, FString);
+DECLARE_MULTICAST_DELEGATE_FourParams(FOnRemoteCVarChange, ERemoteCVarChangeType, FString, FString, EConsoleVariableFlags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnRemoteListItemCheckStateChange, FString, ECheckBoxState);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMultiUserConnectionChange, EConcertConnectionStatus);
 
@@ -47,7 +49,7 @@ struct FManager
 	FOnMultiUserConnectionChange& OnConnectionChange();
 
 	/** Sends the named console variable with value to all connected Multi-user clients */
-	void SendConsoleVariableChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue);
+	void SendConsoleVariableChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue, EConsoleVariableFlags InFlags);
 
 	/** Sends the named console variable with value to all connected Multi-user clients */
 	void SendListItemCheckStateChange(FString InName, ECheckBoxState InCheckedState);
@@ -56,6 +58,12 @@ struct FManager
 	void SetEnableMultiUserSupport(bool bIsEnabled);
 
 	bool IsInitialized() const;
+
+	bool IsSyncEnabled() const;
+
+	bool IsSessionValid() const;
+
+	bool IsLocalUserInMultiUserSession();
 	
 private:
 	TUniquePtr<FManagerImpl> Implementation;

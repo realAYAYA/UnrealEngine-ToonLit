@@ -2,9 +2,10 @@
 #include "VideoDecoderFactory.h"
 #include "Utils.h"
 #include "VideoDecoderStub.h"
-#include "VideoDecoderVPX.h"
-#include "VideoDecoderH265.h"
+#include "VideoDecoderSoftware.h"
+#include "VideoDecoderHardware.h"
 #include "PixelStreamingPrivate.h"
+#include "PixelStreamingCoderUtils.h"
 #include "Settings.h"
 
 // Start WebRTC Includes
@@ -16,7 +17,7 @@
 namespace UE::PixelStreaming
 {
 	// the list of each individual codec we have decoder support for (the order of this array is preference order after the selected codec)
-	const TArray<EPixelStreamingCodec> SupportedDecoderCodecList{ EPixelStreamingCodec::VP8, EPixelStreamingCodec::VP9, /* EPixelStreamingCodec::H264, */ EPixelStreamingCodec::H265 };
+	const TArray<EPixelStreamingCodec> SupportedDecoderCodecList{ EPixelStreamingCodec::VP8, EPixelStreamingCodec::VP9, EPixelStreamingCodec::H264, EPixelStreamingCodec::AV1 };
 
 	// mapping of codec to a list of video formats
 	// done this way so we can order the list of formats based on selected codec in GetSupportedFormats
@@ -30,9 +31,17 @@ namespace UE::PixelStreaming
 
 		Codecs[EPixelStreamingCodec::VP8].push_back(webrtc::SdpVideoFormat(cricket::kVp8CodecName));
 		Codecs[EPixelStreamingCodec::VP9].push_back(webrtc::SdpVideoFormat(cricket::kVp9CodecName));
-		// Codecs[EPixelStreamingCodec::H264].push_back(CreateH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel3_1));
-		// Codecs[EPixelStreamingCodec::H264].push_back(CreateH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel3_1));
-		Codecs[EPixelStreamingCodec::H265].push_back(webrtc::SdpVideoFormat(cricket::kH265CodecName));
+		
+		if(IsDecoderSupported<FVideoDecoderConfigH264>())
+		{
+			Codecs[EPixelStreamingCodec::H264].push_back(UE::PixelStreaming::CreateH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel3_1));
+			Codecs[EPixelStreamingCodec::H264].push_back(UE::PixelStreaming::CreateH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel3_1));
+		}
+
+		if(IsDecoderSupported<FVideoDecoderConfigAV1>())
+		{
+			Codecs[EPixelStreamingCodec::AV1].push_back(webrtc::SdpVideoFormat(cricket::kAv1CodecName));
+		}
 
 		return Codecs;
 	}
@@ -41,8 +50,8 @@ namespace UE::PixelStreaming
 	 * Adds all the formats of a given codec to a destination list according to a list of supported formats
 	 */
 	void AddSupportedCodecFormats(EPixelStreamingCodec Codec,
-							 	  const TMap<EPixelStreamingCodec, std::vector<webrtc::SdpVideoFormat>>& SupportedFormatsForCodecs,
-							      std::vector<webrtc::SdpVideoFormat>& OutFormats)
+		const TMap<EPixelStreamingCodec, std::vector<webrtc::SdpVideoFormat>>& SupportedFormatsForCodecs,
+		std::vector<webrtc::SdpVideoFormat>& OutFormats)
 	{
 		if (SupportedFormatsForCodecs.Contains(Codec))
 		{
@@ -75,7 +84,7 @@ namespace UE::PixelStreaming
 		{
 			std::vector<webrtc::SdpVideoFormat> TempSupportedFormats;
 			AddSupportedCodecFormats(SelectedCodec, CodecMap, TempSupportedFormats);
-			
+
 			if (TempSupportedFormats.empty())
 			{
 				UE_LOG(LogPixelStreaming, Error, TEXT("Selected codec was not a supported codec, falling back to negotiating codecs..."));
@@ -121,15 +130,19 @@ namespace UE::PixelStreaming
 	{
 		if (absl::EqualsIgnoreCase(format.name, cricket::kVp8CodecName))
 		{
-			return std::make_unique<VideoDecoderVPX>(8);
+			return std::make_unique<FVideoDecoderSoftware>(EPixelStreamingCodec::VP8);
 		}
 		else if (absl::EqualsIgnoreCase(format.name, cricket::kVp9CodecName))
 		{
-			return std::make_unique<VideoDecoderVPX>(9);
+			return std::make_unique<FVideoDecoderSoftware>(EPixelStreamingCodec::VP9);
 		}
-		else if (absl::EqualsIgnoreCase(format.name, cricket::kH265CodecName))
+		else if (absl::EqualsIgnoreCase(format.name, cricket::kH264CodecName))
 		{
-			return std::make_unique<VideoDecoderH265>();
+			return std::make_unique<FVideoDecoderHardware>(EPixelStreamingCodec::H264);
+		}
+		else if (absl::EqualsIgnoreCase(format.name, cricket::kAv1CodecName))
+		{
+			return std::make_unique<FVideoDecoderHardware>(EPixelStreamingCodec::AV1);
 		}
 		return std::make_unique<FVideoDecoderStub>();
 	}

@@ -51,7 +51,7 @@ void FSlateGameResources::SetContentRoot( const FString& InContentRootDir )
 
 const FSlateBrush* FSlateGameResources::GetBrush( const FName PropertyName, const ANSICHAR* Specifier, const ISlateStyle* RequestingStyle ) const
 {
-	ensureMsgf(Specifier == NULL, TEXT("Attempting to look up resource (%s, %s). \n Specifiers not supported by Slate Resource Sets loaded from content browser."), *PropertyName.ToString(), Specifier);
+	ensureMsgf(Specifier == NULL, TEXT("Attempting to look up resource (%s, %s). \n Specifiers not supported by Slate Resource Sets loaded from content browser."), *PropertyName.ToString(), ANSI_TO_TCHAR(Specifier));
 	FName CleanName = GetCleanName(PropertyName);
 	auto* Resource = UIResources.Find(CleanName);
 	if(Resource)
@@ -65,7 +65,7 @@ const FSlateBrush* FSlateGameResources::GetBrush( const FName PropertyName, cons
 
 const FSlateBrush* FSlateGameResources::GetOptionalBrush(const FName PropertyName, const ANSICHAR* Specifier, const FSlateBrush* const InDefaultBrush) const
 {
-	ensureMsgf(Specifier == NULL, TEXT("Attempting to look up resource (%s, %s). \n Specifiers not supported by Slate Resource Sets loaded from content browser."), *PropertyName.ToString(), Specifier);
+	ensureMsgf(Specifier == NULL, TEXT("Attempting to look up resource (%s, %s). \n Specifiers not supported by Slate Resource Sets loaded from content browser."), *PropertyName.ToString(), ANSI_TO_TCHAR(Specifier));
 	FName CleanName = GetCleanName(PropertyName);
 	auto* Resource = UIResources.Find(CleanName);
 	if(Resource)

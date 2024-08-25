@@ -25,6 +25,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "AssetManagerEditor",
+			"Enabled": true
+		},	
+		{
 			"Name": "PluginUtils",
 			"Enabled": true
 		},

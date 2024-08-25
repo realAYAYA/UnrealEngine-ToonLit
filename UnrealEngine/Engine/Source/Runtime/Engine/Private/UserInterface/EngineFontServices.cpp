@@ -10,12 +10,13 @@ FEngineFontServices::FEngineFontServices()
 {
 	check(IsInGameThread());
 
-#if !UE_SERVER
-	if (!IsRunningDedicatedServer() && !IsRunningCommandlet())
+	if (FSlateApplication::IsInitialized())
 	{
-		SlateFontServices = FSlateApplication::Get().GetRenderer()->GetFontServices();
+		if (const FSlateRenderer* Renderer = FSlateApplication::Get().GetRenderer())
+		{
+			SlateFontServices = Renderer->GetFontServices();
+		}
 	}
-#endif
 }
 
 FEngineFontServices::~FEngineFontServices()

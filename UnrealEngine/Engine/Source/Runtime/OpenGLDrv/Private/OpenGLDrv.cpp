@@ -95,7 +95,7 @@ bool FOpenGLDynamicRHI::RHIEGLSupportsNoErrorContext() const
 
 void FOpenGLDynamicRHI::RHIInitEGLInstanceGLES2()
 {
-	AndroidEGL::GetInstance()->Init(AndroidEGL::AV_OpenGLES, 2, 0, false);
+	AndroidEGL::GetInstance()->Init(AndroidEGL::AV_OpenGLES, 2, 0);
 	AndroidEGL::GetInstance()->InitSurface(false, false);
 }
 
@@ -149,6 +149,62 @@ bool FOpenGLDynamicRHI::RHIRequiresComputeGenerateMips() const
 {
 	return !FOpenGL::SupportsGenerateMipmap();
 };
+
+// only use shader hashes to determine GL PSO hash;
+uint64 FOpenGLDynamicRHI::RHIComputeStatePrecachePSOHash(const FGraphicsPipelineStateInitializer& Initializer)
+{
+	struct FHashKey
+	{
+		FSHAHash VertexShader;
+		FSHAHash PixelShader;
+#if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+		FSHAHash GeometryShader;
+#endif // PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+#if PLATFORM_SUPPORTS_MESH_SHADERS
+		FSHAHash MeshShader;
+#endif // PLATFORM_SUPPORTS_MESH_SHADERS
+	} HashKey;
+
+	FMemory::Memzero(&HashKey, sizeof(FHashKey));
+
+	HashKey.VertexShader = Initializer.BoundShaderState.GetVertexShader() ? Initializer.BoundShaderState.GetVertexShader()->GetHash() : FSHAHash();
+	HashKey.PixelShader = Initializer.BoundShaderState.GetPixelShader() ? Initializer.BoundShaderState.GetPixelShader()->GetHash() : FSHAHash();
+#if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+	HashKey.GeometryShader = Initializer.BoundShaderState.GetGeometryShader() ? Initializer.BoundShaderState.GetGeometryShader()->GetHash() : FSHAHash();
+#endif
+#if PLATFORM_SUPPORTS_MESH_SHADERS
+	HashKey.MeshShader = Initializer.BoundShaderState.GetMeshShader() ? Initializer.BoundShaderState.GetMeshShader()->GetHash() : FSHAHash();
+#endif
+
+	uint64 PrecachePSOHash = CityHash64((const char*)&HashKey, sizeof(FHashKey));
+	return PrecachePSOHash;
+}
+
+uint64 FOpenGLDynamicRHI::RHIComputePrecachePSOHash(const FGraphicsPipelineStateInitializer& Initializer)
+{
+	uint64 StatePrecachePSOHash = Initializer.StatePrecachePSOHash;
+	if (StatePrecachePSOHash == 0)
+	{
+		StatePrecachePSOHash = RHIComputeStatePrecachePSOHash(Initializer);
+	}
+
+	return StatePrecachePSOHash;
+}
+
+bool FOpenGLDynamicRHI::RHIMatchPrecachePSOInitializers(const FGraphicsPipelineStateInitializer& LHS, const FGraphicsPipelineStateInitializer& RHS)
+{
+	// check the RHI shaders (pointer check for shaders should be fine)
+	if (LHS.BoundShaderState.VertexShaderRHI != RHS.BoundShaderState.VertexShaderRHI ||
+		LHS.BoundShaderState.PixelShaderRHI != RHS.BoundShaderState.PixelShaderRHI ||
+		LHS.BoundShaderState.GetMeshShader() != RHS.BoundShaderState.GetMeshShader() ||
+		LHS.BoundShaderState.GetAmplificationShader() != RHS.BoundShaderState.GetAmplificationShader() ||
+		LHS.BoundShaderState.GetGeometryShader() != RHS.BoundShaderState.GetGeometryShader())
+	{
+		return false;
+	}
+
+	return true;
+}
 
 void FOpenGLGPUProfiler::BeginFrame(FOpenGLDynamicRHI* InRHI)
 {

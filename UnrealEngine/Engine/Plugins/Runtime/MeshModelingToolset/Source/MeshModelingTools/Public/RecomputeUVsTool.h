@@ -42,7 +42,7 @@ public:
  * URecomputeUVsTool Recomputes UVs based on existing segmentations of the mesh
  */
 UCLASS()
-class MESHMODELINGTOOLS_API URecomputeUVsTool : public USingleSelectionMeshEditingTool
+class MESHMODELINGTOOLS_API URecomputeUVsTool : public USingleSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -58,6 +58,12 @@ public:
 	virtual bool CanAccept() const override;
 
 	virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 	UPROPERTY()

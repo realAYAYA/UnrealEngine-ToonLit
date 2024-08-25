@@ -33,7 +33,6 @@ namespace UE::PixelStreaming
 		virtual void StopStreaming() override;
 		virtual TSharedPtr<IPixelStreamingStreamer> CreateStreamer(const FString& StreamerId) override;
 		virtual TArray<FString> GetStreamerIds() override;
-		virtual TSharedPtr<IPixelStreamingStreamer> GetStreamer(const FString& StreamerId) override;
 		virtual TSharedPtr<IPixelStreamingStreamer> FindStreamer(const FString& StreamerId) override;
 		virtual TSharedPtr<IPixelStreamingStreamer> DeleteStreamer(const FString& StreamerId) override;
 		void DeleteStreamer(TSharedPtr<IPixelStreamingStreamer> ToBeDeleted) override;
@@ -59,12 +58,6 @@ namespace UE::PixelStreaming
 		void StartupModule() override;
 		void ShutdownModule() override;
 		/** End IModuleInterface implementation */
-
-		/** Deprected methods from the IPixelStreamingModule. We're only keeping these here until we can fully remove them */
-		const FPixelStreamingInputProtocol GetProtocol() override;
-		void RegisterMessage(EPixelStreamingMessageDirection MessageDirection, const FString& MessageType, FPixelStreamingInputMessage Message, const TFunction<void(FMemoryReader)>& Handler) override;
-		TFunction<void(FMemoryReader)> FindMessageHandler(const FString& MessageType) override;
-		/** End deprecated methods */
 
 		// Own methods
 		void InitDefaultStreamer();

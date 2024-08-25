@@ -23,4 +23,6 @@ public:
 
 	DECLARE_EVENT(ILevelInstanceEditorModule, FTryExitEditorModeEvent);
 	virtual FTryExitEditorModeEvent& OnTryExitEditorMode() = 0;
+
+	virtual bool IsEditInPlaceStreamingEnabled() const = 0;
 };

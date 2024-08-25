@@ -341,12 +341,12 @@ public:
 
 	void EditInit(double Time, uint8 MinAlignment);
 
-	void EditAlloc(double Time, uint32 CallstackId, uint64 Address, uint64 Size, uint32 Alignment, HeapId RootHeap);
-	void EditFree(double Time, uint32 CallstackId, uint64 Address, HeapId RootHeap);
+	void EditAlloc(uint32 ThreadId, double Time, uint32 CallstackId, uint64 Address, uint64 Size, uint32 Alignment, HeapId RootHeap);
+	void EditFree(uint32 ThreadId, double Time, uint32 CallstackId, uint64 Address, HeapId RootHeap);
 
 	void EditHeapSpec(HeapId Id, HeapId ParentId, const FStringView& Name, EMemoryTraceHeapFlags Flags);
-	void EditMarkAllocationAsHeap(double Time, uint32 CallstackId, uint64 Address, HeapId Heap, EMemoryTraceHeapAllocationFlags Flags);
-	void EditUnmarkAllocationAsHeap(double Time, uint32 CallstackId, uint64 Address, HeapId Heap);
+	void EditMarkAllocationAsHeap(uint32 ThreadId, double Time, uint32 CallstackId, uint64 Address, HeapId Heap, EMemoryTraceHeapAllocationFlags Flags);
+	void EditUnmarkAllocationAsHeap(uint32 ThreadId, double Time, uint32 CallstackId, uint64 Address, HeapId Heap);
 
 	void EditAddTagSpec(TagIdType Tag, TagIdType ParentTag, const TCHAR* Display) { EditAccessCheck(); TagTracker.AddTagSpec(Tag, ParentTag, Display); }
 	void EditPushTag(uint32 ThreadId, uint8 Tracker, TagIdType Tag);
@@ -356,16 +356,10 @@ public:
 
 	void EditOnAnalysisCompleted(double Time);
 
-	void SetCurrentThreadId(uint32 InThreadId, uint32 InSystemThreadId)
-	{
-		CurrentTraceThreadId = InThreadId;
-		CurrentSystemThreadId = InSystemThreadId;
-	}
-
 	//////////////////////////////////////////////////
 
 private:
-	bool ShouldIgnoreEvent(double Time, uint64 Address, HeapId RootHeapId, uint32 CallstackId);
+	bool ShouldIgnoreEvent(uint32 ThreadId, double Time, uint64 Address, HeapId RootHeapId, uint32 CallstackId);
 	void AdvanceTimelines(double Time);
 	void AddHeapSpec(HeapId Id, HeapId ParentId, const FStringView& Name, EMemoryTraceHeapFlags Flags);
 
@@ -406,11 +400,7 @@ private:
 	uint8 SummarySizeShift = 0;
 	bool bInitialized = false;
 
-	uint32 CurrentTraceThreadId = 0;
-	uint32 CurrentSystemThreadId = 0;
-
 	FTagTracker TagTracker;
-	uint8 CurrentTracker = 0;
 
 	TArray<FHeapSpec*> HeapSpecs;
 	FRootHeap* RootHeaps[MaxRootHeaps] = { nullptr };

@@ -63,8 +63,6 @@ void FBridgeStyle::SetIcon(const FString& StyleName, const FString& ResourcePath
 
 	Name += ".Small";
 	Style->Set(*Name, new IMAGE_BRUSH(ResourcePath, Icon20x20));
-
-	FSlateApplication::Get().GetRenderer()->ReloadTextureResources();
 }
 
 void FBridgeStyle::SetSVGIcon(const FString& StyleName, const FString& ResourcePath)
@@ -77,8 +75,6 @@ void FBridgeStyle::SetSVGIcon(const FString& StyleName, const FString& ResourceP
 
 	Name += ".Small";
 	Style->Set(*Name, new IMAGE_BRUSH_SVG(ResourcePath, Icon20x20));
-
-	FSlateApplication::Get().GetRenderer()->ReloadTextureResources();
 }
 
 #undef IMAGE_BRUSH

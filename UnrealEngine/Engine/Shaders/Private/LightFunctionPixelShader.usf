@@ -46,7 +46,7 @@ void Main(
 	float3 TranslatedWorldPosition = SvPositionToTranslatedWorld(SvPosition);
 
 	// Calculate radial view distance for stable fading
-	float ViewDistance = length(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+	float ViewDistance = GetDistanceToCameraFromViewVector(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
 
 	float GreyScale;
 	{

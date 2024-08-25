@@ -61,6 +61,10 @@ public:
 	// END DEPRECATED
 
 public:
+	//~ Begin UObject Interface.
+	ENGINE_API virtual void PostLoad() override;
+	//~ End UObject Interface.
+
 #if WITH_EDITOR
 	//~ Begin AActor Interface.
 	ENGINE_API virtual void CheckForErrors() override;
@@ -80,6 +84,3 @@ public:
 	/** Returns LightComponent subobject **/
 	class ULightComponent* GetLightComponent() const { return LightComponent; }
 };
-
-
-

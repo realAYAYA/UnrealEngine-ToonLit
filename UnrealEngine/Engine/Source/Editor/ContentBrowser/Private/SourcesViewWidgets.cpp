@@ -24,10 +24,12 @@
 #include "Layout/Margin.h"
 #include "Misc/EnumClassFlags.h"
 #include "Misc/Optional.h"
+#include "Misc/PathViews.h"
 #include "PathViewTypes.h"
 #include "SAssetTagItem.h"
 #include "SlotBase.h"
 #include "Styling/AppStyle.h"
+#include "Styling/StyleColors.h"
 #include "Templates/Function.h"
 #include "UObject/NameTypes.h"
 #include "Widgets/Images/SImage.h"
@@ -38,6 +40,43 @@
 struct FSlateBrush;
 
 #define LOCTEXT_NAMESPACE "ContentBrowser"
+
+struct FAssetTreeItemBrushes
+{
+	/** Brushes for the different folder states */
+	const FSlateBrush* FolderOpenBrush;
+	const FSlateBrush* FolderClosedBrush;
+	const FSlateBrush* FolderOpenVirtualBrush;
+	const FSlateBrush* FolderClosedVirtualBrush;
+	const FSlateBrush* FolderOpenCodeBrush;
+	const FSlateBrush* FolderClosedCodeBrush;
+	const FSlateBrush* FolderOpenDeveloperBrush;
+	const FSlateBrush* FolderClosedDeveloperBrush;
+	const FSlateBrush* FolderOpenPluginRootBrush;
+	const FSlateBrush* FolderClosedPluginRootBrush;
+
+	FAssetTreeItemBrushes()
+	{
+		FolderOpenBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpen");
+		FolderClosedBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosed");
+		FolderOpenVirtualBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpenVirtual");
+		FolderClosedVirtualBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosedVirtual");
+		FolderOpenCodeBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpenCode");
+		FolderClosedCodeBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosedCode");
+		FolderOpenDeveloperBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpenDeveloper");
+		FolderClosedDeveloperBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosedDeveloper");
+		FolderOpenPluginRootBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpenPluginRoot");
+		FolderClosedPluginRootBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosedPluginRoot");
+	}
+	
+	static FAssetTreeItemBrushes& Get()
+	{
+		static FAssetTreeItemBrushes Instance;
+		return Instance;
+	}
+};
+
+
 
 //////////////////////////
 // SAssetTreeItem
@@ -53,21 +92,36 @@ void SAssetTreeItem::Construct( const FArguments& InArgs )
 
 	IsSelected = InArgs._IsSelected;
 
-	FolderOpenBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpen");
-	FolderClosedBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosed");
-	FolderOpenCodeBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpenCode");
-	FolderClosedCodeBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosedCode");
-	FolderOpenDeveloperBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderOpenDeveloper");
-	FolderClosedDeveloperBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosedDeveloper");
-
 	FolderType = EFolderType::Normal;
-	if (ContentBrowserUtils::IsItemDeveloperContent(InArgs._TreeItem->GetItem()))
+	const FContentBrowserItem& Item = InArgs._TreeItem->GetItem();
+	if (ContentBrowserUtils::IsItemDeveloperContent(Item))
 	{
 		FolderType = EFolderType::Developer;
 	}
-	else if (EnumHasAnyFlags(InArgs._TreeItem->GetItem().GetItemCategory(), EContentBrowserItemFlags::Category_Class))
+	else if (EnumHasAnyFlags(Item.GetItemCategory(), EContentBrowserItemFlags::Category_Class))
 	{
 		FolderType = EFolderType::Code;
+	}
+
+	if (ContentBrowserUtils::ShouldShowCustomVirtualFolderIcon())
+	{
+		FContentBrowserItemDataAttributeValue VirtualAttributeValue = Item.GetItemAttribute(ContentBrowserItemAttributes::ItemIsCustomVirtualFolder);
+		if (VirtualAttributeValue.IsValid() && VirtualAttributeValue.GetValue<bool>())
+		{
+			FolderType = EFolderType::CustomVirtual;
+		}
+	}
+	
+	if (ContentBrowserUtils::ShouldShowPluginFolderIcon())
+	{
+		if (InArgs._TreeItem->GetItem().IsInPlugin())
+		{
+			TSharedPtr<FTreeItem> Parent = InArgs._TreeItem->Parent.Pin();
+			if (!Parent.IsValid() || !Parent->GetItem().IsInPlugin())
+			{
+				FolderType = EFolderType::PluginRoot;
+			}
+		}
 	}
 
 	bool bIsRoot = !InArgs._TreeItem->Parent.IsValid();
@@ -256,16 +310,22 @@ bool SAssetTreeItem::IsReadOnly() const
 
 const FSlateBrush* SAssetTreeItem::GetFolderIcon() const
 {
+	FAssetTreeItemBrushes& Brushes = FAssetTreeItemBrushes::Get();
 	switch( FolderType )
 	{
 	case EFolderType::Code:
-		return ( IsItemExpanded.Get() ) ? FolderOpenCodeBrush : FolderClosedCodeBrush;
+		return IsItemExpanded.Get() ? Brushes.FolderOpenCodeBrush : Brushes.FolderClosedCodeBrush;
 
 	case EFolderType::Developer:
-		return (IsItemExpanded.Get()) ? FolderOpenDeveloperBrush : FolderClosedDeveloperBrush;
+		return IsItemExpanded.Get() ? Brushes.FolderOpenDeveloperBrush : Brushes.FolderClosedDeveloperBrush;
+
+	case EFolderType::CustomVirtual:
+		return IsItemExpanded.Get() ? Brushes.FolderOpenVirtualBrush : Brushes.FolderClosedVirtualBrush;
+	case EFolderType::PluginRoot:
+		return (IsItemExpanded.Get()) ? Brushes.FolderOpenPluginRootBrush : Brushes.FolderClosedPluginRootBrush;
 
 	default:
-		return ( IsItemExpanded.Get() ) ? FolderOpenBrush : FolderClosedBrush;
+		return IsItemExpanded.Get() ? Brushes.FolderOpenBrush : Brushes.FolderClosedBrush;
 	}
 }
 
@@ -296,7 +356,7 @@ FSlateColor SAssetTreeItem::GetFolderColor() const
 
 		return FoundColor;
 	}
-	
+
 	return ContentBrowserUtils::GetDefaultColor();
 }
 
@@ -313,7 +373,26 @@ FText SAssetTreeItem::GetToolTipText() const
 {
 	if (TSharedPtr<FTreeItem> TreeItemPin = TreeItem.Pin())
 	{
-		return FText::FromName(TreeItemPin->GetItem().GetVirtualPath());
+		// If this item is a plugin folder, append the plugin description to the tooltip
+		const FContentBrowserItem& Item = TreeItemPin->GetItem();
+		FText PathText = FText::FromName(Item.GetVirtualPath());
+		if (Item.IsInPlugin())
+		{
+			FNameBuilder ItemPath{Item.GetInternalPath()};
+			FStringView PluginName = FPathViews::GetMountPointNameFromPath(ItemPath.ToView());
+			if (TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(PluginName))
+			{
+				const FPluginDescriptor& Descriptor = Plugin->GetDescriptor();
+				if (!Descriptor.Description.IsEmpty())
+				{
+					return FText::Format(LOCTEXT("TwoLineTooltip", "{0}\n{1}"),
+						PathText,
+						FText::FromString(Descriptor.Description)
+						);
+				}
+			}
+		}
+		return PathText;
 	}
 	return FText();
 }

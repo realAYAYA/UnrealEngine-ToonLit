@@ -625,9 +625,9 @@ void TemporallyAccumulate(
 				PrevRefInfo.DeviceZ = HistoryScreenPosition.z;
 				PrevRefInfo.WorldDepth = ConvertFromDeviceZ(HistoryScreenPosition.z);
 				
-				float4 ClipPosition = float4(HistoryScreenPosition.xy * (View.ViewToClip[3][3] < 1.0f ? PrevRefInfo.WorldDepth : 1.0f), PrevRefInfo.WorldDepth, 1);
+				float4 ClipPosition = float4(GetScreenPositionForProjectionType(HistoryScreenPosition.xy, PrevRefInfo.WorldDepth), PrevRefInfo.WorldDepth, 1);
 
-				float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+				float3 PreViewTranslationOffset = DFFastLocalSubtractDemote(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation);
 				PrevRefInfo.TranslatedWorldPosition = mul(ClipPosition, View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
 
 				KernelConfig.CompressedRefSceneMetadata = CompressSampleSceneInfo(

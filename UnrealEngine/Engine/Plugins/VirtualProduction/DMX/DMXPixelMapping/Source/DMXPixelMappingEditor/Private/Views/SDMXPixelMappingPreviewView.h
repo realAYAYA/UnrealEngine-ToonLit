@@ -51,7 +51,7 @@ protected:
 	virtual void OnPaintBackground(const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId) const override;
 	virtual int32 GetGraphRulePeriod() const override;
 	virtual float GetGridScaleAmount() const override;
-	virtual int32 GetSnapGridSize() const override;
+	virtual int32 GetGridSize() const override;
 	virtual FSlateRect ComputeAreaBounds() const override;
 	//~ End SDMXPixelMappingSurface interface
 

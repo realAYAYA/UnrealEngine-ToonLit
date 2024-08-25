@@ -2,6 +2,7 @@
 
 #include "MassActorSubsystem.h"
 #include "MassCommonTypes.h"
+#include "MassActorTypes.h"
 #include "Engine/World.h"
 #include "MassEntityManager.h"
 #include "MassEntitySubsystem.h"
@@ -24,15 +25,21 @@ void FMassActorFragment::SetAndUpdateHandleMap(const FMassEntityHandle MassAgent
 	}
 }
 
-void FMassActorFragment::ResetAndUpdateHandleMap()
+void FMassActorFragment::ResetAndUpdateHandleMap(UMassActorSubsystem* CachedActorSubsystem)
 {
 	if (AActor* ActorPtr = Cast<AActor>(Actor.Get()))
 	{
-		UWorld* World = Actor->GetWorld();
-		check(World);
-		if (UMassActorSubsystem* MassActorSubsystem = UWorld::GetSubsystem<UMassActorSubsystem>(World))
+		if (CachedActorSubsystem == nullptr)
 		{
-			MassActorSubsystem->RemoveHandleForActor(ActorPtr);
+			UWorld* World = Actor->GetWorld();
+			UE_CLOG(World == nullptr, LogMassActor, Warning, TEXT("%hs: got Null while fetching World for actor %s. Can cause issues down the line. Pass in the optional CachedActorSubsystem parameter to address")
+				, __FUNCTION__, *GetNameSafe(ActorPtr));
+			CachedActorSubsystem = UWorld::GetSubsystem<UMassActorSubsystem>(World);
+		}
+
+		if (CachedActorSubsystem)
+		{
+			CachedActorSubsystem->RemoveHandleForActor(ActorPtr);
 		}
 	}
 
@@ -93,6 +100,7 @@ void UMassActorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UMassActorSubsystem::Deinitialize()
 {
 	ActorManager.Reset();
+	Super::Deinitialize();
 }
 
 //----------------------------------------------------------------------//

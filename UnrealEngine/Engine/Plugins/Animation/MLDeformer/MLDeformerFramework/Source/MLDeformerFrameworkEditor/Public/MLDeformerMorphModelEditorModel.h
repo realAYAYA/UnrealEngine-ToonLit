@@ -33,7 +33,17 @@ namespace UE::MLDeformer
 		virtual FString GetHeatMapDeformerGraphPath() const override;
 		virtual void OnPreTraining() override;
 		virtual void OnPostTraining(ETrainingResult TrainingResult, bool bUsePartiallyTrainedWhenAborted) override;
+		virtual void OnMaxNumLODsChanged() override;
 		// ~END FMLDeformerEditorModel overrides.
+
+		/**
+		 * Returns whether this model supports morph output weight clamping or not.
+		 * This is used to make sure the morph target weights are within valid ranges.
+		 * Some models might choose not to do this, because they might already clamp input values.
+		 * When this returns false, the "Clamp morph weights" option in the UI will also be hidden.
+		 * @return Returns true when the model supports morph weight clamping, otherwise false is returned.
+		 */
+		virtual bool IsMorphWeightClampingSupported() const		{ return true; }
 
 		/**
 		 * Get the mask buffer for a given morph target.
@@ -66,6 +76,9 @@ namespace UE::MLDeformer
 		 */
 		void ApplyBoneToMask(int32 SkeletonBoneIndex, TArrayView<float> MaskBuffer);
 
+		UE_DEPRECATED(5.4, "Please use the RecursiveAddBoneToMaskUpwards that doesn't take the VirtualParentTable as parameter.")
+		void RecursiveAddBoneToMaskUpwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth = 0);
+
 		/**
 		 * Recursively add bone masks for this bone and its parents.
 		 * The number of parents is controlled by the MaxHierarchyDepth.
@@ -73,10 +86,12 @@ namespace UE::MLDeformer
 		 * @param SkeletonBoneIndex The bone index of our current bone to add to the mask.
 		 * @param MaxHierarchyDepth The maximum hierarchy depth. If this is 1, it means that we visit only up to the parent of the specified bone. If it is 2, we also visit the parent of the parent, etc.
 		 * @param OutBoneAdded The list of bones that we already added to the mask. Bones that are in this list will not be added to the mask again.
-		 * @param VirtualParentTable The table of virtual parents. This lets us know that we also have to add say the finger bone vertices to the mask of the hand in our example described above.
 		 * @param CurHierarchyDepth The current recursive hierarchy depth. This is used to track how deep we are when moving up the hierarchy. A value of 1 means we are currently adding the parent of the initial bone.
 		 */
-		void RecursiveAddBoneToMaskUpwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth = 0);
+		void RecursiveAddBoneToMaskUpwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth = 0);
+
+		UE_DEPRECATED(5.4, "Please use the RecursiveAddBoneToMaskDownwards that doesn't take the VirtualParentTable as parameter.")
+		void RecursiveAddBoneToMaskDownwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth = 0);
 
 		/**
 		 * Recursively add bone masks for this bone and its children.
@@ -84,11 +99,10 @@ namespace UE::MLDeformer
 		 * @param RefSkel The reference skeleton.
 		 * @param SkeletonBoneIndex The bone index of our current bone to add to the mask.
 		 * @param MaxHierarchyDepth The maximum hierarchy depth. If this is 1, it means that we visit only down to the children of the specified bone. If it is 2, we also visit the children of the children, etc.
-		 * @param VirtualParentTable The table of virtual parents. This lets us know that we also have to add say the finger bone vertices to the mask of the hand in our example described above.
 		 * @param OutBoneAdded The list of bones that we already added to the mask. Bones that are in this list will not be added to the mask again.
 		 * @param CurHierarchyDepth The current recursive hierarchy depth. This is used to track how deep we are when moving down the hierarchy. A value of 1 means we are currently adding a child node of the initial bone.
 		 */
-		void RecursiveAddBoneToMaskDownwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth = 0);
+		void RecursiveAddBoneToMaskDownwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth = 0);
 
 		/**
 		 * Add any required bone to the mask.
@@ -99,6 +113,7 @@ namespace UE::MLDeformer
 		 * @param VirtualParentTable The table of virtual parents. This lets us know that we also have to add say the finger bone vertices to the mask of the hand in our example described above.
 		 * @param OutBonesAdded The list of bones we added to the mask. This list can contain items already. Bones that are already in the list won't be added to the mask again.
 		 */
+		UE_DEPRECATED(5.4, "This method will be removed.")
 		void AddRequiredBones(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded);
 
 		/**
@@ -110,6 +125,7 @@ namespace UE::MLDeformer
 		 * @return The bone index that is the virtual parent for the specified bone. This can point to itself in case it is in the included bone names list.
 		 * @see BuildVirtualParentTable.
 		 */
+		UE_DEPRECATED(5.4, "This method will be removed.")
 		int32 FindVirtualParentIndex(const FReferenceSkeleton& RefSkel, int32 BoneIndex, const TArray<FName>& IncludedBoneNames) const;
 
 		/**
@@ -122,6 +138,7 @@ namespace UE::MLDeformer
 		 * @param IncludedBoneNames The names of the bones that are inputs to the ML model.
 		 * @return Returns a mapping array with the length of number of bones in the reference skeleton. Each array element contains a bone index inside the reference skeleton as well.
 		 */
+		UE_DEPRECATED(5.4, "This method will be removed.")
 		TArray<int32> BuildVirtualParentTable(const FReferenceSkeleton& RefSkel, const TArray<FName>& IncludedBoneNames) const;
 
 		// Helpers.
@@ -129,6 +146,8 @@ namespace UE::MLDeformer
 		UMLDeformerMorphModelVizSettings* GetMorphModelVizSettings() const;
 
 	protected:
+		void TransferMorphTargets(TArray<UMorphTarget*> MorphTargetsLODZero);
+
 		/**
 		 * Initialize a set of engine morph targets and compress them to GPU friendly buffers.
 		 * These morph targets are initialized from a set of deltas. Each morph target needs to have Model->GetNumBaseVerts() number of deltas.
@@ -279,6 +298,9 @@ namespace UE::MLDeformer
 		 * So the size of this buffer is: (NumVertsPerMorphTarget * NumMorphTargets).
 		 */
 		TArray<FVector3f> MorphTargetDeltasBackup;
+
+		/** The backup of the minimum and maximum weights for each morph target. */
+		TArray<FFloatInterval> MorphTargetsMinMaxWeightsBackup;
 
 		/** The backup of the input item mask buffer. This contains all the bone and bone group masks. */
 		TArray<float> InputItemMaskBufferBackup;

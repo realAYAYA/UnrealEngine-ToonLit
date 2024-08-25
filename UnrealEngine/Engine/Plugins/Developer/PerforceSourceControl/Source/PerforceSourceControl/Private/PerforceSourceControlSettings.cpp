@@ -185,8 +185,13 @@ FPerforceConnectionInfo FPerforceSourceControlSettings::GetConnectionInfo() cons
 		OutConnectionInfo = ConnectionInfo;
 	}
 	
+#if SOURCE_CONTROL_WITH_SLATE
 	// The password needs to be gotten straight from the input UI, its not stored anywhere else
 	const FString Password = SPerforceSourceControlSettings::GetPassword();
+#else
+	const FString Password;
+#endif //SOURCE_CONTROL_WITH_SLATE
+
 	if(!Password.IsEmpty())
 	{
 		OutConnectionInfo.Password = Password;

@@ -42,6 +42,7 @@ namespace UE::Sequencer
 {
 	class FCategoryModel;
 	class FChannelModel;
+	struct FViewDensityInfo;
 }
 
 /** Enumerates which edge is being resized */
@@ -62,7 +63,7 @@ namespace SequencerSectionConstants
 
 	const float DefaultSectionGripSize = 8.0f;
 
-	const float DefaultSectionHeight = 15.f;
+	const float DefaultSectionHeight = 27.f;
 
 	const FName SelectionColorName("SelectionColor");
 
@@ -162,6 +163,11 @@ public:
 	virtual FText GetSectionToolTip() const { return GetSectionTitle(); }
 
 	/**
+	 * @return The local section time
+	 */
+	virtual TOptional<FFrameTime> GetSectionTime(FSequencerSectionPainter& InPainter) const { return TOptional<FFrameTime>(); }
+
+	/**
 	 * @return The amount of padding to apply to non-interactive portions of the section interface (such as section text)
 	 */
 	virtual FMargin GetContentPadding() const { return FMargin(11.f, 6.f); }
@@ -186,8 +192,11 @@ public:
 	/**
 	 * @return The height of the section
 	 */
-	virtual float GetSectionHeight() const { return SequencerSectionConstants::DefaultSectionHeight; }
-	
+	UE_DEPRECATED(5.4, "Please call GetSectionHeight(const FViewDensityInfo& ViewDensity) instead.")
+	SEQUENCER_API virtual float GetSectionHeight() const;
+	SEQUENCER_API virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const;
+
+
 	/**
 	 * @return The width of the section drag handles
 	 */

@@ -3,8 +3,10 @@
 #pragma once
 
 #include "EntitySystem/MovieSceneEntitySystem.h"
+#include "EntitySystem/MovieSceneEntityInstantiatorSystem.h"
 #include "EntitySystem/MovieSceneOverlappingEntityTracker.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateStorage.h"
+#include "MaterialTypes.h"
 
 #include "MovieSceneMaterialParameterSystem.generated.h"
 
@@ -36,49 +38,64 @@ MOVIESCENETRACKS_API void CollectGarbageForOutput(FAnimatedMaterialParameterInfo
 
 
 /**
- * System responsible for tracking and animating material parameter entities.
- * Operates on the following component types from FMovieSceneTracksComponentTypes:
+ * System responsible for tracking material parameter entities.
  *
- * Instantiation: Tracks any BoundMaterial with a ScalarParameterName, ColorParameterName or VectorParameterName.
- *                Manages adding BlendChannelInputs and Outputs where multiple entities animate the same parameter
- *                on the same bound material.
- *                BoundMaterials may be a UMaterialInstanceDynamic, or a UMaterialParameterCollectionInstance.
- *
- * Evaluation:    Visits any BoundMaterial with the supported parameter names and either a BlendChannelOutput component
- *                or no BlendChannelInput, and applies the resulting parameter to the bound material instance.
+ * Tracks any BoundMaterial with a MaterialParameterInfo, as well as deprecated ScalarParameterName,
+ * ColorParameterName or VectorParameterName.
+ * Manages adding BlendChannelInputs and Outputs where multiple entities animate the same parameter
+ * on the same bound material.
+ * BoundMaterials may be a UMaterialInstanceDynamic, or a UMaterialParameterCollectionInstance.
  */
 UCLASS(MinimalAPI)
-class UMovieSceneMaterialParameterSystem
-	: public UMovieSceneEntitySystem
+class UMovieSceneMaterialParameterInstantiatorSystem : public UMovieSceneEntityInstantiatorSystem
 {
 public:
 
 	GENERATED_BODY()
 
-	UMovieSceneMaterialParameterSystem(const FObjectInitializer& ObjInit);
+	UMovieSceneMaterialParameterInstantiatorSystem(const FObjectInitializer& ObjInit);
 
 private:
 
 	virtual void OnLink() override;
 	virtual void OnUnlink() override;
-	virtual void OnSchedulePersistentTasks(UE::MovieScene::IEntitySystemScheduler* TaskScheduler) override;
 	virtual void OnRun(FSystemTaskPrerequisites& InPrerequisites, FSystemSubsequentTasks& Subsequents) override;
-
-	void OnInstantiation();
-	void OnEvaluation(FSystemTaskPrerequisites& InPrerequisites, FSystemSubsequentTasks& Subsequents);
 
 private:
 
 	/** Overlapping trackers that track multiple entities animating the same bound object and name */
-	UE::MovieScene::TOverlappingEntityTracker<UE::MovieScene::FAnimatedMaterialParameterInfo, UE::MovieScene::FObjectComponent, FName> ScalarParameterTracker;
-	UE::MovieScene::TOverlappingEntityTracker<UE::MovieScene::FAnimatedMaterialParameterInfo, UE::MovieScene::FObjectComponent, FName> VectorParameterTracker;
+	UE::MovieScene::TOverlappingEntityTracker<UE::MovieScene::FAnimatedMaterialParameterInfo, UE::MovieScene::FObjectComponent, FMaterialParameterInfo> ScalarParameterTracker;
+	UE::MovieScene::TOverlappingEntityTracker<UE::MovieScene::FAnimatedMaterialParameterInfo, UE::MovieScene::FObjectComponent, FMaterialParameterInfo> VectorParameterTracker;
 
 	/** Holds pre-animated values for scalar values */
 	TSharedPtr<UE::MovieScene::FPreAnimatedScalarMaterialParameterStorage> ScalarParameterStorage;
 	/** Holds pre-animated values for vector or color values */
 	TSharedPtr<UE::MovieScene::FPreAnimatedVectorMaterialParameterStorage> VectorParameterStorage;
+
 public:
 
 	UPROPERTY()
 	TObjectPtr<UMovieScenePiecewiseDoubleBlenderSystem> DoubleBlenderSystem;
+};
+
+
+/**
+ * System responsible for animating material parameter entities.
+ *
+ * Visits any BoundMaterial with the supported parameter names and either a BlendChannelOutput component
+ * or no BlendChannelInput, and applies the resulting parameter to the bound material instance.
+ */
+UCLASS(MinimalAPI)
+class UMovieSceneMaterialParameterEvaluationSystem : public UMovieSceneEntitySystem
+{
+public:
+
+	GENERATED_BODY()
+
+	UMovieSceneMaterialParameterEvaluationSystem(const FObjectInitializer& ObjInit);
+
+private:
+
+	virtual void OnSchedulePersistentTasks(UE::MovieScene::IEntitySystemScheduler* TaskScheduler) override;
+	virtual void OnRun(FSystemTaskPrerequisites& InPrerequisites, FSystemSubsequentTasks& Subsequents) override;
 };

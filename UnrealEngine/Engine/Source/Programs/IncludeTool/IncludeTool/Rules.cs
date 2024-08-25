@@ -39,6 +39,7 @@ namespace IncludeTool
 			"/engine/source/programs/unrealswarm/private/",
 			"/engine/plugins/runtime/packethandlers/compressioncomponents/oodle/source/thirdparty/notforlicensees/oodle/213/win/examples/",
 			"/engine/plugins/developer/riderlink/",
+			"/engine/source/runtime/symslib/syms/",
 		};
 
 		/// <summary>
@@ -98,7 +99,6 @@ namespace IncludeTool
 			"include/internal/cef_",
 			"opus.h",
 			"opus_multistream.h",
-			"openvr.h",
 			"libyuv/",
 			"openssl/",
 			"vpx/",
@@ -226,6 +226,12 @@ namespace IncludeTool
 			{
 				return true;
 			}
+			// remove symslib files
+			if (NormalizedPath.Contains("symslib/syms"))
+			{
+				return true;
+			}
+
 			return false;
 		}
 
@@ -350,9 +356,8 @@ namespace IncludeTool
 			"/Engine/Source/Runtime/Online/SSL/Private/PlatformSslCertificateManager.h",
 
 			// Weird Android multiple target platform through INL file stuff
-			"/Engine/Source/Developer/Android/AndroidTargetPlatform/Private/AndroidTargetDevice.h",
-			"/Engine/Source/Developer/Android/AndroidTargetPlatform/Private/AndroidTargetDeviceOutput.h",
-			"/Engine/Source/Developer/Android/AndroidTargetPlatform/Private/AndroidTargetPlatform.h",
+			"/Engine/Source/Developer/Android/AndroidTargetPlatformControls/Private/AndroidTargetDevice.h",
+			"/Engine/Source/Developer/Android/AndroidTargetPlatformControls/Private/AndroidTargetDeviceOutput.h",
 
 			// Platform specific
 			"/Engine/Source/Runtime/Slate/Public/Framework/Text/GenericPlatformTextField.h",
@@ -447,6 +452,7 @@ namespace IncludeTool
 			"/Engine/Source/Runtime/Experimental/Chaos/Public/PhysicsProxy/SingleParticlePhysicsProxyFwd.h", // invalid forward declaration - 'namespace Chaos'
 			"/Engine/Source/Runtime/Interchange/Engine/Public/InterchangeEngineFwd.h", // invalid forward declaration - 'namespace UE'
 			"/Engine/Plugins/Experimental/GameFeatures/Source/GameFeatures/Public/GameFeatureTypesFwd.h", //  invalid forward declaration - 'namespace GameFeaturePluginStatePrivate'
+			"/Engine/Plugins/Experimental/StateGraph/Source/StateGraph/Public/StateGraphFwd.h", //  invalid forward declaration - 'namespace UE'
 			"/Engine/Source/Runtime/Core/Public/Containers/VersePathFwd.h", // invalid forward declaration - 'namespace UE::Core'
 			"/Engine/Source/Runtime/Experimental/Iris/Core/Public/Iris/ReplicationState/ReplicationStateFwd.h", // invalid forward declaration - 'namespace UE::Net'
 			"/Engine/Source/Runtime/Experimental/Iris/Core/Private/Iris/ReplicationSystem/ObjectReferenceCacheFwd.h", // invalid forward declaration - 'namespace UE::Net'
@@ -458,6 +464,7 @@ namespace IncludeTool
 			"/Engine/Source/Runtime/Core/Public/Templates/SharedPointerFwd.h", // Has an enum as well
 			"/Engine/Source/Runtime/Core/Public/Misc/OptionalFwd.h", // Has special struct
 			"/Engine/Source/Runtime/CoreUObject/Public/UObject/ScriptDelegateFwd.h", // error: invalid forward declaration - 'typedef TScriptDelegate<FWeakObjectPtr> FScriptDelegate;'
+			"/Engine/Source/Runtime/CoreUObject/Public/UObject/VerseTypesFwd.h", // error: invalid forward declaration - 'namespace Verse'
 			"/Engine/Source/Runtime/CoreUObject/Public/UObject/WeakObjectPtrFwd.h", // error: invalid forward declaration - 'template<> struct TIsPODType<FWeakObjectPtr> { enum { Value = true }; };'
 			"/Engine/Source/Runtime/Core/Public/UObject/WeakObjectPtrTemplatesFwd.h", // error: invalid forward declaration - 'template<class T> struct TIsPODType<TWeakObjectPtr<T> > { enum { Value = true }; };'
 		};
@@ -657,6 +664,7 @@ namespace IncludeTool
 
 			"/Engine/Restricted/",
 			"/Engine/Shaders/Shared/RayTracingBuiltInResources.h",
+			"/Engine/Source/Runtime/Symslib/syms/",
 		};
 
 		/// <summary>

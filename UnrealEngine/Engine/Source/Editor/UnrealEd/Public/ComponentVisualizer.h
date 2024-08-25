@@ -23,6 +23,8 @@
 #include "UObject/UnrealType.h"
 #include "UObject/WeakObjectPtr.h"
 #include "UObject/WeakObjectPtrTemplates.h"
+#include "Elements/Framework/EngineElementsLibrary.h"
+#include "Elements/Framework/TypedElementHandle.h"
 
 #include "ComponentVisualizer.generated.h"
 
@@ -47,6 +49,11 @@ struct HComponentVisProxy : public HHitProxy
 	virtual EMouseCursor::Type GetMouseCursor() override
 	{
 		return EMouseCursor::Crosshairs;
+	}
+
+	virtual FTypedElementHandle GetElementHandle() const override
+	{
+		return UEngineElementsLibrary::AcquireEditorComponentElementHandle(Component.Get());
 	}
 
 	TWeakObjectPtr<const UActorComponent> Component;
@@ -155,6 +162,7 @@ public:
 	/** */
 	virtual void OnRegister() {}
 	/** Only show this visualizer if the actor is selected */
+	UE_DEPRECATED(5.4, "This function is unused and will be removed in a future version. Component visualizers are only shown for the active selection. Use bDebugDraw on the specific component, or the editor setting to control drawing of subcomponents for selected actors.")
 	virtual bool ShowWhenSelected() { return true; }
 	/** Show this visualizer if the component is directly is selected */
 	virtual bool ShouldShowForSelectedSubcomponents(const UActorComponent* Component) { return true; }

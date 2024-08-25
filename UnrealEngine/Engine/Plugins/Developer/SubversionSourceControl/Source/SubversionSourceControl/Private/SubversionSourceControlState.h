@@ -68,7 +68,9 @@ public:
 	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> FindHistoryRevision( const FString& InRevision ) const override;
 	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> GetCurrentRevision() const override;
 	virtual FResolveInfo GetResolveInfo() const override;
+#if SOURCE_CONTROL_WITH_SLATE
 	virtual FSlateIcon GetIcon() const override;
+#endif //SOURCE_CONTROL_WITH_SLATE
 	virtual FText GetDisplayName() const override;
 	virtual FText GetDisplayTooltip() const override;
 	virtual const FString& GetFilename() const override;

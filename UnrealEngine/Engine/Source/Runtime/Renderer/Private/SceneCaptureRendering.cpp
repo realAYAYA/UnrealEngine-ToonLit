@@ -42,6 +42,16 @@
 #include "GenerateMips.h"
 #include "RectLightTexture.h"
 #include "Materials/MaterialRenderProxy.h"
+#include "Rendering/CustomRenderPass.h"
+
+bool GSceneCaptureAllowRenderInMainRenderer = true;
+static FAutoConsoleVariableRef CVarSceneCaptureAllowRenderInMainRenderer(
+	TEXT("r.SceneCapture.AllowRenderInMainRenderer"),
+	GSceneCaptureAllowRenderInMainRenderer,
+	TEXT("Whether to allow SceneDepth & DeviceDepth scene capture to render in the main renderer as an optimization.\n")
+	TEXT("0: render as an independent renderer.\n")
+	TEXT("1: render as part of the main renderer if Render in Main Renderer is enabled on scene capture component.\n"),
+	ECVF_Scalability);
 
 #if WITH_EDITOR
 // All scene captures on the given render thread frame will be dumped
@@ -162,6 +172,12 @@ public:
 		{
 			OutEnvironment.SetRenderTargetOutputFormat(0, PF_A32B32G32R32F);
 		}
+
+		if (IsMobilePlatform(Parameters.Platform))
+		{
+			OutEnvironment.FullPrecisionInPS = 1;
+		}
+
 	}
 };
 
@@ -181,20 +197,42 @@ void CopySceneCaptureComponentToTarget(
 	const FSceneViewFamily& ViewFamily,
 	TConstArrayView<FViewInfo> Views)
 {
-	ESceneCaptureSource SceneCaptureSource = ViewFamily.SceneCaptureSource;
-
-	if (IsForwardShadingEnabled(ViewFamily.GetShaderPlatform()) && (SceneCaptureSource == SCS_Normal || SceneCaptureSource == SCS_BaseColor))
+	TArray<const FViewInfo*> ViewPtrArray;
+	for (const FViewInfo& View : Views)
 	{
-		SceneCaptureSource = SCS_SceneColorHDR;
+		ViewPtrArray.Add(&View);
 	}
+	CopySceneCaptureComponentToTarget(GraphBuilder, SceneTextures, ViewFamilyTexture, ViewFamily, ViewPtrArray);
+}
 
-	if (CaptureNeedsSceneColor(SceneCaptureSource))
+void CopySceneCaptureComponentToTarget(
+	FRDGBuilder& GraphBuilder,
+	const FMinimalSceneTextures& SceneTextures,
+	FRDGTextureRef ViewFamilyTexture,
+	const FSceneViewFamily& ViewFamily,
+	const TArray<const FViewInfo*>& Views)
+{
+	FGraphicsPipelineStateInitializer GraphicsPSOInit;
+	GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
+	GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
+
+	const bool bForwardShadingEnabled = IsForwardShadingEnabled(ViewFamily.GetShaderPlatform());
+	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
-		RDG_EVENT_SCOPE(GraphBuilder, "CaptureSceneComponent[%d]", SceneCaptureSource);
+		const FViewInfo& View = *Views[ViewIndex];
 
-		FGraphicsPipelineStateInitializer GraphicsPSOInit;
-		GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
-		GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
+		// If view has its own scene capture setting, use it over view family setting
+		ESceneCaptureSource SceneCaptureSource = View.CustomRenderPass ? View.CustomRenderPass->GetSceneCaptureSource() : ViewFamily.SceneCaptureSource;
+		if (bForwardShadingEnabled && (SceneCaptureSource == SCS_Normal || SceneCaptureSource == SCS_BaseColor))
+		{
+			SceneCaptureSource = SCS_SceneColorHDR;
+		}
+		if (!CaptureNeedsSceneColor(SceneCaptureSource))
+		{
+			continue;
+		}
+
+		RDG_EVENT_SCOPE(GraphBuilder, "CaptureSceneComponent_View[%d]", SceneCaptureSource);
 
 		bool bIsCompositing = false;
 		if (SceneCaptureSource == SCS_SceneColorHDR && ViewFamily.SceneCaptureCompositeMode == SCCM_Composite)
@@ -217,48 +255,43 @@ void CopySceneCaptureComponentToTarget(
 		const bool bUse128BitRT = PlatformRequires128bitRT(ViewFamilyTexture->Desc.Format);
 		const FSceneCapturePS::FPermutationDomain PixelPermutationVector = FSceneCapturePS::GetPermutationVector(SceneCaptureSource, bUse128BitRT, IsMobilePlatform(ViewFamily.GetShaderPlatform()));
 
-		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
+		FSceneCapturePS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSceneCapturePS::FParameters>();
+		PassParameters->View = View.ViewUniformBuffer;
+		PassParameters->SceneTextures = SceneTextures.GetSceneTextureShaderParameters(ViewFamily.GetFeatureLevel());
+		PassParameters->RenderTargets[0] = FRenderTargetBinding(ViewFamilyTexture, bIsCompositing ? ERenderTargetLoadAction::ELoad : ERenderTargetLoadAction::ENoAction);
+
+		TShaderMapRef<FScreenVS> VertexShader(View.ShaderMap);
+		TShaderMapRef<FSceneCapturePS> PixelShader(View.ShaderMap, PixelPermutationVector);
+
+		GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GFilterVertexDeclaration.VertexDeclarationRHI;
+		GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
+		GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
+		GraphicsPSOInit.PrimitiveType = PT_TriangleList;
+
+		GraphBuilder.AddPass(
+			RDG_EVENT_NAME("View(%d)", ViewIndex),
+			PassParameters,
+			ERDGPassFlags::Raster,
+			[PassParameters, GraphicsPSOInit, VertexShader, PixelShader, &View] (FRHICommandList& RHICmdList)
 		{
-			const FViewInfo& View = Views[ViewIndex];
+			FGraphicsPipelineStateInitializer LocalGraphicsPSOInit = GraphicsPSOInit;
+			RHICmdList.ApplyCachedRenderTargets(LocalGraphicsPSOInit);
+			SetGraphicsPipelineState(RHICmdList, LocalGraphicsPSOInit, 0);
+			SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), *PassParameters);
+			
+			CopyCaptureToTargetSetViewportFn(RHICmdList);
 
-			FSceneCapturePS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSceneCapturePS::FParameters>();
-			PassParameters->View = View.ViewUniformBuffer;
-			PassParameters->SceneTextures = SceneTextures.GetSceneTextureShaderParameters(ViewFamily.GetFeatureLevel());
-			PassParameters->RenderTargets[0] = FRenderTargetBinding(ViewFamilyTexture, bIsCompositing ? ERenderTargetLoadAction::ELoad : ERenderTargetLoadAction::ENoAction);
-
-			TShaderMapRef<FScreenVS> VertexShader(View.ShaderMap);
-			TShaderMapRef<FSceneCapturePS> PixelShader(View.ShaderMap, PixelPermutationVector);
-
-			GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GFilterVertexDeclaration.VertexDeclarationRHI;
-			GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
-			GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
-			GraphicsPSOInit.PrimitiveType = PT_TriangleList;
-
-			GraphBuilder.AddPass(
-				RDG_EVENT_NAME("View(%d)", ViewIndex),
-				PassParameters,
-				ERDGPassFlags::Raster,
-				[PassParameters, GraphicsPSOInit, VertexShader, PixelShader, &View] (FRHICommandList& RHICmdList)
-			{
-				FGraphicsPipelineStateInitializer LocalGraphicsPSOInit = GraphicsPSOInit;
-				RHICmdList.ApplyCachedRenderTargets(LocalGraphicsPSOInit);
-				SetGraphicsPipelineState(RHICmdList, LocalGraphicsPSOInit, 0);
-				SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), *PassParameters);
-				
-				CopyCaptureToTargetSetViewportFn(RHICmdList);
-
-				DrawRectangle(
-					RHICmdList,
-					View.ViewRect.Min.X, View.ViewRect.Min.Y,
-					View.ViewRect.Width(), View.ViewRect.Height(),
-					View.ViewRect.Min.X, View.ViewRect.Min.Y,
-					View.ViewRect.Width(), View.ViewRect.Height(),
-					View.UnconstrainedViewRect.Size(),
-					View.GetSceneTexturesConfig().Extent,
-					VertexShader,
-					EDRF_UseTriangleOptimization);
-			});
-		}
+			DrawRectangle(
+				RHICmdList,
+				View.ViewRect.Min.X, View.ViewRect.Min.Y,
+				View.ViewRect.Width(), View.ViewRect.Height(),
+				View.ViewRect.Min.X, View.ViewRect.Min.Y,
+				View.ViewRect.Width(), View.ViewRect.Height(),
+				View.UnconstrainedViewRect.Size(),
+				View.GetSceneTexturesConfig().Extent,
+				VertexShader,
+				EDRF_UseTriangleOptimization);
+		});
 	}
 }
 
@@ -300,14 +333,11 @@ static void UpdateSceneCaptureContentDeferred_RenderThread(
 
 #if WANTS_DRAW_MESH_EVENTS
 	SCOPED_DRAW_EVENTF(RHICmdList, SceneCapture, TEXT("SceneCapture %s"), *EventName);
-	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("SceneCapture %s", *EventName), FSceneRenderer::GetRDGParalelExecuteFlags(FeatureLevel));
+	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("SceneCapture %s", *EventName), ERDGBuilderFlags::AllowParallelExecute);
 #else
 	SCOPED_DRAW_EVENT(RHICmdList, UpdateSceneCaptureContent_RenderThread);
-	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("SceneCapture"), FSceneRenderer::GetRDGParalelExecuteFlags(FeatureLevel));
+	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("SceneCapture"), ERDGBuilderFlags::AllowParallelExecute);
 #endif
-
-	// We need to execute the pre-render view extensions before we do any view dependent work.
-	FSceneRenderer::ViewExtensionPreRender_RenderThread(GraphBuilder, SceneRenderer);
 
 	{
 		FRDGTextureRef TargetTexture = RegisterExternalTexture(GraphBuilder, RenderTarget->GetRenderTargetTexture(), TEXT("SceneCaptureTarget"));
@@ -392,9 +422,6 @@ void UpdateSceneCaptureContentMobile_RenderThread(
 	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("SceneCaptureMobile"));
 #endif
 
-	// We need to execute the pre-render view extensions before we do any view dependent work.
-	FSceneRenderer::ViewExtensionPreRender_RenderThread(GraphBuilder, SceneRenderer);
-
 	{
 		FViewInfo& View = SceneRenderer->Views[0];
 
@@ -477,7 +504,7 @@ static void UpdateSceneCaptureContent_RenderThread(
 {
 	FUniformExpressionCacheAsyncUpdateScope AsyncUpdateScope;
 
-	switch (SceneRenderer->Scene->GetShadingPath())
+	switch (GetFeatureLevelShadingPath(SceneRenderer->Scene->GetFeatureLevel()))
 	{
 		case EShadingPath::Mobile:
 		{
@@ -599,12 +626,82 @@ void BuildProjectionMatrix(FIntPoint InRenderTargetSize, float InFOV, float InNe
 	}
 }
 
+void GetShowOnlyAndHiddenComponents(USceneCaptureComponent* SceneCaptureComponent, TSet<FPrimitiveComponentId>& HiddenPrimitives, TOptional<TSet<FPrimitiveComponentId>>& ShowOnlyPrimitives)
+{
+	check(SceneCaptureComponent);
+	for (auto It = SceneCaptureComponent->HiddenComponents.CreateConstIterator(); It; ++It)
+	{
+		// If the primitive component was destroyed, the weak pointer will return NULL.
+		UPrimitiveComponent* PrimitiveComponent = It->Get();
+		if (PrimitiveComponent)
+		{
+			HiddenPrimitives.Add(PrimitiveComponent->GetPrimitiveSceneId());
+		}
+	}
+
+	for (auto It = SceneCaptureComponent->HiddenActors.CreateConstIterator(); It; ++It)
+	{
+		AActor* Actor = *It;
+
+		if (Actor)
+		{
+			for (UActorComponent* Component : Actor->GetComponents())
+			{
+				if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component))
+				{
+					HiddenPrimitives.Add(PrimComp->GetPrimitiveSceneId());
+				}
+			}
+		}
+	}
+
+	if (SceneCaptureComponent->PrimitiveRenderMode == ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList)
+	{
+		ShowOnlyPrimitives.Emplace();
+
+		for (auto It = SceneCaptureComponent->ShowOnlyComponents.CreateConstIterator(); It; ++It)
+		{
+			// If the primitive component was destroyed, the weak pointer will return NULL.
+			UPrimitiveComponent* PrimitiveComponent = It->Get();
+			if (PrimitiveComponent)
+			{
+				ShowOnlyPrimitives->Add(PrimitiveComponent->GetPrimitiveSceneId());
+			}
+		}
+
+		for (auto It = SceneCaptureComponent->ShowOnlyActors.CreateConstIterator(); It; ++It)
+		{
+			AActor* Actor = *It;
+
+			if (Actor)
+			{
+				for (UActorComponent* Component : Actor->GetComponents())
+				{
+					if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component))
+					{
+						ShowOnlyPrimitives->Add(PrimComp->GetPrimitiveSceneId());
+					}
+				}
+			}
+		}
+	}
+	else if (SceneCaptureComponent->ShowOnlyComponents.Num() > 0 || SceneCaptureComponent->ShowOnlyActors.Num() > 0)
+	{
+		static bool bWarned = false;
+
+		if (!bWarned)
+		{
+			UE_LOG(LogRenderer, Log, TEXT("Scene Capture has ShowOnlyComponents or ShowOnlyActors ignored by the PrimitiveRenderMode setting! %s"), *SceneCaptureComponent->GetPathName());
+			bWarned = true;
+		}
+	}
+}
+
 void SetupViewFamilyForSceneCapture(
 	FSceneViewFamily& ViewFamily,
 	USceneCaptureComponent* SceneCaptureComponent,
 	const TArrayView<const FSceneCaptureViewInfo> Views,
 	float MaxViewDistance,
-	bool bUseFauxOrthoViewPos,
 	bool bCaptureSceneColor,
 	bool bIsPlanarReflection,
 	FPostProcessSettings* PostProcessSettings,
@@ -640,7 +737,6 @@ void SetupViewFamilyForSceneCapture(
 		ViewInitOptions.SceneViewStateInterface = SceneCaptureComponent->GetViewState(CubemapFaceIndex != INDEX_NONE ? CubemapFaceIndex : ViewIndex);
 		ViewInitOptions.ProjectionMatrix = SceneCaptureViewInfo.ProjectionMatrix;
 		ViewInitOptions.LODDistanceFactor = FMath::Clamp(SceneCaptureComponent->LODDistanceFactor, .01f, 100.0f);
-		ViewInitOptions.bUseFauxOrthoViewPos = bUseFauxOrthoViewPos;
 		ViewInitOptions.bIsSceneCapture = true;
 		ViewInitOptions.bIsSceneCaptureCube = SceneCaptureComponent->IsCube();
 		ViewInitOptions.bSceneCaptureUsesRayTracing = SceneCaptureComponent->bUseRayTracingIfEnabled;
@@ -659,73 +755,7 @@ void SetupViewFamilyForSceneCapture(
 
 		FSceneView* View = new FSceneView(ViewInitOptions);
 
-		check(SceneCaptureComponent);
-		for (auto It = SceneCaptureComponent->HiddenComponents.CreateConstIterator(); It; ++It)
-		{
-			// If the primitive component was destroyed, the weak pointer will return NULL.
-			UPrimitiveComponent* PrimitiveComponent = It->Get();
-			if (PrimitiveComponent)
-			{
-				View->HiddenPrimitives.Add(PrimitiveComponent->ComponentId);
-			}
-		}
-
-		for (auto It = SceneCaptureComponent->HiddenActors.CreateConstIterator(); It; ++It)
-		{
-			AActor* Actor = *It;
-
-			if (Actor)
-			{
-				for (UActorComponent* Component : Actor->GetComponents())
-				{
-					if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component))
-					{
-						View->HiddenPrimitives.Add(PrimComp->ComponentId);
-					}
-				}
-			}
-		}
-
-		if (SceneCaptureComponent->PrimitiveRenderMode == ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList)
-		{
-				View->ShowOnlyPrimitives.Emplace();
-
-			for (auto It = SceneCaptureComponent->ShowOnlyComponents.CreateConstIterator(); It; ++It)
-			{
-				// If the primitive component was destroyed, the weak pointer will return NULL.
-				UPrimitiveComponent* PrimitiveComponent = It->Get();
-				if (PrimitiveComponent)
-				{
-					View->ShowOnlyPrimitives->Add(PrimitiveComponent->ComponentId);
-				}
-			}
-
-			for (auto It = SceneCaptureComponent->ShowOnlyActors.CreateConstIterator(); It; ++It)
-			{
-				AActor* Actor = *It;
-
-				if (Actor)
-				{
-					for (UActorComponent* Component : Actor->GetComponents())
-					{
-						if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component))
-						{
-							View->ShowOnlyPrimitives->Add(PrimComp->ComponentId);
-						}
-					}
-				}
-			}
-		}
-		else if (SceneCaptureComponent->ShowOnlyComponents.Num() > 0 || SceneCaptureComponent->ShowOnlyActors.Num() > 0)
-		{
-			static bool bWarned = false;
-
-			if (!bWarned)
-			{
-				UE_LOG(LogRenderer, Log, TEXT("Scene Capture has ShowOnlyComponents or ShowOnlyActors ignored by the PrimitiveRenderMode setting! %s"), *SceneCaptureComponent->GetPathName());
-				bWarned = true;
-			}
-		}
+		GetShowOnlyAndHiddenComponents(SceneCaptureComponent, View->HiddenPrimitives, View->ShowOnlyPrimitives);
 
 		ViewFamily.Views.Add(View);
 
@@ -751,7 +781,6 @@ static FSceneRenderer* CreateSceneRendererForSceneCapture(
 	const FMatrix& ViewRotationMatrix,
 	const FVector& ViewLocation,
 	const FMatrix& ProjectionMatrix,
-	bool bUseFauxOrthoViewPos,
 	float MaxViewDistance,
 	bool bCaptureSceneColor,
 	FPostProcessSettings* PostProcessSettings,
@@ -766,6 +795,15 @@ static FSceneRenderer* CreateSceneRendererForSceneCapture(
 	SceneCaptureViewInfo.StereoPass = EStereoscopicPass::eSSP_FULL;
 	SceneCaptureViewInfo.StereoViewIndex = INDEX_NONE;
 	SceneCaptureViewInfo.ViewRect = FIntRect(0, 0, RenderTargetSize.X, RenderTargetSize.Y);
+
+	// Use camera position correction for ortho scene captures
+	if(USceneCaptureComponent2D * SceneCaptureComponent2D = Cast<USceneCaptureComponent2D>(SceneCaptureComponent))
+	{
+		if (!SceneCaptureViewInfo.IsPerspectiveProjection() && SceneCaptureComponent2D->bUpdateOrthoPlanes)
+		{
+			SceneCaptureViewInfo.UpdateOrthoPlanes(SceneCaptureComponent2D->bUseCameraHeightAsViewTarget);
+		}
+	}
 
 	FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
 		RenderTarget,
@@ -782,13 +820,15 @@ static FSceneRenderer* CreateSceneRendererForSceneCapture(
 		SceneCaptureComponent,
 		MakeArrayView(&SceneCaptureViewInfo, 1),
 		MaxViewDistance, 
-		bUseFauxOrthoViewPos,
 		bCaptureSceneColor,
 		/* bIsPlanarReflection = */ false,
 		PostProcessSettings, 
 		PostProcessBlendWeight,
 		ViewActor,
 		CubemapFaceIndex);
+
+	// Scene capture source is used to determine whether to disable occlusion queries inside FSceneRenderer constructor
+	ViewFamily.SceneCaptureSource = SceneCaptureComponent->CaptureSource;
 
 	// Screen percentage is still not supported in scene capture.
 	ViewFamily.EngineShowFlags.ScreenPercentage = false;
@@ -797,6 +837,24 @@ static FSceneRenderer* CreateSceneRendererForSceneCapture(
 
 	return FSceneRenderer::CreateSceneRenderer(&ViewFamily, nullptr);
 }
+
+class FSceneCapturePass final : public FCustomRenderPassBase
+{
+public:
+	IMPLEMENT_CUSTOM_RENDER_PASS(FSceneCapturePass);
+
+	FSceneCapturePass(const FString& InDebugName, ERenderMode InRenderMode, ERenderOutput InRenderOutput, UTextureRenderTarget2D* InRenderTarget)
+		: FCustomRenderPassBase(InDebugName, InRenderMode, InRenderOutput, FIntPoint(InRenderTarget->GetSurfaceWidth(), InRenderTarget->GetSurfaceHeight()))
+		, SceneCaptureRenderTarget(InRenderTarget->GameThread_GetRenderTargetResource())
+	{}
+
+	virtual void OnPreRender(FRDGBuilder& GraphBuilder) override
+	{
+		RenderTargetTexture = SceneCaptureRenderTarget->GetRenderTargetTexture(GraphBuilder);
+	}
+	
+	FRenderTarget* SceneCaptureRenderTarget = nullptr;
+};
 
 void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureComponent)
 {
@@ -823,7 +881,6 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 
 		const bool bUseSceneColorTexture = CaptureNeedsSceneColor(CaptureComponent->CaptureSource);
 		const bool bEnableOrthographicTiling = (CaptureComponent->GetEnableOrthographicTiling() && CaptureComponent->ProjectionType == ECameraProjectionMode::Orthographic && bUseSceneColorTexture);
-		bool bUseFauxOrthoViewPos = false;
 		if (CaptureComponent->GetEnableOrthographicTiling() && CaptureComponent->ProjectionType == ECameraProjectionMode::Orthographic && !bUseSceneColorTexture)
 		{
 			UE_LOG(LogRenderer, Warning, TEXT("SceneCapture - Orthographic and tiling with CaptureSource not using SceneColor (i.e FinalColor) not compatible. SceneCapture render will not be tiled"));
@@ -847,7 +904,6 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 			}
 			else
 			{
-				bUseFauxOrthoViewPos = CaptureComponent->bUseFauxOrthoViewPos;
 				if (bEnableOrthographicTiling)
 				{
 					BuildOrthoMatrix(CaptureSize, CaptureComponent->OrthoWidth, CaptureComponent->TileID, NumXTiles, NumYTiles, ProjectionMatrix);
@@ -860,6 +916,31 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 			}
 		}
 
+		// As optimization for depth capture modes, render scene capture as additional render passes inside the main renderer.
+		if (GSceneCaptureAllowRenderInMainRenderer && 
+			CaptureComponent->bRenderInMainRenderer && 
+			(CaptureComponent->CaptureSource == ESceneCaptureSource::SCS_SceneDepth || CaptureComponent->CaptureSource == ESceneCaptureSource::SCS_DeviceDepth)
+			)
+		{
+			FCustomRenderPassRendererInput PassInput;
+			PassInput.ViewLocation = ViewLocation;
+			PassInput.ViewRotationMatrix = ViewRotationMatrix;
+			PassInput.ProjectionMatrix = ProjectionMatrix;
+			PassInput.ViewActor = CaptureComponent->GetViewOwner();
+
+			FString DebugName = CaptureComponent->CaptureSource == ESceneCaptureSource::SCS_SceneDepth ? TEXT("SceneCapturePass_SceneDepth") : TEXT("SceneCapturePass_DeviceDepth");
+			FCustomRenderPassBase::ERenderOutput RenderOutput = CaptureComponent->CaptureSource == ESceneCaptureSource::SCS_SceneDepth ? FCustomRenderPassBase::ERenderOutput::SceneDepth : FCustomRenderPassBase::ERenderOutput::DeviceDepth;
+			FSceneCapturePass* CustomPass = new FSceneCapturePass(DebugName, FCustomRenderPassBase::ERenderMode::DepthPass, RenderOutput, TextureRenderTarget);
+			PassInput.CustomRenderPass = CustomPass;
+
+			GetShowOnlyAndHiddenComponents(CaptureComponent, PassInput.HiddenPrimitives, PassInput.ShowOnlyPrimitives);
+
+			// Caching scene capture info to be passed to the scene renderer.
+			// #todo: We cannot (yet) guarantee for which ViewFamily this CRP will eventually be rendered since it will just execute the next time the scene is rendered by any FSceneRenderer. This seems quite problematic and could easily lead to unexpected behavior...
+			AddCustomRenderPass(nullptr, PassInput);
+			return;
+		}
+
 		FSceneRenderer* SceneRenderer = CreateSceneRendererForSceneCapture(
 			this, 
 			CaptureComponent, 
@@ -868,7 +949,6 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 			ViewRotationMatrix, 
 			ViewLocation, 
 			ProjectionMatrix, 
-			bUseFauxOrthoViewPos,
 			CaptureComponent->MaxViewDistanceOverride, 
 			bUseSceneColorTexture,
 			&CaptureComponent->PostProcessSettings, 
@@ -879,7 +959,6 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 
 		SceneRenderer->Views[0].bFogOnlyOnRenderedOpaque = CaptureComponent->bConsiderUnrenderedOpaquePixelAsFullyTranslucent;
 
-		SceneRenderer->ViewFamily.SceneCaptureSource = CaptureComponent->CaptureSource;
 		SceneRenderer->ViewFamily.SceneCaptureCompositeMode = CaptureComponent->CompositeMode;
 
 		// Need view state interface to be allocated for Lumen, as it requires persistent data.  This means
@@ -896,25 +975,6 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 		else if (ViewStateInterface)
 		{
 			ViewStateInterface->RemoveLumenSceneData(this);
-		}
-
-		if(UseVirtualShadowMaps(SceneRenderer->ShaderPlatform, FeatureLevel))
-		{
-			// A separate VSM cache is added to the SceneCapture views. 
-			// This is needed to prevent the cache being invalidated on every frame.
-			// In a future iteration, it may be more efficient to share this cache with the main viewfamily.
-			if (ViewStateInterface)
-			{
-				ViewStateInterface->AddVirtualShadowMapCache(this);
-			}
-			else
-			{
-				GEngine->AddOnScreenDebugMessage((uint64)this, 10.0f, FColor::Yellow, TEXT("SceneCapture has no viewstate. This may affect Virtual Shadow Map caching performance. Consider enabling bAlwaysPersistRenderingState or bCaptureEveryFrame."));
-			}
-		}
-		else if (ViewStateInterface)
-		{
-			ViewStateInterface->RemoveVirtualShadowMapCache(this);
 		}
 
 		// Ensure that the views for this scene capture reflect any simulated camera motion for this frame
@@ -936,7 +996,7 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 				}
 				else
 				{
-					CaptureComponent->SceneViewExtensions.RemoveAt(Index, 1, false);
+					CaptureComponent->SceneViewExtensions.RemoveAt(Index, 1, EAllowShrinking::No);
 					--Index;
 				}
 			}
@@ -1027,6 +1087,8 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponent2D* CaptureCompone
 		{
 			Extension->BeginRenderViewFamily(SceneRenderer->ViewFamily);
 		}
+
+		UE::RenderCommandPipe::FSyncScope SyncScope;
 
 		ENQUEUE_RENDER_COMMAND(CaptureCommand)(
 			[SceneRenderer, TextureRenderTargetResource, TexturePtrNotDeferenced, EventName, TargetName, bGenerateMips, GenerateMipsParams, GameViewportRT, bEnableOrthographicTiling, bIsCompositing, bOrthographicCamera, NumXTiles, NumYTiles, TileID, CaptureMemorySize](FRHICommandListImmediate& RHICmdList)
@@ -1172,10 +1234,8 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponentCube* CaptureCompo
 
 			FSceneRenderer* SceneRenderer = CreateSceneRendererForSceneCapture(this, CaptureComponent,
 				TextureTarget->GameThread_GetRenderTargetResource(), CaptureSize, ViewRotationMatrix,
-				Location, ProjectionMatrix, false, CaptureComponent->MaxViewDistanceOverride,
+				Location, ProjectionMatrix, CaptureComponent->MaxViewDistanceOverride,
 				bCaptureSceneColor, &PostProcessSettings, 0, CaptureComponent->GetViewOwner(), faceidx);
-
-			SceneRenderer->ViewFamily.SceneCaptureSource = CaptureComponent->CaptureSource;
 
 			for (const FSceneViewExtensionRef& Extension : SceneRenderer->ViewFamily.ViewExtensions)
 			{
@@ -1202,6 +1262,8 @@ void FScene::UpdateSceneCaptureContents(USceneCaptureComponentCube* CaptureCompo
 			{
 				Extension->BeginRenderViewFamily(SceneRenderer->ViewFamily);
 			}
+
+			UE::RenderCommandPipe::FSyncScope SyncScope;
 
 			ENQUEUE_RENDER_COMMAND(CaptureCommand)(
 				[SceneRenderer, TextureRenderTarget, EventName, TargetFace](FRHICommandListImmediate& RHICmdList)

@@ -31,7 +31,7 @@ EActiveTimerReturnType SGraphPreviewer::RefreshGraphTimer(const double InCurrent
 void SGraphPreviewer::Construct( const FArguments& InArgs, UEdGraph* InGraphObj )
 {
 	EdGraphObj = InGraphObj;
-	NeedsRefreshCounter = 2;
+	NeedsRefreshCounter = 0;
 
 	TSharedPtr<SOverlay> DisplayStack;
 
@@ -43,10 +43,11 @@ void SGraphPreviewer::Construct( const FArguments& InArgs, UEdGraph* InGraphObj 
 		+SOverlay::Slot()
 		[
 			SAssignNew(GraphPanel, SGraphPanel)
-			.GraphObj( EdGraphObj )
-			.IsEditable( false )
+			.GraphObj(EdGraphObj)
+			.IsEditable(false)
 			.ShowGraphStateOverlay(InArgs._ShowGraphStateOverlay)
-			.InitialZoomToFit( true )
+			.InitialZoomToFit(true)
+			.OnUpdateGraphPanel(this, &SGraphPreviewer::OnUpdateGraphPanel)
 		]
 
 		// Bottom-right corner text indicating the type of tool
@@ -62,6 +63,7 @@ void SGraphPreviewer::Construct( const FArguments& InArgs, UEdGraph* InGraphObj 
 		]
 	];
 
+	// Note - this will also invoke OnUpdateGraphPanel (see below)
 	GraphPanel->Update();
 
 	// Add the title bar if specified
@@ -73,6 +75,14 @@ void SGraphPreviewer::Construct( const FArguments& InArgs, UEdGraph* InGraphObj 
 				InArgs._TitleBar.ToSharedRef()
 			];
 	}
+}
 
-	RegisterActiveTimer(0.0f, FWidgetActiveTimerDelegate::CreateSP(this, &SGraphPreviewer::RefreshGraphTimer));
+void SGraphPreviewer::OnUpdateGraphPanel()
+{
+	if (!NeedsRefreshCounter)
+	{
+		// As node's bounds don't get updated immediately, to truly zoom out to fit we need to tick a couple times
+		NeedsRefreshCounter = 2;
+		RegisterActiveTimer(0.0f, FWidgetActiveTimerDelegate::CreateSP(this, &SGraphPreviewer::RefreshGraphTimer));
+	}
 }

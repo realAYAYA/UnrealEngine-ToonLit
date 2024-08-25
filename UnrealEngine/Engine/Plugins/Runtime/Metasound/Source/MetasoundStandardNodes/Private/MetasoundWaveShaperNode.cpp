@@ -45,7 +45,7 @@ namespace Metasound
 
 		static const FNodeClassMetadata& GetNodeInfo();
 		static const FVertexInterface& GetVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		FWaveShaperOperator(const FOperatorSettings& InSettings, 
 			const FAudioBufferReadRef& InAudioInput, 
@@ -192,16 +192,15 @@ namespace Metasound
 		return Info;
 	}
 
-	TUniquePtr<IOperator> FWaveShaperOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FWaveShaperOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-		const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-		FAudioBufferReadRef AudioIn = InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InAudioInput), InParams.OperatorSettings);
-		FFloatReadRef InAmount = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InWaveShapeAmount), InParams.OperatorSettings);
-		FFloatReadRef InBias = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InWaveShapeBias), InParams.OperatorSettings);
-		FFloatReadRef OutGain = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InOutputGain), InParams.OperatorSettings);
-		FEnumWaveShaperReadRef InType = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumEWaveShaperType>(InputInterface, METASOUND_GET_PARAM_NAME(InType), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InAudioInput), InParams.OperatorSettings);
+		FFloatReadRef InAmount = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InWaveShapeAmount), InParams.OperatorSettings);
+		FFloatReadRef InBias = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InWaveShapeBias), InParams.OperatorSettings);
+		FFloatReadRef OutGain = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InOutputGain), InParams.OperatorSettings);
+		FEnumWaveShaperReadRef InType = InputData.GetOrCreateDefaultDataReadReference<FEnumEWaveShaperType>(METASOUND_GET_PARAM_NAME(InType), InParams.OperatorSettings);
 
 		return MakeUnique<FWaveShaperOperator>(InParams.OperatorSettings, AudioIn, InAmount, InBias, OutGain, InType);
 	}

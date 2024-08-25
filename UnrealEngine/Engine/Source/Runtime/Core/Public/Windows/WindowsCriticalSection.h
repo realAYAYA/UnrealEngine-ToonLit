@@ -60,6 +60,9 @@ public:
 
 	/**
 	 * Releases the lock on the critical section
+	 * 
+	 * Calling this when not locked is undefined behavior & may cause indefinite waiting on next lock.
+	 * See: https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-leavecriticalsection#remarks
 	 */
 	FORCEINLINE void Unlock()
 	{

@@ -128,7 +128,7 @@ namespace SwarmCoordinator
 				UpdatedInfo.Configuration["IPAddress"] = IPAddress.Loopback;
 				bool IPAddressUpdateSuccess = false;
 
-				if( UpdatedInfo.Name != Environment.MachineName )
+				if( UpdatedInfo.Name != System.Net.Dns.GetHostName())
 				{
 					try
 					{

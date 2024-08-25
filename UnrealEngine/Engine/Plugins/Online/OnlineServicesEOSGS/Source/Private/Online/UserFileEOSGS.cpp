@@ -3,6 +3,7 @@
 #include "Online/UserFileEOSGS.h"
 
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/AuthEOSGS.h"
 #include "Online/OnlineErrorEOSGS.h"
 #include "Online/OnlineIdEOSGS.h"
@@ -24,7 +25,7 @@ void FUserFileEOSGS::Initialize()
 {
 	Super::Initialize();
 
-	PlayerDataStorageHandle = EOS_Platform_GetPlayerDataStorageInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	PlayerDataStorageHandle = EOS_Platform_GetPlayerDataStorageInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(PlayerDataStorageHandle);
 }
 
@@ -53,8 +54,8 @@ TOnlineAsyncOpHandle<FUserFileEnumerateFiles> FUserFileEOSGS::EnumerateFiles(FUs
 			const FUserFileEnumerateFiles::Params& Params = Op.GetParams();
 
 			EOS_PlayerDataStorage_QueryFileListOptions Options = {};
-			Options.ApiVersion = 1;
-			UE_EOS_CHECK_API_MISMATCH(EOS_PLAYERDATASTORAGE_QUERYFILELISTOPTIONS_API_LATEST, 1);
+			Options.ApiVersion = 2;
+			UE_EOS_CHECK_API_MISMATCH(EOS_PLAYERDATASTORAGE_QUERYFILELISTOPTIONS_API_LATEST, 2);
 			Options.LocalUserId = GetProductUserIdChecked(Params.LocalAccountId);
 
 			EOS_Async(EOS_PlayerDataStorage_QueryFileList, PlayerDataStorageHandle, Options, MoveTemp(Promise));

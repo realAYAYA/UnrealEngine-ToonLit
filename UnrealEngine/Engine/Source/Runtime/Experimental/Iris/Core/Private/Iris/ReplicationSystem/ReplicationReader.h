@@ -8,6 +8,7 @@
 #include "Iris/ReplicationSystem/NetRefHandleManager.h"
 #include "Iris/ReplicationSystem/ObjectReferenceCache.h"
 #include "Iris/ReplicationSystem/ReplicationTypes.h"
+#include "Iris/ReplicationSystem/PendingBatchData.h"
 #include "Containers/Map.h"
 #include "Misc/MemStack.h"
 
@@ -67,6 +68,7 @@ private:
 		FakeInitChangeMaskOffset = 0xFFFFFFFFU,
 	};
 	typedef TMultiMap<uint32, FNetRefHandle> FObjectReferenceTracker;
+	typedef TArray<FNetRefHandle, TInlineAllocator<32>> FResolvedNetRefHandlesArray;
 
 	struct FReplicatedObjectInfo
 	{
@@ -114,41 +116,9 @@ private:
 		uint32 bDestroy : 1;
 		uint32 bTearOff : 1;
 		uint32 bDeferredEndReplication : 1;
+		uint32 bShouldCallSubObjectCreatedFromReplication : 1;
 	};
 
-	// Queued data chunk
-	struct FQueuedDataChunk
-	{
-		FQueuedDataChunk()
-		: StorageOffset(0U)
-		, NumBits(0U)
-		, bHasBatchOwnerData(0U)
-		, bIsEndReplicationChunk(0U)
-		{
-		}
-
-		uint32 StorageOffset;
-		uint32 NumBits : 30;
-		uint32 bHasBatchOwnerData : 1;
-		uint32 bIsEndReplicationChunk : 1;
-	};
-
-	// Struct to contain storage and required data for queued batches pending must be mapped references
-	struct FPendingBatchData
-	{
-		// We use a single array to store the actual data, it will grow if required.
-		TArray<uint32, TInlineAllocator<32>> DataChunkStorage;		
-		TArray<FQueuedDataChunk, TInlineAllocator<4>> QueuedDataChunks;
-
-		// Must be mapped references pending resolve
-		TArray<FNetRefHandle, TInlineAllocator<4>> PendingMustBeMappedReferences;
-
-		// Resolved references for which we have are holding on to references to avoid GC
-		TArray<FNetRefHandle, TInlineAllocator<4>> ResolvedReferences;
-
-		// Batch owner with queued data chunks
-		FNetRefHandle Handle;
-	};
 
 	enum : uint32
 	{
@@ -210,13 +180,13 @@ private:
 	FReplicatedObjectInfo* GetReplicatedObjectInfo(uint32 InternalIndex);
 
 	// Update reference tracking maps for the current object
-	void UpdateObjectReferenceTracking(FReplicatedObjectInfo* ReplicationInfo, FNetBitArrayView ChangeMask, bool bIncludeInitState, const FObjectReferenceTracker& NewUnresolvedReferences, const FObjectReferenceTracker& NewMappedDynamicReferences);
+	void UpdateObjectReferenceTracking(FReplicatedObjectInfo* ReplicationInfo, FNetBitArrayView ChangeMask, bool bIncludeInitState, FResolvedNetRefHandlesArray& OutNewResolvedRefHandles, const FObjectReferenceTracker& NewUnresolvedReferences, const FObjectReferenceTracker& NewMappedDynamicReferences);
 
 	// Remove all references for object
 	void CleanupReferenceTracking(FReplicatedObjectInfo* ObjectInfo);
 
 	// Update ReplicationInfo and OutUnresolvedChangeMask based on data collected by the Collector
-	void BuildUnresolvedChangeMaskAndUpdateObjectReferenceTracking(const FResolveAndCollectUnresolvedAndResolvedReferenceCollector& Collector, FNetBitArrayView CollectorChangeMask, FReplicatedObjectInfo* ReplicationInfo, FNetBitArrayView& OutUnresolvedChangeMask);
+	void BuildUnresolvedChangeMaskAndUpdateObjectReferenceTracking(const FResolveAndCollectUnresolvedAndResolvedReferenceCollector& Collector, FNetBitArrayView CollectorChangeMask, FReplicatedObjectInfo* ReplicationInfo, FNetBitArrayView& OutUnresolvedChangeMask, FResolvedNetRefHandlesArray& OutNewResolvedRefHandles);
 
 	void RemoveUnresolvedObjectReferenceInReplicationInfo(FReplicatedObjectInfo* ReplicationInfo, FNetRefHandle Handle);
 	void RemoveResolvedObjectReferenceInReplicationInfo(FReplicatedObjectInfo* ReplicationInfo, FNetRefHandle Handle);
@@ -228,11 +198,15 @@ private:
 	void DeserializeObjectStateDelta(FNetSerializationContext& Context, uint32 InternalIndex, FDispatchObjectInfo& Info, FReplicatedObjectInfo& ObjectInfo, const FNetRefHandleManager::FReplicatedObjectData& ObjectData, uint32& OutNewBaselineIndex);
 
 	// If async loading is enabled this function will verify if we can resolve all PendingMustBeMappedReferences
-	FReplicationReader::FPendingBatchData* UpdateUnresolvedMustBeMappedReferences(FNetRefHandle Handle, TArray<FNetRefHandle>& MustBeMappedReferences);
+	FPendingBatchData* UpdateUnresolvedMustBeMappedReferences(FNetRefHandle Handle, TArray<FNetRefHandle>& MustBeMappedReferences);
 
 	// If we are queuing data for a batch we must also defer calls to EndReplication
 	// This method writes this method in the form of a QueuedChunk
 	bool EnqueueEndReplication(FPendingBatchData* PendingBatchData, bool bShouldDestroyInstance, FNetRefHandle NetRefHandleToEndReplication);
+
+	// Remove a handle from the hot and cold unresolved caches used by ResolveAndDispatchUnresolvedReferences(). If this handle is marked as unresolved
+	// again, it will be added to the hot cache.
+	void RemoveFromUnresolvedCache(const FNetRefHandle Handle);
 	
 private:
 
@@ -249,6 +223,16 @@ private:
 	FNetRefHandleManager* NetRefHandleManager;
 	FReplicationStateStorage* StateStorage;
 	UReplicationBridge* ReplicationBridge;
+
+	// A cache holding unresolved handles that should be resolved each time ResolveAndDispatchUnresolvedReferences() is called.
+	TMap<FNetRefHandle, uint32> HotUnresolvedHandleCache;
+
+	// A cache holding unresolved handles that should be resolved by ResolveAndDispatchUnresolvedReferences() at fixed intervals.
+	TMap<FNetRefHandle, uint32> ColdUnresolvedHandleCache;
+
+	// Temporary buffers used by ResolveAndDispatchUnresolvedReferences().
+	TSet<FNetRefHandle> VisitedUnresolvedHandles;
+	TSet<uint32> InternalObjectsToResolve;
 
 	// We track some data about incoming objects
 	// Stored in a map for now
@@ -268,7 +252,10 @@ private:
 	TMultiMap<FNetRefHandle, uint32> ResolvedDynamicHandleToDependents;
 
 	// We do not expect to have many objects in this state
-	TArray<FPendingBatchData> PendingBatches;
+	FPendingBatches PendingBatches;
+
+	// We do not expect many objects to be broken
+	TArray<FNetRefHandle> BrokenObjects;
 
 	// Used during receive and processing of pending batches
 	TArray<FNetRefHandle> TempMustBeMappedReferences;

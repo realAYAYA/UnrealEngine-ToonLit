@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "CoreTypes.h"
 #include "Async/Async.h"
 #include "Async/Future.h"
 #include "Containers/Array.h"
@@ -10,6 +9,7 @@
 #include "Containers/Queue.h"
 #include "Containers/Set.h"
 #include "Containers/UnrealString.h"
+#include "CoreTypes.h"
 #include "Delegates/Delegate.h"
 #include "Delegates/DelegateBase.h"
 #include "Delegates/DelegateInstancesImpl.h"
@@ -20,10 +20,10 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformStackWalk.h"
 #include "HAL/PlatformTime.h"
+#include "HAL/PreprocessorHelpers.h"
 #include "HAL/ThreadSafeBool.h"
 #include "Internationalization/Regex.h"
 #include "Logging/LogVerbosity.h"
-#include "Math/Color.h"
 #include "Math/Color.h"
 #include "Math/MathFwd.h"
 #include "Math/Rotator.h"
@@ -47,7 +47,7 @@
 
 #include <atomic>
 
-DEFINE_LOG_CATEGORY_STATIC(LogLatentCommands, Log, All);
+CORE_API DECLARE_LOG_CATEGORY_EXTERN(LogLatentCommands, Log, All);
 class FAutomationTestBase;
 
 #ifndef WITH_AUTOMATION_TESTS
@@ -65,8 +65,10 @@ class FAutomationTestBase;
 		Info.LineNumber = 1;																				\
 	}
 
+// This macro allows for early exit of the executing unit test function when the condition is false
+// It explicitly uses the condition to ensure static analysis is happy with nullptr checks
 #ifndef UE_RETURN_ON_ERROR
-#define UE_RETURN_ON_ERROR(Condition, Message) if(!AddErrorIfFalse(Condition, Message)) return false;
+#define UE_RETURN_ON_ERROR(Condition, Message) const bool PREPROCESSOR_JOIN(UE____bCondition_Line_, __LINE__) = (Condition); AddErrorIfFalse(PREPROCESSOR_JOIN(UE____bCondition_Line_, __LINE__), (Message)); if(!PREPROCESSOR_JOIN(UE____bCondition_Line_, __LINE__)) return false
 #endif
 
 /**
@@ -602,12 +604,13 @@ public:
 
 struct FAutomationExpectedMessage
 {
-	// Original regular expression pattern string matching expected log message.
-	// NOTE: using the Exact comparison type wraps the pattern string with ^ and $ tokens,
-	// but the base pattern string is preserved to allow checks for duplicate entries.
+	// Original string pattern matching expected log message.
+	// If IsRegex is false, it is this string that is used to match.
+	// Otherwise MessagePatternRegex is set to a valid pointer of FRegexPattern.
+	// The base pattern string is preserved none the less to allow checks for duplicate entries.
 	FString MessagePatternString;
-	// Regular expression pattern for MessagePatternString
-	FRegexPattern MessagePattern;
+	// Regular expression pattern from MessagePatternString if regex option was true(default), otherwise it is not set.
+	TOptional<FRegexPattern> MessagePatternRegex;
 	// Type of comparison to perform on error log using MessagePattern.
 	EAutomationExpectedMessageFlags::MatchType CompareType;
 	/** 
@@ -622,28 +625,80 @@ struct FAutomationExpectedMessage
 	/**
 	* Constructor
 	*/
-	FAutomationExpectedMessage(FString& InMessagePattern, ELogVerbosity::Type InVerbosity, EAutomationExpectedMessageFlags::MatchType InCompareType, int32 InExpectedNumberOfOccurrences = 1)
+	FAutomationExpectedMessage(FString& InMessagePattern, ELogVerbosity::Type InVerbosity, EAutomationExpectedMessageFlags::MatchType InCompareType, int32 InExpectedNumberOfOccurrences = 1, bool IsRegex = true)
 		: MessagePatternString(InMessagePattern)
-		, MessagePattern((InCompareType == EAutomationExpectedMessageFlags::Exact) ? FString::Printf(TEXT("^%s$"), *InMessagePattern) : InMessagePattern)
 		, CompareType(InCompareType)
 		, ExpectedNumberOfOccurrences(InExpectedNumberOfOccurrences)
 		, ActualNumberOfOccurrences(0)
 		, Verbosity(InVerbosity)
-	{}
+	{
+		if (IsRegex)
+		{
+			MessagePatternRegex = FRegexPattern((InCompareType == EAutomationExpectedMessageFlags::Exact) ? FString::Printf(TEXT("^%s$"), *InMessagePattern) : InMessagePattern, ERegexPatternFlags::CaseInsensitive);
+		}		
+	}
 
 	FAutomationExpectedMessage(FString& InMessagePattern, ELogVerbosity::Type InVerbosity, int32 InExpectedNumberOfOccurrences)
 		: MessagePatternString(InMessagePattern)
-		, MessagePattern(InMessagePattern)
+		, MessagePatternRegex(FRegexPattern(InMessagePattern, ERegexPatternFlags::CaseInsensitive))
 		, CompareType(EAutomationExpectedMessageFlags::Contains)
 		, ExpectedNumberOfOccurrences(InExpectedNumberOfOccurrences)
 		, ActualNumberOfOccurrences(0)
 		, Verbosity(InVerbosity)
 	{}
+
+	inline bool IsRegex() const
+	{
+		return MessagePatternRegex.IsSet();
+	}
+
+	inline bool IsExactCompareType() const
+	{
+		return CompareType == EAutomationExpectedMessageFlags::Exact;
+	}
+
+	/// <summary>
+	/// Look if Message matches the expected message and increment internal counter if true.
+	/// </summary>
+	/// <param name="Message"></param>
+	/// <returns></returns>
+	bool Matches(const FString& Message)
+	{
+		bool HasMatch = false;
+		if (IsRegex())
+		{
+			FRegexMatcher MessageMatcher(MessagePatternRegex.GetValue(), Message);
+			HasMatch = MessageMatcher.FindNext();
+		}
+		else
+		{
+			HasMatch = Message.Contains(MessagePatternString) && (!IsExactCompareType() || Message.Len() == MessagePatternString.Len());
+		}
+		ActualNumberOfOccurrences += HasMatch;
+		return HasMatch;
+	}
+
+	bool operator==(const FAutomationExpectedMessage& Other) const
+	{
+		return MessagePatternString == Other.MessagePatternString;
+	}
+
+	bool operator<(const FAutomationExpectedMessage& Other) const
+	{
+		return MessagePatternString < Other.MessagePatternString;
+	}
+
 };
+
+FORCEINLINE uint32 GetTypeHash(const FAutomationExpectedMessage& Object)
+{
+	return GetTypeHash(Object.MessagePatternString);
+}
 
 struct FAutomationScreenshotData
 {
 	FString ScreenShotName;
+	FString VariantName;
 	FString Context;
 	FString TestName;
 	FString Notes;
@@ -693,8 +748,8 @@ struct FAutomationScreenshotData
 	bool bIgnoreAntiAliasing;
 	bool bIgnoreColors;
 
-	// Name of the screenshot generated from AutomationCommon::GetScreenShotName()
-	FString ScreenshotName;
+	// Path of the screenshot generated from AutomationCommon::GetScreenShotPath()
+	FString ScreenshotPath;
 
 	FAutomationScreenshotData()
 		: Id()
@@ -736,8 +791,47 @@ struct FAutomationScreenshotCompareResults
 	double GlobalDifference = 0.0;
 	bool bWasNew = false;
 	bool bWasSimilar = false;
+	FString IncomingFilePath;
+	FString ReportComparisonFilePath;
+	FString ReportApprovedFilePath;
+	FString ReportIncomingFilePath;
+	FString ScreenshotPath;
 
-	CORE_API FAutomationEvent ToAutomationEvent(const FString& ScreenhotName) const;
+	FAutomationScreenshotCompareResults()
+		: UniqueId()
+		, MaxLocalDifference(0.0)
+		, GlobalDifference(0.0)
+		, bWasNew(false)
+		, bWasSimilar(false)
+	{ }
+
+	FAutomationScreenshotCompareResults(
+		FGuid InUniqueId,
+		FString InErrorMessage,
+		double InMaxLocalDifference,
+		double InGlobalDifference,
+		bool InWasNew,
+		bool InWasSimilar,
+		FString InIncomingFilePath,
+		FString InReportComparisonFilePath,
+		FString InReportApprovedFilePath,
+		FString InReportIncomingFilePath,
+		FString InScreenshotPath
+	)
+		: UniqueId(InUniqueId)
+		, ErrorMessage(InErrorMessage)
+		, MaxLocalDifference(InMaxLocalDifference)
+		, GlobalDifference(InGlobalDifference)
+		, bWasNew(InWasNew)
+		, bWasSimilar(InWasSimilar)
+		, IncomingFilePath(InIncomingFilePath)
+		, ReportComparisonFilePath(InReportComparisonFilePath)
+		, ReportApprovedFilePath(InReportApprovedFilePath)
+		, ReportIncomingFilePath(InReportIncomingFilePath)
+		, ScreenshotPath(InScreenshotPath)
+	{ }
+
+	CORE_API FAutomationEvent ToAutomationEvent() const;
 };
 
 enum class EAutomationComparisonToleranceLevel : uint8
@@ -807,11 +901,15 @@ DECLARE_DELEGATE_ThreeParams(FOnTestScreenshotAndTraceCaptured, const TArray<FCo
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnTestScreenshotComparisonComplete, const FAutomationScreenshotCompareResults& /*CompareResults*/);
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnTestScreenshotComparisonReport, const FAutomationScreenshotCompareResults& /*CompareResults*/);
+
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnTestDataRetrieved, bool /*bWasNew*/, const FString& /*JsonData*/);
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnPerformanceDataRetrieved, bool /*bSuccess*/, const FString& /*ErrorMessage*/);
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnTestEvent, FAutomationTestBase*);
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnTestSectionEvent, const FString& /*Section*/);
 
 /** Class representing the main framework for running automation tests */
 class FAutomationTestFramework
@@ -832,6 +930,9 @@ public:
 	/** Called when a screenshot comparison completes. */
 	FOnTestScreenshotComparisonComplete OnScreenshotCompared;
 
+	/** Called when a screenshot comparison result is reported */
+	FOnTestScreenshotComparisonReport OnScreenshotComparisonReport;
+
 	/** Called when the test data is retrieved. */
 	FOnTestDataRetrieved OnTestDataRetrieved;
 
@@ -840,6 +941,22 @@ public:
 
 	/** The final call related to screenshots, after they've been taken, and after they've been compared (or not if automation isn't running). */
 	FSimpleMulticastDelegate OnScreenshotTakenAndCompared;
+
+	/** Called before all chosen tests run. */
+	FSimpleMulticastDelegate OnBeforeAllTestsEvent;
+
+	/** Called after all chosen tests run have finished. */
+	FSimpleMulticastDelegate OnAfterAllTestsEvent;
+
+	/** Called entering test section. */
+	CORE_API FOnTestSectionEvent& GetOnEnteringTestSection(const FString& Section);
+	CORE_API void TriggerOnEnteringTestSection(const FString& Section) const;
+	CORE_API bool IsAnyOnEnteringTestSectionBound() const;
+
+	/** Called leaving test section. */
+	CORE_API FOnTestSectionEvent& GetOnLeavingTestSection(const FString& Section);
+	CORE_API void TriggerOnLeavingTestSection(const FString& Section) const;
+	CORE_API bool IsAnyOnLeavingTestSectionBound() const;
 
 	/**
 	 * Return the singleton instance of the framework.
@@ -916,8 +1033,9 @@ public:
 	 *
 	 * @param	InTestToRun			Name of the test that should be run
 	 * @param	InRoleIndex			Identifier for which worker in this group that should execute a command
+	 * @param	InFullTestPath		Full test path
 	 */
-	CORE_API void StartTestByName( const FString& InTestToRun, const int32 InRoleIndex );
+	CORE_API void StartTestByName( const FString& InTestToRun, const int32 InRoleIndex, const FString& InFullTestPath = FString() );
 
 	/**
 	 * Stop the current test and return the results of execution
@@ -1032,6 +1150,14 @@ public:
 	}
 
 	/**
+	 * Returns the actively executing test full path
+	 */
+	FString GetCurrentTestFullPath() const
+	{
+		return CurrentTestFullPath;
+	}
+
+	/**
 	 * Whether to skip stack walk while iterating for listing the tests
 	 */
 	static CORE_API bool NeedSkipStackWalk();
@@ -1041,7 +1167,26 @@ public:
 	 */
 	static CORE_API bool NeedLogBPTestMetadata();
 
+	/**
+	 * Whether to also run stereo test variants for screenshot functional tests
+	 */
+	static CORE_API bool NeedPerformStereoTestVariants();
+
+	/**
+	 * Whether to skip variants when the baseline test fails, and skip saving screenshots for successful variants
+	 */
+	static CORE_API bool NeedUseLightweightStereoTestVariants();
+
+	/**
+	 * Notify that the screenshot comparison has completed
+	 */
 	CORE_API void NotifyScreenshotComparisonComplete(const FAutomationScreenshotCompareResults& CompareResults);
+
+	/**
+	 * Notify the screenshot comparison report to the framework
+	 */
+	CORE_API void NotifyScreenshotComparisonReport(const FAutomationScreenshotCompareResults& CompareResults);
+
 	CORE_API void NotifyTestDataRetrieved(bool bWasNew, const FString& JsonData);
 	CORE_API void NotifyPerformanceDataRetrieved(bool bSuccess, const FString& ErrorMessage);
 
@@ -1104,12 +1249,6 @@ private:
 	private:
 		/** Associated automation test; all warnings, errors, etc. are routed to the automation test to track */
 		std::atomic<FAutomationTestBase*>CurTest;
-
-		/** Critical section */
-		FCriticalSection ActionCS;
-
-		/** Tests that we've logged the failure cause when an error is involved */
-		TSet<FAutomationTestBase*> LoggedFailureCause;
 	};
 
 	 /** Special feedback context used during automated testing to filter messages that happen during tests */
@@ -1173,7 +1312,7 @@ private:
 	 private:
 		 std::atomic<FAutomationTestBase*> CurTest;
 		 std::atomic<FFeedbackContext*> DestinationContext;
-		 FCriticalSection ActionCS;;
+		 FCriticalSection ActionCS;
 	 };
 
 	friend class FAutomationTestOutputDevice;
@@ -1195,9 +1334,9 @@ private:
 	 * Internal helper method designed to simply start the provided test name.
 	 *
 	 * @param	InTestToRun			Name of the test that should be run
-	 * @param	OutExecutionInfo	Results of executing the test
+	 * @param	InFullTestPath		Full test path
 	 */
-	CORE_API void InternalStartTest( const FString& InTestToRun );
+	CORE_API void InternalStartTest( const FString& InTestToRun, const FString& InFullTestPath );
 
 	/**
 	 * Internal helper method designed to stop current executing test and return the results of execution.
@@ -1249,6 +1388,9 @@ private:
 	/** Copy of the parameters for the active test */
 	FString Parameters;
 
+	/** Full test path as given by the automation controller of the active test */
+	FString CurrentTestFullPath;
+
 	/** Whether we want to run automation tests on content within the Developer Directories */
 	bool bDeveloperDirectoryIncluded;
 
@@ -1265,6 +1407,9 @@ private:
 	bool bForceSmokeTests;
 
 	bool bCaptureStack;
+
+	TMap<FString, FOnTestSectionEvent> OnEnteringTestSectionEvent;
+	TMap<FString, FOnTestSectionEvent> OnLeavingTestSectionEvent;
 };
 
 /** Simple abstract base class for all automation tests */
@@ -1312,9 +1457,18 @@ public:
 	FString GetTestContext() const { return TestParameterContext; }
 
 	/**
+	* Returns the beautified test name
+	*/
+	virtual FString GetBeautifiedTestName() const = 0;
+
+	/**
 	 * Returns the beautified test name with test context. Should return what is displayed in the Test Automation UI. See GenerateTestNames()
 	 */
 	virtual FString GetTestFullName() const {
+		if (FAutomationTestFramework::Get().GetCurrentTest() == this)
+		{
+			return FAutomationTestFramework::Get().GetCurrentTestFullPath();
+		}
 		if (GetTestContext().IsEmpty()) { return GetBeautifiedTestName(); }
 		return FString::Printf(TEXT("%s.%s"), *GetBeautifiedTestName(), *GetTestContext());
 	}
@@ -1352,6 +1506,7 @@ public:
 	 * @param	InFilename	The filename the error originated in
 	 * @param	InLineNumber	The line number in the file this error originated in
 	 */
+	UE_DEPRECATED(5.4, "Please use AddError instead.")
 	CORE_API virtual void AddErrorS(const FString& InError, const FString& InFilename, int32 InLineNumber);
 
 	/**
@@ -1361,6 +1516,7 @@ public:
 	 * @param	InFilename	The filename the error originated in
 	 * @param	InLineNumber	The line number in the file this error originated in
 	 */
+	UE_DEPRECATED(5.4, "Please use AddWarning instead.")
 	CORE_API virtual void AddWarningS(const FString& InWarning, const FString& InFilename, int32 InLineNumber);
 
 	/**
@@ -1480,14 +1636,28 @@ public:
 	* Adds a regex pattern to an internal list that this test will expect to encounter in logs (of the specified verbosity) during its execution. If an expected pattern
 	* is not encountered, it will cause this test to fail.
 	*
-	* @param ExpectedPatternString - The expected message string. Supports basic regex patterns.
+	* @param ExpectedPatternString - The expected message string. Supports basic regex patterns if IsRegex is set to true (the default).
+	* @param ExpectedVerbosity - The expected message verbosity. This is treated as a minimum requirement, so for example the Warning level will intercept Warnings, Errors and Fatal.
+	* @param CompareType - How to match this string with an encountered message, should it match exactly or simply just contain the string.
+	* @param Occurrences - How many times to expect this message string to be seen. If > 0, the message must be seen the exact number of times
+	* specified or the test will fail. If == 0, the message must be seen one or more times (with no upper limit) or the test will fail.
+	* @param IsRegex - If the pattern is to be used as regex or plain string. Default is true.
+	*/
+	CORE_API void AddExpectedMessage(FString ExpectedPatternString, ELogVerbosity::Type ExpectedVerbosity, EAutomationExpectedMessageFlags::MatchType CompareType = EAutomationExpectedMessageFlags::Contains, int32 Occurrences = 1, bool IsRegex = true);
+
+	/**
+
+	* Adds a plain string to an internal list that this test will expect to encounter in logs (of the specified verbosity) during its execution. If an expected pattern
+	* is not encountered, it will cause this test to fail.
+	*
+	* @param ExpectedString - The expected message string.
 	* @param ExpectedVerbosity - The expected message verbosity. This is treated as a minimum requirement, so for example the Warning level will intercept Warnings, Errors and Fatal.
 	* @param CompareType - How to match this string with an encountered message, should it match exactly or simply just contain the string.
 	* @param Occurrences - How many times to expect this message string to be seen. If > 0, the message must be seen the exact number of times
 	* specified or the test will fail. If == 0, the message must be seen one or more times (with no upper limit) or the test will fail.
 	*/
-	CORE_API void AddExpectedMessage(FString ExpectedPatternString, ELogVerbosity::Type ExpectedVerbosity, EAutomationExpectedMessageFlags::MatchType CompareType = EAutomationExpectedMessageFlags::Contains, int32 Occurrences = 1);
-	
+	CORE_API void AddExpectedMessagePlain(FString ExpectedString, ELogVerbosity::Type ExpectedVerbosity, EAutomationExpectedMessageFlags::MatchType CompareType = EAutomationExpectedMessageFlags::Contains, int32 Occurrences = 1);
+
 	/**
 	* Adds a regex pattern to an internal list that this test will expect to encounter in logs (of all severities) during its execution. If an expected pattern
 	* is not encountered, it will cause this test to fail.
@@ -1496,8 +1666,21 @@ public:
 	* @param CompareType - How to match this string with an encountered message, should it match exactly or simply just contain the string.
 	* @param Occurrences - How many times to expect this message string to be seen. If > 0, the message must be seen the exact number of times
 	* specified or the test will fail. If == 0, the message must be seen one or more times (with no upper limit) or the test will fail.
+	* @param IsRegex - If the pattern is to be used as regex or plain string. Default is true.
 	*/
-	CORE_API void AddExpectedMessage(FString ExpectedPatternString, EAutomationExpectedMessageFlags::MatchType CompareType = EAutomationExpectedMessageFlags::Contains, int32 Occurrences = 1);
+	CORE_API void AddExpectedMessage(FString ExpectedPatternString, EAutomationExpectedMessageFlags::MatchType CompareType = EAutomationExpectedMessageFlags::Contains, int32 Occurrences = 1, bool IsRegex = true);
+
+	/**
+	* Adds a plain string to an internal list that this test will expect to encounter in logs (of all severities) during its execution. If an expected pattern
+	* is not encountered, it will cause this test to fail.
+	*
+	* @param ExpectedString - The expected message string.
+	* @param CompareType - How to match this string with an encountered message, should it match exactly or simply just contain the string.
+	* @param Occurrences - How many times to expect this message string to be seen. If > 0, the message must be seen the exact number of times
+	* specified or the test will fail. If == 0, the message must be seen one or more times (with no upper limit) or the test will fail.
+	*/
+	CORE_API void AddExpectedMessagePlain(FString ExpectedString, EAutomationExpectedMessageFlags::MatchType CompareType = EAutomationExpectedMessageFlags::Contains, int32 Occurrences = 1);
+
 
 	/**
 	* Populate the provided expected log messages object with the expected messages contained within the test. Not particularly efficient,
@@ -1515,8 +1698,20 @@ public:
 	* @param CompareType - How to match this string with an encountered error, should it match exactly or simply just contain the string.
 	* @param Occurrences - How many times to expect this error string to be seen. If > 0, the error must be seen the exact number of times
 	* specified or the test will fail. If == 0, the error must be seen one or more times (with no upper limit) or the test will fail.
+	* @param IsRegex - If the pattern is to be used as regex or plain string. Default is true.
 	*/
-	CORE_API void AddExpectedError(FString ExpectedPatternString, EAutomationExpectedErrorFlags::MatchType CompareType = EAutomationExpectedErrorFlags::Contains, int32 Occurrences = 1);
+	CORE_API void AddExpectedError(FString ExpectedPatternString, EAutomationExpectedErrorFlags::MatchType CompareType = EAutomationExpectedErrorFlags::Contains, int32 Occurrences = 1, bool IsRegex = true);
+
+	/**
+	* Adds a plain string to an internal list that this test will expect to encounter in error or warning logs during its execution. If an expected pattern
+	* is not encountered, it will cause this test to fail.
+	*
+	* @param ExpectedString - The expected message string.
+	* @param CompareType - How to match this string with an encountered error, should it match exactly or simply just contain the string.
+	* @param Occurrences - How many times to expect this error string to be seen. If > 0, the error must be seen the exact number of times
+	* specified or the test will fail. If == 0, the error must be seen one or more times (with no upper limit) or the test will fail.
+	*/
+	CORE_API void AddExpectedErrorPlain(FString ExpectedString, EAutomationExpectedErrorFlags::MatchType CompareType = EAutomationExpectedErrorFlags::Contains, int32 Occurrences = 1);
 
 	/**
 	 * Is this a complex tast - if so it will be a stress test.
@@ -1649,6 +1844,7 @@ public:
 	CORE_API bool TestEqual(const TCHAR* What, const FLinearColor Actual, const FLinearColor Expected);
 	CORE_API bool TestEqual(const TCHAR* What, const TCHAR* Actual, const TCHAR* Expected);
 	CORE_API bool TestEqualInsensitive(const TCHAR* What, const TCHAR* Actual, const TCHAR* Expected);
+	CORE_API bool TestNotEqualInsensitive(const TCHAR* What, const TCHAR* Actual, const TCHAR* Expected);
 
 	bool TestEqual(const FString& What, const int32 Actual, const int32 Expected)
 	{
@@ -1794,27 +1990,28 @@ public:
 	}
 
 	/**
-	 * Logs an error if the given shared pointer is valid.
+	 * Logs an error if the given object tests true when calling its IsValid member.
 	 *
 	 * @param Description - Description text for the test.
-	 * @param SharedPointer - The shared pointer to test.
+	 * @param Value - The value to test.
 	 *
 	 * @see TestValid
 	 */
 	template<typename ValueType>
-	FORCEINLINE bool TestInvalid(const TCHAR* Description, const TSharedPtr<ValueType>& SharedPointer)
+	FORCEINLINE bool TestInvalid(const TCHAR* Description, const ValueType& Value)
 	{
-		if (SharedPointer.IsValid())
+		if (Value.IsValid())
 		{
-			AddError(FString::Printf(TEXT("%s: The shared pointer is valid."), Description));
+			AddError(FString::Printf(TEXT("%s: The value is valid (.IsValid() returned true)."), Description));
 			return false;
 		}
 		return true;
 	}
 
-	template<typename ValueType> bool TestInvalid(const FString& Description, const TSharedPtr<ValueType>& SharedPointer)
+	template<typename ValueType>
+	bool TestInvalid(const FString& Description, const ValueType& Value)
 	{
-		return TestInvalid(*Description, SharedPointer);
+		return TestInvalid(*Description, Value);
 	}
 
 	/**
@@ -1950,27 +2147,28 @@ public:
 	#define TestTrueExpr(Expression) TestTrue(TEXT(#Expression), Expression)
 
 	/**
-	 * Logs an error if the given shared pointer is not valid.
+	 * Logs an error if the given object returns false when calling its IsValid member.
 	 *
 	 * @param Description - Description text for the test.
-	 * @param SharedPointer - The shared pointer to test.
+	 * @param Value - The value to test.
 	 *
 	 * @see TestInvalid
 	 */
 	template<typename ValueType>
-	FORCEINLINE bool TestValid(const TCHAR* Description, const TSharedPtr<ValueType>& SharedPointer)
+	FORCEINLINE bool TestValid(const TCHAR* Description, const ValueType& Value)
 	{
-		if (!SharedPointer.IsValid())
+		if (!Value.IsValid())
 		{
-			AddError(FString::Printf(TEXT("%s: The shared pointer is not valid."), Description));
+			AddError(FString::Printf(TEXT("%s: The value is not valid (.IsValid() returned false)."), Description));
 			return false;
 		}
 		return true;
 	}
 
-	template<typename ValueType> bool TestValid(const FString& Description, const TSharedPtr<ValueType>& SharedPointer)
+	template<typename ValueType>
+	bool TestValid(const FString& Description, const ValueType& Value)
 	{
-		return TestValid(*Description, SharedPointer);
+		return TestValid(*Description, Value);
 	}
 
 protected:
@@ -1989,11 +2187,6 @@ protected:
 	 * @return TRUE if the test was run successfully; FALSE otherwise
 	 */
 	virtual bool RunTest(const FString& Parameters)=0;
-
-	/**
-	 * Returns the beautified test name
-	 */
-	virtual FString GetBeautifiedTestName() const = 0;
 
 	/** Sets the parameter context of the test. */
 	virtual void SetTestContext(FString Context) { TestParameterContext = Context; }
@@ -2041,10 +2234,10 @@ private:
 	CORE_API void InternalSetSuccessState(bool bSuccessful);
 
 	/* Log messages to be expected while processing this test.*/
-	TArray<FAutomationExpectedMessage> ExpectedMessages;
+	TSet<FAutomationExpectedMessage> ExpectedMessages;
 
 	/** Critical section lock */
-	FCriticalSection ActionCS;
+	FRWLock ActionCS;
 };
 
 class FBDDAutomationTestBase : public FAutomationTestBase
@@ -3101,12 +3294,12 @@ private:
 		return CompleteId;
 	}
 
-	static TArray<FProgramCounterSymbolInfo> StackWalk()
+	static TArray<FProgramCounterSymbolInfo> StackWalk(int32 IgnoreCount, int32 MaxDepth)
 	{
 		QUICK_SCOPE_CYCLE_COUNTER(STAT_FAutomationSpecBase_StackWalk);
 
 		LLM_SCOPE_BYNAME(TEXT("AutomationTest/Framework"));
-		SAFE_GETSTACK(Stack, 1, 1);
+		SAFE_GETSTACK(Stack, IgnoreCount, MaxDepth);
 		return Stack;
 	}
 
@@ -3128,18 +3321,13 @@ private:
 	{
 		QUICK_SCOPE_CYCLE_COUNTER(STAT_FAutomationSpecBase_GetStack);
 
-		static bool CurrentNeedSkipStackWalk(FAutomationTestFramework::NeedSkipStackWalk());
-		static TSharedRef<TArray<FProgramCounterSymbolInfo>> Stack = MakeShared<TArray<FProgramCounterSymbolInfo>>(
-			CurrentNeedSkipStackWalk ? SkipStackWalk() : StackWalk());
-
-		if (CurrentNeedSkipStackWalk != FAutomationTestFramework::NeedSkipStackWalk())
-		{
-			// This block is to react on changes of corresponding configuration variable */
-			CurrentNeedSkipStackWalk = !CurrentNeedSkipStackWalk;
-			Stack = MakeShared<TArray<FProgramCounterSymbolInfo>>(
-				CurrentNeedSkipStackWalk ? SkipStackWalk() : StackWalk());
-		}
+		const bool NeedSkipStackWalk(FAutomationTestFramework::NeedSkipStackWalk());
+		constexpr int32 IgnoreCount(3);
+		constexpr int32 MaxDepth(1);
 		
+		TSharedRef<TArray<FProgramCounterSymbolInfo>> Stack = MakeShared<TArray<FProgramCounterSymbolInfo>>(
+			NeedSkipStackWalk ? SkipStackWalk() : StackWalk(IgnoreCount, MaxDepth));
+
 		return Stack;
 	}
 
@@ -3745,6 +3933,18 @@ public: \
 		return false;\
 	}
 
+#define UTEST_NOT_EQUAL_INSENSITIVE(What, Actual, Expected)\
+	if (!TestNotEqualInsensitive(What, Actual, Expected))\
+	{\
+		return false;\
+	}
+
+#define UTEST_NOT_EQUAL_INSENSITIVE_EXPR(Actual, Expected)\
+	if (!TestNotEqualInsensitive(TEXT(#Actual), Actual, Expected))\
+	{\
+		return false;\
+	}
+
 #define UTEST_NOT_EQUAL(What, Actual, Expected)\
 	if (!TestNotEqual(What, Actual, Expected))\
 	{\
@@ -3805,26 +4005,26 @@ public: \
 		return false;\
 	}
 
-#define UTEST_VALID(What, SharedPointer)\
-	if (!TestValid(What, SharedPointer))\
+#define UTEST_VALID(What, Value)\
+	if (!TestValid(What, Value))\
 	{\
 		return false;\
 	}
 
-#define UTEST_VALID_EXPR(SharedPointer)\
-	if (!TestValid(TEXT(#SharedPointer), SharedPointer))\
+#define UTEST_VALID_EXPR(Value)\
+	if (!TestValid(TEXT(#Value), Value))\
 	{\
 		return false;\
 	}
 
-#define UTEST_INVALID(What, SharedPointer)\
-	if (!TestInvalid(What, SharedPointer))\
+#define UTEST_INVALID(What, Value)\
+	if (!TestInvalid(What, Value))\
 	{\
 		return false;\
 	}
 
-#define UTEST_INVALID_EXPR(SharedPointer)\
-	if (!TestInvalid(TEXT(#SharedPointer), SharedPointer))\
+#define UTEST_INVALID_EXPR(Value)\
+	if (!TestInvalid(TEXT(#Value), Value))\
 	{\
 		return false;\
 	}
@@ -3845,7 +4045,8 @@ public: \
 	if (!TestNotNull(What, Pointer))\
 	{\
 		return false;\
-	}
+	}\
+	CA_ASSUME(Pointer);
 
 #define UTEST_NOT_NULL_EXPR(Pointer)\
 	if (!TestNotNull(TEXT(#Pointer), Pointer))\

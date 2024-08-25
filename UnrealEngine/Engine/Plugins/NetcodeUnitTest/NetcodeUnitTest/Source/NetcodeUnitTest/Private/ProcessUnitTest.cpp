@@ -633,7 +633,7 @@ void UProcessUnitTest::PollProcessOutput()
 			{
 				if (MaxPipeDelay - PipeCounter > 0.0)
 				{
-					FPlatformProcess::SleepNoStats(CurPipeDelay);
+					FPlatformProcess::SleepNoStats(static_cast<float>(CurPipeDelay));
 
 					PipeCounter += CurPipeDelay;
 				}

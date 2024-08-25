@@ -10,7 +10,6 @@
 #include "MuCOE/Nodes/CustomizableObjectNodeLayoutBlocks.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMesh.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeTable.h"
-#include "MuT/NodeLayout.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
@@ -19,12 +18,7 @@ UCustomizableObjectLayout::UCustomizableObjectLayout()
 	GridSize = FIntPoint(4, 4);
 	MaxGridSize = FIntPoint(4, 4);
 
-	FCustomizableObjectLayoutBlock Block;
-	Block.Min = FIntPoint(0, 0);
-	Block.Max = FIntPoint(4, 4);
-	Block.Id = FGuid::NewGuid();
-	Block.Priority = 0;
-	Block.bUseSymmetry = false;
+	FCustomizableObjectLayoutBlock Block(FIntPoint(0, 0), FIntPoint(4, 4));
 	Blocks.Add(Block);
 
 	PackingStrategy = ECustomizableObjectTextureLayoutPackingStrategy::Resizable;
@@ -44,6 +38,32 @@ void UCustomizableObjectLayout::SetLayout(UObject* InMesh, int32 LODIndex, int32
 void UCustomizableObjectLayout::SetPackingStrategy(ECustomizableObjectTextureLayoutPackingStrategy Strategy)
 {
 	PackingStrategy = Strategy;
+}
+
+
+mu::EPackStrategy ConvertLayoutStrategy(const ECustomizableObjectTextureLayoutPackingStrategy LayoutPackStrategy)
+{
+	mu::EPackStrategy PackStrategy = mu::EPackStrategy::FIXED_LAYOUT;
+
+	switch (LayoutPackStrategy)
+	{
+	case ECustomizableObjectTextureLayoutPackingStrategy::Fixed:
+		PackStrategy = mu::EPackStrategy::FIXED_LAYOUT;
+		break;
+
+	case ECustomizableObjectTextureLayoutPackingStrategy::Resizable:
+		PackStrategy = mu::EPackStrategy::RESIZABLE_LAYOUT;
+		break;
+
+	case ECustomizableObjectTextureLayoutPackingStrategy::Overlay:
+		PackStrategy = mu::EPackStrategy::OVERLAY_LAYOUT;
+		break;
+
+	default:
+		checkNoEntry();
+	}
+
+	return PackStrategy;
 }
 
 
@@ -119,12 +139,7 @@ void UCustomizableObjectLayout::GenerateBlocksFromUVs()
 		
 				Layout->GetLayout()->GetBlock(i, &minX, &minY, &sizeX, &sizeY);
 		
-				FCustomizableObjectLayoutBlock block;
-				block.Min = FIntPoint(minX, minY);
-				block.Max = FIntPoint(minX + sizeX, minY + sizeY);
-				block.Id = FGuid::NewGuid();
-				block.Priority = 0;
-				block.bUseSymmetry = false;
+				FCustomizableObjectLayoutBlock block(FIntPoint(minX, minY), FIntPoint(minX + sizeX, minY + sizeY));
 				Blocks.Add(block);
 			}
 		

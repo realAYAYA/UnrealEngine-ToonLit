@@ -42,7 +42,7 @@ namespace UE::PixelStreaming
 	{
 		FPixelCaptureFrameMetadata& FrameMetadata = Frame.Metadata;
 		FrameMetadata.UseCount++;
-		FrameMetadata.LastEncodeStartTime = FPlatformTime::Cycles64();
+		FrameMetadata.LastEncodeStartTime = rtc::TimeMillis();
 		if (FrameMetadata.UseCount == 1)
 		{
 			FrameMetadata.FirstEncodeStartTime = FrameMetadata.LastEncodeStartTime;
@@ -52,7 +52,7 @@ namespace UE::PixelStreaming
 	void FVideoEncoderSingleLayerVPX::UpdateFrameMetadataPostEncode(IPixelCaptureOutputFrame& Frame)
 	{
 		FPixelCaptureFrameMetadata& FrameMetadata = Frame.Metadata;
-		FrameMetadata.LastEncodeEndTime = FPlatformTime::Cycles64();
+		FrameMetadata.LastEncodeEndTime = rtc::TimeMillis();
 
 		FStats::Get()->AddFrameTimingStats(FrameMetadata);
 	}

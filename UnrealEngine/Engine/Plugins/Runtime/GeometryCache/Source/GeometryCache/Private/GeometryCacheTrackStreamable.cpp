@@ -34,7 +34,7 @@ void UGeometryCacheTrackStreamable::TriggerSerializationCrash()
 	const int64 AssetSize = 1024 * 1024 * 1024ll; // 1 Gig for the individual asset
 
 	// Add enough bulk data chunks to the requested size
-	const int32 NumChunks = FMath::DivideAndRoundUp(BulkDataSize, ChunkDataSize);
+	const int32 NumChunks = static_cast<int32>(FMath::DivideAndRoundUp(BulkDataSize, ChunkDataSize));
 	for ( int Count=0; Count<NumChunks;Count++)
 	{
 		// Create a new chunk for this coded frame
@@ -52,7 +52,7 @@ void UGeometryCacheTrackStreamable::TriggerSerializationCrash()
 	}
 
 	// Add enough sample info objects to blow the asset up to the requested size
-	int64 NumSamplesToAdd = FMath::DivideAndRoundUp(AssetSize, (int64)sizeof(FGeometryCacheTrackStreamableSampleInfo));
+	const int32 NumSamplesToAdd = static_cast<int32>(FMath::DivideAndRoundUp(AssetSize, (int64)sizeof(FGeometryCacheTrackStreamableSampleInfo)));
 	Track->Samples.AddUninitialized(NumSamplesToAdd);
 
 	FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
@@ -404,7 +404,7 @@ void UGeometryCacheTrackStreamable::GetChunksForTimeRange(float StartTime, float
 
 	for (int32 ChunkID = 0; ChunkID <Chunks.Num(); ChunkID++)
 	{
-		if (Chunks[ChunkID].FirstFrame <= LastFrame && Chunks[ChunkID].LastFrame >= FirstFrame)
+		if (Chunks[ChunkID].FirstFrame <= static_cast<float>(LastFrame) && Chunks[ChunkID].LastFrame >= static_cast<float>(FirstFrame))
 		{
 			OutChunkIndexes.Add(ChunkID);
 		}
@@ -551,10 +551,19 @@ bool UGeometryCacheTrackStreamable::GetMeshDataAtTime(float Time, FGeometryCache
 		return false;
 	}
 
+	const int32 SampleIndex = FindSampleIndexFromTime(Time, false);
+	return GetMeshDataAtSampleIndex(SampleIndex, OutMeshData);
+}
+
+bool UGeometryCacheTrackStreamable::GetMeshDataAtSampleIndex(int32 SampleIndex, FGeometryCacheMeshData& OutMeshData)
+{
+	if (!Codec || !Samples.IsValidIndex(SampleIndex))
+	{
+		return false;
+	}
+
 	// Fetch the mesh data directly bypassing the GeometryCacheStreamingManager
 	FStreamingGeometryCacheData Data(this);
-
-	const int32 SampleIndex = FindSampleIndexFromTime(Time, false);
 	Data.AddNeededChunk(SampleIndex);
 	Data.UpdateStreamingStatus();
 	Data.BlockTillAllRequestsFinished();

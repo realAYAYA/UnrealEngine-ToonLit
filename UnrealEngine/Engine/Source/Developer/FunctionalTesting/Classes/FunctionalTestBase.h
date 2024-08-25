@@ -8,10 +8,10 @@
 /**
  * Base class for Functional test cases.  
  */
-class FUNCTIONALTESTING_API FFunctionalTestBase : public FAutomationTestBase
+class FFunctionalTestBase : public FAutomationTestBase
 {
 public:
-	FFunctionalTestBase(const FString& InName, const bool bInComplexTask);
+	FUNCTIONALTESTING_API FFunctionalTestBase(const FString& InName, const bool bInComplexTask);
 
 	/**
 	 * If true logs will not be included in test events
@@ -45,7 +45,7 @@ public:
 		{
 			bElevateLogWarningsToErrors = InWarningsAreErrors.GetValue();
 		}
-	}	
+	}
 
 	/**
 	 * Determines if Error logs should be suppressed from test results
@@ -74,31 +74,33 @@ public:
 	/**
 	 * Marks us as actively running a functional test
 	 */
-	void SetFunctionalTestRunning(const FString& InName);
+	FUNCTIONALTESTING_API void SetFunctionalTestRunning(const FString& InName);
 
 	/**
 	 * Marks us as no longer running a test
 	 */
-	void SetFunctionalTestComplete(const FString& InName);
+	FUNCTIONALTESTING_API void SetFunctionalTestComplete(const FString& InName);
 
 	/**
 	 * Returns the name of the running functional test. Empty if no test is running
 	 */
-	static FString GetRunningTestName() { return ActiveTestName; }
+	FUNCTIONALTESTING_API static FString GetRunningTestName() { return ActiveTestName; }
 
 	/**
 	 * Returns true if a functional test is running (does not include map setup)
 	 */
-	static bool IsFunctionalTestRunning()	{ return bIsFunctionalTestRunning;	}
+	FUNCTIONALTESTING_API static bool IsFunctionalTestRunning()	{ return bIsFunctionalTestRunning;	}
 
 protected:
 
-	void SetLogErrorAndWarningHandlingToDefault();
+	FUNCTIONALTESTING_API void SetLogErrorAndWarningHandlingToDefault();
 
 	bool bSuppressLogErrors;
 	bool bSuppressLogWarnings;
 	bool bElevateLogWarningsToErrors;
 	bool bSuppressLogs;
+
+private:
 
 	static bool bIsFunctionalTestRunning;
 	static FString ActiveTestName;

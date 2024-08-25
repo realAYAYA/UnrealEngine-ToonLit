@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,6 +11,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Web;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -154,7 +154,7 @@ namespace UnrealGameSync
 	/// <summary>
 	/// Global telemetry static class
 	/// </summary>
-	public static class Telemetry
+	public static class UgsTelemetry
 	{
 		/// <summary>
 		/// The current telemetry provider

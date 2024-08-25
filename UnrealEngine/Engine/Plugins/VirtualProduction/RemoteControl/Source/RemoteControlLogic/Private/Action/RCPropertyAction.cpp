@@ -1,13 +1,15 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Action/RCPropertyAction.h"
 
 #include "Action/RCActionContainer.h"
+#include "Behaviour/RCBehaviour.h"
 #include "Controller/RCController.h"
 #include "IRemoteControlModule.h"
 #include "IRemoteControlPropertyHandle.h"
 #include "IStructSerializerBackend.h"
 #include "RCVirtualProperty.h"
+#include "RemoteControlField.h"
 #include "RemoteControlPreset.h"
 #include "StructSerializer.h"
 #include "Action/RCAction.h"
@@ -19,7 +21,7 @@ URCPropertyAction::URCPropertyAction()
 	PropertySelfContainer = CreateDefaultSubobject<URCVirtualPropertySelfContainer>(FName("VirtualPropertySelfContainer"));
 }
 
-URCBehaviour* URCAction::GetParentBehaviour()
+URCBehaviour* URCAction::GetParentBehaviour() const
 {
 	URCActionContainer* ActionContainer = Cast<URCActionContainer>(GetOuter());
 	if (ensure(ActionContainer))
@@ -28,6 +30,22 @@ URCBehaviour* URCAction::GetParentBehaviour()
 	}
 
 	return nullptr;
+}
+
+void URCAction::UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap)
+{
+	if (const FGuid* FoundId = InEntityIdMap.Find(ExposedFieldId))
+	{
+		ExposedFieldId = *FoundId;
+	}
+}
+
+void URCAction::NotifyActionValueChanged()
+{
+	if (URCBehaviour* Behaviour = GetParentBehaviour())
+	{
+		Behaviour->NotifyActionValueChanged(this);
+	}
 }
 
 void URCPropertyAction::Execute() const
@@ -72,6 +90,16 @@ void URCPropertyAction::Execute() const
 	Super::Execute();
 }
 
+void URCPropertyAction::UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap)
+{
+	if (PropertySelfContainer)
+	{
+		PropertySelfContainer->UpdateEntityIds(InEntityIdMap);
+	}
+	
+	Super::UpdateEntityIds(InEntityIdMap);	
+}
+
 FProperty* URCPropertyAction::GetProperty() const
 {
 	if (ensure(PropertySelfContainer))
@@ -80,6 +108,18 @@ FProperty* URCPropertyAction::GetProperty() const
 	}
 
 	return nullptr;
+}
+
+void URCPropertyAction::UpdateValueBasedOnRCProperty() const
+{
+	if (const TSharedPtr<FRemoteControlProperty> RCExposedProperty = GetRemoteControlProperty())
+	{
+		const FProperty* RCProperty = RCExposedProperty->GetProperty();
+		if (PropertySelfContainer)
+		{
+			PropertySelfContainer->UpdateValueWithProperty(RCProperty, RCExposedProperty->GetFieldContainerAddress());
+		}
+	}
 }
 
 FName URCAction::GetExposedFieldLabel() const

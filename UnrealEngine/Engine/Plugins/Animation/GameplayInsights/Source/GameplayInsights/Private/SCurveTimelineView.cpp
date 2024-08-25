@@ -18,6 +18,7 @@ void SCurveTimelineView::Construct( const SCurveTimelineView::FArguments& InArgs
 	RenderFill = InArgs._RenderFill;
 	DesiredSize = InArgs._DesiredSize;
 	CurveData = InArgs._CurveData;
+	TrackName = InArgs._TrackName;
 
 	// set clipping on by default, since the OnPaint function is drawing outside the bounds
 	Clipping = EWidgetClipping::ClipToBounds;
@@ -89,6 +90,13 @@ void SCurveTimelineView::UpdateCurveToolTip(const FGeometry& InMyGeometry, const
 								.BorderImage( FCoreStyle::Get().GetBrush( "ToolTip.BrightBackground" ) )
 								[
 									SNew(SVerticalBox)
+									+ SVerticalBox::Slot()
+									[
+										SNew(STextBlock)
+										.Text(this, &SCurveTimelineView::GetTrackName)
+										.Font(FCoreStyle::Get().GetFontStyle("ToolTip.LargerFont"))
+										.ColorAndOpacity(FLinearColor::Black)
+									]
 									+ SVerticalBox::Slot()
 									[
 										SNew(STextBlock)
@@ -218,7 +226,7 @@ int32 SCurveTimelineView::PaintCurve(const FGeometry& AllottedGeometry, const FS
 											LineColor,
 											false
 											);
-						Points.SetNum(0,false);
+						Points.SetNum(0,EAllowShrinking::No);
 					}
 			
 					float X = RangeToScreen.InputToLocalX(Point.Time);

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<html>
+<head>
+	<title>ROBOMERGE track change</title>
+	<link rel="icon" href="/img/robo-r.png" type="image/png">
+
+	<script src="/js/jquery-3.4.1.min.js"></script>
+	<script src="/js/bootstrap.bundle.min.js"></script>
+	<script src="/js/hpcc-wasm-index.min.js"></script>
+	<script src="/js/flow.js"></script>
+	<script src="/js/trackchange.js"></script>
+
+	<link rel="stylesheet" href="/css/bootstrap.min.css">
+	<link rel="stylesheet" href="/css/main.css">
+
+	<script>
+		$(() => {
+			doTrackChange('{{ &query }}');
+		});
+
+	</script>
+</head>
+<body>
+	<header><img src="/img/logo.png"></header>
+	<div class="container">
+
+		<div id="loadingDiv" class="card card-single border-dark loading-box">
+			<div class="text-center card-body">
+				<h1 id="loadingText" class="align-self-center">Tracking change...</h1>
+				<img id="loadingimg" class="mx-auto d-block" style="width:128px;" src="/img/robo-r-rotating.gif">
+			</div>
+		</div>
+		
+		<div id="error-panel" style="display:none;"> <!-- show or hide in script -->
+			<div class="alert alert-warning" role="alert">
+Errors attempting to track change <a href="https://p4-swarm.epicgames.net/changes/{{ cl }}" target="_blank">CL#{{ cl }}</a>
+			</div>
+			<pre></pre>
+		</div>
+		<div id="success-panel" style="display:none;">
+			<div id="changes" style="display:none;"></div>
+			<div id="graph" style="display:none; margin: auto; text-align: center;"></div>
+
+			<div id="graph-key-template" class="graph-key initiallyHidden">Merge type
+				<table>
+					<tr title="Change was automatically merged">
+						<td class="arrow auto-merge-arrow"></td>
+						<td class="arrow-label">Auto merge</td>
+					</tr>
+					<tr title="Changes was manually merged to resolve a conflict">
+						<td class="arrow red-arrow"></td>
+						<td class="arrow-label">Merge w/ conflict</td>
+					</tr>
+					<tr title="Change was manually merged, likely as part of a bulk merge">
+						<td class="arrow on-request-arrow"></td>
+						<td class="arrow-label">Manual merge</td>
+					</tr>
+					<tr title="Change was part of a populate">
+						<td class="arrow default-flow-arrow"></td>
+						<td class="arrow-label">Populate</td>
+					</tr>
+				</table>
+
+		</div>
+
+		<div style="transform: scale(0.7);">
+			<h4>Options</h4>
+			<table class="table">
+				<thead><tr><th>Setting</th><th>Effect</th></tr></thead>
+				<tbody>
+					<tr>
+						<td style="vertical-align: middle"><tt>bots=</tt></td>
+						<td>
+							Comma separated list of bots to filter results by<br>
+							e.g. <tt>http://robomerge/trackchange/12345?bots=test1,test2
+						</td>
+					</tr>
+					<tr>
+						<td style="vertical-align: middle"><tt>depots=</tt></td>
+						<td>
+							Comma separated list of depots to filter results by<br>
+							e.g. <tt>http://robomerge/trackchange/12345?depots=UE5,Stream-Test
+						</td>
+					</tr>
+					<tr>
+						<td style="vertical-align: middle"><tt>streams=</tt></td>
+						<td>
+							Comma separated list of streams to show. Supports * as a wildcard.<br>
+							e.g. <tt>http://robomerge/trackchange/12345?streams=//UE5/Dev-*,//UE5/Main</tt>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+</body>

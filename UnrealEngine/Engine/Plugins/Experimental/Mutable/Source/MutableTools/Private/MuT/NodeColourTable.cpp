@@ -17,8 +17,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeColourTable::Private::s_type =
-			NODE_TYPE( "TableColour", NodeColour::GetStaticType() );
+	FNodeType NodeColourTable::Private::s_type =
+			FNodeType( "TableColour", NodeColour::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -29,75 +29,47 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeColourTable::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeColourTable::GetInputNode( int i ) const
-	{
-		check( i >=0 && i < 0 );
-        (void)i;
-        return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeColourTable::SetInputNode( int i, NodePtr )
-	{
-		check( i >=0 && i < 0 );
-        (void)i;
-        //m_pD->m_pObject = dynamic_cast<NodeObject*>( pNode.get() );
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-	const char* NodeColourTable::GetColumn() const
+	void NodeColourTable::SetColumn( const FString& strName )
 	{
-		return m_pD->m_columnName.c_str();
+		m_pD->ColumnName = strName;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeColourTable::SetColumn( const char* strName )
+	void NodeColourTable::SetParameterName( const FString& strName )
 	{
-		if (strName)
-		{
-			m_pD->m_columnName = strName;
-		}
-		else
-		{
-			m_pD->m_columnName = "";
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeColourTable::SetParameterName( const char* strName )
-	{
-		m_pD->m_parameterName = strName;
+		m_pD->ParameterName = strName;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeColourTable::SetTable( TablePtr pTable )
 	{
-		m_pD->m_pTable = pTable;
+		m_pD->Table = pTable;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	TablePtr NodeColourTable::GetTable() const
 	{
-		return m_pD->m_pTable;
+		return m_pD->Table;
 	}
 
+
+	//---------------------------------------------------------------------------------------------
+	void NodeColourTable::SetNoneOption(bool bAddNoneOption)
+	{
+		m_pD->bNoneOption = bAddNoneOption;
+	}
+
+	
+	//---------------------------------------------------------------------------------------------
+	void NodeColourTable::SetDefaultRowName(const FString RowName)
+	{
+		m_pD->DefaultRowName = RowName;
+	}
 
 }
 

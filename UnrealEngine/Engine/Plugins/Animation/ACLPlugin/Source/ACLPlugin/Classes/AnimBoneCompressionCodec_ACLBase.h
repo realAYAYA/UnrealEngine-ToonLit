@@ -54,6 +54,10 @@ class UAnimBoneCompressionCodec_ACLBase : public UAnimBoneCompressionCodec
 	UPROPERTY(EditAnywhere, Category = "ACL Options")
 	TEnumAsByte<ACLCompressionLevel> CompressionLevel;
 
+	/** How to treat phantom tracks. Phantom tracks are not mapped to a skeleton bone. */
+	UPROPERTY(EditAnywhere, Category = "ACL Options")
+	ACLPhantomTrackMode PhantomTrackMode;
+
 	/** The default virtual vertex distance for normal bones. */
 	UPROPERTY(EditAnywhere, Category = "ACL Options", meta = (ClampMin = "0"))
 	float DefaultVirtualVertexDistance;
@@ -68,16 +72,12 @@ class UAnimBoneCompressionCodec_ACLBase : public UAnimBoneCompressionCodec
 
 	// UAnimBoneCompressionCodec implementation
 	virtual bool Compress(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult) override;
-// @third party code - Epic Games Begin
 	virtual void PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar) override;
-// @third party code - Epic Games End
+	virtual int64 EstimateCompressionMemoryUsage(const UAnimSequence& AnimSequence) const override;
 
 	// Our implementation
-	virtual bool UseDatabase() const { return false; }
-	virtual void RegisterWithDatabase(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult) {}
-// @third party code - Epic Games Begin
-	virtual void GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const PURE_VIRTUAL(UAnimBoneCompressionCodec_ACLBase::GetCompressionSettings);
-// @third party code - Epic Games End
+	virtual void PostCompression(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult) const {}
+	virtual void GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const PURE_VIRTUAL(UAnimBoneCompressionCodec_ACLBase::GetCompressionSettings, );
 	virtual TArray<class USkeletalMesh*> GetOptimizationTargets() const { return TArray<class USkeletalMesh*>(); }
 	virtual ACLSafetyFallbackResult ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult);
 #endif

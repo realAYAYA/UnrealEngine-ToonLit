@@ -6,6 +6,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "WorldPartition/Filter/WorldPartitionActorFilter.h"
 #include "WorldPartition/WorldPartitionActorContainerID.h"
+#include "WorldPartition/WorldPartitionHandle.h"
 #include "Containers/Map.h"
 #include "Containers/Set.h"
 #include "Misc/Guid.h"
@@ -15,6 +16,7 @@ class ULevel;
 class ULevelStreaming;
 class UWorldPartition;
 class UActorDescContainer;
+class UWorldPartitionLevelStreamingDynamic;
 class FWorldPartitionActorDesc;
 class FWorldPartitionDraw2DContext;
 
@@ -30,17 +32,14 @@ struct FStreamingSourceVelocity
 	FStreamingSourceVelocity(const FName& InSourceName);
 	void Invalidate() { bIsValid = false; }
 	bool IsValid() { return bIsValid; }
-	float GetAverageVelocity(const FVector& NewPosition, const float CurrentTime);
+	FVector GetAverageVelocity(const FVector& NewPosition, double CurrentTime);
 
 private:
-	enum { VELOCITY_HISTORY_SAMPLE_COUNT = 16 };
 	bool bIsValid;
 	FName SourceName;
-	int32 LastIndex;
-	float LastUpdateTime;
+	double LastUpdateTime;
 	FVector LastPosition;
-	float VelocityHistorySum;
-	TArray<float, TInlineAllocator<VELOCITY_HISTORY_SAMPLE_COUNT>> VelocityHistory;
+	FVector AvgVelocity;
 };
 
 /**
@@ -54,12 +53,6 @@ class UWorldPartitionSubsystem : public UTickableWorldSubsystem
 
 public:
 	ENGINE_API UWorldPartitionSubsystem();
-
-	//~ Begin UObject Interface
-#if WITH_EDITOR
-	static ENGINE_API void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
-#endif
-	//~ End UObject Interface
 
 	//~ Begin USubsystem Interface.
 	ENGINE_API virtual void Initialize(FSubsystemCollectionBase& Collection) override;
@@ -91,6 +84,7 @@ public:
 	ENGINE_API bool IsStreamingCompleted(const IWorldPartitionStreamingSourceProvider* InStreamingSourceProvider = nullptr) const;
 
 	ENGINE_API void DumpStreamingSources(FOutputDevice& OutputDevice) const;
+	ENGINE_API void DumpWorldPartitions(FOutputDevice& OutputDevice) const;
 
 	ENGINE_API TSet<IWorldPartitionStreamingSourceProvider*> GetStreamingSourceProviders() const;
 	ENGINE_API void RegisterStreamingSourceProvider(IWorldPartitionStreamingSourceProvider* StreamingSource);
@@ -100,6 +94,9 @@ public:
 	DECLARE_DELEGATE_RetVal_OneParam(bool, FWorldPartitionStreamingSourceProviderFilter, const IWorldPartitionStreamingSourceProvider*);
 	FWorldPartitionStreamingSourceProviderFilter& OnIsStreamingSourceProviderFiltered() { return IsStreamingSourceProviderFiltered; }
 
+	static ENGINE_API TMulticastDelegate<void(UWorldPartitionSubsystem*, UWorld*)> OnWorldPartitionSubsystemInitialized;
+	static ENGINE_API TMulticastDelegate<void(UWorldPartitionSubsystem*, UWorld*)> OnWorldPartitionSubsystemDeinitialized;
+
 	ENGINE_API void ForEachWorldPartition(TFunctionRef<bool(UWorldPartition*)> Func);
 
 #if WITH_EDITOR
@@ -108,47 +105,18 @@ public:
 
 	static ENGINE_API bool IsRunningConvertWorldPartitionCommandlet();
 
-	UActorDescContainer* RegisterContainer(FName PackageName) { return ActorDescContainerInstanceManager.RegisterContainer(PackageName, GetWorld()); }
-	void UnregisterContainer(UActorDescContainer* Container) { ActorDescContainerInstanceManager.UnregisterContainer(Container); }
-	FBox GetContainerBounds(FName PackageName) const { return ActorDescContainerInstanceManager.GetContainerBounds(PackageName); }
-	void UpdateContainerBounds(FName PackageName) { ActorDescContainerInstanceManager.UpdateContainerBounds(PackageName); }
+	UE_DEPRECATED(5.4, "Use UActorDescContainerSubsystem instead")
+	UActorDescContainer* RegisterContainer(FName PackageName) { return nullptr; }
+	UE_DEPRECATED(5.4, "Use UActorDescContainerSubsystem instead")
+	void UnregisterContainer(UActorDescContainer* Container) { }
+	UE_DEPRECATED(5.4, "Use UActorDescContainerSubsystem instead")
+	FBox GetContainerBounds(FName PackageName) const { return FBox(); }
+	UE_DEPRECATED(5.4, "Use UActorDescContainerSubsystem instead")
+	void UpdateContainerBounds(FName PackageName) { }
 
-	TSet<FWorldPartitionActorDesc*> SelectedActorDescs;
-
-	class FActorDescContainerInstanceManager
-	{
-		friend class UWorldPartitionSubsystem;
-
-		struct FActorDescContainerInstance
-		{
-			FActorDescContainerInstance()
-				: Container(nullptr)
-				, RefCount(0)
-				, Bounds(ForceInit)
-			{}
-
-			void AddReferencedObjects(FReferenceCollector& Collector);
-			void UpdateBounds();
-
-			TObjectPtr<UActorDescContainer> Container;
-			uint32 RefCount;
-			FBox Bounds;
-		};
-
-		void AddReferencedObjects(FReferenceCollector& Collector);
-
-	public:
-		UActorDescContainer* RegisterContainer(FName PackageName, UWorld* InWorld);
-		void UnregisterContainer(UActorDescContainer* Container);
-
-		FBox GetContainerBounds(FName PackageName) const;
-		void UpdateContainerBounds(FName PackageName);
-
-	private:
-		TMap<FName, FActorDescContainerInstance> ActorDescContainers;
-	};
+	TSet<FWorldPartitionHandle> SelectedActorHandles;
 private:
-	ENGINE_API FWorldPartitionActorFilter GetWorldPartitionActorFilterInternal(const FString& InWorldPackage, EWorldPartitionActorFilterType InFilterTypes, TSet<FString>& InOutVisitedPackages) const;
+	ENGINE_API FWorldPartitionActorFilter GetWorldPartitionActorFilterInternal(const FString& InWorldPackage, EWorldPartitionActorFilterType InFilterTypes, TSet<FString>& InOutVisitedPackageStack) const;
 #endif
 
 protected:
@@ -217,13 +185,12 @@ private:
 	int32 LevelStreamingForceGCAfterLevelStreamedOut;
 
 	// Tracks streaming levels of uninitialized world partition used to delay next initialization until they're done being removed
-	TMap<FSoftObjectPath, TSet<TWeakObjectPtr<ULevelStreaming>>> WorldPartitionUninitializationPendingStreamingLevels;
+	TMap<FSoftObjectPath, TSet<TWeakObjectPtr<UWorldPartitionLevelStreamingDynamic>>> WorldPartitionUninitializationPendingStreamingLevels;
 
 	// Tracks world partition loading and pending loads
 	TSet<TWeakObjectPtr<const ULevelStreaming>> WorldPartitionLoadingAndPendingLoadStreamingLevels;
 
 #if WITH_EDITOR
 	bool bIsRunningConvertWorldPartitionCommandlet;
-	mutable FActorDescContainerInstanceManager ActorDescContainerInstanceManager;
 #endif
 };

@@ -16,6 +16,8 @@
 #include "Misc/AssertionMacros.h"
 #include "RHICommandList.h"
 
+PRAGMA_DISABLE_BUFFER_OVERRUN_WARNING
+
 class FRDGTexture;
 class FRDGTextureSRV;
 class FRDGTextureUAV;
@@ -1920,3 +1922,5 @@ constexpr uint32 CalcPackedComponentIndex(uint32 ElementIndex)	{ return (Element
 
 #define GET_SCALAR_ARRAY_ELEMENT(PackedArray, ElementIndex) \
 	PackedArray[CalcPackedArrayIndex(ElementIndex)][CalcPackedComponentIndex(ElementIndex)]
+
+PRAGMA_ENABLE_BUFFER_OVERRUN_WARNING

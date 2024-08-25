@@ -20,7 +20,19 @@ namespace ImmediatePhysics_Chaos
 
 		ENGINE_API bool GetEnabled() const;
 
+		/**
+		 * Note that this will not update the colliding pairs in the simulation, so better to change the kinematic
+		 * state there.
+		 */
 		ENGINE_API void SetEnabled(bool bEnabled);
+
+		ENGINE_API bool GetHasCollision() const;
+
+		/**
+		 * Note that this will not update the colliding pairs in the simulation, so better to change the kinematic
+		 * state there.
+		 */
+		ENGINE_API void SetHasCollision(bool bHasCollision);
 
 		/** Sets the world transform, zeroes velocity, etc.*/
 		ENGINE_API void InitWorldTransform(const FTransform& WorldTM);
@@ -33,6 +45,9 @@ namespace ImmediatePhysics_Chaos
 		 * was possible (even if nothing changed). Returns false if it fails - e.g. because there was no current 
 		 * ParticleHandle, or if the particle type was not EParticleType::Rigid (unless the current type was
 		 * EParticleType::Kinematic and bKinematic was true)
+		 * 
+		 * Note that this will not update the colliding pairs in the simulation, so better to change the kinematic
+		 * state there.
 		 */
 		ENGINE_API bool SetIsKinematic(bool bKinematic);
 
@@ -53,6 +68,9 @@ namespace ImmediatePhysics_Chaos
 
 		/** Whether the body is static */
 		ENGINE_API bool IsStatic() const;
+
+		/** Returns true the body is or could be dynamic (i.e. currently simulated, or a rigid body that is currently kinematic) */
+		ENGINE_API bool CouldBeDynamic() const;
 
 		/** Sets whether world gravity should apply to this actor, assuming it is dynamic */
 		ENGINE_API void SetGravityEnabled(bool bEnable);
@@ -136,6 +154,9 @@ namespace ImmediatePhysics_Chaos
 		/** Get the actor-space centre of mass offset */
 		ENGINE_API FTransform GetLocalCoMTransform() const;
 
+		/** Get the actor-space centre of mass offset (location only) */
+		ENGINE_API FVector GetLocalCoMLocation() const;
+
 		ENGINE_API Chaos::FGeometryParticleHandle* GetParticle();
 		ENGINE_API const Chaos::FGeometryParticleHandle* GetParticle() const;
 
@@ -172,7 +193,7 @@ namespace ImmediatePhysics_Chaos
 		Chaos::FGeometryParticleHandle* ParticleHandle;
 		Chaos::TArrayCollectionArray<Chaos::FVec3>& ParticlePrevXs;
 		Chaos::TArrayCollectionArray<Chaos::FRotation3>& ParticlePrevRs;
-		TUniquePtr<Chaos::FImplicitObject> Geometry;
+		Chaos::FImplicitObjectPtr Geometry;
 		TArray<TUniquePtr<Chaos::FPerShapeData>> Shapes;
 		int32 Level;
 	};

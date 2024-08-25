@@ -52,7 +52,7 @@ void VisitSubTrackImpl(const FSequenceVisitParams& InParams, UMovieSceneSubTrack
 			continue;
 		}
 
-		TRange<FFrameNumber> EffectiveRange = TRange<FFrameNumber>::Intersection(Entry.Range * SubSequenceSpace->RootToSequenceTransform.InverseLinearOnly(), SubSequenceSpace->RootClampRange);
+		TRange<FFrameNumber> EffectiveRange = TRange<FFrameNumber>::Intersection(SubSequenceSpace->RootToSequenceTransform.InverseNoLooping().TransformRangeConstrained(Entry.Range), SubSequenceSpace->RootClampRange);
 		if (EffectiveRange.IsEmpty())
 		{
 			continue;

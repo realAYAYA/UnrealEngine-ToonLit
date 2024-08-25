@@ -2,8 +2,8 @@
 
 using System;
 using System.Threading.Tasks;
+using EpicGames.Horde.Logs;
 using Horde.Server.Logs.Data;
-using Horde.Server.Utilities;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace Horde.Server.Logs.Storage
@@ -120,23 +120,9 @@ namespace Horde.Server.Logs.Storage
 		}
 
 		/// <inheritdoc/>
-		public Task WriteIndexAsync(LogId logId, long length, LogIndexData indexData)
-		{
-			AddEntry(IndexKey(logId, length), indexData);
-			return _inner.WriteIndexAsync(logId, length, indexData);
-		}
-
-		/// <inheritdoc/>
 		public Task<LogChunkData?> ReadChunkAsync(LogId logId, long offset, int lineIndex)
 		{
 			return ReadValueAsync(ChunkKey(logId, offset), () => _inner.ReadChunkAsync(logId, offset, lineIndex));
-		}
-
-		/// <inheritdoc/>
-		public Task WriteChunkAsync(LogId logId, long offset, LogChunkData chunkData)
-		{
-			AddEntry(ChunkKey(logId, offset), chunkData);
-			return _inner.WriteChunkAsync(logId, offset, chunkData);
 		}
 	}
 }

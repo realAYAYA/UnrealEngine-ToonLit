@@ -1,8 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text;
 using System.Text.Json;
 using EpicGames.Core;
@@ -72,7 +69,14 @@ namespace Horde.Agent.Utility
 		public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
 		{
 			JsonLogEvent logEvent = JsonLogEvent.FromLoggerState(logLevel, eventId, state, exception, formatter);
-			logEvent = new JsonLogEvent(logLevel, eventId, logEvent.LineIndex, logEvent.LineCount, Annotate(logEvent.Data));
+			try
+			{
+				logEvent = new JsonLogEvent(logLevel, eventId, logEvent.LineIndex, logEvent.LineCount, Annotate(logEvent.Data));
+			}
+			catch (Exception ex)
+			{
+				_inner.LogWarning(KnownLogEvents.Systemic_LogEventMatcher, ex, "Unable to annotate source files with Perforce metadata: {Message}", ex.Message);
+			}
 			_inner.Log(logLevel, eventId, logEvent, null, JsonLogEvent.Format);
 		}
 
@@ -80,7 +84,7 @@ namespace Horde.Agent.Utility
 		public bool IsEnabled(LogLevel logLevel) => _inner.IsEnabled(logLevel);
 
 		/// <inheritdoc/>
-		public IDisposable BeginScope<TState>(TState state) => _inner.BeginScope(state);
+		public IDisposable? BeginScope<TState>(TState state) where TState : notnull => _inner.BeginScope(state);
 
 		static bool ReadFirstLogProperty(ref Utf8JsonReader reader)
 		{
@@ -141,10 +145,10 @@ namespace Horde.Agent.Utility
 			}
 		}
 
-		static readonly Utf8String s_sourceFileType = "SourceFile";
-		static readonly Utf8String s_assetType = "Asset";
+		static readonly Utf8String s_sourceFileType = new Utf8String("SourceFile");
+		static readonly Utf8String s_assetType = new Utf8String("Asset");
 
-		static readonly Utf8String s_file = "file";
+		static readonly Utf8String s_file = new Utf8String("file");
 
 		ReadOnlyMemory<byte> Annotate(ReadOnlyMemory<byte> data)
 		{

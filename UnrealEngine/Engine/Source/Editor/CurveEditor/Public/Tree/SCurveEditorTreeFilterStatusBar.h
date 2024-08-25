@@ -20,6 +20,12 @@ public:
 	/** Construct the status bar */
 	void Construct(const FArguments& InArgs, TSharedPtr<FCurveEditor> InCurveEditor);
 
+	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
+
+	void ShowStatusBar();
+	void HideStatusBar();
+	void FadeOutStatusBar();
+
 private:
 
 	/** Request the visibility of the clear hyperlink widget based on whether there's a filter active or not */
@@ -35,4 +41,5 @@ private:
 
 	TWeakPtr<FCurveEditor> WeakCurveEditor;
 	TSharedPtr<STextBlock> TextBlock;
+	double OpacityThrobEndTime = 0;
 };

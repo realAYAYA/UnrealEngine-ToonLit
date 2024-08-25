@@ -106,6 +106,7 @@ public:
 				]
 
 				+SVerticalBox::Slot()
+				.Padding(FMargin(0.f, 32.f, 0.f, 0.f))
 				.AutoHeight()
 				[
 					SNew(SHorizontalBox)

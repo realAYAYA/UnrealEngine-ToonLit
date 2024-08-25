@@ -29,14 +29,32 @@ void FComputeGraphTaskWorker::Enqueue(
 	uint8 InGraphSortPriority,
 	FComputeGraphRenderProxy const* InGraphRenderProxy, 
 	TArray<FComputeDataProviderRenderProxy*> InDataProviderRenderProxies, 
-	FSimpleDelegate InFallbackDelegate)
+	FSimpleDelegate InFallbackDelegate,
+	const UObject* InOwnerPointer)
 {
 	FGraphInvocation& GraphInvocation = GraphInvocationsPerGroup.FindOrAdd(InExecutionGroupName).AddDefaulted_GetRef();
 	GraphInvocation.OwnerName = InOwnerName;
+	GraphInvocation.OwnerPointer = InOwnerPointer;
 	GraphInvocation.GraphSortPriority = InGraphSortPriority;
 	GraphInvocation.GraphRenderProxy = InGraphRenderProxy;
 	GraphInvocation.DataProviderRenderProxies = MoveTemp(InDataProviderRenderProxies);
 	GraphInvocation.FallbackDelegate = InFallbackDelegate;
+}
+
+void FComputeGraphTaskWorker::Abort(const UObject* InOwnerPointer)
+{
+	for (auto& Pair : GraphInvocationsPerGroup)
+	{
+		TArray<FGraphInvocation>& Invocations = Pair.Value;
+
+		for (int32 Index = Invocations.Num() - 1; Index >= 0; Index--)
+		{
+			if (Invocations[Index].OwnerPointer == InOwnerPointer)
+			{
+				Invocations.RemoveAt(Index, 1, EAllowShrinking::No);
+			}
+		}
+	}
 }
 
 bool FComputeGraphTaskWorker::HasWork(FName InExecutionGroupName) const
@@ -47,7 +65,7 @@ bool FComputeGraphTaskWorker::HasWork(FName InExecutionGroupName) const
 
 void FComputeGraphTaskWorker::SubmitWork(FRDGBuilder& GraphBuilder, FName InExecutionGroupName, ERHIFeatureLevel::Type FeatureLevel)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE("ComputeFramework::ExecuteBatches");
+	TRACE_CPUPROFILER_EVENT_SCOPE(ComputeFramework::ExecuteBatches);
 	RDG_EVENT_SCOPE(GraphBuilder, "ComputeFramework::ExecuteBatches");
 	RDG_GPU_STAT_SCOPE(GraphBuilder, ComputeFramework_ExecuteBatches);
 
@@ -133,7 +151,7 @@ void FComputeGraphTaskWorker::SubmitWork(FRDGBuilder& GraphBuilder, FName InExec
 				if (bSupportsUnifiedDispatch)
 				{
 					SubmitDesc.bIsUnified = true;
-					Shaders.SetNum(SubmitDesc.ShaderIndex + 1, /*bAllowShrinking*/false);
+					Shaders.SetNum(SubmitDesc.ShaderIndex + 1, EAllowShrinking::No);
 				}
 			}
 
@@ -144,8 +162,8 @@ void FComputeGraphTaskWorker::SubmitWork(FRDGBuilder& GraphBuilder, FName InExec
 		// If we can't run the graph for any reason, back out now and apply fallback logic.
 		if (!bIsValid)
 		{
-			SubmitDescs.SetNum(BaseSubmitDescIndex, /*bAllowShrinking*/false);
-			Shaders.SetNum(BaseShaderIndex, /*bAllowShrinking*/false);
+			SubmitDescs.SetNum(BaseSubmitDescIndex, EAllowShrinking::No);
+			Shaders.SetNum(BaseShaderIndex, EAllowShrinking::No);
 			GraphInvocation.FallbackDelegate.ExecuteIfBound();
 			continue;
 		}

@@ -1237,8 +1237,8 @@ void FDatasmithFBXFileImporter::DoImportMesh(FbxMesh* InMesh, FDatasmithFBXScene
 			continue;
 		}
 
-		CornerPositions.SetNumUninitialized(CornerCount, false);
-		CornerVertexIDs.SetNumUninitialized(CornerCount, false);
+		CornerPositions.SetNumUninitialized(CornerCount, EAllowShrinking::No);
+		CornerVertexIDs.SetNumUninitialized(CornerCount, EAllowShrinking::No);
 		for (int32 CornerIndex = 0; CornerIndex < CornerCount; CornerIndex++)
 		{
 			const int32 ControlPointIndex = InMesh->GetPolygonVertex(PolygonIndex, CornerIndex);
@@ -1254,7 +1254,7 @@ void FDatasmithFBXFileImporter::DoImportMesh(FbxMesh* InMesh, FDatasmithFBXScene
 		}*/
 
 		// Create Vertex instances
-		CornerVertexInstanceIDs.SetNumUninitialized(CornerCount, false);
+		CornerVertexInstanceIDs.SetNumUninitialized(CornerCount, EAllowShrinking::No);
 		for (int32 CornerIndex = 0; CornerIndex < CornerCount; CornerIndex++)
 		{
 			CornerVertexInstanceIDs[CornerIndex] = MeshDescription.CreateVertexInstance(CornerVertexIDs[CornerIndex]);

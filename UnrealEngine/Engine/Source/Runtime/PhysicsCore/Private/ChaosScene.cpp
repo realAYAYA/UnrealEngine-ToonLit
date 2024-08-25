@@ -82,6 +82,7 @@ FChaosScene::FChaosScene(
 #if WITH_CHAOS_VISUAL_DEBUGGER
 	SceneSolver->GetChaosVDContextData().OwnerID = GetChaosVDContextData().Id;
 	SceneSolver->GetChaosVDContextData().Id = FChaosVDRuntimeModule::Get().GenerateUniqueID();
+	SceneSolver->GetChaosVDContextData().Type = static_cast<int32>(EChaosVDContextType::Solver);
 #endif
 
 	SceneSolver->PhysSceneHack = this;
@@ -222,10 +223,10 @@ void FChaosScene::UpdateActorInAccelerationStructure(const FPhysicsActorHandle& 
 		{
 
 			FAABB3 WorldBounds;
-			const bool bHasBounds = Body_External.Geometry()->HasBoundingBox();
+			const bool bHasBounds = Body_External.GetGeometry()->HasBoundingBox();
 			if(bHasBounds)
 			{
-				WorldBounds = Body_External.Geometry()->BoundingBox().TransformedAABB(FRigidTransform3(Body_External.X(), Body_External.R()));
+				WorldBounds = Body_External.GetGeometry()->BoundingBox().TransformedAABB(FRigidTransform3(Body_External.X(), Body_External.R()));
 			}
 
 
@@ -258,10 +259,10 @@ void FChaosScene::UpdateActorsInAccelerationStructure(const TArrayView<FPhysicsA
 					const Chaos::FRigidBodyHandle_External& Body_External = Actor->GetGameThreadAPI();
 					// @todo(chaos): dedupe code in UpdateActorInAccelerationStructure
 					FAABB3 WorldBounds;
-					const bool bHasBounds = Body_External.Geometry()->HasBoundingBox();
+					const bool bHasBounds = Body_External.GetGeometry()->HasBoundingBox();
 					if(bHasBounds)
 					{
-						WorldBounds = Body_External.Geometry()->BoundingBox().TransformedAABB(FRigidTransform3(Body_External.X(), Body_External.R()));
+						WorldBounds = Body_External.GetGeometry()->BoundingBox().TransformedAABB(FRigidTransform3(Body_External.X(), Body_External.R()));
 					}
 
 					Chaos::FAccelerationStructureHandle AccelerationHandle(Actor->GetParticle_LowLevel());
@@ -296,11 +297,11 @@ void FChaosScene::AddActorsToScene_AssumesLocked(TArray<FPhysicsActorHandle>& In
 		{
 			const Chaos::FRigidBodyHandle_External& Body_External = Handle->GetGameThreadAPI();
 			// Get the bounding box for the particle if it has one
-			bool bHasBounds = Body_External.Geometry()->HasBoundingBox();
+			bool bHasBounds = Body_External.GetGeometry()->HasBoundingBox();
 			Chaos::FAABB3 WorldBounds;
 			if(bHasBounds)
 			{
-				const Chaos::FAABB3 LocalBounds = Body_External.Geometry()->BoundingBox();
+				const Chaos::FAABB3 LocalBounds = Body_External.GetGeometry()->BoundingBox();
 				WorldBounds = LocalBounds.TransformedAABB(Chaos::FRigidTransform3(Body_External.X(), Body_External.R()));
 			}
 
@@ -397,6 +398,24 @@ void FChaosScene::OnSyncBodies(Chaos::FPhysicsSolverBase* Solver)
 {
 	struct FDispatcher {} Dispatcher;
 	Solver->PullPhysicsStateForEachDirtyProxy_External(Dispatcher);
+}
+
+void FChaosScene::KillSafeAsyncTasks()
+{
+	Chaos::FPBDRigidsSolver* Solver = GetSolver();
+	if (Solver )
+	{
+		Solver->KillSafeAsyncTasks();
+	}
+}
+
+void FChaosScene::WaitSolverTasks()
+{
+	Chaos::FPBDRigidsSolver* Solver = GetSolver();
+	if(Solver)
+	{
+		Solver->WaitOnPendingTasks_External();
+	}
 }
 
 bool FChaosScene::AreAnyTasksPending() const
@@ -534,11 +553,11 @@ void FChaosScene::EndFrame()
 
 		for(FPhysicsSolverBase* Solver : SolverList)
 		{
-			Solver->CastHelper([&SolverList,this](auto& Concrete)
+			Solver->CastHelper([&SolverList, Solver, this](auto& Concrete)
 			{
 				SyncBodies(&Concrete);
+				Solver->FlipEventManagerBuffer();
 				Concrete.SyncEvents_GameThread();
-
 				{
 					SCOPE_CYCLE_COUNTER(STAT_SqUpdateMaterials);
 					Concrete.SyncQueryMaterials_External();

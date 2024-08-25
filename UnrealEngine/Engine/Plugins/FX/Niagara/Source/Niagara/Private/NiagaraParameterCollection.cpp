@@ -32,7 +32,7 @@ void UNiagaraParameterCollectionInstance::PostLoad()
 {
 	Super::PostLoad();
 
-	ParameterStorage.PostLoad();
+	ParameterStorage.PostLoad(this);
 
 	// Before calling SyncWithCollection we must ensure the collections parameter store is PostLoaded
 	// otherwise the parameters may not be sorted correctly.  If we are the default instance of the
@@ -540,6 +540,10 @@ FString UNiagaraParameterCollection::FriendlyNameFromParameterName(FString Param
 
 FString UNiagaraParameterCollection::ParameterNameFromFriendlyName(const FString& FriendlyName)const
 {
+	if (FriendlyName.StartsWith(GetFullNamespace()))
+	{
+		return FriendlyName;
+	}
 	return FString::Printf(TEXT("%s%s"), *GetFullNamespace(), *FriendlyName);
 }
 

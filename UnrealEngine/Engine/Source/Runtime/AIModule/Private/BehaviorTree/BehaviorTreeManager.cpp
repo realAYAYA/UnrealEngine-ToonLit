@@ -134,7 +134,7 @@ static void InitializeNodeHelper(UBTCompositeNode* ParentNode, UBTNode* NodeOb,
 				UE_LOG(LogBehaviorTree, Warning, TEXT("%s has missing service node! (parent: %s)"),
 					*TreeAsset.GetName(), *UBehaviorTreeTypes::DescribeNodeHelper(CompositeOb));
 
-				CompositeOb->Services.RemoveAt(ServiceIndex, 1, false);
+				CompositeOb->Services.RemoveAt(ServiceIndex, 1, EAllowShrinking::No);
 				ServiceIndex--;
 				continue;
 			}
@@ -161,7 +161,7 @@ static void InitializeNodeHelper(UBTCompositeNode* ParentNode, UBTNode* NodeOb,
 					UE_LOG(LogBehaviorTree, Warning, TEXT("%s has missing decorator node! (parent: %s, branch: %d)"),
 						*TreeAsset.GetName(), *UBehaviorTreeTypes::DescribeNodeHelper(CompositeOb), ChildIndex);
 
-					ChildInfo.Decorators.RemoveAt(DecoratorIndex, 1, false);
+					ChildInfo.Decorators.RemoveAt(DecoratorIndex, 1, EAllowShrinking::No);
 					DecoratorIndex--;
 					continue;
 				}
@@ -232,7 +232,7 @@ static void InitializeNodeHelper(UBTCompositeNode* ParentNode, UBTNode* NodeOb,
 						UE_LOG(LogBehaviorTree, Warning, TEXT("%s has missing service node! (parent: %s)"),
 							*TreeAsset.GetName(), *UBehaviorTreeTypes::DescribeNodeHelper(ChildInfo.ChildTask));
 
-						ChildInfo.ChildTask->Services.RemoveAt(ServiceIndex, 1, false);
+						ChildInfo.ChildTask->Services.RemoveAt(ServiceIndex, 1, EAllowShrinking::No);
 						ServiceIndex--;
 						continue;
 					}

@@ -24,6 +24,7 @@ public:
 
 	/* ISourceControlProvider implementation */
 	virtual void Init(bool bForceConnection = true) override;
+	virtual FInitResult Init(EInitFlags Flags) override;
 	virtual void Close() override;
 	virtual FText GetStatusText() const override;
 	virtual TMap<EStatus, FString> GetStatus() const override;
@@ -63,15 +64,6 @@ public:
 #endif
 
 	using ISourceControlProvider::Execute;
-
-	/**
-	 * Gets a list of client spec names from the source control provider
-	 *
-	 * @param	InConnectionInfo	Credentials for connection
-	 * @param	OutWorkspaceList	List of client spec name strings
-	 * @param	OutErrorMessages	List of any error messages that may have occurred
-	 */
-	void GetWorkspaceList(const struct FPerforceConnectionInfo& InConnectionInfo, TArray<FString>& OutWorkspaceList, TArray<FText>& OutErrorMessages);
 
 	/** Get the P4 ticket we will use for connections */
 	const FString& GetTicket() const;
@@ -140,9 +132,10 @@ private:
 	void OutputCommandMessages(const class FPerforceSourceControlCommand& InCommand) const;
 
 	/**
-	 * Loads user/SCC information from the INI file.
+	 * Loads user/SCC information from the INI file and can attempt to make a connection to the server if requested by
+	 * the Flags parameter.
 	 */
-	void ParseCommandLineSettings(bool bForceConnection);
+	ISourceControlProvider::FInitResult ParseCommandLineSettings(EInitFlags Flags);
 
 	/**
 	 * Helper function for running command 'synchronously'.

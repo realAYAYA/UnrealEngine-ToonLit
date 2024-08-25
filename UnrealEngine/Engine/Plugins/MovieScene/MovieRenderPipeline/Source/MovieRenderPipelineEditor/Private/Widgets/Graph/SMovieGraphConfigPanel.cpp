@@ -52,6 +52,7 @@
 #include "Misc/FileHelper.h"
 #include "EdGraphUtilities.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
 #include "Graph/MovieGraphConfig.h"
 #include "Graph/Nodes/MovieGraphVariableNode.h"
@@ -102,23 +103,34 @@ void SMoviePipelineGraphPanel::Construct(const FArguments& InArgs)
 
 	CurrentGraph = InArgs._Graph;
 	
-	UMoviePipelineEdGraph* GraphToEdit = Cast<UMoviePipelineEdGraph>(FBlueprintEditorUtils::CreateNewGraph(CurrentGraph, TEXT("MoviePipelineEdGraph"), UMoviePipelineEdGraph::StaticClass(), UMovieGraphSchema::StaticClass()));
+	UMoviePipelineEdGraph* EdGraph = Cast<UMoviePipelineEdGraph>(CurrentGraph->PipelineEdGraph);
 
-	// Probably not ideal.. USoundCue has a CreateGraph() node that does this (#if WITH_EDITOR) but then requires an interface
-	// for the editor half to avoid the circular dependency.
-	CurrentGraph->PipelineEdGraph = GraphToEdit;
-	GraphToEdit->InitFromRuntimeGraph(CurrentGraph);
+	// Create the EdGraph if it has not yet been created. It is saved as part of the runtime graph to prevent it from being re-created every time the
+	// graph is opened (and therefore dirtying the package).
+	if (!EdGraph)
+	{
+		EdGraph = Cast<UMoviePipelineEdGraph>(FBlueprintEditorUtils::CreateNewGraph(CurrentGraph, TEXT("MoviePipelineEdGraph"), UMoviePipelineEdGraph::StaticClass(), UMovieGraphSchema::StaticClass()));
 
+		// Probably not ideal.. USoundCue has a CreateGraph() node that does this (#if WITH_EDITOR) but then requires an interface
+		// for the editor half to avoid the circular dependency.
+		CurrentGraph->PipelineEdGraph = EdGraph;
+		EdGraph->InitFromRuntimeGraph(CurrentGraph);
 
-	const UEdGraphSchema* Schema = GraphToEdit->GetSchema();
-	Schema->CreateDefaultNodesForGraph(*GraphToEdit);
+		const UEdGraphSchema* Schema = EdGraph->GetSchema();
+		Schema->CreateDefaultNodesForGraph(*EdGraph);
+	}
+	else
+	{
+		EdGraph->RegisterDelegates(CurrentGraph);
+	}
+	
 	MakeEditorCommands();
 
 	ChildSlot
 	[
 		SAssignNew(GraphEditorWidget, SGraphEditor)
 		.IsEditable(true)
-		.GraphToEdit(GraphToEdit)
+		.GraphToEdit(EdGraph)
 		.AdditionalCommands(GraphEditorCommands)
 		.GraphEvents(InEvents)
 		.Appearance(AppearanceInfo)
@@ -166,6 +178,18 @@ void SMoviePipelineGraphPanel::MakeEditorCommands()
 			FCanExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::CanDuplicateNodes)
 		);
 
+		GraphEditorCommands->MapAction(FGraphEditorCommands::Get().EnableNodes,
+			FExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::SetEnabledStateForSelectedNodes, ENodeEnabledState::Enabled),
+			FCanExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::CanDisableSelectedNodes),
+			FGetActionCheckState::CreateSP(this, &SMoviePipelineGraphPanel::CheckEnabledStateForSelectedNodes, ENodeEnabledState::Enabled)
+		);
+
+		GraphEditorCommands->MapAction(FGraphEditorCommands::Get().DisableNodes,
+			FExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::SetEnabledStateForSelectedNodes, ENodeEnabledState::Disabled),
+			FCanExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::CanDisableSelectedNodes),
+			FGetActionCheckState::CreateSP(this, &SMoviePipelineGraphPanel::CheckEnabledStateForSelectedNodes, ENodeEnabledState::Disabled)
+		);
+
 		// Alignment Commands
 		GraphEditorCommands->MapAction(FGraphEditorCommands::Get().AlignNodesTop,
 			FExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::OnAlignTop)
@@ -193,10 +217,6 @@ void SMoviePipelineGraphPanel::MakeEditorCommands()
 
 		GraphEditorCommands->MapAction(FGraphEditorCommands::Get().StraightenConnections,
 			FExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::OnStraightenConnections)
-		);
-
-		GraphEditorCommands->MapAction(FGraphEditorCommands::Get().CreateComment,
-			FExecuteAction::CreateSP(this, &SMoviePipelineGraphPanel::OnCreateComment)
 		);
 
 		// Distribution Commands
@@ -260,24 +280,49 @@ bool SMoviePipelineGraphPanel::CanDeleteSelectedNodes() const
 void SMoviePipelineGraphPanel::DeleteSelectedNodes()
 {
 	TArray<UMovieGraphNode*> NodesToDelete;
+	TArray<UEdGraphNode*> EdNodesToDelete;
+	
 	for (UObject* Object : GraphEditorWidget->GetSelectedNodes())
 	{
-		UMoviePipelineEdGraphNodeBase* GraphNode = Cast<UMoviePipelineEdGraphNodeBase>(Object);
+		const UMoviePipelineEdGraphNodeBase* GraphNode = Cast<UMoviePipelineEdGraphNodeBase>(Object);
 		if (GraphNode && GraphNode->CanUserDeleteNode())
 		{
 			NodesToDelete.Add(GraphNode->GetRuntimeNode());
+			continue;
+		}
+
+		UEdGraphNode* EdGraphNode = Cast<UEdGraphNode>(Object);
+		if (EdGraphNode && EdGraphNode->CanUserDeleteNode())
+		{
+			EdNodesToDelete.Add(EdGraphNode);
 		}
 	}
 
-	if (NodesToDelete.IsEmpty())
-	{
-		return;
-	}
-
 	UMoviePipelineEdGraph* Graph = Cast<UMoviePipelineEdGraph>(GraphEditorWidget->GetCurrentGraph());
-	if (Graph)
+	
+	const bool bShouldActuallyTransact = Graph && (NodesToDelete.Num() > 0 || EdNodesToDelete.Num() > 0);
+	const FScopedTransaction Transaction(
+		FGenericCommands::Get().Delete->GetDescription(), bShouldActuallyTransact);
+	
+	if (bShouldActuallyTransact)
 	{
-		Graph->GetPipelineGraph()->RemoveNodes(NodesToDelete);
+		// Remove all runtime graph nodes
+		if (!NodesToDelete.IsEmpty())
+		{
+			for (UMovieGraphNode* Node : NodesToDelete)
+			{
+				Graph->GetPipelineGraph()->RemoveNode(Node);
+			}
+		}
+		
+		// Remove all editor nodes (nodes not backed by a runtime node, like comments)
+		if (!EdNodesToDelete.IsEmpty())
+		{
+			for (UEdGraphNode* EdGraphNode : EdNodesToDelete)
+			{
+				Graph->RemoveNode(EdGraphNode);
+			}
+		}
 	}
 
 	ClearGraphSelection();
@@ -448,6 +493,77 @@ bool SMoviePipelineGraphPanel::CanDuplicateNodes() const
 	return CanCopySelectedNodes();
 }
 
+void SMoviePipelineGraphPanel::SetEnabledStateForSelectedNodes(const ENodeEnabledState NewState) const
+{
+	if (!GraphEditorWidget.IsValid())
+	{
+		return;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("SetNodeEnabledState", "Set Node Enabled State"));
+	
+	for (UObject* SelectedNode : GraphEditorWidget->GetSelectedNodes())
+	{
+		if (UEdGraphNode* SelectedGraphNode = Cast<UEdGraphNode>(SelectedNode))
+		{
+			SelectedGraphNode->Modify();
+			SelectedGraphNode->SetEnabledState(NewState);
+		}
+	}
+	
+	GraphEditorWidget->NotifyGraphChanged();
+}
+
+ECheckBoxState SMoviePipelineGraphPanel::CheckEnabledStateForSelectedNodes(const ENodeEnabledState EnabledStateToCheck) const
+{
+	if (!GraphEditorWidget.IsValid())
+	{
+		return ECheckBoxState::Unchecked;
+	}
+	
+	ECheckBoxState CheckBoxState = ECheckBoxState::Undetermined;
+	
+	for (UObject* SelectedNode : GraphEditorWidget->GetSelectedNodes())
+	{
+		if (const UEdGraphNode* SelectedGraphNode = Cast<UEdGraphNode>(SelectedNode))
+		{
+			const ENodeEnabledState NodeEnabledState = SelectedGraphNode->GetDesiredEnabledState();
+			const ECheckBoxState NewCheckBoxState = (NodeEnabledState == EnabledStateToCheck) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+
+			// Initialize CheckBoxState to either Checked/Unchecked; this only happens when the state is Undetermined
+			if (CheckBoxState == ECheckBoxState::Undetermined)
+			{
+				CheckBoxState = NewCheckBoxState;
+				continue;
+			}
+
+			// If the new/old checkbox states don't match, revert to an undetermined state
+			if (NewCheckBoxState != CheckBoxState)
+			{
+				CheckBoxState = ECheckBoxState::Undetermined;
+				break;
+			}
+			
+			CheckBoxState = NewCheckBoxState;
+		}
+	}
+
+	return CheckBoxState;
+}
+
+bool SMoviePipelineGraphPanel::CanDisableSelectedNodes() const
+{
+	for (const UMovieGraphNode* SelectedModelNode : GetSelectedModelNodes())
+	{
+		if (!SelectedModelNode->CanBeDisabled())
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
 void SMoviePipelineGraphPanel::OnAlignTop()
 {
 	if (GraphEditorWidget.IsValid())
@@ -582,6 +698,13 @@ void SMoviePipelineGraphPanel::OnSelectedNodesChanged(const TSet<UObject*>& NewS
 
 void SMoviePipelineGraphPanel::OnNodeDoubleClicked(class UEdGraphNode* Node)
 {
+	if (Node != nullptr)
+	{
+		if (UObject* Object = Node->GetJumpTargetForDoubleClick())
+		{
+			GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Object);
+		}
+	}
 }
 
 void SMoviePipelineGraphPanel::OnNodeTitleCommitted(const FText& NewText, ETextCommit::Type CommitInfo, UEdGraphNode* NodeBeingChanged)
@@ -794,7 +917,7 @@ void SMoviePipelineGraphPanel::OnConfigUpdatedForJobToPreset(TWeakObjectPtr<UMov
 	OnConfigWindowClosed();
 }
 
-void SMoviePipelineGraphPanel::OnSelectionChanged(const TArray<UMoviePipelineExecutorJob*>& InSelectedJobs)
+void SMoviePipelineGraphPanel::OnSelectionChanged(const TArray<UMoviePipelineExecutorJob*>& InSelectedJobs, const TArray<UMoviePipelineExecutorShot*>& InSelectedShots)
 {
 	TArray<UObject*> Jobs;
 	for (UMoviePipelineExecutorJob* Job : InSelectedJobs)
@@ -803,6 +926,24 @@ void SMoviePipelineGraphPanel::OnSelectionChanged(const TArray<UMoviePipelineExe
 	}
 	
 	NumSelectedJobs = InSelectedJobs.Num();
+}
+
+TArray<UMovieGraphNode*> SMoviePipelineGraphPanel::GetSelectedModelNodes() const
+{
+	TArray<UMovieGraphNode*> SelectedModelNodes;
+	
+	for (UObject* SelectedNode : GraphEditorWidget->GetSelectedNodes())
+	{
+		if (const UMoviePipelineEdGraphNodeBase* SelectedGraphNode = Cast<UMoviePipelineEdGraphNodeBase>(SelectedNode))
+		{
+			if (UMovieGraphNode* SelectedModelNode = SelectedGraphNode->GetRuntimeNode())
+			{
+				SelectedModelNodes.Add(SelectedModelNode);
+			}
+		}
+	}
+
+	return SelectedModelNodes;
 }
 
 TSharedRef<SWidget> SMoviePipelineGraphPanel::OnGenerateSavedQueuesMenu()

@@ -38,6 +38,8 @@ namespace UnrealBuildTool.Rules
 			}
 
 			PrecompileForTargets = PrecompileTargetsType.Editor;
+
+			UnsafeTypeCastWarningLevel = WarningLevel.Error;
 		}
 	}
 }

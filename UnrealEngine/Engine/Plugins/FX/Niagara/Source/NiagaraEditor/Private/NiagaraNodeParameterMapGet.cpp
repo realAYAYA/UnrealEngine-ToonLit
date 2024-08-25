@@ -595,18 +595,26 @@ bool UNiagaraNodeParameterMapGet::CommitEditablePinName(const FText& InName, UEd
 		Modify();
 		InGraphPinObj->Modify();
 
+		if (bSuppressEvents == false)
+		{
+			// we refresh the parameter references before changing the pin name, otherwise we might run into weird edge cases where a dirty graph tries to rename the wrong pin or doesn't copy the metadata correctly
+			GetNiagaraGraph()->ConditionalRefreshParameterReferences();
+		}
+
 		InGraphPinObj->PinName = *InName.ToString();
 		InGraphPinObj->PinFriendlyName = InName;
 
 		if (!bSuppressEvents)
+		{
 			OnPinRenamed(InGraphPinObj, OldPinName);
+		}
 
 		return true;
 	}
 	return false;
 }
 
-void UNiagaraNodeParameterMapGet::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const
+void UNiagaraNodeParameterMapGet::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const
 {
 	// If we are referencing any parameter collections, we need to register them here... might want to speeed this up in the future 
 	// by caching any parameter collections locally.
@@ -635,8 +643,7 @@ void UNiagaraNodeParameterMapGet::GatherExternalDependencyData(ENiagaraScriptUsa
 		if (Collection)
 		{
 			FNiagaraCompileHash Hash = Collection->GetCompileHash();
-			InReferencedCompileHashes.AddUnique(Hash);
-			InReferencedObjs.Add(Collection->GetPathName());
+			HashCollector.AddHash(Hash, Collection->GetPathName());
 		}
 	}
 }

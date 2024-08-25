@@ -6,8 +6,9 @@ using System;
 
 public class UElibPNG : ModuleRules
 {
-	protected virtual string LibRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
-	protected virtual string IncRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
+	// no longer needed, once all subclasses remove overrides, delete
+	protected virtual string LibRootDirectory { get { return ""; } }
+	protected virtual string IncRootDirectory { get { return ""; } }
 
 	protected virtual string LibPNGVersion
 	{
@@ -29,8 +30,8 @@ public class UElibPNG : ModuleRules
 		}
 	}
 
-	protected virtual string IncPNGPath { get { return Path.Combine(IncRootDirectory, "libPNG", LibPNGVersion); } }
-	protected virtual string LibPNGPath { get { return Path.Combine(LibRootDirectory, "libPNG", LibPNGVersion, "lib"); } }
+	protected virtual string IncPNGPath { get { return Path.Combine(ModuleDirectory, LibPNGVersion); } }
+	protected virtual string LibPNGPath { get { return Path.Combine(PlatformModuleDirectory, LibPNGVersion, "lib"); } }
 
 	public UElibPNG(ReadOnlyTargetRules Target) : base(Target)
 	{
@@ -63,21 +64,13 @@ public class UElibPNG : ModuleRules
 		{
 			PublicAdditionalLibraries.Add(Path.Combine(LibPNGPath, "Mac", "libpng.a"));
 		}
-		else if (Target.Platform == UnrealTargetPlatform.IOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
-			LibDir = (Target.Architecture == UnrealArch.IOSSimulator)
+			LibDir = (Target.Architecture == UnrealArch.IOSSimulator || Target.Architecture == UnrealArch.TVOSSimulator)
 				? "Simulator"
 				: "Device";
 
-			PublicAdditionalLibraries.Add(Path.Combine(LibPNGPath, "ios", LibDir, "libpng152.a"));
-		}
-		else if (Target.Platform == UnrealTargetPlatform.TVOS)
-		{
-			LibDir = (Target.Architecture == UnrealArch.TVOSSimulator)
-				? "Simulator"
-				: "Device";
-
-			PublicAdditionalLibraries.Add(Path.Combine(LibPNGPath, "TVOS", LibDir, "libpng152.a"));
+			PublicAdditionalLibraries.Add(Path.Combine(LibPNGPath, PlatformSubdirectoryName, LibDir, "libpng152.a"));
 		}
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Android))
 		{

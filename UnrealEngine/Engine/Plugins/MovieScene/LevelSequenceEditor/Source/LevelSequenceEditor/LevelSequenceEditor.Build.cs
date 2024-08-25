@@ -22,6 +22,7 @@ public class LevelSequenceEditor : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"SequencerScripting",
+				"SequencerScriptingEditor",
 			}
 		);
         
@@ -46,8 +47,9 @@ public class LevelSequenceEditor : ModuleRules
 				"MovieScene",
                 "MovieSceneTools",
 				"MovieSceneTracks",
+				"Projects",
                 "PropertyEditor",
-                "SequencerCore",
+				"SequencerCore",
 				"Sequencer",
                 "Slate",
                 "SlateCore",
@@ -58,6 +60,7 @@ public class LevelSequenceEditor : ModuleRules
 				"ToolMenus",
 				"ToolWidgets",
 				"AssetDefinition",
+				"UniversalObjectLocator"
 			}
 		);
 

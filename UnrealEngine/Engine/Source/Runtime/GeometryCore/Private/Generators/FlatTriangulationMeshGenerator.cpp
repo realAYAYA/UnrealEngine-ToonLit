@@ -22,6 +22,8 @@ FMeshShapeGenerator& FFlatTriangulationMeshGenerator::Generate()
 		return *this;
 	}
 
+	TRACE_CPUPROFILER_EVENT_SCOPE(FlatTriangulationMeshGenerator_Generate);
+
 	int NumTriangles = Triangles2D.Num();
 	SetBufferSizes(NumVertices, NumTriangles, NumVertices, NumVertices);
 

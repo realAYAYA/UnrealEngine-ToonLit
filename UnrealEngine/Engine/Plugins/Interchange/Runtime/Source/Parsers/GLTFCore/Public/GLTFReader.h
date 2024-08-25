@@ -44,7 +44,7 @@ namespace GLTF
 		void SetupBufferView(const FJsonObject& Object) const;
 		void SetupAccessor(const FJsonObject& Object) const;
 		void SetupMorphTarget(const FJsonObject& Object, GLTF::FPrimitive& Primitive, const bool bMeshQuantized) const;
-		void SetupPrimitive(const FJsonObject& Object, GLTF::FMesh& Mesh, const bool bMeshQuantized) const;
+		void SetupPrimitive(const FJsonObject& Object, GLTF::FMesh& Mesh, const bool bMeshQuantized, const uint32& PrimitiveIndex) const;
 		void SetupMesh(const FJsonObject& Object, const bool bMeshQuantized) const;
 
 		void SetupScene(const FJsonObject& Object) const;
@@ -59,7 +59,7 @@ namespace GLTF
 		void SetupMaterial(const FJsonObject& Object) const;
 
 		template <typename SetupFunc>
-		void SetupObjects(uint32 ObjectCount, const TCHAR* FieldName, SetupFunc Func) const;
+		bool SetupObjects(uint32 ObjectCount, const TCHAR* FieldName, SetupFunc Func) const;
 		void SetupNodesType() const;
 
 		void GenerateInverseBindPosesPerSkinIndices() const; //Per node
@@ -71,6 +71,8 @@ namespace GLTF
 		void BuildRootJoints() const;
 
 	private:
+		bool CheckForErrors(int32 StartIndex = 0) const;
+
 		uint32 BufferCount;
 		uint32 BufferViewCount;
 		uint32 ImageCount;

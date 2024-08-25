@@ -67,13 +67,18 @@ public:
 	virtual bool RegisterDefaultEntityMetadata(FName MetadataKey, FEntityMetadataInitializer MetadataInitializer) override;
 	virtual void UnregisterDefaultEntityMetadata(FName MetadataKey) override;
 	virtual bool PropertySupportsRawModificationWithoutEditor(FProperty* Property, UClass* OwnerClass = nullptr) const override;
+	virtual bool PropertySupportsRawModification(FProperty* InProperty, const UObject* InObject, const bool bInWithEditor, FString* OutError = nullptr) const override;
 	virtual void RegisterEntityFactory( const FName InFactoryName, const TSharedRef<IRemoteControlPropertyFactory>& InFactory) override;
 	virtual void UnregisterEntityFactory( const FName InFactoryName ) override;
 	virtual FGuid BeginManualEditorTransaction(const FText& InDescription, uint32 TypeHash) override;
 	virtual int32 EndManualEditorTransaction(const FGuid& TransactionId) override;
 	virtual const TMap<FName, TSharedPtr<IRemoteControlPropertyFactory>>& GetEntityFactories() const override { return EntityFactories; };
 	virtual bool CanBeAccessedRemotely(UObject* Object) const override;
+	virtual TSharedPtr<IPropertyIdHandler> GetPropertyIdHandlerFor(FProperty* InProperty) override;
 	//~ End IRemoteControlModule
+
+protected:
+	virtual void RegisterPropertyIdPropertyHandlerImpl(const TSharedRef<IPropertyIdHandler>& InPropertyIdPropertyHandler) override;
 
 private:
 	/** Refreshes Editor related visuals like location Gizmo for relevant properties (like Location of a SceneComponent) */
@@ -90,9 +95,6 @@ private:
 
 	/** Destroy a transient preset using an object reference. */
 	bool DestroyTransientPreset(URemoteControlPreset* Preset);
-
-	/** Determines if a property modification should use a setter or default to deserializing directly onto an object. */
-	static bool PropertyModificationShouldUseSetter(UObject* Object, FProperty* Property);
 
 	/**
 	 * Deserialize data for a non-EQUAL modification request and apply the operation to the resulting data.
@@ -126,6 +128,16 @@ private:
 	void RegisterMaskingFactories();
 
 	/**
+ 	 * Register(s) masking factories of supported types.
+ 	 */
+	void RegisterPropertyIdHandler();
+
+	/**
+	 * Populate the list of functions that cannot be called remotely.
+	 */
+	void PopulateDisallowedFunctions();
+
+	/**
 	 * Whether function can be intercepted by a remote control interceptor.
 	 */
 	bool CanInterceptFunction(const FRCCall& RCCall) const;
@@ -150,6 +162,9 @@ private:
 	 * @param ModifyFunction Function which takes an array helper, attempts to modify the array, and returns true if the request was valid.
 	 */
 	bool ModifyArrayProperty(const FRCObjectReference& ObjectAccess, TFunctionRef<bool(FScriptArrayHelper&)> ModifyFunction);
+
+	/** Returns whether the function is allowed to be called remotely. */
+	bool IsFunctionAllowed(UFunction* Function);
 
 #if WITH_EDITOR
 
@@ -277,6 +292,11 @@ private:
 
 	/** Map of the factories which is responsible for resetting the Remote Control property to its default value. */
 	TMap<FName, TSharedPtr<IRCDefaultValueFactory>> DefaultValueFactories;
+
+	TSet<TSharedPtr<IPropertyIdHandler>> PropertyIdPropertyHandlers; 
+
+	/** List of functions that can't be called remotely. */
+	TSet<TWeakObjectPtr<UFunction>> FunctionDisallowList;
 };
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

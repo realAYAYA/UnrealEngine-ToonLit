@@ -13,7 +13,7 @@ void SDetailExpanderArrow::Construct(const FArguments& InArgs, TSharedRef<SDetai
 	ChildSlot
 	[
 		SNew(SConstrainedBox)
-		.MinWidth(12)
+		.MinWidth(12.0f)
 		.Visibility(this, &SDetailExpanderArrow::GetExpanderVisibility)
 		[
 			SAssignNew(ExpanderArrow, SButton)
@@ -22,7 +22,7 @@ void SDetailExpanderArrow::Construct(const FArguments& InArgs, TSharedRef<SDetai
 			.HAlign(HAlign_Center)
 			.ClickMethod(EButtonClickMethod::MouseDown)
 			.OnClicked(this, &SDetailExpanderArrow::OnExpanderClicked)
-			.ContentPadding(0)
+			.ContentPadding(0.0f)
 			.IsFocusable(false)
 			[
 				SNew(SImage)

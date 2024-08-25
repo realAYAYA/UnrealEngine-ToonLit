@@ -24,11 +24,13 @@ public:
 		, FontScale(InFontScale)
 		, BitmapRenderScale(1.0f)
 		, FontSkew(InFontSkew)
+		, bSupportsSdf(false)
 	{
 #if WITH_FREETYPE
 		if (TSharedPtr<FFreeTypeFace> FontFacePin = FontFace.Pin())
 		{
 			BitmapRenderScale = FontFacePin->GetBitmapRenderScale();
+			bSupportsSdf = FontFacePin->SupportsSdf();
 		}
 #endif	// WITH_FREETYPE
 	}
@@ -45,6 +47,8 @@ public:
 	float BitmapRenderScale;
 	/** The skew transform amount for the rendered font */
 	float FontSkew;
+	/** Is the Face eligible for signed distance field rendering */
+	bool bSupportsSdf;
 };
 
 

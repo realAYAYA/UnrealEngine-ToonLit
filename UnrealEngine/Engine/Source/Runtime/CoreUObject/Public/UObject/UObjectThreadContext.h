@@ -21,6 +21,7 @@
 #include "Templates/RefCounting.h"
 #include "Templates/UnrealTemplate.h"
 #include "Trace/Detail/Channel.h"
+#include "UObject/PropertyPathName.h"
 
 class FLinkerLoad;
 class FName;
@@ -48,7 +49,7 @@ public:
 	*/
 	void PopInitializer()
 	{
-		InitializerStack.Pop(/*bAllowShrinking=*/ false);
+		InitializerStack.Pop(EAllowShrinking::No);
 	}
 
 	/**
@@ -167,6 +168,18 @@ public:
 	int32 SerializedExportIndex;
 	/** Points to the most recently used Linker for serialization by CreateExport() */
 	FLinkerLoad* SerializedExportLinker;
+	/** Path to the property currently being serialized */
+	UE_INTERNAL UE::FPropertyPathName SerializedPropertyPath;
+	/** True when SerializedPropertyPath is being tracked during serialization. */
+	UE_INTERNAL bool bTrackSerializedPropertyPath;
+	/** True when unknown properties will be serialized to or from a property bag for the serialized object. */
+	UE_INTERNAL bool bSerializeUnknownProperty;
+	/** True when the SerializedObject properties are being impersonated. */
+	UE_INTERNAL bool bImpersonateProperties;
+
+	/** event called after each tagged property is deserialized */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnTaggedPropertySerialized, const FUObjectSerializeContext&)
+	UE_INTERNAL FOnTaggedPropertySerialized OnTaggedPropertySerialize;
 
 	/** Adds a new loaded object */
 	COREUOBJECT_API void AddLoadedObject(UObject* InObject);

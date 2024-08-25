@@ -9,9 +9,11 @@ void SVisualAttachmentBox::Construct(const FArguments& InArgs)
 
 void SVisualAttachmentBox::SetContentAnchor(FVector2D InContentAnchor)
 {
-	ContentAnchor = InContentAnchor;
-
-	Invalidate(EInvalidateWidget::Layout);
+	if (InContentAnchor != ContentAnchor)
+	{
+		ContentAnchor = InContentAnchor;
+		Invalidate(EInvalidateWidget::Layout);
+	}
 }
 
 void SVisualAttachmentBox::OnArrangeChildren(const FGeometry& AllottedGeometry, FArrangedChildren& ArrangedChildren) const

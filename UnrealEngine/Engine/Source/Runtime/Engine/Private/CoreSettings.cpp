@@ -3,6 +3,7 @@
 #include "Engine/CoreSettings.h"
 #include "HAL/IConsoleManager.h"
 #include "UObject/UnrealType.h"
+#include "Misc/ConfigCacheIni.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CoreSettings)
 
@@ -21,6 +22,7 @@ int32 GLevelStreamingComponentsUnregistrationGranularity = 5;
 int32 GLevelStreamingRouteActorInitializationGranularity = 10;
 int32 GLevelStreamingForceGCAfterLevelStreamedOut = 1;
 int32 GLevelStreamingContinuouslyIncrementalGCWhileLevelsPendingPurge = 1;
+int32 GLevelStreamingContinuouslyIncrementalGCWhileLevelsPendingPurgeOverride = 0;
 int32 GLevelStreamingAllowLevelRequestsWhileAsyncLoadingInMatch = 1;
 int32 GLevelStreamingMaxLevelRequestsAtOnceWhileInMatch = 0;
 int32 GLevelStreamingForceVerifyLevelsGotRemovedByGC = 0;
@@ -209,9 +211,9 @@ UGarbageCollectionSettings::UGarbageCollectionSettings()
 	MinGCClusterSize = 5;
 	AssetClusteringEnabled = true;
 	ActorClusteringEnabled = true;
-	UseDisregardForGCOnDedicatedServers = false;
+	UseDisregardForGCOnDedicatedServers = true;
 	VerifyUObjectsAreNotFGCObjects = true;
-	PendingKillEnabled = false;
+	GarbageEliminationEnabled = false;
 	DumpObjectCountsToLogWhenMaxObjectLimitExceeded = false;
 }
 
@@ -223,6 +225,14 @@ void UGarbageCollectionSettings::PostInitProperties()
 	if (IsTemplate())
 	{
 		ImportConsoleVariableValues();
+
+		// Upgrade path for gc.PendingKillEnabled -> gc.GarbageEliminationEnabled
+		bool bGarbageEliminationEnabledIni = false;
+		if (GConfig->GetBool(TEXT("/Script/Engine.GarbageCollectionSettings"), TEXT("gc.PendingKillEnabled"), bGarbageEliminationEnabledIni, GEngineIni))
+		{
+			// No need to warn to upgrade to "gc.GarbageEliminationEnabled" as we've already done this in ObjectBaseUtility.cpp InitGarbageElimination()
+			GarbageEliminationEnabled = bGarbageEliminationEnabledIni;
+		}
 	}
 #endif // #if WITH_EDITOR
 }

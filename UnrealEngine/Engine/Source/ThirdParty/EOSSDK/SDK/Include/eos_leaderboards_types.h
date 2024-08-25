@@ -363,6 +363,8 @@ EOS_STRUCT(EOS_Leaderboards_OnQueryLeaderboardRanksCompleteCallbackInfo, (
 	EOS_EResult ResultCode;
 	/** Context that was passed into EOS_Leaderboards_QueryLeaderboardRanks. */
 	void* ClientData;
+	/** The Leaderboard ID for the leaderboard that was queried. */
+	const char* LeaderboardId;
 ));
 
 /**

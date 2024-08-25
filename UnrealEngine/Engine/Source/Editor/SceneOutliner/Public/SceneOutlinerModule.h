@@ -46,7 +46,7 @@ public:
 	virtual TSharedRef<ISceneOutliner> CreateActorPicker(
 		const FSceneOutlinerInitializationOptions& InInitOptions,
 		const FOnActorPicked& OnActorPickedDelegate,
-		TWeakObjectPtr<UWorld> SpecifiedWorld = nullptr) const;
+		TWeakObjectPtr<UWorld> SpecifiedWorld = nullptr, bool bHideLevelInstanceHierarchy = true) const;
 
 	/** Creates a component picker widget. Calls the OnComponentPickedDelegate when an item is selected. */
 	virtual TSharedRef<ISceneOutliner> CreateComponentPicker(
@@ -59,6 +59,24 @@ public:
 		const FSceneOutlinerInitializationOptions& InInitOptions,
 		TWeakObjectPtr<UWorld> SpecifiedWorld = nullptr) const;
 
+
+	/** Register a factory to create a custom Scene Outliner */
+	virtual void RegisterCustomSceneOutlinerFactory(FName ID, FSceneOutlinerFactory InOutlinerFactory);
+
+	/** Unregister a factory to create a custom Scene Outliner */
+	virtual void UnregisterCustomSceneOutlinerFactory(FName ID);
+
+	/** Try to create a custom scene outliner using a registered factory (nullptr if ID was not registered) */
+	virtual TSharedPtr<ISceneOutliner> CreateCustomRegisteredOutliner(FName ID, FSceneOutlinerInitializationOptions InInitOptions);
+
+	/** Check if a custom scene outliner factory is registered with the given ID */
+	virtual bool IsCustomSceneOutlinerFactoryRegistered(FName ID);
+
+	/** Add the columns present in the level editor's Outliner (Actor Browser) to the given init options
+	 *  @param InWorld The world the Outliner initialized by InInitOptions will look it, defaults to the level editor's world if nullptr
+	 */
+	virtual void CreateActorBrowserColumns(FSceneOutlinerInitializationOptions& InInitOptions, UWorld* InWorld = nullptr) const;
+	
 	/** Column permission list */
 	TSharedRef<FNamePermissionList>& GetColumnPermissionList() { return ColumnPermissionList; }
 
@@ -117,6 +135,9 @@ public:
 		return nullptr;
 	}
 
+	void CreateActorInfoColumns(FSceneOutlinerInitializationOptions& InInitOptions, UWorld* WorldPtr = nullptr) const;
+	void CreateWorldPartitionColumns(FSceneOutlinerInitializationOptions& InInitOptions, UWorld* WorldPtr = nullptr) const;
+	
 	/** Map of column type name -> default column info */
 	TMap< FName, FSceneOutlinerColumnInfo> DefaultColumnMap;
 
@@ -130,9 +151,8 @@ private:
 
 	/** Delegate that broadcasts when column permission list changes. */
 	FOnColumnPermissionListChanged ColumnPermissionListChanged;
-
-	// Function to recreate what originally was FActorInfoColumn as separate columns using FTextInfoColumn
-	void CreateActorInfoColumns(FSceneOutlinerInitializationOptions& InInitOptions, UWorld* WorldPtr = nullptr) const;
+	
+	TMap< FName, FSceneOutlinerFactory> CustomOutlinerFactories;
 
 public:
 

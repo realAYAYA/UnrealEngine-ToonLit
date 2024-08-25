@@ -7,36 +7,32 @@
 namespace mu {
 
 	//---------------------------------------------------------------------------------------------
-	String::String( const char* v )
+	String::String( const FString& InValue)
 	{
-		if (v)
-		{
-            m_value = v;
-        }
+        Value = InValue;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	void String::Serialise( const String* p, OutputArchive& arch )
-	{
-		arch << *p;
-	}
+	////---------------------------------------------------------------------------------------------
+	//void String::Serialise( const String* p, OutputArchive& arch )
+	//{
+	//	arch << *p;
+	//}
 
 
-	//---------------------------------------------------------------------------------------------
-	Ptr<String> String::StaticUnserialise( InputArchive& arch )
-	{
-		Ptr<String> pResult = new String();
-		arch >> *pResult;
-		return pResult;
-	}
+	////---------------------------------------------------------------------------------------------
+	//Ptr<String> String::StaticUnserialise( InputArchive& arch )
+	//{
+	//	Ptr<String> pResult = new String();
+	//	arch >> *pResult;
+	//	return pResult;
+	//}
 
 
 	//---------------------------------------------------------------------------------------------
 	Ptr<String> String::Clone() const
 	{
-		Ptr<String> pResult = new String();
-		pResult->m_value = m_value;
+		Ptr<String> pResult = new String(Value);
 		return pResult;
 	}
 
@@ -44,14 +40,14 @@ namespace mu {
 	//---------------------------------------------------------------------------------------------
 	int32 String::GetDataSize() const
 	{
-		return sizeof(String) + m_value.capacity();
+		return sizeof(String) + Value.GetAllocatedSize();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const char* String::GetValue() const
+	const FString& String::GetValue() const
 	{
-        return m_value.c_str();
+        return Value;
 	}
 
 }

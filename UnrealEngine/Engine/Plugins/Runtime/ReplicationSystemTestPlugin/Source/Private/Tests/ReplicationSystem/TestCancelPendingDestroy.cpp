@@ -26,12 +26,12 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDu
 	Server->PostSendUpdate();
 
 	// Filter out object to cause a PendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -67,17 +67,51 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDu
 	Server->PostSendUpdate();
 
 	// Filter out object to cause a PendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Cause packet loss on object creation
 	Server->DeliverTo(Client, DoNotDeliverPacket);
+
+	// Write and send packet and verify object is created
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, DeliverPacket);
+	Server->PostSendUpdate();
+
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDuringWaitOnCreateConfirmationWithPacketLossNotifyBeforeCancel)
+{
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents());
+
+	// Write packet
+	Server->PreSendUpdate();
+	Server->SendUpdate(Client->ConnectionIdOnServer);
+	Server->PostSendUpdate();
+
+	// Filter out object to cause a PendingDestroy
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->PostSendUpdate();
+
+	// Notify packet loss, which should set state to Invalid/not replicated
+	Server->DeliverTo(Client, DoNotDeliverPacket);
+
+	// Remove object from filter to cause object to end up in PendingCreate
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->PostSendUpdate();
 
 	// Write and send packet and verify object is created
 	Server->PreSendUpdate();
@@ -104,12 +138,12 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDu
 	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
 
 	// Filter out object to cause a PendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -139,13 +173,13 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDu
 	Server->PostSendUpdate();
 
 	// Filter out object and write packet to cause object to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -167,6 +201,101 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDu
 	UE_NET_ASSERT_EQ(ClientObject->IntA, ServerObject->IntA);
 }
 
+UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDuringWaitOnDestroyConfirmationWithPacketLossNotifyBeforeCancel)
+{
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents());
+
+	// Write and send packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, DeliverPacket);
+	Server->PostSendUpdate();
+
+	// Filter out object and write packet to cause object to end up in WaitOnDestroyConfirmation
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->SendUpdate(Client->ConnectionIdOnServer);
+	Server->PostSendUpdate();
+
+	// Cause packet loss on the object destroy packet
+	Server->DeliverTo(Client, DoNotDeliverPacket);
+
+	// Remove object from filter to cause object to end up in CancelPendingDestroy
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->PostSendUpdate();
+
+	// Verify that object still exists on client
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Modify a property on the object and make sure it's replicated as the object should still be created
+	ServerObject->IntA ^= 1;
+
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, DeliverPacket);
+	Server->PostSendUpdate();
+
+	UTestReplicatedIrisObject* ClientObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientObject, nullptr);
+	UE_NET_ASSERT_EQ(ClientObject->IntA, ServerObject->IntA);
+}
+
+
+UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDuringWaitOnDestroyConfirmationWithInitialPacketLoss)
+{
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents());
+
+	// Introduce latency by not immediately delivering packets.
+	Server->PreSendUpdate();
+	Server->SendTo(Client, TEXT("Create object"));
+	Server->PostSendUpdate();
+
+	// Filter out object to cause it to end up being PendingDestroy
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+
+	Server->PreSendUpdate();
+	Server->SendTo(Client, TEXT("Destroy object"));
+	Server->PostSendUpdate();
+
+	// Remove object from filter to cause object to not destroy it. 
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+
+	// Modify object.
+	ServerObject->IntA += 1;
+
+	Server->PreSendUpdate();
+	Server->SendTo(Client, TEXT("Update object"));
+	Server->PostSendUpdate();
+
+	// Drop the initial packet.
+	Server->DeliverTo(Client, DoNotDeliverPacket);
+
+	// Deliver remaining packets, if any.
+	{
+		SIZE_T PacketCount = 0;
+		const auto& ConnectionInfo = Server->GetConnectionInfo(Client->ConnectionIdOnServer);
+		PacketCount = ConnectionInfo.WrittenPackets.Count();
+		for (SIZE_T PacketIt = 0; PacketIt != PacketCount; ++PacketIt)
+		{
+			Server->DeliverTo(Client, DeliverPacket);
+		}
+	}
+
+	Server->UpdateAndSend({ Client });
+
+	// The object should end up being created with the latest state.
+	UTestReplicatedIrisObject* ClientObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientObject, nullptr);
+	UE_NET_ASSERT_EQ(ClientObject->IntA, ServerObject->IntA);
+}
+
 UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDuringWaitOnDestroyConfirmationWithoutPacketLoss)
 {
 	// Add a client
@@ -181,13 +310,13 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyDu
 	Server->PostSendUpdate();
 
 	// Filter out object and write packet to cause object to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy, also modify a property 
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	ServerObject->IntA ^= 1;
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
@@ -223,17 +352,17 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	Server->PostSendUpdate();
 
 	// Filter out object to cause a PendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the object to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -265,17 +394,17 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	Server->PostSendUpdate();
 
 	// Filter out object to cause a PendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the object to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -311,17 +440,17 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
 
 	// Filter out object to cause a PendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the object to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -348,18 +477,18 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	Server->PostSendUpdate();
 
 	// Filter out object and write packet to cause object to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the object to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -392,18 +521,18 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	Server->PostSendUpdate();
 
 	// Filter out object and write packet to cause object to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the object to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -442,12 +571,12 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingSubObject
 	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
 
 	// Filter out subobject to cause a SubObjectPendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove subobject from filter to cause object to end up in CancelPendingDestroy
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -478,13 +607,13 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingSubObject
 	Server->PostSendUpdate();
 
 	// Filter out object and write packet to cause subobject to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove subobject from filter to cause object to end up in CancelPendingDestroy
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -506,6 +635,50 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingSubObject
 	UE_NET_ASSERT_EQ(ClientSubObject->IntA, ServerSubObject->IntA);
 }
 
+UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingSubObjectDestroyDuringWaitOnDestroyConfirmationWithPacketLossNotifyBeforeCancel)
+{
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents());
+	UTestReplicatedIrisObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents());
+
+	// Write and send packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, DeliverPacket);
+	Server->PostSendUpdate();
+
+	// Filter out object and write packet to cause subobject to end up in WaitOnDestroyConfirmation
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->SendUpdate(Client->ConnectionIdOnServer);
+	Server->PostSendUpdate();
+
+	// Cause packet loss on the subobject destroy packet
+	Server->DeliverTo(Client, DoNotDeliverPacket);
+
+	// Remove subobject from filter to cause object to end up in CancelPendingDestroy
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->PostSendUpdate();
+
+	// Verify that object still exists on client
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Modify a property on the subobject and make sure it's replicated as the subobject should still exist
+	ServerSubObject->IntA ^= 1;
+
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, DeliverPacket);
+	Server->PostSendUpdate();
+
+	UTestReplicatedIrisObject* ClientSubObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientSubObject, nullptr);
+	UE_NET_ASSERT_EQ(ClientSubObject->IntA, ServerSubObject->IntA);
+}
+
+
 UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingSubObjectDestroyDuringWaitOnDestroyConfirmationWithoutPacketLoss)
 {
 	// Add a client
@@ -521,13 +694,13 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingSubObject
 	Server->PostSendUpdate();
 
 	// Filter out object and write packet to cause subobject to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy, also modify a property 
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	ServerSubObject->IntA ^= 1;
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
@@ -567,17 +740,17 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
 
 	// Filter out object to cause a SubObjectPendingDestroy
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause object to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the subobject to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -589,6 +762,74 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	// Verify that the subobject was destroyed on the client
 	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
 }
+
+UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelPendingDestroyFromCreatedDoesNotMissChanges)
+{
+	// Add a client
+	FReplicationSystemTestClient* Client0 = CreateClient();
+
+	// Add second client, with not filtering to keep object in scope
+	FReplicationSystemTestClient* Client1 = CreateClient();
+
+	// Spawn object on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents());
+
+	// Write and send packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client0, DeliverPacket);
+	Server->SendAndDeliverTo(Client1, DeliverPacket);
+	Server->PostSendUpdate();
+
+	UTestReplicatedIrisObject* Client0Object = Cast<UTestReplicatedIrisObject>(Client0->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UTestReplicatedIrisObject* Client1Object = Cast<UTestReplicatedIrisObject>(Client1->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+
+	// Verify that the object was replicated to all clients
+	UE_NET_ASSERT_NE(Client0Object, nullptr);
+	UE_NET_ASSERT_EQ(Client0Object->IntA, ServerObject->IntA);
+	UE_NET_ASSERT_NE(Client1Object, nullptr);
+	UE_NET_ASSERT_EQ(Client1Object->IntA, ServerObject->IntA);
+
+	// Filter out object to cause a PendingDestroy for Client0
+	FNetObjectGroupHandle ExclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(ExclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddExclusionFilterGroup(ExclusionGroupHandle);
+
+	Server->ReplicationSystem->SetGroupFilterStatus(ExclusionGroupHandle, Client0->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+	Server->ReplicationSystem->SetGroupFilterStatus(ExclusionGroupHandle, Client1->ConnectionIdOnServer, ENetFilterStatus::Allow);
+	
+	Server->PreSendUpdate();
+	Server->SendTo(Client0);
+	Server->PostSendUpdate();
+
+	// Mark dirty
+	ServerObject->IntA = 3;
+
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client1, DeliverPacket);
+	Server->PostSendUpdate();
+
+	// Allow replication again, to trigger cancel
+	Server->ReplicationSystem->SetGroupFilterStatus(ExclusionGroupHandle, Client0->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Drop the packet with the destroy
+	Server->DeliverTo(Client0, false);
+
+	// Write and send a packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client0, DeliverPacket);
+	Server->SendAndDeliverTo(Client1, DeliverPacket);
+	Server->PostSendUpdate();
+
+	Client0Object = Cast<UTestReplicatedIrisObject>(Client0->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	Client1Object = Cast<UTestReplicatedIrisObject>(Client1->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+
+	// Verify that the cancel worked and did not miss changed state
+	UE_NET_ASSERT_NE(Client0Object, nullptr);
+	UE_NET_ASSERT_EQ(Client0Object->IntA, ServerObject->IntA);
+	UE_NET_ASSERT_NE(Client1Object, nullptr);
+	UE_NET_ASSERT_EQ(Client1Object->IntA, ServerObject->IntA);
+}
+
 
 UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPendingSubObjectDestroyDuringWaitOnDestroyConfirmationWithPacketLoss)
 {
@@ -605,18 +846,18 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	Server->PostSendUpdate();
 
 	// Filter out object and write packet to cause subobject to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove object from filter to cause subobject to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the subobject to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -650,18 +891,18 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingCancelPending
 	Server->PostSendUpdate();
 
 	// Filter out subobject and write packet to cause subobject to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove subobject from filter to cause subobject to end up in CancelPendingDestroy...
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
 	// ... and cancel that thought! We want the subobject to be destroyed after all.
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -696,19 +937,19 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingSubObjectDest
 	Server->PostSendUpdate();
 
 	// Filter out subobject and write packet to cause subobject to end up in WaitOnDestroyConfirmation
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject2->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject2->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Filter out parent and write packet
-	Server->GetReplicationSystem()->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerObject->NetRefHandle);
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->SendUpdate(Client->ConnectionIdOnServer);
 	Server->PostSendUpdate();
 
 	// Remove subobject from filter to cause subobject to end up in CancelPendingDestroy
-	Server->GetReplicationSystem()->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerSubObject2->NetRefHandle);
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject2->NetRefHandle);
 	Server->PreSendUpdate();
 	Server->PostSendUpdate();
 
@@ -737,6 +978,47 @@ UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelingSubObjectDest
 	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
 	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject1->NetRefHandle), nullptr);
 	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject2->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestCancelPendingDestroyFixture, TestCancelRootObjectDestroyAfterSubObjectDestroy)
+{
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents());
+	UTestReplicatedIrisObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents());
+
+	// Write and send packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, DeliverPacket);
+	Server->PostSendUpdate();
+
+	// Verify that the subobject now also exists on the client
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Filter out subobject to cause a SubObjectPendingDestroy
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerSubObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->PostSendUpdate();
+
+	// Filter out root object to cause subobject to move to PendingDestroy instead
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->PostSendUpdate();
+
+	// ... and cancel that thought! We don't want the object to be destroyed after all.
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->PostSendUpdate();
+
+	// Write and send a packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, DeliverPacket);
+	Server->PostSendUpdate();
+
+	// Verify that the subobject was destroyed on the client
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
 }
 
 // See TestObjectSplitting.cpp for cancel pending destroy on huge object

@@ -91,20 +91,20 @@ void FOneSkyLocalizationServiceSettings::LoadSettings()
 				continue;
 			}
 
-			TArray<TSharedPtr<FJsonValue> > CredentialsArray = JSONObject->GetArrayField("Credentials");
+			TArray<TSharedPtr<FJsonValue> > CredentialsArray = JSONObject->GetArrayField(TEXT("Credentials"));
 
 			for (TSharedPtr<FJsonValue> CredentialsItem : CredentialsArray)
 			{
 				bool bFoundCredentials = false;
 				const TSharedPtr<FJsonObject>& CredentialsObject = CredentialsItem->AsObject();
-				if (CredentialsObject->HasTypedField<EJson::String>("Name"))
+				if (CredentialsObject->HasTypedField<EJson::String>(TEXT("Name")))
 				{
-					ConnectionInfo.Name = CredentialsObject->GetStringField("Name");
+					ConnectionInfo.Name = CredentialsObject->GetStringField(TEXT("Name"));
 				}
 
-				if (CredentialsObject->HasTypedField<EJson::String>("ApiKey"))
+				if (CredentialsObject->HasTypedField<EJson::String>(TEXT("ApiKey")))
 				{
-					ConnectionInfo.ApiKey = CredentialsObject->GetStringField("ApiKey");
+					ConnectionInfo.ApiKey = CredentialsObject->GetStringField(TEXT("ApiKey"));
 					bFoundCredentials = true;
 				}
 				else
@@ -112,9 +112,9 @@ void FOneSkyLocalizationServiceSettings::LoadSettings()
 					UE_LOG(LogLocalizationService, Log, TEXT("Credentials file %s is missing ApiKey for connection name %s"), *CredentialsFile, *ConnectionInfo.Name);
 				}
 
-				if (CredentialsObject->HasTypedField<EJson::String>("ApiSecret"))
+				if (CredentialsObject->HasTypedField<EJson::String>(TEXT("ApiSecret")))
 				{
-					ConnectionInfo.ApiSecret = CredentialsObject->GetStringField("ApiSecret");
+					ConnectionInfo.ApiSecret = CredentialsObject->GetStringField(TEXT("ApiSecret"));
 				}
 				else
 				{

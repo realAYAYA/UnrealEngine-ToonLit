@@ -10,7 +10,7 @@
 #include "syms/core/generated/syms_meta_debug_info.h"
 
 ////////////////////////////////
-//~ NOTE(rjf): Binary Info Types
+//~ rjf: Binary Info Types
 
 typedef struct SYMS_SecInfo{
   SYMS_String8 name;
@@ -338,18 +338,18 @@ typedef struct SYMS_SigInfo{
   SYMS_SymbolID this_type_id;
 } SYMS_SigInfo;
 
-typedef struct SYMS_EnumInfo{
+typedef struct SYMS_EnumMember{
   SYMS_String8 name;
   SYMS_U64 val;
-} SYMS_EnumInfo;
+} SYMS_EnumMember;
 
-typedef struct SYMS_EnumInfoArray{
-  SYMS_EnumInfo *enum_info;
+typedef struct SYMS_EnumMemberArray{
+  SYMS_EnumMember *enum_members;
   SYMS_U64 count;
-} SYMS_EnumInfoArray;
+} SYMS_EnumMemberArray;
 
 ////////////////////////////////
-// allen: Location Types
+//~ allen: Location Types
 
 typedef SYMS_U64 SYMS_LocID;
 
@@ -380,7 +380,7 @@ typedef enum SYMS_ProcLoc{
 } SYMS_ProcLoc;
 
 ////////////////////////////////
-// allen: Link Name Types
+//~ allen: Link Name Types
 
 typedef struct SYMS_LinkNameRec{
   SYMS_String8 name;
@@ -393,7 +393,7 @@ typedef struct SYMS_LinkNameRecArray{
 } SYMS_LinkNameRecArray;
 
 ////////////////////////////////
-// allen: Nil For Accelerators
+//~ allen: Nil For Accelerators
 
 SYMS_READ_ONLY SYMS_GLOBAL SYMS_FileFormat syms_format_nil = SYMS_FileFormat_Null;
 
@@ -403,7 +403,6 @@ SYMS_READ_ONLY SYMS_GLOBAL SYMS_FileFormat syms_format_nil = SYMS_FileFormat_Nul
 SYMS_C_LINKAGE_BEGIN
 
 SYMS_API SYMS_B32     syms_ext_match_key_match(SYMS_ExtMatchKey *a, SYMS_ExtMatchKey *b);
-SYMS_API SYMS_String8 syms_string_from_symbol_kind(SYMS_SymbolKind kind);
 
 SYMS_API SYMS_USID    syms_make_usid(SYMS_UnitID uid, SYMS_SymbolID sid);
 
@@ -415,6 +414,8 @@ SYMS_API SYMS_B32      syms_type_kind_is_integer(SYMS_TypeKind kind);
 SYMS_API SYMS_B32      syms_type_kind_is_signed(SYMS_TypeKind kind);
 SYMS_API SYMS_B32      syms_type_kind_is_complex(SYMS_TypeKind kind);
 SYMS_API SYMS_B32      syms_type_kind_is_user_defined(SYMS_TypeKind kind);
+SYMS_API SYMS_B32      syms_type_kind_is_record(SYMS_TypeKind kind);
+SYMS_API SYMS_B32      syms_type_kind_is_enum(SYMS_TypeKind kind);
 SYMS_API SYMS_B32      syms_type_kind_is_forward(SYMS_TypeKind kind);
 
 SYMS_API SYMS_SymbolIDArray syms_sid_array_from_list(SYMS_Arena *arena, SYMS_SymbolIDList *list);

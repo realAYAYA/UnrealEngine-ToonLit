@@ -4,11 +4,11 @@
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "Widgets/SNiagaraBakerWidget.h"
 #include "NiagaraBakerRenderer.h"
-#include "NiagaraGpuComputeDispatchInterface.h"
 #include "NiagaraComponent.h"
 #include "NiagaraPlatformSet.h"
 #include "NiagaraSettings.h"
 #include "NiagaraSystem.h"
+#include "NiagaraWorldManager.h"
 
 #include "NiagaraDataInterfaceRenderTarget2D.h"
 
@@ -389,6 +389,22 @@ void FNiagaraBakerViewModel::SetSimTickRate(int TickRate)
 	}
 }
 
+bool FNiagaraBakerViewModel::LockToSimulationFrameRate() const
+{
+	UNiagaraBakerSettings* BakerSettings = GetBakerSettings();
+	return BakerSettings ? BakerSettings->bLockToSimulationFrameRate : true;
+}
+
+void FNiagaraBakerViewModel::ToggleLockToSimulationFrameRate()
+{
+	if (UNiagaraBakerSettings* BakerSettings = GetBakerSettings())
+	{
+		const FScopedTransaction Transaction(LOCTEXT("SetAllowMultiTick", "SetAllowMultiTick"));
+		BakerSettings->Modify();
+		BakerSettings->bLockToSimulationFrameRate = BakerSettings->bLockToSimulationFrameRate ? 0 : 1;
+	}
+}
+
 void FNiagaraBakerViewModel::AddOutput(UClass* Class)
 {
 	if (UNiagaraBakerSettings* BakerSettings = GetBakerSettings())
@@ -672,9 +688,9 @@ FNiagaraBakerFeedbackContext FNiagaraBakerViewModel::RenderBaker()
 	// Ensure we flush everything from the render thread
 	if ( UWorld* World = BakerRenderer->GetWorld() )
 	{
-		if ( FNiagaraGpuComputeDispatchInterface* DispatchInterface = FNiagaraGpuComputeDispatchInterface::Get(World) )
+		if (FNiagaraWorldManager* WorldManager = FNiagaraWorldManager::Get(World))
 		{
-			DispatchInterface->FlushAndWait_GameThread();
+			WorldManager->FlushComputeAndDeferredQueues(true);
 		}
 	}
 

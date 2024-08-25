@@ -45,7 +45,6 @@ public:
 	);
 
 	// UMeshTopologySelectionMechanic
-	virtual void Setup(UInteractiveTool* ParentTool) override;
 	virtual bool UpdateHighlight(const FRay& WorldRay) override;
 	virtual bool UpdateSelection(const FRay& WorldRay, FVector3d& LocalHitPositionOut, FVector3d& LocalHitNormalOut) override;
 
@@ -70,16 +69,6 @@ public:
 	 */
 	void SetSelection_AsTriangleTopology(const UE::Geometry::FGeometrySelection& Selection);
 
-
-	UE_DEPRECATED(5.2, "Use GetTopologySelector in base class")
-	TSharedPtr<FGroupTopologySelector, ESPMode::ThreadSafe> GetTopologySelector() 
-	{ 
-		return StaticCastSharedPtr<FGroupTopologySelector>(TopoSelector); 
-	}
-
-	UE_DEPRECATED(5.2, "Use MechanicProperties in base class")
-	UPROPERTY()
-	TObjectPtr<UDEPRECATED_PolygonSelectionMechanicProperties> Properties_DEPRECATED;
 
 private:
 

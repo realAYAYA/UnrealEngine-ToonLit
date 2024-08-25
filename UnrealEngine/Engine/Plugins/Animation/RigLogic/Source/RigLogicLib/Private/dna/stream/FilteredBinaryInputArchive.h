@@ -61,6 +61,7 @@ class FilteredBinaryInputArchive final : public AnimatedMapFilter, public BlendS
             }
         }
 
+        void process(RawControls& dest);
         void process(RawJoints& dest);
         void process(RawBlendShapeChannels& dest);
         void process(RawAnimatedMaps& dest);
@@ -83,6 +84,9 @@ class FilteredBinaryInputArchive final : public AnimatedMapFilter, public BlendS
         void process(RawVertexSkinWeights& dest);
         void process(RawMachineLearnedBehavior& dest);
 
+        void process(DNA& dest);
+        void removeUnreferencedBlendShapes(DNA& dest);
+
         template<typename ... Args>
         void process(Args&& ... args) {
             BaseArchive::process(std::forward<Args>(args)...);
@@ -96,6 +100,7 @@ class FilteredBinaryInputArchive final : public AnimatedMapFilter, public BlendS
         MemoryResource* memRes;
         DataLayerBitmask layerBitmask;
         LODConstraint lodConstraint;
+        Vector<bool> loadedControls;
         std::uint16_t unconstrainedLODCount;
         bool malformed;
 

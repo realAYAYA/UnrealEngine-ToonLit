@@ -25,7 +25,6 @@
 #include "Settings/EditorStyleSettings.h"
 #include "Settings/LevelEditorViewportSettings.h"
 #include "Styling/SlateBrush.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/RemoveReference.h"
 #include "Types/WidgetActiveTimerDelegate.h"
 #include "UObject/Object.h"

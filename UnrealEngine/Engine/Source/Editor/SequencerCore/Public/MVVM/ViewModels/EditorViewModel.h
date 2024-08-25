@@ -7,6 +7,7 @@
 #include "MVVM/ViewModelPtr.h"
 #include "MVVM/ViewModelTypeID.h"
 #include "MVVM/ViewModels/ViewModel.h"
+#include "MVVM/ViewModels/ViewDensity.h"
 #include "MVVM/ViewModels/ViewModelHierarchy.h"
 #include "Misc/FrameRate.h"
 #include "Templates/SharedPointer.h"
@@ -71,8 +72,20 @@ public:
 	/** Gets the scripting layer */
 	USequencerScriptingLayer* GetScriptingLayer() const;
 
+	/** Returns the current view density for this editor */
+	FViewDensityInfo GetViewDensity() const;
+
+	/** Returns the current view density for this editor */
+	void SetViewDensity(const FViewDensityInfo& InViewDensity);
+
 	/** Returns whether this editor is currently read-only */
 	virtual bool IsReadOnly() const;
+
+	/** Returns the inverse of read-only - useful for direct bindings to IsEnabled for widgets */
+	bool IsEditable() const
+	{
+		return !IsReadOnly();
+	}
 
 protected:
 
@@ -108,7 +121,10 @@ private:
 	TStrongObjectPtr<USequencerScriptingLayer> ScriptingLayer;
 
 	/** The root view-model for the data being edited */
-	TSharedPtr<FViewModel>  RootDataModel;
+	TSharedPtr<FViewModel> RootDataModel;
+
+	/** This editor's current view density defining how condensed the elements appear */
+	FViewDensityInfo ViewDensity;
 };
 
 } // namespace UE::Sequencer

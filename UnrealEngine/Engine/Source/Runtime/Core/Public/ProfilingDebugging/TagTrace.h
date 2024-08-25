@@ -43,11 +43,15 @@ CORE_API int32	MemoryTrace_GetActiveTag();
 class FMemScope
 {
 public:
+	CORE_API FMemScope(); // Used with SetTagAndActivate
 	CORE_API FMemScope(int32 InTag, bool bShouldActivate = true);
 	CORE_API FMemScope(ELLMTag InTag, bool bShouldActivate = true);
 	CORE_API FMemScope(const class FName& InName, bool bShouldActivate = true);
 	CORE_API FMemScope(const UE::LLMPrivate::FTagData* TagData, bool bShouldActivate = true);
 	CORE_API ~FMemScope();
+
+	CORE_API void SetTagAndActivate(const class FName& InName, bool bShouldActivate = true);
+
 private:
 	void ActivateScope(int32 InTag);
 	UE::Trace::Private::FScopedLogScope Inner;
@@ -84,9 +88,11 @@ private:
 inline constexpr int32 TRACE_TAG = 257;
 
 ////////////////////////////////////////////////////////////////////////////////
-#define UE_MEMSCOPE(InTag)				FMemScope PREPROCESSOR_JOIN(MemScope,__LINE__)(InTag);
-#define UE_MEMSCOPE_PTR(InPtr)			FMemScopePtr PREPROCESSOR_JOIN(MemPtrScope,__LINE__)((uint64)InPtr);
-#define UE_MEMSCOPE_DEFAULT(InTag)		FDefaultMemScope PREPROCESSOR_JOIN(MemScope,__LINE__)(InTag);
+#define UE_MEMSCOPE(InTag)					FMemScope PREPROCESSOR_JOIN(MemScope,__LINE__)(InTag);
+#define UE_MEMSCOPE_PTR(InPtr)				FMemScopePtr PREPROCESSOR_JOIN(MemPtrScope,__LINE__)((uint64)InPtr);
+#define UE_MEMSCOPE_DEFAULT(InTag)			FDefaultMemScope PREPROCESSOR_JOIN(MemScope,__LINE__)(InTag);
+#define UE_MEMSCOPE_UNINITIALIZED(Line)		FMemScope PREPROCESSOR_JOIN(MemScope,Line);
+#define UE_MEMSCOPE_ACTIVATE(Line, InTag)	PREPROCESSOR_JOIN(MemScope,Line).SetTagAndActivate(InTag);
 
 #else // UE_MEMORY_TAGS_TRACE_ENABLED
 
@@ -94,6 +100,8 @@ inline constexpr int32 TRACE_TAG = 257;
 #define UE_MEMSCOPE(...)
 #define UE_MEMSCOPE_PTR(...)
 #define UE_MEMSCOPE_DEFAULT(...)
+#define UE_MEMSCOPE_UNINITIALIZED(...)
+#define UE_MEMSCOPE_ACTIVATE(...)
 
 #endif // UE_MEMORY_TAGS_TRACE_ENABLED
 

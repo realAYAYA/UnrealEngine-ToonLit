@@ -16,11 +16,11 @@ StructuredBuffer<FPackedHairVis> VisNodeData;
 Texture2D<float>				 CoverageTexture;
 
 void EmitPS(
-	in float4 SvPosition : SV_Position,
+	in FScreenVertexOutput In,
 	out float4 OutHitProxyId : SV_Target0,
 	out float OutDepth : SV_Depth)
 {
-	const uint2 PixelCoord = (uint2)SvPosition.xy;
+	const uint2 PixelCoord = (uint2)In.Position.xy;
 
 	// Take the first sample
 	const FNodeDesc NodeDesc = DecodeNodeDesc(VisNodeIndex.Load(uint3(PixelCoord,0)));
@@ -59,27 +59,33 @@ Buffer<uint>					 SelectionMaterialIdBuffer;
 Texture2D<uint>					 VisNodeIndex;
 StructuredBuffer<FPackedHairVis> VisNodeData;
 Texture2D<float>				 CoverageTexture;
+Texture2D<float>				 HairOnlyDepthTexture;
 
 void EmitPS(
-	in float4 SvPosition : SV_Position,
+	in float4 InPosition : SV_POSITION,
 	out float OutDepth : SV_Depth)
 {
-	const float2 UV = SvPosition.xy * InvViewportResolution;
-	const uint2 PixelCoord = UV * View.ViewSizeAndInvSize.xy;
 
-	// Take the first sample
-	const FNodeDesc NodeDesc = DecodeNodeDesc(VisNodeIndex.Load(uint3(PixelCoord, 0)));
+	const float2 UV = InPosition.xy * InvViewportResolution;
+	const uint2 PixelCoord = UV * View.ViewSizeAndInvSize.xy;
+	const bool bValid = HairOnlyDepthTexture.Load(uint3(PixelCoord, 0)) > 0;
+
 	bool bIsSelected = false;
-	if (NodeDesc.Count > 0)
+	if (bValid)
 	{
-		const float Coverage = CoverageTexture.Load(uint3(PixelCoord, 0));
-		const uint SampleIndex = NodeDesc.Offset + 0;
-		const FHairVis InNode = UnpackHairVis(VisNodeData[SampleIndex]);
-		const uint MaterialId = clamp(InNode.MaterialId, 0, MaxMaterialCount - 1);
-		if (SelectionMaterialIdBuffer[MaterialId] > 0 && Coverage >= CoverageThreshold)
+		// Take the first sample
+		const FNodeDesc NodeDesc = DecodeNodeDesc(VisNodeIndex.Load(uint3(PixelCoord, 0)));
+		if (NodeDesc.Count > 0)
 		{
-			bIsSelected = true;
-			OutDepth = InNode.Depth;
+			const float Coverage = CoverageTexture.Load(uint3(PixelCoord, 0));
+			const uint SampleIndex = NodeDesc.Offset + 0;
+			const FHairVis InNode = UnpackHairVis(VisNodeData[SampleIndex]);
+			const uint MaterialId = clamp(InNode.MaterialId, 0, MaxMaterialCount - 1);
+			if (SelectionMaterialIdBuffer[MaterialId] > 0 && Coverage >= CoverageThreshold)
+			{
+				bIsSelected = true;
+				OutDepth = InNode.Depth;
+			}
 		}
 	}
 

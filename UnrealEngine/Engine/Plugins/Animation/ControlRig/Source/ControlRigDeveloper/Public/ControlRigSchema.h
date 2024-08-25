@@ -13,4 +13,6 @@ class CONTROLRIGDEVELOPER_API UControlRigSchema : public URigVMSchema
 public:
 
 	virtual bool ShouldUnfoldStruct(URigVMController* InController, const UStruct* InStruct) const override;
+
+	virtual bool SupportsUnitFunction(URigVMController* InController, const FRigVMFunction* InUnitFunction) const override;
 };

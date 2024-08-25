@@ -1639,8 +1639,9 @@ void UClothingAssetCommon::PostEditChangeChainProperty(FPropertyChangedChainEven
 		const FName& PropertyName = ChainEvent.PropertyChain.GetActiveMemberNode() && ChainEvent.PropertyChain.GetActiveMemberNode()->GetNextNode() ?
 			ChainEvent.PropertyChain.GetActiveMemberNode()->GetNextNode()->GetValue()->GetFName() : NAME_None;
 
-		if (PropertyName == FName("SelfCollisionRadius") ||
-			PropertyName == FName("SelfCollisionCullScale"))
+		if (PropertyName == FName("bUseSelfCollisionSpheres") ||
+			PropertyName == FName("SelfCollisionSphereRadius") ||
+			PropertyName == FName("SelfCollisionSphereRadiusCullMultiplier"))
 		{
 			InvalidateFlaggedCachedData(EClothingCachedDataFlagsCommon::SelfCollisionData);
 			bReregisterComponents = true;

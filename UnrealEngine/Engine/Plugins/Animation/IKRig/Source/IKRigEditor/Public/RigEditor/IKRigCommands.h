@@ -18,9 +18,18 @@ public:
 	)
 	{}
 	
-	/** reset whole system to initial state */
+	// reset whole system to initial state
 	TSharedPtr< FUICommandInfo > Reset;
 
-	/** initialize commands */
+	// automatically generate retarget chains
+	TSharedPtr< FUICommandInfo > AutoRetargetChains;
+
+	// automatically setup full body ik
+	TSharedPtr< FUICommandInfo > AutoSetupFBIK;
+
+	// show settings of the asset in the details panel
+	TSharedPtr< FUICommandInfo > ShowAssetSettings;
+
+	// initialize commands
 	virtual void RegisterCommands() override;
 };

@@ -264,6 +264,11 @@ void USkeletalMeshEditorContextObject::BindRefSkeletonTree(ISkeletalMeshEditingI
 	FBindData BindData;
 	Tie(BindData.ToToolNotifierHandle, BindData.FromToolNotifierHandle) = BindInterfaceTo(InEditingInterface, RefSkeletonTree->GetNotifier());
 	TreeBindings.Emplace(InEditingInterface, BindData);
+
+	if(const TSharedPtr<ISkeletalMeshEditorBinding> Binding = Editor.Pin()->GetBinding())
+	{
+		RefSkeletonTree->GetNotifier().HandleNotification(Binding->GetSelectedBones(), ESkeletalMeshNotifyType::BonesSelected);
+	}
 }
 
 void USkeletalMeshEditorContextObject::UnbindRefSkeletonTree(ISkeletalMeshEditingInterface* InEditingInterface)

@@ -63,7 +63,8 @@ private:
 			check(IsInGameThread());
 		}
 
-		if (CallbackThis->Owner.IsValid())
+		TSharedPtr <OwningType> Pinned = CallbackThis->Owner.Pin();
+		if (Pinned.IsValid())
 		{
 			check(CallbackThis->CallbackLambda);
 

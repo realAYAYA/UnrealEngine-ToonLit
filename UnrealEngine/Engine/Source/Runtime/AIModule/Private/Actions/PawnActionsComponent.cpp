@@ -419,7 +419,7 @@ void UDEPRECATED_PawnActionsComponent::RemoveEventsForAction(UDEPRECATED_PawnAct
 	{
 		if (ActionEvents[ActionIndex].Action_DEPRECATED == &PawnAction)
 		{
-			ActionEvents.RemoveAtSwap(ActionIndex, /*Count=*/1, /*bAllowShrinking=*/false);
+			ActionEvents.RemoveAtSwap(ActionIndex, /*Count=*/1, EAllowShrinking::No);
 		}
 	}
 }
@@ -470,7 +470,7 @@ uint32 UDEPRECATED_PawnActionsComponent::AbortActionsInstigatedBy(UObject* const
 				Event.EventType == EPawnActionEventType::Push &&
 				Event.Action_DEPRECATED && Event.Action_DEPRECATED->GetInstigator() == Instigator)
 			{
-				ActionEvents.RemoveAtSwap(ActionIndex, /*Count=*/1, /*bAllowShrinking=*/false);
+				ActionEvents.RemoveAtSwap(ActionIndex, /*Count=*/1, EAllowShrinking::No);
 				AbortedActionsCount++;
 			}
 		}

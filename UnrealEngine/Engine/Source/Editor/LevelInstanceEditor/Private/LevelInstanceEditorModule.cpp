@@ -285,6 +285,22 @@ namespace LevelInstanceMenuUtils
 		return ALevelInstance::StaticClass();
 	}
 
+	bool AreAllSelectedLevelInstancesRootSelections()
+	{
+		for (FSelectionIterator It(GEditor->GetSelectedActorIterator()); It; ++It)
+		{
+			if (ILevelInstanceInterface* LevelInstance = Cast<ILevelInstanceInterface>(*It))
+			{
+				if (CastChecked<AActor>(*It)->GetSelectionParent() != nullptr)
+				{
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+		
 	void CreateLevelInstanceFromSelection(ULevelInstanceSubsystem* LevelInstanceSubsystem, ELevelInstanceCreationType CreationType)
 	{
 		TArray<AActor*> ActorsToMove;
@@ -386,54 +402,90 @@ namespace LevelInstanceMenuUtils
 	void CreateBreakSubMenu(UToolMenu* Menu, TArray<ILevelInstanceInterface*> BreakableLevelInstances)
 	{
 		static int32 BreakLevels = 1;
+		ULevelInstanceEditorPerProjectUserSettings* Settings = GetMutableDefault<ULevelInstanceEditorPerProjectUserSettings>();
 
 		if (ULevelInstanceSubsystem* LevelInstanceSubsystem = GEditor->GetEditorWorldContext().World()->GetSubsystem<ULevelInstanceSubsystem>())
 		{
-			FToolMenuSection& Section = Menu->AddSection(NAME_None, LOCTEXT("LevelInstanceBreakSection", "Break Level Instance"));
-			TSharedRef<SWidget> MenuWidget =
-				SNew(SVerticalBox)
+			FToolMenuSection& Section = Menu->AddSection("Options", LOCTEXT("LevelInstanceBreakOptionsSection", "Options"));
 
-				+SVerticalBox::Slot()
-				[
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot()
-					[
-						SNew(SNumericEntryBox<int32>)
-						.MinValue(1)
-						.Value_Lambda([]() { return BreakLevels; })
-						.OnValueChanged_Lambda([](int32 InValue) { BreakLevels = InValue; })
-						.LabelPadding(0)
-						.Label()
-						[
-							SNumericEntryBox<int32>::BuildLabel(LOCTEXT("BreakLevelsLabel", "Levels"), FLinearColor::White, SNumericEntryBox<int32>::BlueLabelBackgroundColor)
-						]
-					]
-				]
-
-				+SVerticalBox::Slot()
-				.VAlign(VAlign_Center)
-				.HAlign(HAlign_Center)
-				.Padding(0, 5, 0, 0)
-				[
-					SNew(SButton)
-					.HAlign(HAlign_Center)
-					.ContentPadding(FAppStyle::GetMargin("StandardDialog.ContentPadding"))
-					.OnClicked_Lambda([BreakableLevelInstances, LevelInstanceSubsystem]() 
+			FToolMenuEntry OrganizeInFoldersEntry = FToolMenuEntry::InitMenuEntry(
+				"OrganizeInFolders",
+				LOCTEXT("OrganizeActorsInFolders", "Keep Folders"),
+				LOCTEXT(
+					"OrganizeActorsInFoldersTooltip",
+					"Should the actors be placed in the folder the Level Instance is in, "
+					"and keep the folder structure they had inside the Level Instance?"
+				),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateLambda([Settings]()
 					{
-						const FText LevelInstanceBreakWarning = FText::Format(LOCTEXT("BreakingLevelInstance", "You are about to break {0} level instance(s). This action cannot be undone. Are you sure ?"),  FText::FromString(FString::FromInt(BreakableLevelInstances.Num())));
-						if (FMessageDialog::Open(EAppMsgType::YesNo, LevelInstanceBreakWarning) == EAppReturnType::Yes)
-						{
-							for (ILevelInstanceInterface* LevelInstance : BreakableLevelInstances)
-							{
-								LevelInstanceSubsystem->BreakLevelInstance(LevelInstance, BreakLevels);
-							}
-						}
-						return FReply::Handled();
+						Settings->bKeepFoldersDuringBreak = !Settings->bKeepFoldersDuringBreak;
+					}),
+					FCanExecuteAction(),
+					FGetActionCheckState::CreateLambda([Settings]
+					{
+						return Settings->bKeepFoldersDuringBreak ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 					})
-					.Text(LOCTEXT("BreakLevelInstances_BreakLevelInstanceButton", "Break Level Instance(s)"))
+				),
+				EUserInterfaceActionType::ToggleButton
+			);
+			OrganizeInFoldersEntry.bShouldCloseWindowAfterMenuSelection = false;
+			Section.AddEntry(OrganizeInFoldersEntry);
+
+			TSharedRef<SWidget> MenuWidget =
+				SNew(SBox)
+				.Padding(FMargin(5, 2, 5, 0))
+				[
+					SNew(SNumericEntryBox<int32>)
+					.MinValue(1)
+					.Value_Lambda([]() { return BreakLevels; })
+					.OnValueChanged_Lambda([](int32 InValue) { BreakLevels = InValue; })
+					.Label()
+					[
+						SNumericEntryBox<int32>::BuildLabel(LOCTEXT("BreakLevelsLabel", "Levels"), FLinearColor::White, FLinearColor::Transparent)
+					]
 				];
 
 			Section.AddEntry(FToolMenuEntry::InitWidget("SetBreakLevels", MenuWidget, FText::GetEmpty(), false));
+
+			Section.AddSeparator(NAME_None);
+
+			FToolMenuEntry ExecuteEntry = FToolMenuEntry::InitMenuEntry(
+				"ExecuteBreak",
+				LOCTEXT("BreakLevelInstances_BreakLevelInstanceButton", "Break Level Instance(s)"),
+				FText(),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateLambda([BreakableLevelInstances, LevelInstanceSubsystem, Settings]()
+					{
+						const FText LevelInstanceBreakWarning = FText::Format(
+							LOCTEXT(
+								"BreakingLevelInstance",
+								"You are about to break {0} level instance(s). This action cannot be undone. Are you sure ?"
+							),
+							FText::AsNumber(BreakableLevelInstances.Num())
+						);
+
+						if (FMessageDialog::Open(EAppMsgType::YesNo, LevelInstanceBreakWarning) == EAppReturnType::Yes)
+						{
+							ELevelInstanceBreakFlags Flags = ELevelInstanceBreakFlags::None;
+							if (Settings->bKeepFoldersDuringBreak)
+							{
+								Flags |= ELevelInstanceBreakFlags::KeepFolders;
+							}
+
+							for (ILevelInstanceInterface* LevelInstance : BreakableLevelInstances)
+							{
+								LevelInstanceSubsystem->BreakLevelInstance(LevelInstance, BreakLevels, nullptr, Flags);
+							}
+						}
+					})
+				),
+				EUserInterfaceActionType::Button
+			);
+
+			Section.AddEntry(ExecuteEntry);
 		}
 	}
 
@@ -872,6 +924,9 @@ void FLevelInstanceEditorModule::ExtendContextMenu()
 			return;
 		}
 
+		// Some actions aren't allowed on non root selection Level Instances (Readonly Level Instances)
+		const bool bAreAllSelectedLevelInstancesRootSelections = LevelInstanceMenuUtils::AreAllSelectedLevelInstancesRootSelections();
+
 		if (ULevelEditorContextMenuContext* LevelEditorMenuContext = ToolMenu->Context.FindContext<ULevelEditorContextMenuContext>())
 		{
 			// Use the actor under the cursor if available (e.g. right-click menu).
@@ -884,17 +939,28 @@ void FLevelInstanceEditorModule::ExtendContextMenu()
 
 			if (ContextActor)
 			{
+				// Allow Edit/Commmit on non root selected Level Instance
 				LevelInstanceMenuUtils::CreateEditMenu(ToolMenu, ContextActor);
 				LevelInstanceMenuUtils::CreateCommitDiscardMenu(ToolMenu, ContextActor);
-				LevelInstanceMenuUtils::CreatePackedBlueprintMenu(ToolMenu, ContextActor);
-				LevelInstanceMenuUtils::CreateSetCurrentMenu(ToolMenu, ContextActor);
+				
+				if (bAreAllSelectedLevelInstancesRootSelections)
+				{
+					LevelInstanceMenuUtils::CreatePackedBlueprintMenu(ToolMenu, ContextActor);
+					LevelInstanceMenuUtils::CreateSetCurrentMenu(ToolMenu, ContextActor);
+				}
 			}
 
-			LevelInstanceMenuUtils::CreateMoveSelectionToMenu(ToolMenu);
+			if (bAreAllSelectedLevelInstancesRootSelections)
+			{
+				LevelInstanceMenuUtils::CreateMoveSelectionToMenu(ToolMenu);
+			}
 		}
 
-		LevelInstanceMenuUtils::CreateBreakMenu(ToolMenu);
-		LevelInstanceMenuUtils::CreateCreateMenu(ToolMenu);
+		if (bAreAllSelectedLevelInstancesRootSelections)
+		{
+			LevelInstanceMenuUtils::CreateBreakMenu(ToolMenu);
+			LevelInstanceMenuUtils::CreateCreateMenu(ToolMenu);
+		}
 	};
 
 	if (UToolMenu* ToolMenu = UToolMenus::Get()->ExtendMenu("LevelEditor.ActorContextMenu.LevelSubMenu"))
@@ -941,8 +1007,11 @@ void FLevelInstanceEditorModule::ExtendContextMenu()
 			}
 		}), FToolMenuInsert(NAME_None, EToolMenuInsertType::Default));
 	}
-	
+}
+
+bool FLevelInstanceEditorModule::IsEditInPlaceStreamingEnabled() const
+{
+	return GetDefault<ULevelInstanceEditorSettings>()->bIsEditInPlaceStreamingEnabled;
 }
 
 #undef LOCTEXT_NAMESPACE
-

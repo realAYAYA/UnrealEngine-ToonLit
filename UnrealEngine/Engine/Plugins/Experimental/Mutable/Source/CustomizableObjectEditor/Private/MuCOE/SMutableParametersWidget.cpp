@@ -2,7 +2,7 @@
 
 #include "MuCOE/SMutableParametersWidget.h"
 
-#include "MuCOE/SMutableTextSearchBox.h"
+#include "SSearchableComboBox.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "MuR/ModelPrivate.h"
 #include "MuR/ParametersPrivate.h"
@@ -64,7 +64,7 @@ void SMutableParametersWidget::Tick(const FGeometry& AllottedGeometry, const dou
 	
 	for ( int32 ParamIndex=0; ParamIndex< MutableParameters->GetCount(); ++ParamIndex )
 	{
-		FString ParamName = StringCast<TCHAR>(MutableParameters->GetName(ParamIndex)).Get();
+		FString ParamName = MutableParameters->GetName(ParamIndex);
 
 		TSharedPtr<SHorizontalBox> ParameterBox;
 
@@ -228,6 +228,7 @@ void SMutableParametersWidget::ScheduleUpdateIfRequired(const int32& InParameter
 	}
 }
 
+
 void SMutableParametersWidget::GenerateAndAttachParameterSlate(const int32 ParamIndex, TSharedPtr<SHorizontalBox> ParameterHorizontalBox,  mu::RangeIndexPtrConst RangeIndex)
 {
 	switch (MutableParameters->GetType(ParamIndex) )
@@ -278,32 +279,50 @@ void SMutableParametersWidget::GenerateAndAttachParameterSlate(const int32 Param
 	case mu::PARAMETER_TYPE::T_INT:
 	{
 		// If we have a list of options, add a combo box too
-		TSharedPtr<SMutableTextSearchBox> ParamComboBox;
+		TSharedPtr<SSearchableComboBox> ParamComboBox;
 		const int32 ValueCount = MutableParameters->GetIntPossibleValueCount(ParamIndex);
 		if (ValueCount > 0)
 		{
 			const FString ToolTipText = FString("None");
-			TArray<FString> OptionNamesAttribute;
+
+			TSharedPtr<TArray<TSharedPtr<FString>>>* FoundOptions = IntParameterOptions.Find(ParamIndex);
+			TArray<TSharedPtr<FString>>& OptionNamesAttribute = FoundOptions && FoundOptions->IsValid() ?
+																*FoundOptions->Get() :
+																*(IntParameterOptions.Add(ParamIndex, MakeShared<TArray<TSharedPtr<FString>>>()).Get());
+
+			OptionNamesAttribute.Empty();
+
 			const int32 Value = MutableParameters->GetIntValue( ParamIndex , RangeIndex);
 			const int32 ValueIndex = MutableParameters->GetIntValueIndex( ParamIndex, Value );
 			for (int32 i = 0; i < ValueCount; ++i)
 			{
-				const char* ValueText = MutableParameters->GetIntPossibleValueName( ParamIndex, i );
-				OptionNamesAttribute.Add( FString(StringCast<TCHAR>(ValueText).Get()) );				
+				const FString& ValueText = MutableParameters->GetIntPossibleValueName( ParamIndex, i );
+				OptionNamesAttribute.Add(MakeShared<FString>(ValueText));				
 			}
 
 			ParameterHorizontalBox->AddSlot()
 				.Padding(4.0f)
 				.VAlign(VAlign_Center)
 				[
-					SAssignNew(ParamComboBox, SMutableTextSearchBox)
-					.Visibility(this, &SMutableParametersWidget::GetParameterVisibility, ParamIndex)
+					SAssignNew(ParamComboBox, SSearchableComboBox)
+					.SearchVisibility(this, &SMutableParametersWidget::GetParameterVisibility, ParamIndex)
 					.ToolTipText(FText::FromString(ToolTipText))
-					.PossibleSuggestions(OptionNamesAttribute)
-					.InitialText(FText::FromString(OptionNamesAttribute[ValueIndex]))
-					.MustMatchPossibleSuggestions(TAttribute<bool>(true))
-					.SuggestionListPlacement(EMenuPlacement::MenuPlacement_ComboBox)
-					.OnTextCommitted(this, &SMutableParametersWidget::OnIntParameterTextChanged, ParamIndex,RangeIndex)
+					.OptionsSource(&OptionNamesAttribute)
+					.InitiallySelectedItem(OptionNamesAttribute[ValueIndex])
+					.Method(EPopupMethod::UseCurrentWindow)
+					.OnSelectionChanged(this, &SMutableParametersWidget::OnIntParameterTextChanged, ParamIndex, RangeIndex)
+					.OnGenerateWidget(this, &SMutableParametersWidget::OnGenerateWidgetIntParameter)
+					.Content()
+					[
+						SNew(STextBlock)
+						.Text_Lambda([this, ParamIndex, RangeIndex, OptionNamesAttribute]() -> FText
+						{
+							const int32 Value = MutableParameters->GetIntValue(ParamIndex, RangeIndex);
+							const int32 ValueIndex = MutableParameters->GetIntValueIndex(ParamIndex, Value);
+
+							return FText::FromString(*OptionNamesAttribute[ValueIndex]);
+						})
+					]
 				];
 		}
 
@@ -317,7 +336,7 @@ void SMutableParametersWidget::GenerateAndAttachParameterSlate(const int32 Param
 				.MinSliderValue(0)
 				.MaxSliderValue(this, &SMutableParametersWidget::GetIntParameterValueMax, ParamIndex)
 				.Value(this, &SMutableParametersWidget::GetIntParameterValue, ParamIndex, RangeIndex)
-				.OnValueChanged(this, &SMutableParametersWidget::OnIntParameterChanged, ParamIndex, ParamComboBox,RangeIndex)
+				.OnValueChanged(this, &SMutableParametersWidget::OnIntParameterChanged, ParamIndex, ParamComboBox, RangeIndex)
 			];
 		break;
 	}
@@ -512,7 +531,7 @@ TOptional<int32> SMutableParametersWidget::GetIntParameterValueMax(int32 ParamIn
 }
 
 
-void SMutableParametersWidget::OnIntParameterChanged(int32 InValue, int32 ParamIndex, TSharedPtr<SMutableTextSearchBox> Combo, mu::RangeIndexPtrConst RangeIndex )
+void SMutableParametersWidget::OnIntParameterChanged(int32 InValue, int32 ParamIndex, TSharedPtr<SSearchableComboBox> Combo, mu::RangeIndexPtrConst RangeIndex )
 {
 	if (!MutableParameters
 		|| ParamIndex >= MutableParameters->GetCount()
@@ -530,8 +549,9 @@ void SMutableParametersWidget::OnIntParameterChanged(int32 InValue, int32 ParamI
 		// Update the text combo if any
 		if (Combo)
 		{
-			const FString Text = StringCast<TCHAR>(MutableParameters->GetIntPossibleValueName(ParamIndex, InValue)).Get();
-			Combo->SetText(FText::FromString(Text));
+			const FString Text = MutableParameters->GetIntPossibleValueName(ParamIndex, InValue);
+			Combo->RefreshOptions();
+			Combo->SetSelectedItem(MakeShared<FString>(Text), ESelectInfo::Direct);
 		}
 		
 		OnParametersValueChanged.ExecuteIfBound(ParamIndex);
@@ -564,6 +584,12 @@ void SMutableParametersWidget::OnIntParameterTextChanged(TSharedPtr<FString> Sel
 }
 
 
+TSharedRef<SWidget> SMutableParametersWidget::OnGenerateWidgetIntParameter(TSharedPtr<FString> InItem) const
+{
+	return SNew(STextBlock).Text(FText::FromString(*InItem.Get()));
+}
+
+
 FLinearColor SMutableParametersWidget::GetColorParameterValue(int32 ParamIndex, mu::RangeIndexPtrConst RangeIndex) const
 {
 	if (!MutableParameters
@@ -574,8 +600,7 @@ FLinearColor SMutableParametersWidget::GetColorParameterValue(int32 ParamIndex, 
 	}
 
 	FLinearColor Result;
-	MutableParameters->GetColourValue(ParamIndex, &Result.R, &Result.G, &Result.B, RangeIndex);
-	Result.A = 1.0f;
+	MutableParameters->GetColourValue(ParamIndex, &Result.R, &Result.G, &Result.B, &Result.A, RangeIndex);
 
 	return Result;
 }
@@ -588,16 +613,13 @@ FReply SMutableParametersWidget::OnColorBlockMouseButtonDown(const FGeometry& My
 		return FReply::Unhandled();
 	}
 
-	FLinearColor col = GetColorParameterValue(ParamIndex,RangeIndex);
-
-	TArray<FLinearColor*> LinearColorArray;
-	LinearColorArray.Add(&col);
+	FLinearColor Col = GetColorParameterValue(ParamIndex,RangeIndex);
 
 	FColorPickerArgs args;
 	args.bIsModal = true;
-	args.bUseAlpha = false;
+	args.bUseAlpha = true;
 	args.bOnlyRefreshOnMouseUp = false;
-	args.InitialColor = col;
+	args.InitialColor = Col;
 	args.OnColorCommitted = FOnLinearColorValueChanged::CreateSP(this, &SMutableParametersWidget::OnSetColorFromColorPicker, ParamIndex, RangeIndex);
 	OpenColorPicker(args);
 
@@ -614,7 +636,7 @@ void SMutableParametersWidget::OnSetColorFromColorPicker(FLinearColor NewColor, 
 		return;
 	}
 	
-	MutableParameters->SetColourValue(ParamIndex, NewColor.R, NewColor.G, NewColor.B, RangeIndex);
+	MutableParameters->SetColourValue(ParamIndex, NewColor.R, NewColor.G, NewColor.B, NewColor.A, RangeIndex);
 
 	OnParametersValueChanged.ExecuteIfBound(ParamIndex);
 }

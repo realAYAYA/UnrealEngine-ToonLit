@@ -14,8 +14,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeStringConstant::Private::s_type =
-			NODE_TYPE( "StringConstant", NodeString::GetStaticType() );
+	FNodeType NodeStringConstant::Private::s_type =
+			FNodeType( "StringConstant", NodeString::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,41 +26,11 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeStringConstant::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeStringConstant::GetInputNode( int ) const
-	{
-		check( false );
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeStringConstant::SetInputNode( int, NodePtr )
-	{
-		check( false );
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-	const char* NodeStringConstant::GetValue() const
+	void NodeStringConstant::SetValue( const FString& v )
 	{
-		return m_pD->m_value.c_str();
-	}
-
-	//---------------------------------------------------------------------------------------------
-	void NodeStringConstant::SetValue( const char* v )
-	{
-		m_pD->m_value = v?v:"";
+		m_pD->m_value = v;
 	}
 
 

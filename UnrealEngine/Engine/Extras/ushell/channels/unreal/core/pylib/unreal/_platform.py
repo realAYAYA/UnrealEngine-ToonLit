@@ -78,17 +78,17 @@ class Platform(object):
             # As the time of writing the SDK.json files have trailing commas
             # and C-style comments. So we'll try and conform it
             ret = ""
-            count = 0
             for line in inp:
+                try: line = line[:line.index("//")]
+                except ValueError: pass
                 line = line.strip()
-                if not line or line.startswith("//"):
+                if not line:
                     continue
 
-                count += 1
-                sep = "," if count > 1 else ""
-                if line.endswith(","):    line = line[:-1]
-                if line[0] in "[{":       count = 0
-                elif line[0] in "}]":     sep = ""
+                line = line[:-1] if line.endswith(",") else line
+                sep = "" if ret[-1:] in "[{" else ","
+                sep = "" if line[0] in "]}" else sep
+
                 ret += sep + line
             return ret
 
@@ -152,6 +152,10 @@ class Platform(object):
         if form:
             return form
         raise ValueError(f"No known cook form for target '{target}'")
+
+    def get_cook_flavor(self):
+        if hasattr(self, "_get_cook_flavor"):
+            return self._get_cook_flavor()
 
     @_optional_api
     def launch(self, exec_context, stage_dir, binary_path, args):

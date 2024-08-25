@@ -8,6 +8,8 @@
 #endif
 #include "IAudioParameterInterfaceRegistry.h"
 #include "AudioLinkSettingsAbstract.h"
+#include "SoundAttenuationEditorSettings.h"
+#include "Sound/SoundSubmixSend.h"
 
 #include "SoundAttenuation.generated.h"
 
@@ -63,20 +65,6 @@ enum class EReverbSendMethod : uint8
 };
 
 UENUM(BlueprintType)
-enum class ESubmixSendMethod : uint8
-{
-	// A submix send based on linear interpolation between a distance range and send-level range
-	Linear,
-
-	// A submix send based on a supplied curve
-	CustomCurve,
-
-	// A manual submix send level (Uses the specified constant send level value. Useful for 2D sounds.)
-	Manual,
-};
-
-
-UENUM(BlueprintType)
 enum class EPriorityAttenuationMethod : uint8
 {
 	// A priority attenuation based on linear interpolation between a distance range and priority attenuation range
@@ -112,45 +100,6 @@ struct FSoundAttenuationPluginSettings
 	TArray<TObjectPtr<USourceDataOverridePluginSourceSettingsBase>> SourceDataOverridePluginSettingsArray;
 };
 
-USTRUCT(BlueprintType)
-struct FAttenuationSubmixSendSettings
-{
-	GENERATED_USTRUCT_BODY()
-
-	/** Submix to send audio to based on distance. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationSubmixSend)
-	TObjectPtr<USoundSubmixBase> Submix = nullptr;
-
-	/** What method to use to use for submix sends. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationReverbSend)
-	ESubmixSendMethod SubmixSendMethod = ESubmixSendMethod::Linear;
-
-	/** The amount to send to the Submix when the sound is located at a distance equal to value specified in the submix send distance min. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationSubmixSend, meta = (DisplayName = "Submix Min Send Level"))
-	float SubmixSendLevelMin = 0.0f;
-
-	/** The amount to send to the Submix when the sound is located at a distance equal to value specified in the reverb max send distance. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationSubmixSend, meta = (DisplayName = "Submix Max Send Level"))
-	float SubmixSendLevelMax = 1.0f;
-
-	/** The min distance to send to the Submix. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationSubmixSend, meta = (DisplayName = "Submix Min Send Distance"))
-	float SubmixSendDistanceMin = 400.0f;
-
-	/** The max distance to send to the Submix. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationSubmixSend, meta = (DisplayName = "Submix Max Send Distance"))
-	float SubmixSendDistanceMax = 6000.0f;
-
-	/* The manual Submix send level to use. Doesn't change as a function of distance. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationSubmixSend)
-	float ManualSubmixSendLevel = 0.2f;
-
-	/* The custom Submix send curve to use for distance-based send level. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AttenuationSubmixSend)
-	FRuntimeFloatCurve CustomSubmixSendCurve;
-};
-
-
 // Defines how to speaker map the sound when using the non-spatialized radius feature
 UENUM(BlueprintType)
 enum class ENonSpatializedRadiusSpeakerMapMode : uint8
@@ -163,6 +112,14 @@ enum class ENonSpatializedRadiusSpeakerMapMode : uint8
 
 	// Will blend the 3D source to a multichannel 2D version (i.e. upmix stereo to quad) if rendering in surround
 	Surround2D,
+};
+
+USTRUCT(BlueprintType)
+struct FAttenuationSubmixSendSettings : public FSoundSubmixSendInfoBase
+{
+	GENERATED_BODY();
+	
+	FAttenuationSubmixSendSettings();
 };
 
 /*
@@ -509,6 +466,13 @@ struct FSoundAttenuationSettings : public FBaseAttenuationSettings
 		, PriorityAttenuationDistanceMax(UE_REAL_TO_FLOAT(AttenuationShapeExtents.X) + FalloffDistance)
 		, ManualPriorityAttenuation(1.0f)
 	{
+#if WITH_EDITOR
+		if (const USoundAttenuationEditorSettings* SoundAttenuationEditorSettings = GetDefault<USoundAttenuationEditorSettings>())
+		{
+			bEnableReverbSend = SoundAttenuationEditorSettings->bEnableReverbSend;
+			bEnableSendToAudioLink = SoundAttenuationEditorSettings->bEnableSendToAudioLink;
+		}
+#endif // WITH_EDITOR
 	}
 
 	ENGINE_API bool operator==(const FSoundAttenuationSettings& Other) const;

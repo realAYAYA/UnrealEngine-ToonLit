@@ -13,8 +13,10 @@ class FNiagaraEmitterViewModel;
 class FNiagaraScriptViewModel;
 class UNiagaraStackEditorData;
 class UNiagaraStackErrorItem;
+class UNiagaraStackNote;
 class UNiagaraClipboardContent;
 class UNiagaraStackEntry;
+struct FNiagaraStackNoteData;
 
 UENUM()
 enum class EStackIssueSeverity : uint8
@@ -22,7 +24,6 @@ enum class EStackIssueSeverity : uint8
 	Error = 0,
 	Warning, 
 	Info,
-	CustomNote,
 	None
 };
 
@@ -114,6 +115,7 @@ public:
 	{
 		static NIAGARAEDITOR_API const FName System;
 		static NIAGARAEDITOR_API const FName Emitter;
+		static NIAGARAEDITOR_API const FName StatelessEmitter;
 		static NIAGARAEDITOR_API const FName Particle;
 		static NIAGARAEDITOR_API const FName Render;
 	};
@@ -393,6 +395,8 @@ public:
 		}
 	}
 
+	NIAGARAEDITOR_API UNiagaraStackNote* GetStackNote();
+	
 	NIAGARAEDITOR_API FOnExpansionChanged& OnExpansionChanged();
 
 	NIAGARAEDITOR_API FOnExpansionChanged& OnExpansionInOverviewChanged();
@@ -437,6 +441,20 @@ public:
 		return nullptr;
 	}
 
+	template<typename ChildType>
+	static ChildType* FindCurrentChildOfType(const TArray<UNiagaraStackEntry*>& CurrentChildren)
+	{
+		for (UNiagaraStackEntry* CurrentChild : CurrentChildren)
+		{
+			ChildType* TypedCurrentChild = Cast<ChildType>(CurrentChild);
+			if (TypedCurrentChild != nullptr)
+			{
+				return TypedCurrentChild;
+			}
+		}
+		return nullptr;
+	}
+
 	NIAGARAEDITOR_API virtual void GetSearchItems(TArray<FStackSearchItem>& SearchItems) const;
 
 	NIAGARAEDITOR_API virtual UObject* GetExternalAsset() const;
@@ -460,8 +478,6 @@ public:
 	NIAGARAEDITOR_API bool HasIssuesOrAnyChildHasIssues() const;
 	NIAGARAEDITOR_API bool HasUsagesOrAnyChildHasUsages() const;
 	NIAGARAEDITOR_API void GetRecursiveUsages(bool& bRead, bool& bWrite) const;
-
-	NIAGARAEDITOR_API int32 GetTotalNumberOfCustomNotes() const;
 	
 	NIAGARAEDITOR_API int32 GetTotalNumberOfInfoIssues() const;
 
@@ -522,6 +538,13 @@ public:
 	/** Handler for when a rename is committed for this stack entry. */
 	NIAGARAEDITOR_API virtual void OnRenamed(FText NewName);
 
+	/** Generally, all stack items with a valid stack key would support the note feature. We only allow them on specific types of of entries. */
+	NIAGARAEDITOR_API virtual bool SupportsStackNotes() { return false; }
+	NIAGARAEDITOR_API bool HasStackNoteData() const;
+	NIAGARAEDITOR_API FNiagaraStackNoteData GetStackNoteData() const;
+	NIAGARAEDITOR_API void SetStackNoteData(FNiagaraStackNoteData InStackNoteData);
+	NIAGARAEDITOR_API void DeleteStackNoteData();
+	
 	virtual bool SupportsSummaryView() const { return false; }
 	NIAGARAEDITOR_API virtual struct FNiagaraHierarchyIdentity DetermineSummaryIdentity() const;
 	NIAGARAEDITOR_API bool IsInSummaryView() const;
@@ -610,16 +633,14 @@ private:
 			: TotalNumberOfInfoIssues(0)
 			, TotalNumberOfWarningIssues(0)
 			, TotalNumberOfErrorIssues(0)
-			, TotalNumberOfCustomNotes(0)
 		{
 		}
 
-		bool HasAnyIssues() const { return TotalNumberOfInfoIssues > 0 || TotalNumberOfWarningIssues > 0 || TotalNumberOfErrorIssues > 0 || TotalNumberOfCustomNotes > 0; }
+		bool HasAnyIssues() const { return TotalNumberOfInfoIssues > 0 || TotalNumberOfWarningIssues > 0 || TotalNumberOfErrorIssues > 0; }
 
 		int32 TotalNumberOfInfoIssues;
 		int32 TotalNumberOfWarningIssues;
 		int32 TotalNumberOfErrorIssues;
-		int32 TotalNumberOfCustomNotes;
 		TArray<UNiagaraStackEntry*> ChildrenWithIssues;
 	};
 
@@ -657,6 +678,9 @@ private:
 
 	mutable TArray<UNiagaraStackEntry*> FilteredChildren;
 
+	UPROPERTY()
+	TObjectPtr<UNiagaraStackNote> StackNote;
+	
 	UPROPERTY()
 	TArray<TObjectPtr<UNiagaraStackErrorItem>> ErrorChildren;
 

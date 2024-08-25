@@ -79,7 +79,7 @@ struct FSkeletalAnimationSystemData
 	TMap<USkeletalMeshComponent*, FBoundObjectActiveSkeletalAnimations> SkeletalAnimations;
 
 	/** Map of persistent montage data */
-	TMap<FObjectKey, FMontagePlayerPerSectionData> MontageData;
+	TMap<FObjectKey, TMap<FObjectKey, FMontagePlayerPerSectionData>> MontageData;
 };
 
 } // namespace UE::MovieScene

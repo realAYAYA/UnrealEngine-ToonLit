@@ -8,12 +8,10 @@
 #include "UsdWrappers/UsdPrim.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/usdGeom/xformable.h"
+#include "pxr/usd/usdGeom/xformable.h"
 #include "USDIncludesEnd.h"
-
-#endif //  #if USE_USD_SDK
+#endif	  //  #if USE_USD_SDK
 
 namespace UE
 {
@@ -25,74 +23,74 @@ namespace UE
 			FUsdGeomXformableImpl() = default;
 
 #if USE_USD_SDK
-			explicit FUsdGeomXformableImpl( const pxr::UsdGeomXformable& InUsdGeomXformable )
-				: PxrUsdGeomXformable( InUsdGeomXformable )
+			explicit FUsdGeomXformableImpl(const pxr::UsdGeomXformable& InUsdGeomXformable)
+				: PxrUsdGeomXformable(InUsdGeomXformable)
 			{
 			}
 
-			explicit FUsdGeomXformableImpl( pxr::UsdGeomXformable&& InUsdGeomXformable )
-				: PxrUsdGeomXformable( MoveTemp( InUsdGeomXformable ) )
+			explicit FUsdGeomXformableImpl(pxr::UsdGeomXformable&& InUsdGeomXformable)
+				: PxrUsdGeomXformable(MoveTemp(InUsdGeomXformable))
 			{
 			}
 
-			explicit FUsdGeomXformableImpl( const pxr::UsdPrim& InUsdPrim )
-				: PxrUsdGeomXformable( pxr::UsdGeomXformable( InUsdPrim ) )
+			explicit FUsdGeomXformableImpl(const pxr::UsdPrim& InUsdPrim)
+				: PxrUsdGeomXformable(pxr::UsdGeomXformable(InUsdPrim))
 			{
 			}
 
-			TUsdStore< pxr::UsdGeomXformable > PxrUsdGeomXformable;
-#endif // #if USE_USD_SDK
+			TUsdStore<pxr::UsdGeomXformable> PxrUsdGeomXformable;
+#endif	  // #if USE_USD_SDK
 		};
 	}
 
 	FUsdGeomXformable::FUsdGeomXformable()
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdGeomXformableImpl >();
+		Impl = MakeUnique<Internal::FUsdGeomXformableImpl>();
 	}
 
-	FUsdGeomXformable::FUsdGeomXformable( const FUsdGeomXformable& Other )
-		: FUsdTyped( Other )
+	FUsdGeomXformable::FUsdGeomXformable(const FUsdGeomXformable& Other)
+		: FUsdTyped(Other)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdGeomXformableImpl >( Other.Impl->PxrUsdGeomXformable.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdGeomXformableImpl>(Other.Impl->PxrUsdGeomXformable.Get());
+#endif	  // #if USE_USD_SDK
 	}
 
-	FUsdGeomXformable::FUsdGeomXformable( FUsdGeomXformable&& Other )
-		: FUsdTyped( MoveTemp( Other ) )
-		, Impl( MoveTemp( Other.Impl ) )
+	FUsdGeomXformable::FUsdGeomXformable(FUsdGeomXformable&& Other)
+		: FUsdTyped(MoveTemp(Other))
+		, Impl(MoveTemp(Other.Impl))
 	{
 	}
 
-	FUsdGeomXformable::FUsdGeomXformable( const FUsdPrim& Prim )
-		: FUsdTyped( Prim )
+	FUsdGeomXformable::FUsdGeomXformable(const FUsdPrim& Prim)
+		: FUsdTyped(Prim)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdGeomXformableImpl >( Prim );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdGeomXformableImpl>(Prim);
+#endif	  // #if USE_USD_SDK
 	}
 
-	FUsdGeomXformable& FUsdGeomXformable::operator=( const FUsdGeomXformable& Other )
+	FUsdGeomXformable& FUsdGeomXformable::operator=(const FUsdGeomXformable& Other)
 	{
-		FUsdTyped::operator=( Other );
+		FUsdTyped::operator=(Other);
 
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdGeomXformableImpl >( Other.Impl->PxrUsdGeomXformable.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdGeomXformableImpl>(Other.Impl->PxrUsdGeomXformable.Get());
+#endif	  // #if USE_USD_SDK
 
 		return *this;
 	}
 
-	FUsdGeomXformable& FUsdGeomXformable::operator=( FUsdGeomXformable&& Other )
+	FUsdGeomXformable& FUsdGeomXformable::operator=(FUsdGeomXformable&& Other)
 	{
-		FUsdTyped::operator=( MoveTemp( Other ) );
+		FUsdTyped::operator=(MoveTemp(Other));
 
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MoveTemp( Other.Impl );
+		Impl = MoveTemp(Other.Impl);
 
 		return *this;
 	}
@@ -109,26 +107,26 @@ namespace UE
 		return (bool)Impl->PxrUsdGeomXformable.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 #if USE_USD_SDK
-	FUsdGeomXformable::FUsdGeomXformable( const pxr::UsdGeomXformable& InUsdGeomXformable )
+	FUsdGeomXformable::FUsdGeomXformable(const pxr::UsdGeomXformable& InUsdGeomXformable)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdGeomXformableImpl >( InUsdGeomXformable );
+		Impl = MakeUnique<Internal::FUsdGeomXformableImpl>(InUsdGeomXformable);
 	}
 
-	FUsdGeomXformable::FUsdGeomXformable( pxr::UsdGeomXformable&& InUsdGeomXformable )
+	FUsdGeomXformable::FUsdGeomXformable(pxr::UsdGeomXformable&& InUsdGeomXformable)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdGeomXformableImpl >( MoveTemp( InUsdGeomXformable ) );
+		Impl = MakeUnique<Internal::FUsdGeomXformableImpl>(MoveTemp(InUsdGeomXformable));
 	}
 
-	FUsdGeomXformable::FUsdGeomXformable( const pxr::UsdPrim& Prim )
+	FUsdGeomXformable::FUsdGeomXformable(const pxr::UsdPrim& Prim)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdGeomXformableImpl >( Prim );
+		Impl = MakeUnique<Internal::FUsdGeomXformableImpl>(Prim);
 	}
 
 	FUsdGeomXformable::operator pxr::UsdGeomXformable&()
@@ -140,7 +138,7 @@ namespace UE
 	{
 		return Impl->PxrUsdGeomXformable.Get();
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	bool FUsdGeomXformable::GetResetXformStack() const
 	{
@@ -148,7 +146,7 @@ namespace UE
 		return Impl->PxrUsdGeomXformable.Get().GetResetXformStack();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdGeomXformable::TransformMightBeTimeVarying() const
@@ -157,32 +155,32 @@ namespace UE
 		return Impl->PxrUsdGeomXformable.Get().TransformMightBeTimeVarying();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdGeomXformable::GetTimeSamples( TArray< double >* Times ) const
+	bool FUsdGeomXformable::GetTimeSamples(TArray<double>* Times) const
 	{
-		if ( !Times )
+		if (!Times)
 		{
 			return false;
 		}
 
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
-		std::vector< double > UsdTimes;
+		std::vector<double> UsdTimes;
 
-		if ( Impl->PxrUsdGeomXformable.Get().GetTimeSamples( &UsdTimes ) )
+		if (Impl->PxrUsdGeomXformable.Get().GetTimeSamples(&UsdTimes))
 		{
-			Times->Empty( UsdTimes.size() );
+			Times->Empty(UsdTimes.size());
 
-			for ( double UsdTime : UsdTimes )
+			for (double UsdTime : UsdTimes)
 			{
-				Times->Add( UsdTime );
+				Times->Add(UsdTime);
 			}
 
 			return true;
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -190,10 +188,10 @@ namespace UE
 	FUsdAttribute FUsdGeomXformable::GetXformOpOrderAttr() const
 	{
 #if USE_USD_SDK
-		return FUsdAttribute( Impl->PxrUsdGeomXformable.Get().GetXformOpOrderAttr() );
+		return FUsdAttribute(Impl->PxrUsdGeomXformable.Get().GetXformOpOrderAttr());
 #else
 		return FUsdAttribute();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdGeomXformable::ClearXformOpOrder() const
@@ -202,6 +200,6 @@ namespace UE
 		return Impl->PxrUsdGeomXformable.Get().ClearXformOpOrder();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
-}
+}	 // namespace UE

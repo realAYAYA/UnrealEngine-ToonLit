@@ -32,13 +32,6 @@ void FD3D11DynamicRHI::RHIBeginFrame()
 {
 	UniformBufferBeginFrame();
 	GPUProfilingData.BeginFrame(this);
-
-#if INTEL_METRICSDISCOVERY
-	if (GDX11IntelMetricsDiscoveryEnabled)
-	{
-		IntelMetricsDicoveryBeginFrame();
-	}
-#endif // INTEL_METRICSDISCOVERY
 }
 
 template <int32 Frequency>
@@ -342,13 +335,6 @@ void FD3DGPUProfiler::BeginFrame(FD3D11DynamicRHI* InRHI)
 
 void FD3D11DynamicRHI::RHIEndFrame()
 {
-#if INTEL_METRICSDISCOVERY
-	if (GDX11IntelMetricsDiscoveryEnabled)
-	{
-		IntelMetricsDicoveryEndFrame();
-	}
-#endif // INTEL_METRICSDISCOVERY
-
 	GPUProfilingData.EndFrame();
 	CurrentComputeShader = nullptr;
 }
@@ -558,7 +544,7 @@ void FD3DGPUProfiler::PopEvent()
 #if NV_AFTERMATH
 	if (GDX11NVAfterMathEnabled && bTrackingGPUCrashData && GDX11NVAfterMathMarkers)
 	{
-		PushPopStack.Pop(false);
+		PushPopStack.Pop(EAllowShrinking::No);
 	}
 #endif
 

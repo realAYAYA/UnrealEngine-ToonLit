@@ -4,7 +4,7 @@
 
 #include "Messaging/CommonGameDialog.h"
 #include "NativeGameplayTags.h"
-#include "Player/LyraLocalPlayer.h"
+#include "CommonLocalPlayer.h"
 #include "PrimaryGameLayout.h"
 #include "Widgets/CommonActivatableWidgetContainer.h"
 
@@ -24,7 +24,7 @@ void ULyraUIMessaging::Initialize(FSubsystemCollectionBase& Collection)
 
 void ULyraUIMessaging::ShowConfirmation(UCommonGameDialogDescriptor* DialogDescriptor, FCommonMessagingResultDelegate ResultCallback)
 {
-	if (ULyraLocalPlayer* LocalPlayer = GetLocalPlayer<ULyraLocalPlayer>())
+	if (UCommonLocalPlayer* LocalPlayer = GetLocalPlayer<UCommonLocalPlayer>())
 	{
 		if (UPrimaryGameLayout* RootLayout = LocalPlayer->GetRootUILayout())
 		{
@@ -37,7 +37,7 @@ void ULyraUIMessaging::ShowConfirmation(UCommonGameDialogDescriptor* DialogDescr
 
 void ULyraUIMessaging::ShowError(UCommonGameDialogDescriptor* DialogDescriptor, FCommonMessagingResultDelegate ResultCallback)
 {
-	if (ULyraLocalPlayer* LocalPlayer = GetLocalPlayer<ULyraLocalPlayer>())
+	if (UCommonLocalPlayer* LocalPlayer = GetLocalPlayer<UCommonLocalPlayer>())
 	{
 		if (UPrimaryGameLayout* RootLayout = LocalPlayer->GetRootUILayout())
 		{

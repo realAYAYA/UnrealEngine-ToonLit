@@ -259,9 +259,9 @@ public:
 
 	const FGlobalShaderMapSection* GetFirstSection()
 	{
-		for (auto It : SectionMap)
+		if (const auto It = SectionMap.CreateConstIterator())
 		{
-			return It.Value;
+			return It.Value();
 		}
 		return nullptr;
 	}

@@ -4,6 +4,7 @@
 
 #if WITH_STATETREE_DEBUGGER
 
+#include "Delegates/IDelegateInstance.h"
 #include "IStateTreeTraceProvider.h"
 #include "StateTree.h"
 #include "StateTreeDebuggerTypes.h"
@@ -26,7 +27,7 @@ class UStateTree;
 
 DECLARE_DELEGATE_OneParam(FOnStateTreeDebuggerScrubStateChanged, const UE::StateTreeDebugger::FScrubState& ScrubState);
 DECLARE_DELEGATE_TwoParams(FOnStateTreeDebuggerBreakpointHit, FStateTreeInstanceDebugId InstanceId, const FStateTreeDebuggerBreakpoint Breakpoint);
-DECLARE_DELEGATE_OneParam(FOnStateTreeDebuggerActiveStatesChanges, TConstArrayView<FStateTreeStateHandle> ActiveStates);
+DECLARE_DELEGATE_OneParam(FOnStateTreeDebuggerActiveStatesChanges, const FStateTreeTraceActiveStates& ActiveStates);
 DECLARE_DELEGATE_OneParam(FOnStateTreeDebuggerNewInstance, FStateTreeInstanceDebugId InstanceId);
 DECLARE_DELEGATE(FOnStateTreeDebuggerNewSession);
 DECLARE_DELEGATE(FOnStateTreeDebuggerDebuggedInstanceSet);
@@ -140,7 +141,6 @@ struct STATETREEMODULE_API FStateTreeDebugger : FTickableGameObject
 
 	/**
 	 * Queue a request to auto start an analysis session on the next available live trace.
-	 * This will replace the current analysis session if any.
 	 * @return True if connection was successfully requested or was able to use active trace, false otherwise.
 	 */
 	bool RequestAnalysisOfEditorSession();
@@ -177,6 +177,8 @@ struct STATETREEMODULE_API FStateTreeDebugger : FTickableGameObject
 	void StopSessionAnalysis();
 	FTraceDescriptor GetSelectedTraceDescriptor() const { return ActiveSessionTraceDescriptor; }
 	FText GetSelectedTraceDescription() const;
+
+	void GetSessionInstances(TArray<UE::StateTreeDebugger::FInstanceDescriptor>& OutInstances) const;
 
 	FOnStateTreeDebuggerNewSession OnNewSession;
 	FOnStateTreeDebuggerNewInstance OnNewInstance;
@@ -233,7 +235,13 @@ private:
 
 	void SendNotifications();
 
-	void SetActiveStates(const TConstArrayView<FStateTreeStateHandle> NewActiveStates);
+	void SetActiveStates(const FStateTreeTraceActiveStates& NewActiveStates);
+
+	/**
+	 * Request an analysis session on the latest next available live trace.
+	 * This will replace the current analysis session if any.
+	 */
+	void RequestAnalysisOfLatestTrace();
 
 	/**
 	 * Looks for a new live traces to start an analysis session.
@@ -254,7 +262,7 @@ private:
 	void RefreshActiveStates();
 
 	UE::Trace::FStoreClient* GetStoreClient() const;
-	void GetSessionInstances(TArray<UE::StateTreeDebugger::FInstanceDescriptor>& OutInstances) const;
+
 	void UpdateInstances();
 
 	bool ProcessEvent(const FStateTreeInstanceDebugId InstanceId, const TraceServices::FFrame& Frame, const FStateTreeTraceEventVariantType& Event);
@@ -286,7 +294,7 @@ private:
 	TArray<FStateTreeDebuggerBreakpoint> Breakpoints;
 
 	/** List of currently active states in the selected instance */
-	TArray<FStateTreeStateHandle> ActiveStates;
+	FStateTreeTraceActiveStates ActiveStates;
 
 	/**
 	 * When auto-connecting on next live session it is possible that a few frames are required for the tracing session to be accessible and connected to.
@@ -328,6 +336,11 @@ private:
 	 * Indicates the last transition type between two consecutive analyses to manage track cleanup properly.
 	 */
 	EAnalysisTransitionType AnalysisTransitionType = EAnalysisTransitionType::Unset;
+
+	/**
+	 * Delegate Handle bound to UE::StateTree::Delegates::OnTracingStateChanged
+	 */
+	FDelegateHandle TracingStateChangedHandle;
 };
 
 #endif // WITH_STATETREE_DEBUGGER

@@ -112,32 +112,32 @@ EStateTreeRunStatus FGameplayInteractionSyncSlotTagTransitionTask::EnterState(FS
 				if (TargetSlot == Data.SlotHandle
 					&& Data.Reason == ESmartObjectChangeReason::OnTagAdded)
 				{
-					check(InstanceDataRef.IsValid());
-					FInstanceDataType& InstanceData = *InstanceDataRef;
-
-					UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagTransitionTask] Sync transition: (%s) Tag %s added"),
-						*LexToString(InstanceData.TargetSlot), *Data.Tag.ToString());
-
-					if (InstanceData.State == EGameplayInteractionSyncSlotTransitionState::WaitingForFromTag)
+					if (FInstanceDataType* InstanceData = InstanceDataRef.GetPtr())
 					{
-						if (Data.Tag.MatchesTag(TransitionFromTag))
-						{
-							SmartObjectSubsystem->SendSlotEvent(InstanceData.TargetSlot, TransitionEventTag);
-							InstanceData.State = EGameplayInteractionSyncSlotTransitionState::WaitingForToTag;
+						UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagTransitionTask] Sync transition: (%s) Tag %s added"),
+							*LexToString(InstanceData->TargetSlot), *Data.Tag.ToString());
 
-							UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagTransitionTask] Sync transition: (%s) WaitingForFromTag match [%s] -> SOEvent %s"),
-								*LexToString(InstanceData.TargetSlot), *TransitionFromTag.ToString(), *TransitionEventTag.ToString());
+						if (InstanceData->State == EGameplayInteractionSyncSlotTransitionState::WaitingForFromTag)
+						{
+							if (Data.Tag.MatchesTag(TransitionFromTag))
+							{
+								SmartObjectSubsystem->SendSlotEvent(InstanceData->TargetSlot, TransitionEventTag);
+								InstanceData->State = EGameplayInteractionSyncSlotTransitionState::WaitingForToTag;
+
+								UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagTransitionTask] Sync transition: (%s) WaitingForFromTag match [%s] -> SOEvent %s"),
+									*LexToString(InstanceData->TargetSlot), *TransitionFromTag.ToString(), *TransitionEventTag.ToString());
+							}
 						}
-					}
-					else if (InstanceData.State == EGameplayInteractionSyncSlotTransitionState::WaitingForToTag)
-					{
-						if (Data.Tag.MatchesTag(TransitionToTag))
+						else if (InstanceData->State == EGameplayInteractionSyncSlotTransitionState::WaitingForToTag)
 						{
-							EventQueue.SendEvent(Owner, TransitionEventTag);
-							InstanceData.State = EGameplayInteractionSyncSlotTransitionState::Completed;
+							if (Data.Tag.MatchesTag(TransitionToTag))
+							{
+								EventQueue.SendEvent(Owner, TransitionEventTag);
+								InstanceData->State = EGameplayInteractionSyncSlotTransitionState::Completed;
 
-							UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagTransitionTask] Sync transition: (%s) WaitingForToTag match [%s] -> Event %s"),
-								*LexToString(InstanceData.TargetSlot), *TransitionToTag.ToString(), *TransitionEventTag.ToString());
+								UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagTransitionTask] Sync transition: (%s) WaitingForToTag match [%s] -> Event %s"),
+									*LexToString(InstanceData->TargetSlot), *TransitionToTag.ToString(), *TransitionEventTag.ToString());
+							}
 						}
 					}
 				}

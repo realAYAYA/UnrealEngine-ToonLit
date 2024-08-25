@@ -44,6 +44,8 @@ class OPTIMUSCORE_API UOptimusDebugDrawDataInterface : public UOptimusComputeDat
 	GENERATED_BODY()
 
 public:
+	UOptimusDebugDrawDataInterface();
+	
 	//~ Begin UOptimusComputeDataInterface Interface
 	FString GetDisplayName() const override;
 	FName GetCategory() const override;
@@ -63,6 +65,10 @@ public:
 	UComputeDataProvider* CreateDataProvider(TObjectPtr<UObject> InBinding, uint64 InInputMask, uint64 InOutputMask) const override;
 	//~ End UComputeDataInterface Interface
 
+	// Make sure DirectX12 and Shader Model 6 is enabled in project settings for DebugDraw to function, since DXC is required for shader compilation. 
+	UPROPERTY(Transient, VisibleAnywhere, Category = DebugDraw, meta=(EditConditionHides, EditCondition="!bIsSupported"))
+	bool bIsSupported = false;
+	
 	UPROPERTY(EditAnywhere, Category = DebugDraw, meta = (ShowOnlyInnerProperties))
 	FOptimusDebugDrawParameters DebugDrawParameters;
 

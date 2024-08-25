@@ -7,6 +7,7 @@
 #include "GeometryCollection/TransformCollection.h"
 
 class FGeometryCollection;
+class FGeometryDynamicCollection;
 
 namespace GeometryCollectionAlgo
 {
@@ -133,12 +134,17 @@ namespace GeometryCollectionAlgo
 	*  Global Matrices of the specified index.
 	*/
 	FTransform CHAOS_API GlobalMatrix(const TManagedArray<FTransform>& RelativeTransforms, const TManagedArray<int32>& Parents, int32 Index);
+	FTransform CHAOS_API GlobalMatrix(const TManagedArray<FTransform3f>& RelativeTransforms, const TManagedArray<int32>& Parents, int32 Index);
+	FTransform CHAOS_API GlobalMatrix(TArrayView<const FTransform> RelativeTransforms, TArrayView<const int32> Parents, int32 Index);
+	FTransform CHAOS_API GlobalMatrix(TArrayView<const FTransform3f> RelativeTransforms, TArrayView<const int32> Parents, int32 Index);
+	FTransform3f CHAOS_API GlobalMatrix3f(const TManagedArray<FTransform3f>& RelativeTransforms, const TManagedArray<int32>& Parents, int32 Index);
 
 
 	/*
 	*  Global Matrices of the collection based on list of indices
 	*/
 	void CHAOS_API GlobalMatrices(const TManagedArray<FTransform>& RelativeTransforms, const TManagedArray<int32>& Parents, const TArray<int32>& Indices, TArray<FTransform>& Transforms);
+	void CHAOS_API GlobalMatrices(const TManagedArray<FTransform3f>& RelativeTransforms, const TManagedArray<int32>& Parents, const TArray<int32>& Indices, TArray<FTransform3f>& Transforms);
 
 	/*
 	 *  Recursively traverse from a root node down
@@ -151,8 +157,8 @@ namespace GeometryCollectionAlgo
 	template<typename MatrixType>
 	void CHAOS_API GlobalMatrices(const TManagedArray<FTransform>& RelativeTransforms, const TManagedArray<int32>& Parents, const TManagedArray<FTransform>& UniformScale, TArray<MatrixType>& Transforms);
 
-	template<typename MatrixType>
-	void CHAOS_API GlobalMatrices(const TManagedArray<FTransform>& RelativeTransforms, const TManagedArray<int32>& Parents, TArray<MatrixType>& Transforms);
+	template<typename MatrixType, typename TransformType>
+	void CHAOS_API GlobalMatrices(const TManagedArray<TransformType>& RelativeTransforms, const TManagedArray<int32>& Parents, TArray<MatrixType>& Transforms);
 
 	/*
 	*  Gets pairs of elements whose bounding boxes overlap.
@@ -282,5 +288,15 @@ namespace GeometryCollectionAlgo
 	TArray<int32>
 	CHAOS_API
 	ComputeRecursiveOrder(const FManagedArrayCollection& Collection);
+
+
+	// For internal use only 
+	namespace Private
+	{
+		void CHAOS_API GlobalMatrices(const FGeometryDynamicCollection& DynamicCollection, TArray<FTransform>& Transforms);
+		void CHAOS_API GlobalMatrices(const FGeometryDynamicCollection& DynamicCollection, TArray<FTransform3f>& Transforms);
+		void CHAOS_API GlobalMatrices(const FGeometryDynamicCollection& DynamicCollection, const TArray<int32>& Indices, TArray<FTransform>& OutGlobalTransforms);
+		FTransform CHAOS_API GlobalMatrix(const FGeometryDynamicCollection& DynamicCollection, int32 Index);
+	}
 
 }

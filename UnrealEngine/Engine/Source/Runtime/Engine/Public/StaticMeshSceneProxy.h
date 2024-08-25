@@ -16,6 +16,8 @@ class FLocalVertexFactoryUniformShaderParameters;
 class FRawStaticIndexBuffer;
 struct FStaticMeshVertexFactories;
 using FStaticMeshVertexFactoriesArray = TArray<FStaticMeshVertexFactories>;
+struct FStaticMeshSceneProxyDesc;
+
 
 /**
  * A static mesh component scene proxy.
@@ -27,6 +29,9 @@ public:
 
 	/** Initialization constructor. */
 	ENGINE_API FStaticMeshSceneProxy(UStaticMeshComponent* Component, bool bForceLODsShareStaticLighting);
+
+	/** Initialization constructor. */
+	ENGINE_API FStaticMeshSceneProxy(const FStaticMeshSceneProxyDesc& InDesc, bool bForceLODsShareStaticLighting);
 
 	ENGINE_API virtual ~FStaticMeshSceneProxy();
 
@@ -49,7 +54,7 @@ public:
 		bool bAllowPreCulledIndices,
 		FMeshBatch& OutMeshBatch) const;
 
-	ENGINE_API virtual void CreateRenderThreadResources() override;
+	ENGINE_API virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 
 	ENGINE_API virtual void DestroyRenderThreadResources() override;
 
@@ -65,7 +70,7 @@ public:
 		const FMaterialRenderProxy* RenderProxy,
 		FMeshBatch& OutMeshBatch) const;
 
-	ENGINE_API virtual void SetEvaluateWorldPositionOffsetInRayTracing(bool NewValue);
+	ENGINE_API virtual void SetEvaluateWorldPositionOffsetInRayTracing(FRHICommandListBase& RHICmdList, bool NewValue);
 
 	virtual uint8 GetCurrentFirstLODIdx_RenderThread() const final override
 	{
@@ -107,15 +112,16 @@ public:
 	// FPrimitiveSceneProxy interface.
 #if WITH_EDITOR
 	ENGINE_API virtual HHitProxy* CreateHitProxies(UPrimitiveComponent* Component, TArray<TRefCountPtr<HHitProxy> >& OutHitProxies) override;
+	ENGINE_API virtual HHitProxy* CreateHitProxies(IPrimitiveComponent* ComponentInterface, TArray<TRefCountPtr<HHitProxy> >& OutHitProxies) override;
 #endif
 	ENGINE_API virtual void DrawStaticElements(FStaticPrimitiveDrawInterface* PDI) override;
 	ENGINE_API virtual int32 GetLOD(const FSceneView* View) const override;
 	ENGINE_API virtual FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override;
 	ENGINE_API virtual bool CanBeOccluded() const override;
+	ENGINE_API virtual bool AllowInstanceCullingOcclusionQueries() const override { return true; }
 	ENGINE_API virtual bool IsUsingDistanceCullFade() const override;
 	ENGINE_API virtual void GetLightRelevance(const FLightSceneProxy* LightSceneProxy, bool& bDynamic, bool& bRelevant, bool& bLightMapped, bool& bShadowMapped) const override;
 	ENGINE_API virtual void GetDistanceFieldAtlasData(const FDistanceFieldVolumeData*& OutDistanceFieldData, float& SelfShadowBias) const override;
-	ENGINE_API virtual void GetDistanceFieldInstanceData(TArray<FRenderTransform>& InstanceLocalToPrimitiveTransforms) const override;
 	ENGINE_API virtual bool HasDistanceFieldRepresentation() const override;
 	ENGINE_API virtual bool StaticMeshHasPendingStreaming() const override;
 	ENGINE_API virtual bool HasDynamicIndirectShadowCasterRepresentation() const override;
@@ -129,15 +135,18 @@ public:
 	ENGINE_API virtual const FCardRepresentationData* GetMeshCardRepresentation() const override;
 
 #if RHI_RAYTRACING
+	ENGINE_API virtual TArray<FRayTracingGeometry*> GetStaticRayTracingGeometries() const override;
+
 	ENGINE_API virtual void GetDynamicRayTracingInstances(FRayTracingMaterialGatheringContext& Context, TArray<FRayTracingInstance>& OutRayTracingInstances) override;
 	ENGINE_API virtual bool HasRayTracingRepresentation() const override;
 	virtual bool IsRayTracingRelevant() const override { return true; }
 	virtual bool IsRayTracingStaticRelevant() const override 
 	{ 
-		const bool bAllowStaticLighting = FReadOnlyCVARCache::Get().bAllowStaticLighting;
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 		const bool bIsStaticInstance = !bDynamicRayTracingGeometry;
 		return bIsStaticInstance && !HasViewDependentDPG() && !(bAllowStaticLighting && HasStaticLighting() && !HasValidSettingsForStaticLighting());
 	}
+	ENGINE_API virtual RayTracing::GeometryGroupHandle GetRayTracingGeometryGroupHandle() const override;
 #endif // RHI_RAYTRACING
 
 	ENGINE_API virtual void GetLCIs(FLCIArray& LCIs) override;
@@ -203,7 +212,7 @@ protected:
 		const FRawStaticIndexBuffer* PreCulledIndexBuffer;
 
 		/** Initialization constructor. */
-		FLODInfo(const UStaticMeshComponent* InComponent, const FStaticMeshVertexFactoriesArray& InLODVertexFactories, int32 InLODIndex, int32 InClampedMinLOD, bool bLODsShareStaticLighting);
+		FLODInfo(const FStaticMeshSceneProxyDesc& InProxyDesc, const FStaticMeshVertexFactoriesArray& InLODVertexFactories, int32 InLODIndex, int32 InClampedMinLOD, bool bLODsShareStaticLighting);
 
 		bool UsesMeshModifyingMaterials() const { return bUsesMeshModifyingMaterials; }
 
@@ -228,16 +237,18 @@ protected:
 	float OverlayMaterialMaxDrawDistance;
 
 #if RHI_RAYTRACING
-	ENGINE_API void CreateDynamicRayTracingGeometries();
+	ENGINE_API void CreateDynamicRayTracingGeometries(FRHICommandListBase& RHICmdList);
 	ENGINE_API void ReleaseDynamicRayTracingGeometries();
 
 	bool bSupportRayTracing : 1;
 	bool bDynamicRayTracingGeometry : 1;
 	bool bNeedsDynamicRayTracingGeometries : 1;
+
 	TArray<FRayTracingGeometry, TInlineAllocator<MAX_MESH_LOD_COUNT>> DynamicRayTracingGeometries;
 	TArray<FMeshBatch> CachedRayTracingMaterials;
 	int16 CachedRayTracingMaterialsLODIndex = INDEX_NONE;
-	FRayTracingMaskAndFlags CachedRayTracingInstanceMaskAndFlags;
+
+	RayTracing::GeometryGroupHandle RayTracingGeometryGroupHandle = INDEX_NONE;
 #endif
 	/**
 	 * The forcedLOD set in the static mesh editor, copied from the mesh component
@@ -280,7 +291,7 @@ private:
 	const UStaticMesh* StaticMesh;
 
 #if STATICMESH_ENABLE_DEBUG_RENDERING
-	AActor* Owner;
+	UObject* Owner;
 	/** LightMap resolution used for VMI_LightmapDensity */
 	int32 LightMapResolution;
 	/** Body setup for collision debug rendering */

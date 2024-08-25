@@ -71,4 +71,14 @@ namespace UE::PixelStreamingServers
 		FCoreDelegates::OnEnginePreExit.Remove(EngineShutdownHandle);
 	}
 
+	void FMonitoredServerBase::GetNumStreamers(TFunction<void(uint16)> OnNumStreamersReceived)
+	{
+		// Todo (Luke.Bermingham): When the need arises for us to return the number of streamers for Cirrus
+		// we should implement the following endpoints in Cirrus:
+		// (1) health check
+		// (2) statistic
+		// We would then use the statistics HTTP endpoint to return number of streamers.
+		unimplemented();
+	}
+
 } // UE::PixelStreamingServers

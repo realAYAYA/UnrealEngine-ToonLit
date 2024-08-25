@@ -751,19 +751,34 @@ void UNiagaraStackFunctionInputCollection::ToClipboardFunctionInputs(UObject* In
 
 void UNiagaraStackFunctionInputCollection::SetValuesFromClipboardFunctionInputs(const TArray<const UNiagaraClipboardFunctionInput*>& ClipboardFunctionInputs)
 {
-	TArray<const UNiagaraClipboardFunctionInput*> StaticSwitchInputs;
-	TArray<const UNiagaraClipboardFunctionInput*> StandardInputs;
-
+	// First try to set each input as a static switch, and if a switch is set refresh the categories
+	// before applying additional inputs.  This is necessary because static switches can change the set
+	// of exposed inputs.
+	// NOTE: It's still possible that inputs could end up missing in cases where the switch dependencies are 
+	// especially complex since we're not doing a full switch dependency check, but this should handle the
+	// vast majority of cases.
 	TArray<UNiagaraStackInputCategory*> ChildCategories;
 	GetUnfilteredChildrenOfType(ChildCategories);
-
-	// Set static switches first so that other inputs will be available to set.
-	for (UNiagaraStackInputCategory* ChildCategory : ChildCategories)
+	for (const UNiagaraClipboardFunctionInput* ClipboardFunctionInput : ClipboardFunctionInputs)
 	{
-		ChildCategory->SetStaticSwitchValuesFromClipboardFunctionInputs(ClipboardFunctionInputs, *this);
+		bool bInputSetAsSwitch = false;
+		for (UNiagaraStackInputCategory* ChildCategory : ChildCategories)
+		{
+			if (ChildCategory->TrySetStaticSwitchValuesFromClipboardFunctionInput(*ClipboardFunctionInput))
+			{
+				bInputSetAsSwitch = true;
+				break;
+			}
+		}
+		if (bInputSetAsSwitch)
+		{
+			RefreshChildren();
+			ChildCategories.Empty();
+			GetUnfilteredChildrenOfType(ChildCategories);
+		}
 	}
 
-	RefreshChildren();
+	// After all static switches have been set the remaining standard inputs can be set without additional refreshes.
 	for (UNiagaraStackInputCategory* ChildCategory : ChildCategories)
 	{
 		ChildCategory->SetStandardValuesFromClipboardFunctionInputs(ClipboardFunctionInputs);

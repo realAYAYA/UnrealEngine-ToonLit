@@ -26,7 +26,8 @@ FText ULiveLinkMessageBusSourceFactory::GetSourceTooltip() const
 TSharedPtr<SWidget> ULiveLinkMessageBusSourceFactory::BuildCreationPanel(FOnLiveLinkSourceCreated InOnLiveLinkSourceCreated) const
 {
 	return SNew(SLiveLinkMessageBusSourceFactory)
-		.OnSourceSelected(FOnLiveLinkMessageBusSourceSelected::CreateUObject(this, &ULiveLinkMessageBusSourceFactory::OnSourceSelected, InOnLiveLinkSourceCreated));
+		.OnSourceSelected(FOnLiveLinkMessageBusSourceSelected::CreateUObject(this, &ULiveLinkMessageBusSourceFactory::OnSourceSelected, InOnLiveLinkSourceCreated))
+		.FactoryClass(GetClass());
 }
 
 TSharedPtr<FLiveLinkMessageBusSource> ULiveLinkMessageBusSourceFactory::MakeSource(const FText& Name,

@@ -281,9 +281,8 @@ uint2 CompressBC4Block( in float Block[16] )
 
 	uint2 BC4Block = 0;
 	BC4Block.x = (MinAlphaUint << 8) | MaxAlphaUint;
-	BC4Block.x |= Indices.x >> 16;
-	BC4Block.y = Indices.y & 0xffff;
-	BC4Block.y |= Indices.y >> 16;
+	BC4Block.x |= Indices.x;
+	BC4Block.y = Indices.y;
 	return BC4Block;
 }
 

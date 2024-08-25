@@ -4,14 +4,13 @@
 #include "Chaos/Real.h"
 #include "CoreMinimal.h"
 #include "Serializable.h"
+#include "ShapeInstanceFwd.h"
 #include "Serialization/ArchiveProxy.h"
 #include "UObject/DestructionObjectVersion.h"
 #include "Templates/Models.h"
 
 namespace Chaos
 {
-class FImplicitObject; //needed for legacy serializer
-
 
 #if CHAOS_MEMORY_TRACKING
 struct FChaosArchiveSection
@@ -102,6 +101,24 @@ public:
 		}
 	}
 
+	template <typename T>
+	TRefCountPtr<T>& ToRefCountPointerHelper(TSerializablePtr<T>& Obj)
+	{
+		T* RawPtr = const_cast<T*>(Obj.Get());
+		if (FRefCountPtrHolder* BaseHolder = ObjToRefCountPtrHolder.FindRef(RawPtr))
+		{
+			auto ConcreteHolder = static_cast<TRefCountPtrHolder<T>*>(BaseHolder);
+			return ConcreteHolder->RCP;
+		}
+		else
+		{
+			auto NewHolder = new TRefCountPtrHolder<T>(RawPtr);
+			TRefCountPtr<T>& NewRCP = NewHolder->RCP;
+			ObjToRefCountPtrHolder.Add((void*)RawPtr, NewHolder);
+			return NewRCP;
+		}
+	}
+
 	int32 GetObjectTag(const void* ObjectPtr) const
 	{
 		if (const int32* SerializedObjectPtrTag = ObjToTag.Find(ObjectPtr))
@@ -126,11 +143,24 @@ private:
 		TSharedPtrHolder(T* Obj) : SP(Obj) {}
 		TSharedPtr<T, Mode> SP;
 	};
-
 	
+	class FRefCountPtrHolder
+	{
+	public:
+		FRefCountPtrHolder() = default;
+		virtual ~FRefCountPtrHolder() {}
+	};
+
+	template <typename T>
+	class TRefCountPtrHolder : public FRefCountPtrHolder
+	{
+	public:
+		TRefCountPtrHolder(T* Obj) : RCP(Obj) {}
+		TRefCountPtr<T> RCP;
+	};
 
 	TMap<void*, FSharedPtrHolder*> ObjToSharedPtrHolder;
-
+	TMap<void*, FRefCountPtrHolder*> ObjToRefCountPtrHolder;
 };
 
 class FChaosArchive : public FArchiveProxy
@@ -231,6 +261,28 @@ public:
 		}
 	}
 
+	template <typename T>
+	void SerializePtr(TRefCountPtr<T>& Obj)
+	{
+		TSerializablePtr<T> Copy = MakeSerializable(Obj);
+		SerializePtr(Copy);
+		if (IsLoading())
+		{
+			Obj = Context->ToRefCountPointerHelper<T>(Copy);
+		}
+	}
+
+	template <typename T>
+	void SerializeConstPtr(TRefCountPtr<const T>& Obj)
+	{
+		TSerializablePtr<T> Copy = MakeSerializable(Obj);
+		SerializePtr(Copy);
+		if (IsLoading())
+		{
+			Obj = Context->ToRefCountPointerHelper<T>(Copy);
+		}
+	}
+
 	template <typename T, ESPMode Mode>
 	void SerializePtr(TSharedPtr<T, Mode>& Obj)
 	{
@@ -280,7 +332,6 @@ private:
 	{
 		check(false);
 	}
-
 	CHAOS_API void SerializeLegacy(TUniquePtr<FImplicitObject>& Obj);
 
 	template <typename T>
@@ -324,30 +375,7 @@ private:
 	{ }
 #endif
 };
-
-
-template <typename T>
-FORCEINLINE FChaosArchive& operator<<(FChaosArchive& Ar, TSerializablePtr<T>& Serializable)
-{
-	Ar.SerializePtr(Serializable);
-	return Ar;
-}
-
-template <typename T, typename TAllocator>
-FChaosArchive& operator<<(FChaosArchive& Ar, TArray<TSerializablePtr<T>, TAllocator>& Array)
-{
-	int32 ArrayNum = Array.Num();
-	Ar << ArrayNum;
-	Array.SetNum(ArrayNum);
-
-	for (int32 Idx = 0; Idx < ArrayNum; ++Idx)
-	{
-		Ar << Array[Idx];
-	}
-
-	return Ar;
-}
-
+	
 template <typename T, typename TAllocator>
 FChaosArchive& operator<<(FChaosArchive& Ar, TArray<T, TAllocator>& Array)
 {
@@ -399,6 +427,13 @@ constexpr typename TEnableIf<TModels_V<CSerializablePtr, T>, bool>::Type IsSeria
 }
 
 template <typename T>
+typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TRefCountPtr<T>& Obj)
+{
+	Ar.SerializePtr(Obj);
+	return Ar;
+}
+
+template <typename T>
 typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TUniquePtr<T>& Obj)
 {
 	Ar.SerializePtr(Obj);
@@ -413,12 +448,58 @@ typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FC
 }
 
 template <typename T>
+typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TSerializablePtr<T>& Serializable)
+{
+	Ar.SerializePtr(Serializable);
+	return Ar;
+}
+
+template <typename T>
 typename TEnableIf<T::AlwaysSerializable, FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, T*& Obj)
 {
 	Ar.SerializePtr(AsAlwaysSerializable(Obj));
 	return Ar;
 }
 
+template <typename T, typename TAllocator>
+typename TEnableIf<T::AlwaysSerializable, FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TArray<T*, TAllocator>& Array)
+{
+	Ar << AsAlwaysSerializableArray(Array);
+	return Ar;
+}
+	
+template <typename T, typename TAllocator>
+typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TArray<TRefCountPtr<T>, TAllocator>& Array)
+{
+	int32 ArrayNum = Array.Num();
+	Ar << ArrayNum;
+	Array.Reserve(ArrayNum);
+	Array.SetNum(ArrayNum);
+
+	for (int32 Idx = 0; Idx < ArrayNum; ++Idx)
+	{
+		Ar << Array[Idx];
+	}
+
+	return Ar;
+}
+
+template <typename T, typename TAllocator, typename TAllocator2>
+typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TArray<TArray<TRefCountPtr<T>, TAllocator>,TAllocator2>& Array)
+{
+	int32 ArrayNum = Array.Num();
+	Ar << ArrayNum;
+	Array.Reserve(ArrayNum);
+	Array.SetNum(ArrayNum);
+
+	for (int32 Idx = 0; Idx < ArrayNum; ++Idx)
+	{
+		Ar << Array[Idx];
+	}
+
+	return Ar;
+}
+	
 template <typename T, typename TAllocator>
 typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TArray<TUniquePtr<T>, TAllocator>& Array)
 {
@@ -434,14 +515,7 @@ typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FC
 
 	return Ar;
 }
-
-template <typename T, typename TAllocator>
-typename TEnableIf<T::AlwaysSerializable, FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TArray<T*, TAllocator>& Array)
-{
-	Ar << AsAlwaysSerializableArray(Array);
-	return Ar;
-}
-
+	
 template <typename T, typename TAllocator, typename TAllocator2>
 typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TArray<TArray<TUniquePtr<T>, TAllocator>,TAllocator2>& Array)
 {
@@ -480,6 +554,21 @@ typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FC
 	int32 ArrayNum = Array.Num();
 	Ar << ArrayNum;
 	Array.Reserve(ArrayNum);
+	Array.SetNum(ArrayNum);
+
+	for (int32 Idx = 0; Idx < ArrayNum; ++Idx)
+	{
+		Ar << Array[Idx];
+	}
+
+	return Ar;
+}
+
+template <typename T, typename TAllocator>
+typename TEnableIf<IsSerializablePtr<T>(), FChaosArchive& > ::Type operator<<(FChaosArchive& Ar, TArray<TSerializablePtr<T>, TAllocator>& Array)
+{
+	int32 ArrayNum = Array.Num();
+	Ar << ArrayNum;
 	Array.SetNum(ArrayNum);
 
 	for (int32 Idx = 0; Idx < ArrayNum; ++Idx)

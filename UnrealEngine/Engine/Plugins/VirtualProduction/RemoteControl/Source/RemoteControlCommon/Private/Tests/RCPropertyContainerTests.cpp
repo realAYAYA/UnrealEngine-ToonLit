@@ -11,7 +11,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FPropertyContainerSpec,
-	"Plugin.RemoteControl.PropertyContainer",
+	"Plugins.RemoteControl.PropertyContainer",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter | EAutomationTestFlags::ApplicationContextMask)
 END_DEFINE_SPEC(FPropertyContainerSpec)
 

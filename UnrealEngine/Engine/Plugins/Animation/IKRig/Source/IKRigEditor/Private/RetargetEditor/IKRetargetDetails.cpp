@@ -15,7 +15,10 @@
 #include "Widgets/Input/SSegmentedControl.h"
 #include "ScopedTransaction.h"
 #include "AnimationRuntime.h"
+#include "SPositiveActionButton.h"
 #include "SSearchableComboBox.h"
+#include "RetargetEditor/SRetargetOpStack.h"
+#include "Retargeter/IKRetargetOps.h"
 #include "UObject/UnrealTypePrivate.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(IKRetargetDetails)
@@ -30,14 +33,14 @@
 FEulerTransform UIKRetargetBoneDetails::GetTransform(EIKRetargetTransformType TransformType, const bool bLocalSpace) const
 {
 	// editor setup?
-	const FIKRetargetEditorController* Controller = EditorController.Get();
+	const FIKRetargetEditorController* Controller = EditorController.Pin().Get();
 	if (!Controller)
 	{
 		return FEulerTransform::Identity;
 	}
 
 	// ensure we have a valid skeletal mesh
-	const bool bEditingSource = EditorController->GetSourceOrTarget() == ERetargetSourceOrTarget::Source;
+	const bool bEditingSource = Controller->GetSourceOrTarget() == ERetargetSourceOrTarget::Source;
 	UDebugSkelMeshComponent* Mesh = bEditingSource ? Controller->SourceSkelMeshComponent : Controller->TargetSkelMeshComponent;
 	if (!(Mesh && Mesh->GetSkeletalMeshAsset()))
 	{
@@ -82,9 +85,9 @@ FEulerTransform UIKRetargetBoneDetails::GetTransform(EIKRetargetTransformType Tr
 	case EIKRetargetTransformType::RelativeOffset:
 		{
 			// this is the only stored data we have for bone pose offsets
-			const ERetargetSourceOrTarget SourceOrTarget = EditorController->GetSourceOrTarget();
-			const FRotator LocalRotationDelta = EditorController->AssetController->GetRotationOffsetForRetargetPoseBone(SelectedBone, SourceOrTarget).Rotator();
-			const FVector GlobalTranslationDelta = IsRootBone() ? EditorController->AssetController->GetCurrentRetargetPose(SourceOrTarget).GetRootTranslationDelta() : FVector::Zero();
+			const ERetargetSourceOrTarget SourceOrTarget = Controller->GetSourceOrTarget();
+			const FRotator LocalRotationDelta = Controller->AssetController->GetRotationOffsetForRetargetPoseBone(SelectedBone, SourceOrTarget).Rotator();
+			const FVector GlobalTranslationDelta = IsRootBone() ? Controller->AssetController->GetCurrentRetargetPose(SourceOrTarget).GetRootTranslationDelta() : FVector::Zero();
 			const int32 ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
 
 			if (bLocalSpace)
@@ -124,12 +127,10 @@ FEulerTransform UIKRetargetBoneDetails::GetTransform(EIKRetargetTransformType Tr
 
 	case EIKRetargetTransformType::Bone:
 		{
-			ensure(bLocalSpace);
-			
 			// this is the only stored data we have for bone pose offsets
-			const ERetargetSourceOrTarget SourceOrTarget = EditorController->GetSourceOrTarget();
-			const FQuat LocalRotationOffset = EditorController->AssetController->GetRotationOffsetForRetargetPoseBone(SelectedBone, SourceOrTarget);
-			const FVector GlobalTranslationDelta = IsRootBone() ? EditorController->AssetController->GetCurrentRetargetPose(SourceOrTarget).GetRootTranslationDelta() : FVector::Zero();
+			const ERetargetSourceOrTarget SourceOrTarget = Controller->GetSourceOrTarget();
+			const FQuat LocalRotationOffset = Controller->AssetController->GetRotationOffsetForRetargetPoseBone(SelectedBone, SourceOrTarget);
+			const FVector GlobalTranslationDelta = IsRootBone() ? Controller->AssetController->GetCurrentRetargetPose(SourceOrTarget).GetRootTranslationDelta() : FVector::Zero();
 			const int32 ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
 			
 			// combine the local space offset from ref pose with the recorded offset in the retarget pose
@@ -294,8 +295,14 @@ void UIKRetargetBoneDetails::OnPasteFromClipboard(
 		return;
 	}
 
+	const FIKRetargetEditorController* Controller = EditorController.Pin().Get();
+	if (!Controller)
+	{
+		return;
+	}
+
 	// must have valid controller
-	UIKRetargeterController* AssetController = EditorController->AssetController;
+	UIKRetargeterController* AssetController = Controller->AssetController;
 	if(!AssetController)
 	{
 		return;
@@ -331,7 +338,7 @@ void UIKRetargetBoneDetails::OnPasteFromClipboard(
 	};
 
 	FIKRigLogger* Log = nullptr;
-	if (UIKRetargetProcessor* Processor = EditorController->GetRetargetProcessor())
+	if (UIKRetargetProcessor* Processor = Controller->GetRetargetProcessor())
 	{
 		Log = &Processor->Log;
 	}
@@ -341,11 +348,11 @@ void UIKRetargetBoneDetails::OnPasteFromClipboard(
 	const bool bIsRelative = IsComponentRelative(Component, TransformType);
 	FEulerTransform Transform = GetTransform(TransformType, bIsRelative);
 
-	const ERetargetSourceOrTarget SourceOrTarget = EditorController->GetSourceOrTarget();
+	const ERetargetSourceOrTarget SourceOrTarget = Controller->GetSourceOrTarget();
 
 	// create a transaction on the asset
 	FScopedTransaction Transaction(LOCTEXT("PasteTransform", "Paste Transform"));
-	EditorController.Get()->AssetController->GetAsset()->Modify();
+	Controller->AssetController->GetAsset()->Modify();
 	
 	switch(Component)
 	{
@@ -356,7 +363,7 @@ void UIKRetargetBoneDetails::OnPasteFromClipboard(
 			if (Result && ErrorPipe.NumErrors == 0)
 			{
 				Transform.SetLocation(Data);
-				EditorController->AssetController->GetCurrentRetargetPose(SourceOrTarget).SetRootTranslationDelta(Transform.GetLocation());
+				Controller->AssetController->GetCurrentRetargetPose(SourceOrTarget).SetRootTranslationDelta(Transform.GetLocation());
 			}
 			break;
 		}
@@ -367,7 +374,7 @@ void UIKRetargetBoneDetails::OnPasteFromClipboard(
 			if (Result && ErrorPipe.NumErrors == 0)
 			{
 				Transform.SetRotator(Data);
-				EditorController->AssetController->SetRotationOffsetForRetargetPoseBone(SelectedBone, Transform.GetRotation(), SourceOrTarget);
+				Controller->AssetController->SetRotationOffsetForRetargetPoseBone(SelectedBone, Transform.GetRotation(), SourceOrTarget);
 			}
 			break;
 		}
@@ -431,15 +438,21 @@ void UIKRetargetBoneDetails::OnNumericValueCommitted(
 		return;
 	}
 
-	UIKRetargeterController* AssetController = EditorController->AssetController;
+	const FIKRetargetEditorController* Controller = EditorController.Pin().Get();
+	if (!Controller)
+	{
+		return;
+	}
+
+	UIKRetargeterController* AssetController = Controller->AssetController;
 	if(!AssetController)
 	{
 		return;
 	}
 
 	// ensure we have a valid skeletal mesh
-	const bool bEditingSource = EditorController->GetSourceOrTarget() == ERetargetSourceOrTarget::Source;
-	UDebugSkelMeshComponent* Mesh = bEditingSource ? EditorController->SourceSkelMeshComponent : EditorController->TargetSkelMeshComponent;
+	const bool bEditingSource = Controller->GetSourceOrTarget() == ERetargetSourceOrTarget::Source;
+	UDebugSkelMeshComponent* Mesh = bEditingSource ? Controller->SourceSkelMeshComponent : Controller->TargetSkelMeshComponent;
 	if (!(Mesh && Mesh->GetSkeletalMeshAsset()))
 	{
 		return;
@@ -453,7 +466,7 @@ void UIKRetargetBoneDetails::OnNumericValueCommitted(
 		return;
 	}
 
-	const ERetargetSourceOrTarget SourceOrTarget = EditorController->GetSourceOrTarget();
+	const ERetargetSourceOrTarget SourceOrTarget = Controller->GetSourceOrTarget();
 
 	switch (TransformType)
 	{
@@ -505,6 +518,12 @@ void UIKRetargetBoneDetails::CommitValueAsRelativeOffset(
 	FVector::FReal Value,
 	bool bShouldTransact)
 {
+	const FIKRetargetEditorController* Controller = EditorController.Pin().Get();
+	if (!Controller)
+	{
+		return;
+	}
+
 	switch(Component)
 	{
 	case ESlateTransformComponent::Location:
@@ -539,8 +558,8 @@ void UIKRetargetBoneDetails::CommitValueAsRelativeOffset(
 			
 			// store the new transform in the retarget pose
 			FScopedTransaction Transaction(LOCTEXT("EditRootTranslation", "Edit Retarget Root Pose Translation"), bShouldTransact);
-			EditorController->AssetController->GetAsset()->Modify();
-			EditorController->AssetController->GetCurrentRetargetPose(SourceOrTarget).SetRootTranslationDelta(CurrentGlobalOffset.GetTranslation());
+			Controller->AssetController->GetAsset()->Modify();
+			Controller->AssetController->GetCurrentRetargetPose(SourceOrTarget).SetRootTranslationDelta(CurrentGlobalOffset.GetTranslation());
 			
 			break;
 		}
@@ -588,8 +607,8 @@ void UIKRetargetBoneDetails::CommitValueAsRelativeOffset(
 			
 			// store the new rotation in the retarget pose
 			FScopedTransaction Transaction(LOCTEXT("EditRootRotation", "Edit Retarget Pose Rotation"), bShouldTransact);
-			EditorController->AssetController->GetAsset()->Modify();
-			EditorController->AssetController->SetRotationOffsetForRetargetPoseBone(SelectedBone, NewLocalRotationDelta, SourceOrTarget);
+			Controller->AssetController->GetAsset()->Modify();
+			Controller->AssetController->SetRotationOffsetForRetargetPoseBone(SelectedBone, NewLocalRotationDelta, SourceOrTarget);
 			break;
 		}
 	default:
@@ -609,6 +628,12 @@ void UIKRetargetBoneDetails::CommitValueAsBoneSpace(
 	FVector::FReal Value,
 	bool bShouldTransact)
 {
+	const FIKRetargetEditorController* Controller = EditorController.Pin().Get();
+	if (!Controller)
+	{
+		return;
+	}
+
 	switch(Component)
 	{
 	case ESlateTransformComponent::Location:
@@ -643,34 +668,29 @@ void UIKRetargetBoneDetails::CommitValueAsBoneSpace(
 			
 			// store the new transform in the retarget pose
 			FScopedTransaction Transaction(LOCTEXT("EditRootTranslation", "Edit Retarget Root Pose Translation"), bShouldTransact);
-			EditorController->AssetController->GetAsset()->Modify();
-			EditorController->AssetController->GetCurrentRetargetPose(SourceOrTarget).SetRootTranslationDelta(CurrentGlobalOffset.GetTranslation());
+			Controller->AssetController->GetAsset()->Modify();
+			Controller->AssetController->GetCurrentRetargetPose(SourceOrTarget).SetRootTranslationDelta(CurrentGlobalOffset.GetTranslation());
 			
 			break;
 		}
 	case ESlateTransformComponent::Rotation:
 		{
-			// only allow local bone space pose editing for now
-			const bool bIsRotationLocal = BoneRelative[1];
-			if (ensure(bIsRotationLocal))
-			{
-				// combine the local space offset from ref pose with the recorded offset in the retarget pose
-				FTransform LocalRefTransform = RefSkeleton.GetRefBonePose()[BoneIndex];
-				const FQuat LocalRotationOffset = AssetController->GetRotationOffsetForRetargetPoseBone(SelectedBone, SourceOrTarget);
-				FQuat CombinedLocalRotation = LocalRefTransform.GetRotation() * LocalRotationOffset;
-				FEulerTransform CombinedLocalDeltaTransform = FEulerTransform(FVector::ZeroVector, CombinedLocalRotation.Rotator(), FVector::OneVector);
-			
-				// rotations are stored in local space, so just apply the edit
-				SAdvancedTransformInputBox<FEulerTransform>::ApplyNumericValueChange(CombinedLocalDeltaTransform, Value, Component, Representation, SubComponent);
+			// combine the local space offset from ref pose with the recorded offset in the retarget pose
+			FTransform LocalRefTransform = RefSkeleton.GetRefBonePose()[BoneIndex];
+			const FQuat LocalRotationOffset = AssetController->GetRotationOffsetForRetargetPoseBone(SelectedBone, SourceOrTarget);
+			FQuat CombinedLocalRotation = LocalRefTransform.GetRotation() * LocalRotationOffset;
+			FEulerTransform CombinedLocalDeltaTransform = FEulerTransform(FVector::ZeroVector, CombinedLocalRotation.Rotator(), FVector::OneVector);
+		
+			// rotations are stored in local space, so just apply the edit
+			SAdvancedTransformInputBox<FEulerTransform>::ApplyNumericValueChange(CombinedLocalDeltaTransform, Value, Component, Representation, SubComponent);
 
-				// subtract the local space from the result to be left with JUST the retarget pose offset
-				FQuat NewLocalRotationDelta = LocalRefTransform.GetRotation().Inverse() * CombinedLocalDeltaTransform.GetRotation();
-			
-				// store the new rotation in the retarget pose
-				FScopedTransaction Transaction(LOCTEXT("EditRootRotation", "Edit Retarget Pose Rotation"), bShouldTransact);
-				EditorController->AssetController->GetAsset()->Modify();
-				EditorController->AssetController->SetRotationOffsetForRetargetPoseBone(SelectedBone, NewLocalRotationDelta, SourceOrTarget);
-			}
+			// subtract the local space from the result to be left with JUST the retarget pose offset
+			FQuat NewLocalRotationDelta = LocalRefTransform.GetRotation().Inverse() * CombinedLocalDeltaTransform.GetRotation();
+		
+			// store the new rotation in the retarget pose
+			FScopedTransaction Transaction(LOCTEXT("EditRootRotation", "Edit Retarget Pose Rotation"), bShouldTransact);
+			Controller->AssetController->GetAsset()->Modify();
+			Controller->AssetController->SetRotationOffsetForRetargetPoseBone(SelectedBone, NewLocalRotationDelta, SourceOrTarget);
 			
 			break;
 		}
@@ -681,7 +701,13 @@ void UIKRetargetBoneDetails::CommitValueAsBoneSpace(
 
 bool UIKRetargetBoneDetails::IsRootBone() const
 {
-	const FName RootBone = EditorController->AssetController->GetRetargetRootBone(EditorController->GetSourceOrTarget());
+	const FIKRetargetEditorController* Controller = EditorController.Pin().Get();
+	if (!Controller)
+	{
+		return false;
+	}
+
+	const FName RootBone = Controller->AssetController->GetRetargetRootBone(Controller->GetSourceOrTarget());
 	return SelectedBone == RootBone;
 }
 
@@ -692,10 +718,10 @@ void UIKRetargetBoneDetails::OnMultiNumericValueCommitted(
 	FVector::FReal Value,
 	ETextCommit::Type CommitType,
 	EIKRetargetTransformType TransformType,
-	TArrayView<UIKRetargetBoneDetails*> Bones,
+	TArrayView<TObjectPtr<UIKRetargetBoneDetails>> Bones,
 	bool bIsCommit)
 {
-	for(UIKRetargetBoneDetails* Bone : Bones)
+	for(TObjectPtr<UIKRetargetBoneDetails> Bone : Bones)
 	{	
 		Bone->OnNumericValueCommitted(Component, Representation, SubComponent, Value, CommitType, TransformType, bIsCommit);
 	}
@@ -742,7 +768,7 @@ void FIKRetargetBoneDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& 
 		return;
 	}
 	
-	const FIKRetargetEditorController& Controller = *Bones[0]->EditorController.Get();
+	const FIKRetargetEditorController& Controller = *Bones[0]->EditorController.Pin().Get();
 	const UIKRetargeterController* AssetController = Controller.AssetController;
 	
 	const bool bIsEditingPose = Controller.IsEditingPose();
@@ -791,7 +817,7 @@ void FIKRetargetBoneDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& 
 	.Font(IDetailLayoutBuilder::GetDetailFont())
 	.UseQuaternionForRotation(true);
 
-	TArrayView<UIKRetargetBoneDetails*> BonesView = TArrayView<UIKRetargetBoneDetails*>(Bones);
+	TArrayView< TObjectPtr<UIKRetargetBoneDetails> > BonesView = TArrayView< TObjectPtr<UIKRetargetBoneDetails> >(Bones);
 	
 	for(int32 PropertyIndex=0;PropertyIndex<UIData.Properties.Num();PropertyIndex++)
 	{
@@ -818,6 +844,23 @@ void FIKRetargetBoneDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& 
 				TransformType,
 				BonesView,
 				false);
+
+			TransformWidgetArgs.OnBeginSliderMovement_Lambda([](
+				ESlateTransformComponent::Type Component,
+				ESlateRotationRepresentation::Type Representation,
+				ESlateTransformSubComponent::Type SubComponent)
+			{
+				GEditor->BeginTransaction(LOCTEXT("EditRetargetPoseSlider", "Edit Retarget Pose Transform Slider"));
+			});
+			
+			TransformWidgetArgs.OnEndSliderMovement_Lambda([](
+				ESlateTransformComponent::Type Component,
+				ESlateRotationRepresentation::Type Representation,
+				ESlateTransformSubComponent::Type SubComponent,
+				double)
+			{
+				GEditor->EndTransaction();
+			});
 		}
 
 		// get/set relative
@@ -830,7 +873,7 @@ void FIKRetargetBoneDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& 
 		})
 		.OnIsComponentRelativeChanged_Lambda( [bIsEditable, BonesView, TransformType](ESlateTransformComponent::Type InComponent, bool bIsRelative)
 		{
-			for (const TObjectPtr<UIKRetargetBoneDetails> Bone: BonesView)
+			for (const TObjectPtr<UIKRetargetBoneDetails>& Bone: BonesView)
 			{
 				Bone->OnComponentRelativeChanged(InComponent, bIsRelative, TransformType);
 			}
@@ -864,8 +907,8 @@ void FIKRetargetBoneDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& 
 		});
 
 		// copy/paste bones transforms
-		TransformWidgetArgs.OnCopyToClipboard_UObject(Bones[0], &UIKRetargetBoneDetails::OnCopyToClipboard, TransformType);
-		TransformWidgetArgs.OnPasteFromClipboard_UObject(Bones[0], &UIKRetargetBoneDetails::OnPasteFromClipboard, TransformType);
+		TransformWidgetArgs.OnCopyToClipboard_UObject(Bones[0].Get(), &UIKRetargetBoneDetails::OnCopyToClipboard, TransformType);
+		TransformWidgetArgs.OnPasteFromClipboard_UObject(Bones[0].Get(), &UIKRetargetBoneDetails::OnPasteFromClipboard, TransformType);
 
 		TransformWidgetArgs.Visibility_Lambda([TransformChoiceWidget, TransformType]() -> EVisibility
 		{
@@ -878,6 +921,16 @@ void FIKRetargetBoneDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& 
 			UIData.ButtonTooltips[PropertyIndex], 
 			TransformWidgetArgs);
 	}
+}
+
+void FIKRetargetBoneDetailCustomization::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObjects(Bones);
+}
+
+FString FIKRetargetBoneDetailCustomization::GetReferencerName() const
+{
+	return TEXT("FIKRetargetBoneDetailCustomization");
 }
 
 void FIKRetargetBoneDetailCustomization::GetTransformUIData(
@@ -972,8 +1025,8 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 		return;
 	}
 
-	Controller = ChainSettingsObjects[0]->EditorController;
-	if (!Controller.IsValid())
+	FIKRetargetEditorController* Controller = ChainSettingsObjects[0]->EditorController.Pin().Get();
+	if (!Controller)
 	{
 		return;
 	}
@@ -986,6 +1039,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 	// FK: it can only run FK retarget if it's mapped to a source chain
 	// IK: can only run IK if FK is setup AND it's mapped to a goal that is connected to a solver (in the target IK rig)
 	auto CheckChainSetupForIKAndFK([this](
+		FIKRetargetEditorController* Controller,
 		const TObjectPtr<URetargetChainSettings> ChainSettings,
 		bool& OutFKSetup,
 		bool& OutIKSetup,
@@ -1019,7 +1073,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 	bool bFirstChainFKSetup;
 	bool bFirstChainIKSetup;
 	bool bFirstChainIKConnected;
-	CheckChainSetupForIKAndFK(ChainSettingsObjects[0].Get(), bFirstChainFKSetup, bFirstChainIKSetup, bFirstChainIKConnected);
+	CheckChainSetupForIKAndFK(Controller, ChainSettingsObjects[0].Get(), bFirstChainFKSetup, bFirstChainIKSetup, bFirstChainIKConnected);
 
 	// check to see if there is a mix of chains with valid FK or IK setups
 	bool bIsFKSetupMultipleValues = false;
@@ -1030,7 +1084,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 		bool bIsFKSetup;
 		bool bIsIKSetup;
 		bool bIsIKConnected;
-		CheckChainSetupForIKAndFK(ChainSettings.Get(), bIsFKSetup, bIsIKSetup, bIsIKConnected);
+		CheckChainSetupForIKAndFK(Controller, ChainSettings.Get(), bIsFKSetup, bIsIKSetup, bIsIKConnected);
 		bIsFKSetupMultipleValues = bIsFKSetup != bFirstChainFKSetup ? true : bIsFKSetupMultipleValues;
 		bIsIKSetupMultipleValues = bIsIKSetup != bFirstChainIKSetup ? true : bIsIKSetupMultipleValues;
 		bIsIKConnectedMultipleValues = bIsIKConnected != bFirstChainIKConnected ? true : bIsIKConnectedMultipleValues;
@@ -1079,7 +1133,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 		{
 			return SNew(STextBlock).Text(FText::FromString(*InItem.Get()));
 		})
-		.OnSelectionChanged_Lambda([this](TSharedPtr<FString> InString, ESelectInfo::Type SelectInfo)
+		.OnSelectionChanged_Lambda([this, Controller]( TSharedPtr<FString> InString, ESelectInfo::Type SelectInfo)
 		{
 			const FName SourceChainName = FName(*InString.Get());
 			for (TWeakObjectPtr<URetargetChainSettings> ChainMapSettings : ChainSettingsObjects)
@@ -1102,6 +1156,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 	const bool bFKEditingEnabled = bFirstChainFKSetup && !bIsFKSetupMultipleValues;
 	AddSettingsSection(
 		DetailBuilder,
+		Controller,
 		SettingsCategory,
 		GET_MEMBER_NAME_STRING_CHECKED(FTargetChainSettings, FK),
 		FName("FK"),
@@ -1133,6 +1188,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 	
 	AddSettingsSection(
 		DetailBuilder,
+		Controller,
 		SettingsCategory,
 		GET_MEMBER_NAME_STRING_CHECKED(FTargetChainSettings, IK),
 		FName("IK"),
@@ -1145,6 +1201,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 	// Plant settings
 	AddSettingsSection(
 		DetailBuilder,
+		Controller,
 		SettingsCategory,
 		GET_MEMBER_NAME_STRING_CHECKED(FTargetChainSettings, SpeedPlanting),
 		FName("Speed Planting"),
@@ -1157,6 +1214,7 @@ void FRetargetChainSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder&
 
 void FRetargetChainSettingsCustomization::AddSettingsSection(
 	const IDetailLayoutBuilder& DetailBuilder,
+	const FIKRetargetEditorController* Controller,
 	IDetailCategoryBuilder& SettingsCategory,
 	const FString& StructPropertyName,
 	const FName& GroupName,
@@ -1197,10 +1255,11 @@ void FRetargetChainSettingsCustomization::AddSettingsSection(
 					IsEnabledProperty.Get().GetValue(IsChecked);
 					return IsChecked ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 				})
-				.OnCheckStateChanged_Lambda([this, IsEnabledProperty](ECheckBoxState State)
+				.OnCheckStateChanged_Lambda([this, IsEnabledProperty, Controller](ECheckBoxState State)
 				{
 					IsEnabledProperty->SetValue(State == ECheckBoxState::Checked);
-					Controller->HandleRetargeterNeedsInitialized();
+					// clear the output log and trigger a reinitialization
+					Controller->ReinitializeRetargeterNoUIRefresh();
 				})
 			];
 	}
@@ -1277,20 +1336,20 @@ void FRetargetRootSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder& 
 	AddPropertyRowToGroup(AlphaGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, RotationAlpha));
 	AddPropertyRowToGroup(AlphaGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, TranslationAlpha));
 
-	// offset group
-	IDetailGroup& OffsetGroup = SettingsCategory.AddGroup("Offsets", LOCTEXT("OffsetRoot_Label", "Offsets"), false, true);
-	AddPropertyRowToGroup(OffsetGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, TranslationOffset));
-	AddPropertyRowToGroup(OffsetGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, RotationOffset));
+	// blend to source group
+	IDetailGroup& BlendToSourceGroup = SettingsCategory.AddGroup("Blend To Source", LOCTEXT("BlendToSource_Label", "Blend to Source"), false, true);
+	AddPropertyRowToGroup(BlendToSourceGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, BlendToSource));
+	AddPropertyRowToGroup(BlendToSourceGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, BlendToSourceWeights));
 
 	// scale group
 	IDetailGroup& ScaleGroup = SettingsCategory.AddGroup("Scale Translation", LOCTEXT("ScaleRoot_Label", "Scale Translation"), false, true);
 	AddPropertyRowToGroup(ScaleGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, ScaleHorizontal));
 	AddPropertyRowToGroup(ScaleGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, ScaleVertical));
 
-	// blend to source group
-	IDetailGroup& BlendToSourceGroup = SettingsCategory.AddGroup("Blend To Source", LOCTEXT("BlendToSource_Label", "Blend to Source"), false, true);
-	AddPropertyRowToGroup(BlendToSourceGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, BlendToSource));
-	AddPropertyRowToGroup(BlendToSourceGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, BlendToSourceWeights));
+	// offset group
+	IDetailGroup& OffsetGroup = SettingsCategory.AddGroup("Offsets", LOCTEXT("OffsetRoot_Label", "Offsets"), false, true);
+	AddPropertyRowToGroup(OffsetGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, TranslationOffset));
+	AddPropertyRowToGroup(OffsetGroup,GET_MEMBER_NAME_STRING_CHECKED(FTargetRootSettings, RotationOffset));
 
 	// affect IK directionally
 	IDetailGroup& AffectIKGroup = SettingsCategory.AddGroup("Affect IK", LOCTEXT("AffectIK_Label", "Affect IK"), false, true);
@@ -1337,7 +1396,8 @@ void FRetargetGlobalSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder
 	AlphaGroup.AddPropertyRow(GetPropertyHandle(GET_MEMBER_NAME_STRING_CHECKED(FRetargetGlobalSettings, bEnableRoot)));
 	AlphaGroup.AddPropertyRow(GetPropertyHandle(GET_MEMBER_NAME_STRING_CHECKED(FRetargetGlobalSettings, bEnableFK)));
 	AlphaGroup.AddPropertyRow(GetPropertyHandle(GET_MEMBER_NAME_STRING_CHECKED(FRetargetGlobalSettings, bEnableIK)));
-
+	AlphaGroup.AddPropertyRow(GetPropertyHandle(GET_MEMBER_NAME_STRING_CHECKED(FRetargetGlobalSettings, bEnablePost)));
+	
 	// stride warping group
 	const FText WarpingTitleLabel = LOCTEXT("Warping_Label", "Stride Warping");
 	IDetailGroup& WarpingGroup = SettingsCategory.AddGroup("Warping", WarpingTitleLabel, false, true);
@@ -1360,7 +1420,7 @@ void FRetargetGlobalSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder
 	// get target chain options for combobox
 	TargetChainOptions.Reset();
 	TargetChainOptions.Add(MakeShareable(new FString(TEXT("None"))));
-	if (const UIKRigDefinition* TargetIKRig = Controller->AssetController->GetIKRig(ERetargetSourceOrTarget::Target))
+	if (const UIKRigDefinition* TargetIKRig = Controller.Pin().Get()->AssetController->GetIKRig(ERetargetSourceOrTarget::Target))
 	{
 		const TArray<FBoneChain>& Chains = TargetIKRig->GetRetargetChains();
 		for (const FBoneChain& BoneChain : Chains)
@@ -1411,6 +1471,111 @@ void FRetargetGlobalSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder
 	WarpingGroup.AddPropertyRow(GetPropertyHandle(GET_MEMBER_NAME_STRING_CHECKED(FRetargetGlobalSettings, WarpForwards))).EditCondition(EditCondition,nullptr);
 	WarpingGroup.AddPropertyRow(GetPropertyHandle(GET_MEMBER_NAME_STRING_CHECKED(FRetargetGlobalSettings, WarpSplay))).EditCondition(EditCondition,nullptr);
 	WarpingGroup.AddPropertyRow(GetPropertyHandle(GET_MEMBER_NAME_STRING_CHECKED(FRetargetGlobalSettings, SidewaysOffset))).EditCondition(EditCondition,nullptr);
+}
+
+void FRetargetOpStackCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
+{
+	TArray<TWeakObjectPtr<UObject>> ObjectsBeingCustomized = DetailBuilder.GetSelectedObjects();
+	if (ObjectsBeingCustomized.Num() < 0)
+	{
+		return;
+	}
+	
+	RetargetOpStackObject = Cast<URetargetOpStack>(ObjectsBeingCustomized[0].Get());
+	if (!RetargetOpStackObject.IsValid())
+	{
+		return;
+	}
+
+	Controller = RetargetOpStackObject->EditorController;
+	if (!Controller.IsValid())
+	{
+		return;
+	}
+
+	IDetailCategoryBuilder& OpStackCategory = DetailBuilder.EditCategory(TEXT("Retarget Ops Stack"));
+	
+	// add row to select source chain to map to
+	OpStackCategory.AddCustomRow(LOCTEXT("RetargetOps_Label", "Retarget Ops"))
+	.WholeRowWidget
+	[
+		SNew(SRetargetOpStack, Controller)
+	];
+
+	// add custom category with all op settings, filter visibility based on selection
+	IDetailCategoryBuilder& OpSettingCategory = DetailBuilder.EditCategory(TEXT("Op Settings"));
+	for (TObjectPtr<URetargetOpBase> Op : RetargetOpStackObject->RetargetOps)
+	{
+		for (TFieldIterator<FProperty> PropIt(Op->GetClass()); PropIt; ++PropIt)
+		{
+			const FProperty* Prop = *PropIt;
+			if (!Prop->HasAllPropertyFlags(CPF_Edit))
+			{
+				continue;
+			}
+			
+			const TSharedPtr<IPropertyHandle> PropertyHandle = DetailBuilder.AddObjectPropertyData({Op}, Prop->GetFName());
+			if (PropertyHandle && PropertyHandle->IsValidHandle())
+			{
+				PropertyHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([this]()
+				{
+					Controller.Pin().Get()->ReinitializeRetargeterNoUIRefresh();
+				}));
+				
+				PropertyHandle->SetOnChildPropertyValueChanged(FSimpleDelegate::CreateLambda([this]()
+				{
+					Controller.Pin().Get()->ReinitializeRetargeterNoUIRefresh();
+				}));
+				
+				OpSettingCategory.AddProperty(PropertyHandle)
+				.Visibility(MakeAttributeLambda([this, Op]()
+				{
+					return Controller.Pin().Get()->GetSelectedOp() == Op ? EVisibility::Visible : EVisibility::Hidden;
+				}));
+			}
+		}
+	}
+}
+
+TSharedRef<SWidget> FRetargetOpStackCustomization::CreateAddNewMenuWidget()
+{
+	constexpr bool bCloseMenuAfterSelection = true;
+	FMenuBuilder MenuBuilder(bCloseMenuAfterSelection, nullptr);
+
+	MenuBuilder.BeginSection("AddNewRetargetOp", LOCTEXT("AddOperations", "Add New Retarget Op"));
+
+	// add menu option to create each retarget op type
+	for(TObjectIterator<UClass> ClassIt; ClassIt; ++ClassIt)
+	{
+		UClass* Class = *ClassIt;
+		if(Class->IsChildOf(URetargetOpBase::StaticClass()) && !Class->HasAnyClassFlags(CLASS_Abstract))
+		{
+			const URetargetOpBase* OpCDO = Cast<URetargetOpBase>(Class->GetDefaultObject());
+			FUIAction Action = FUIAction( FExecuteAction::CreateSP(this, &FRetargetOpStackCustomization::AddNewRetargetOp, Class));
+			MenuBuilder.AddMenuEntry(FText::FromString(OpCDO->GetNiceName().ToString()), FText::GetEmpty(), FSlateIcon(), Action);
+		}
+	}
+
+	MenuBuilder.EndSection();
+
+	return MenuBuilder.MakeWidget();
+}
+
+void FRetargetOpStackCustomization::AddNewRetargetOp(UClass* Class)
+{
+	if (!Controller.IsValid())
+	{
+		return; 
+	}
+
+	const UIKRetargeterController* AssetController = Controller.Pin().Get()->AssetController;
+	if (!AssetController)
+	{
+		return;
+	}
+	
+	// add the op todo refresh UI
+	const int32 NewOpIndex = AssetController->AddRetargetOp(Class);
 }
 
 #undef LOCTEXT_NAMESPACE

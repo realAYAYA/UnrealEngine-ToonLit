@@ -138,6 +138,8 @@ void FAnimNode_WheelController::InitializeBoneReferences(const FBoneContainer& R
 
 void FAnimNode_WheelController::Initialize_AnyThread(const FAnimationInitializeContext& Context)
 {
+	FAnimNode_SkeletalControlBase::Initialize_AnyThread(Context);
+
 	AnimInstanceProxy = (FVehicleAnimationInstanceProxy*)Context.AnimInstanceProxy;	//TODO: This is cached for now because we need it in eval bone transforms.
 }
 

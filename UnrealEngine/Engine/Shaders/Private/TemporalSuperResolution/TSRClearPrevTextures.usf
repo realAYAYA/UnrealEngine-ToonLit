@@ -12,9 +12,7 @@
 
 //------------------------------------------------------- PARAMETERS
 
-RWTexture2D<uint> PrevUseCountOutput;
-RWTexture2D<uint> PrevClosestDepthOutput;
-RWTexture2D<uint> SubpixelDepthOutput;
+RWTexture2DArray<uint> PrevAtomicOutput;
 
 
 //------------------------------------------------------- ENTRY POINT
@@ -46,9 +44,12 @@ void MainCS(
 			#endif
 			PrevUseCountPixelPos.x = select(all(PrevUseCountPixelPos < PrevUseCountMaxPixelPos), PrevUseCountPixelPos.x, uint(~0));
 
-			PrevUseCountOutput[PrevUseCountPixelPos] = 0;
-			PrevClosestDepthOutput[InputPixelPos] = 0;
-			SubpixelDepthOutput[InputPixelPos] = 0;
+			PrevAtomicOutput[uint3(PrevUseCountPixelPos, 0)] = 0;
+			PrevAtomicOutput[uint3(InputPixelPos, 1)] = 0;
+			
+			#if CONFIG_SUPPORT_ORTHO_VIEW
+				PrevAtomicOutput[uint3(InputPixelPos, 2)] = 0;
+			#endif
 		}
 	}
 }

@@ -26,5 +26,14 @@ protected:
 
 	// Exclude water mesh components from HLOD since we have a custom HLOD builder for water bodies.
 	virtual bool IsHLODRelevant() const override { return false; }
+
+	// Exclude water meshes from loading on the server since we don't render at all.
+	virtual bool NeedsLoadForServer() const override { return false; }
+
+#if WITH_EDITOR
+	virtual void PostLoad() override;
+	virtual void PostStaticMeshCompilation() override;
+	void FixupCollisionOnBodySetup();
+#endif
 };
 

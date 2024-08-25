@@ -11,6 +11,7 @@
 #include "NiagaraNode.h"
 #include "EdGraphSchema_NiagaraSystemOverview.h"
 #include "NiagaraConstants.h"
+#include "NiagaraScriptSource.h"
 #include "NiagaraScriptVariable.h"
 #include "NiagaraSettings.h"
 #include "EdGraph/EdGraph.h"
@@ -137,6 +138,8 @@ void UNiagaraSystemEditorData::PostLoadFromOwner(UObject* InOwner)
 		SynchronizeOverviewGraphWithSystem(*OwningSystem);
 	}
 
+	PostLoad_TransferModuleStackNotesToNewFormat(OwningSystem);
+	
 	// Remove any niagara nodes which may have been pasted into the overview graph in error.  This is no longer possible.
 	TArray<UNiagaraNode*> NiagaraNodes;
 	SystemOverviewGraph->GetNodesOfClass<UNiagaraNode>(NiagaraNodes);
@@ -224,6 +227,52 @@ void UNiagaraSystemEditorData::UpdatePlaybackRangeFromEmitters(UNiagaraSystem& O
 		PlaybackRangeMin = EmitterPlaybackRangeMin;
 		PlaybackRangeMax = EmitterPlaybackRangeMax;
 	}
+}
+
+void UNiagaraSystemEditorData::PostLoad_TransferModuleStackNotesToNewFormat(UObject* InOwner)
+{
+	// since we lack graph context during post load, we do this workaround to find the emitter graph
+	UNiagaraSystem* System = Cast<UNiagaraSystem>(InOwner);
+
+	TArray<UNiagaraScriptSourceBase*> SourceBases;
+	
+	if(UNiagaraScript* SystemSpawnScript = System->GetSystemSpawnScript())
+	{
+		SystemSpawnScript->ConditionalPostLoad();
+		
+		if (UNiagaraScriptSource* GraphSource = Cast<UNiagaraScriptSource>(SystemSpawnScript->GetLatestSource()))
+        {
+			GraphSource->ConditionalPostLoad();
+			SourceBases.Add(GraphSource);
+        }
+	}
+	
+	if(UNiagaraScript* SystemUpdateScript = System->GetSystemUpdateScript())
+	{
+		SystemUpdateScript->ConditionalPostLoad();
+
+		if (UNiagaraScriptSource* GraphSource = Cast<UNiagaraScriptSource>(SystemUpdateScript->GetLatestSource()))
+		{
+			GraphSource->ConditionalPostLoad();
+			SourceBases.Add(GraphSource);
+		}
+	}
+	
+	for(UNiagaraScriptSourceBase* SourceBase : SourceBases)
+	{		
+		UNiagaraScriptSource* Source = CastChecked<UNiagaraScriptSource>(SourceBase);
+
+		TArray<UNiagaraNodeFunctionCall*> FunctionCallNodes;
+		Source->NodeGraph->GetNodesOfClass(FunctionCallNodes);
+
+		for(UNiagaraNodeFunctionCall* FunctionCallNode : FunctionCallNodes)
+		{
+			if(FunctionCallNode->GetDeprecatedCustomNotes().Num() > 0)
+			{
+				StackEditorData->TransferDeprecatedStackNotes(*FunctionCallNode);
+			}
+		}
+	}	
 }
 
 void FindOuterNodes(const TArray<UNiagaraOverviewNode*> OverviewNodes, UNiagaraOverviewNode*& OutLeft, UNiagaraOverviewNode*& OutRight)

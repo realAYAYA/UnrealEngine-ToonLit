@@ -9,8 +9,8 @@ public class Boost : ModuleRules
 	{
 		Type = ModuleType.External;
 
-		string BoostVersion = "1_80_0";
-		string[] BoostLibraries = { "atomic", "chrono", "filesystem", "iostreams", "program_options", "python39", "regex", "system", "thread" };
+		string BoostVersion = "1_82_0";
+		string[] BoostLibraries = { "atomic", "chrono", "filesystem", "iostreams", "program_options", "python311", "regex", "system", "thread" };
 
 		string BoostVersionDir = "boost-" + BoostVersion;
 		string BoostPath = Path.Combine(Target.UEThirdPartySourceDirectory, "Boost", BoostVersionDir);

@@ -40,10 +40,10 @@ void FURLRequestFilter::UpdateConfig(const TCHAR* ConfigSectionRootName, const F
 
 	AllowedRequests.Empty();
 
-	FConfigFile* File = GConfig->FindConfigFile(ConfigFileName);
+	const FConfigFile* File = GConfig->FindConfigFile(ConfigFileName);
 	if (File != nullptr)
 	{
-		Algo::ForEach(*File, [this, ConfigSectionRootName](const FConfigFile::ElementType& Entry)
+		Algo::ForEach(*File, [this, ConfigSectionRootName](const FConfigFileMap::ElementType& Entry)
 			{
 				const FString& SectionName = Entry.Key;
 

@@ -7,6 +7,7 @@
 
 class FFreeTypeFace;
 class FFreeTypeCacheDirectory;
+struct FSlateFontInfo;
 
 #ifndef WITH_HARFBUZZ
 	#define WITH_HARFBUZZ 0
@@ -54,7 +55,7 @@ public:
 
 #if WITH_HARFBUZZ
 	/** Create a HarfBuzz font from the given face - must be destroyed with hb_font_destroy when done */
-	hb_font_t* CreateFont(const FFreeTypeFace& InFace, const uint32 InGlyphFlags, const float InFontSize, const float InFontScale) const;
+	hb_font_t* CreateFont(const FFreeTypeFace& InFace, const uint32 InGlyphFlags, const FSlateFontInfo& InFontInfo, const float InFontScale) const;
 #endif // WITH_HARFBUZZ
 
 private:

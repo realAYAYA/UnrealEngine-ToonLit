@@ -141,9 +141,9 @@ public:
 	 */
 	void Empty()
 	{
-		Grid.Resize(0, 0, 0, true);
-		ClosestTriGrid.Resize(0, 0, 0, true);
-		IntersectionsGrid.Resize(0, 0, 0, true);
+		Grid.Resize(0, 0, 0, EAllowShrinking::Yes);
+		ClosestTriGrid.Resize(0, 0, 0, EAllowShrinking::Yes);
+		IntersectionsGrid.Resize(0, 0, 0, EAllowShrinking::Yes);
 	}
 
 	TTriLinearGridInterpolant<TSweepingMeshSDF> MakeInterpolant()
@@ -417,14 +417,14 @@ private:
 			if (!bWantIntersectionsGrid)
 			{
 				// empty grid
-				intersection_count.Resize(0,0,0,true);
+				intersection_count.Resize(0,0,0,EAllowShrinking::Yes);
 			}
 		}
 
 		if (!bWantClosestTriGrid)
 		{
 			// empty grid
-			closest_tri.Resize(0,0,0,true);
+			closest_tri.Resize(0,0,0,EAllowShrinking::Yes);
 		}
 
 	}   // end make_level_set_3
@@ -553,14 +553,14 @@ private:
 			if (!bWantIntersectionsGrid)
 			{
 				// empty grid
-				intersection_count.Resize(0, 0, 0, true);
+				intersection_count.Resize(0, 0, 0, EAllowShrinking::Yes);
 			}
 		}
 
 		if (!bWantClosestTriGrid)
 		{
 			// empty grid
-			closest_tri.Resize(0, 0, 0, true);
+			closest_tri.Resize(0, 0, 0, EAllowShrinking::Yes);
 		}
 	}   // end make_level_set_3
 
@@ -692,14 +692,14 @@ private:
 			if (!bWantIntersectionsGrid)
 			{
 				// empty grid
-				intersection_count.Resize(0, 0, 0, true);
+				intersection_count.Resize(0, 0, 0, EAllowShrinking::Yes);
 			}
 		}
 
 		if (!bWantClosestTriGrid)
 		{
 			// empty grid
-			closest_tri.Resize(0, 0, 0, true);
+			closest_tri.Resize(0, 0, 0, EAllowShrinking::Yes);
 		}
 
 	}   // end make_level_set_3
@@ -951,11 +951,11 @@ private:
 	{
 		if (!bWantIntersectionsGrid)
 		{
-			IntersectionsGrid.Resize(0, 0, 0, true);
+			IntersectionsGrid.Resize(0, 0, 0, EAllowShrinking::Yes);
 		}
 		if (!bWantClosestTriGrid)
 		{
-			ClosestTriGrid.Resize(0, 0, 0, true);
+			ClosestTriGrid.Resize(0, 0, 0, EAllowShrinking::Yes);
 		}
 	}
 

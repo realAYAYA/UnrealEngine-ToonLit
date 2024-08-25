@@ -27,6 +27,7 @@
 #include "Insights/ViewModels/FrameTrackHelper.h"
 #include "Insights/ViewModels/ThreadTimingTrack.h"
 #include "Insights/Widgets/STimingProfilerWindow.h"
+#include "Insights/Widgets/STimersView.h"
 #include "Insights/Widgets/STimingView.h"
 
 #include <limits>
@@ -62,6 +63,29 @@ SFrameTrack::~SFrameTrack()
 				}
 			}
 		}
+	}
+
+	TSharedPtr<STimersView> TimersView;
+	TSharedPtr<STimingProfilerWindow> ProfilerWindow = FTimingProfilerManager::Get()->GetProfilerWindow();
+	if (ProfilerWindow.IsValid())
+	{
+		TimersView = ProfilerWindow->GetTimersView();
+	}
+
+	if (TimersView)
+	{
+		for (const TSharedPtr<FFrameTrackSeries>& Series : AllSeries)
+		{
+			if (Series.IsValid() && Series->Type == EFrameTrackSeriesType::TimerFrameStats)
+			{
+				const TSharedPtr<FTimerFrameStatsTrackSeries> TimerSeries = StaticCastSharedPtr<FTimerFrameStatsTrackSeries>(Series);
+				FTimerNodePtr TimerNode = TimersView->GetTimerNode(TimerSeries->TimerId);
+				if (TimerNode)
+				{
+					TimerNode->OnRemovedFromGraph();
+				}
+			}
+		};
 	}
 }
 
@@ -1646,6 +1670,27 @@ bool SFrameTrack::RemoveTimerFrameStatSeries(ETraceFrameType FrameType, uint32 T
 	bIsStateDirty = true;
 
 	return NumRemoved >= 1;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+uint32 SFrameTrack::GetNumSeriesForTimer(uint32 TimerId)
+{
+	uint32 NumSeries = 0;
+
+	for (const TSharedPtr<FFrameTrackSeries>& Series : AllSeries)
+	{
+		if (Series->Type == EFrameTrackSeriesType::TimerFrameStats)
+		{
+			const TSharedPtr<FTimerFrameStatsTrackSeries> TimerSeries = StaticCastSharedPtr<FTimerFrameStatsTrackSeries>(Series);
+			if (TimerSeries->TimerId == TimerId)
+			{
+				++NumSeries;
+			}
+		}
+	};
+
+	return NumSeries;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

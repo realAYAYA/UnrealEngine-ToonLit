@@ -11,6 +11,7 @@
 #include "MuCO/UnrealPortabilityHelpers.h"
 #include "MuR/OpMeshFormat.h"
 #include "Engine/SkeletalMesh.h"
+#include "MuCO/CustomizableObject.h"
 #include "UObject/Package.h"
 
 class UMaterialInterface;
@@ -376,24 +377,24 @@ namespace MutableMeshPreviewUtils
 			TArray<uint16> BoneMap;
 			BoneMap.SetNumZeroed(FMath::Max(NumBonesInBoneMap, 1));
 
+			FSkeletalMeshLODRenderData& LODResource = OutSkeletalMesh->GetResourceForRendering()->LODRenderData[0];
+
 			// Load buffer data found on the mutable model onto the out skeletal mesh
 			// It includes vertex and index buffers
 			UnrealConversionUtils::SetupRenderSections(
-				OutSkeletalMesh,
+				LODResource,
 				InMutableMesh,
-				0,
 				BoneMap,
 				0);
 
 			UnrealConversionUtils::CopyMutableVertexBuffers(
-				OutSkeletalMesh,
+				LODResource,
 				InMutableMesh,
-				0); 
+				false); 
 			
-			FSkeletalMeshLODRenderData& LODModel = OutSkeletalMesh->GetResourceForRendering()->LODRenderData[0];
 
 			// Ensure there's at least one bone in the bonemap of each render section, the root.
-			for (FSkelMeshRenderSection& RenderSection : LODModel.RenderSections)
+			for (FSkelMeshRenderSection& RenderSection : LODResource.RenderSections)
 			{
 				if (RenderSection.BoneMap.IsEmpty())
 				{
@@ -402,18 +403,18 @@ namespace MutableMeshPreviewUtils
 			}
 
 			// Add root as the only required bone
-			LODModel.ActiveBoneIndices.Add(0);
-			LODModel.RequiredBones.Add(0);
+			LODResource.ActiveBoneIndices.Add(0);
+			LODResource.RequiredBones.Add(0);
 			
 			// Copy index buffers or fail to generate the mesh
-			if (!UnrealConversionUtils::CopyMutableIndexBuffers(InMutableMesh, LODModel))
+			if (!UnrealConversionUtils::CopyMutableIndexBuffers(LODResource, InMutableMesh))
 			{
 				return false;
 			}
 			
 			// Update LOD and streaming data
-			LODModel.bIsLODOptional = false;
-			LODModel.bStreamedDataInlined = false;
+			LODResource.bIsLODOptional = false;
+			LODResource.bStreamedDataInlined = false;
 			
 			return true;
 		}

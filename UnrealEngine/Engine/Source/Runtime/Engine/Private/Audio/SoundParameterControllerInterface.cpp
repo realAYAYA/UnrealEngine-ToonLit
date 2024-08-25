@@ -165,12 +165,11 @@ void ISoundParameterControllerInterface::SetParameters(TArray<FAudioParameter>&&
 			if (!ParamsToSet.IsEmpty())
 			{
 				DECLARE_CYCLE_STAT(TEXT("FAudioThreadTask.SoundParameterControllerInterface.SetParameters"), STAT_AudioSetParameters, STATGROUP_AudioThreadCommands);
-				AudioDevice->SendCommandToActiveSounds(GetInstanceOwnerID(), [AudioDevice, Params = MoveTemp(ParamsToSet)](FActiveSound& ActiveSound)
+				AudioDevice->SendCommandToActiveSounds(GetInstanceOwnerID(), [AudioDevice, Params = MoveTemp(ParamsToSet)](FActiveSound& ActiveSound) mutable
 				{
 					if (Audio::IParameterTransmitter* Transmitter = ActiveSound.GetTransmitter())
 					{
-						TArray<FAudioParameter> TempParams = Params;
-						Transmitter->SetParameters(MoveTemp(TempParams));
+						Transmitter->SetParameters(MoveTemp(Params));
 					}
 				}, GET_STATID(STAT_AudioSetParameters));
 			}

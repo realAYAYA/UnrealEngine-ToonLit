@@ -253,14 +253,14 @@ FDebugRenderSceneProxy* UGeometryCollectionISMPoolDebugDrawComponent::CreateDebu
 
 	FDebugRenderSceneProxy* DebugProxy = new FGeometryCollectionISMPoolDebugDrawSceneProxy(this);
 
-	if (UHierarchicalInstancedStaticMeshComponent* HISMComponent = Cast<UHierarchicalInstancedStaticMeshComponent>(SelectedComponent))
+	if (const UHierarchicalInstancedStaticMeshComponent* HISMComponent = Cast<UHierarchicalInstancedStaticMeshComponent>(SelectedComponent))
 	{
 		const FTransform LocalToWorldTransform = HISMComponent->GetComponentTransform();
 		TArray<FClusterNode> TreeNodes;
 		HISMComponent->GetTree(TreeNodes);
 		DrawBoxAndChildren(DebugProxy, LocalToWorldTransform, TreeNodes, 0, 0);
 	}
-	else if(UInstancedStaticMeshComponent* ISMComponent = Cast<UInstancedStaticMeshComponent>(SelectedComponent))
+	else if(const UInstancedStaticMeshComponent* ISMComponent = Cast<UInstancedStaticMeshComponent>(SelectedComponent))
 	{
 		const FBox LocalBounds = ISMComponent->CalcBounds(FTransform::Identity).GetBox();
 		const FTransform LocalToWorldTransform = ISMComponent->GetComponentTransform();

@@ -3,6 +3,7 @@
 #include "Pch.h"
 #include "AsioTcpServer.h"
 #include "Foundation.h"
+#include "Logging.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 FAsioTcpServer::FAsioTcpServer(asio::io_context& IoContext)
@@ -74,6 +75,12 @@ bool FAsioTcpServer::StartServer(uint32 Port, uint32 Backlog)
 	TempAcceptor.open(tcp::v4());
 #endif
 
+	// Set the reuse address option (SO_REUSEADDR on *nix) otherwise
+	// when stopping the server the connection is in timed wait prevent
+	// rebinding to that address.
+	asio::socket_base::reuse_address reuse_option(true);
+	TempAcceptor.set_option(reuse_option);
+
 	tcp::endpoint Endpoint(tcp::v4(), uint16(Port));
 	TempAcceptor.bind(Endpoint);
 	TempAcceptor.listen(Backlog);
@@ -120,6 +127,15 @@ void FAsioTcpServer::AsyncAccept()
 		{
 			AsyncAccept();
 			return;
+		}
+		
+		if (ErrorCode == asio::error::operation_aborted)
+		{
+			TS_LOG("Listening cancelled, closing port...");
+		}
+		else if (ErrorCode)
+		{
+			TS_LOG("Accept failed with error %u, closing port...", ErrorCode);
 		}
 
 		Close();

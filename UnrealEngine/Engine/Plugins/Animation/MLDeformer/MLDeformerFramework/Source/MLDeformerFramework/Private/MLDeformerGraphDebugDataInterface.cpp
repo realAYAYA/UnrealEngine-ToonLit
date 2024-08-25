@@ -156,11 +156,11 @@ namespace UE::MLDeformer
 			const UMLDeformerVizSettings* VizSettings = Model->GetVizSettings();
 			const UMLDeformerModelInstance* ModelInstance = DeformerComponent->GetModelInstance();
 
-			SkeletalMeshObject = ModelInstance->GetSkeletalMeshComponent()->MeshObject;
+			SkeletalMeshObject = (ModelInstance && ModelInstance->GetSkeletalMeshComponent()) ? ModelInstance->GetSkeletalMeshComponent()->MeshObject : nullptr;
 			VertexMapBufferSRV = Model->GetVertexMapBuffer().ShaderResourceViewRHI;
 			HeatMapMode = static_cast<int32>(VizSettings->GetHeatMapMode());
 			HeatMapMax = 1.0f / FMath::Max(VizSettings->GetHeatMapMax(), 0.00001f);
-			GroundTruthLerp = VizSettings->GetGroundTruthLerp();
+			GroundTruthLerp = (ModelInstance && ModelInstance->GetSkeletalMeshComponent()->GetPredictedLODLevel() == 0) ? VizSettings->GetGroundTruthLerp() : 0.0f;
 		}
 	}
 
@@ -188,7 +188,15 @@ namespace UE::MLDeformer
 		{
 			return false;
 		}
+
 		if (SkeletalMeshObject == nullptr || VertexMapBufferSRV == nullptr)
+		{
+			return false;
+		}
+
+		// Only support showing heatmaps in groundtruth mode on LOD 0.
+		const FSkeletalMeshRenderData& SkeletalMeshRenderData = SkeletalMeshObject->GetSkeletalMeshRenderData();
+		if (SkeletalMeshRenderData.GetPendingFirstLODIdx(0) != 0 && HeatMapMode == static_cast<int32>(EMLDeformerHeatMapMode::GroundTruth))
 		{
 			return false;
 		}

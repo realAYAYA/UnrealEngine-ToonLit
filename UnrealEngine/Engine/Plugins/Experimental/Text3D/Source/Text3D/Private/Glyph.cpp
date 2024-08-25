@@ -32,6 +32,7 @@ void FText3DGlyph::Build(UStaticMesh* StaticMesh, UMaterial* DefaultMaterial)
 	UStaticMesh::FBuildMeshDescriptionsParams Params;
 	Params.bCommitMeshDescription = true;
 	Params.bFastBuild = true;
+	Params.bAllowCpuAccess = true;
 	StaticMesh->BuildFromMeshDescriptions(MeshDescriptions, Params);
 }
 

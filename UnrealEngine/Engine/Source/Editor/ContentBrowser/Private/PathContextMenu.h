@@ -93,6 +93,9 @@ public:
 	/** Handler for when "Resave" is selected */
 	void ExecuteResaveFolder();
 
+	/** Handler for when "Copy AssetPath" is selected */
+	void CopySelectedFolder();
+
 	/** Handler for when "Delete" is selected and the delete was confirmed */
 	FReply ExecuteDeleteFolderConfirmed();
 
@@ -104,6 +107,8 @@ private:
 	FText GetDeleteToolTip() const;
 
 	void SaveFilesWithinSelectedFolders(EContentBrowserItemSaveFlags InSaveFlags);
+	
+	void CopySelectedFoldersToClipoard();
 
 	/** Checks to see if any of the selected paths use custom colors */
 	bool SelectedHasCustomColors() const;

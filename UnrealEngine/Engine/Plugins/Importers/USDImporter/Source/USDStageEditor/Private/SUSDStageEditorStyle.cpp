@@ -2,17 +2,14 @@
 
 #include "SUSDStageEditorStyle.h"
 
-#include "Styling/AppStyle.h"
 #include "Interfaces/IPluginManager.h"
 #include "SlateOptMacros.h"
-#include "Styling/CoreStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "Styling/SlateTypes.h"
-#include "Styling/StyleColors.h"
 
-#define IMAGE_PLUGIN_BRUSH( RelativePath, ... ) FSlateImageBrush( FUsdStageEditorStyle::InContent( RelativePath, ".png" ), __VA_ARGS__ )
+#define IMAGE_PLUGIN_BRUSH(RelativePath, ...) FSlateImageBrush(FUsdStageEditorStyle::InContent(RelativePath, ".png"), __VA_ARGS__)
 #define IMAGE_BRUSH(RelativePath, ...) FSlateImageBrush(StyleSet->RootToContentDir(RelativePath, TEXT(".png")), __VA_ARGS__)
-#define IMAGE_BRUSH_SVG( RelativePath, ... ) FSlateVectorImageBrush(StyleSet->RootToContentDir(RelativePath, TEXT(".svg")), __VA_ARGS__)
+#define IMAGE_BRUSH_SVG(RelativePath, ...) FSlateVectorImageBrush(StyleSet->RootToContentDir(RelativePath, TEXT(".svg")), __VA_ARGS__)
 #define BOX_BRUSH(RelativePath, ...) FSlateBoxBrush(StyleSet->RootToContentDir(RelativePath, TEXT(".png")), __VA_ARGS__)
 #define DEFAULT_FONT(...) FCoreStyle::GetDefaultFontStyle(__VA_ARGS__)
 
@@ -22,8 +19,11 @@ FString FUsdStageEditorStyle::InContent(const FString& RelativePath, const ANSIC
 	return (ContentDir / RelativePath) + Extension;
 }
 
-TSharedPtr< FSlateStyleSet > FUsdStageEditorStyle::StyleSet = nullptr;
-TSharedPtr< class ISlateStyle > FUsdStageEditorStyle::Get() { return StyleSet; }
+TSharedPtr<FSlateStyleSet> FUsdStageEditorStyle::StyleSet = nullptr;
+TSharedPtr<class ISlateStyle> FUsdStageEditorStyle::Get()
+{
+	return StyleSet;
+}
 
 FName FUsdStageEditorStyle::GetStyleSetName()
 {
@@ -54,34 +54,34 @@ void FUsdStageEditorStyle::Initialize()
 
 	{
 		/** Height of items in the stage/layer tree views, prim info panel, etc. */
-		StyleSet->Set( "UsdStageEditor.ListItemHeight", 20.0f );
+		StyleSet->Set("UsdStageEditor.ListItemHeight", 20.0f);
 
 		/** Color of Prim labels that have composition arcs */
-		StyleSet->Set( "UsdStageEditor.PrimCompositionArcColor", FLinearColor( FColor::Orange ) );
+		StyleSet->Set("UsdStageEditor.PrimCompositionArcColor", FLinearColor(FColor::Orange));
 
 		/** Highlighted color of Prim labels that have composition arcs */
-		StyleSet->Set( "UsdStageEditor.HighlightPrimCompositionArcColor", FLinearColor( 0.2f, 0.08f, 0.0f, 1.0f ) );
+		StyleSet->Set("UsdStageEditor.HighlightPrimCompositionArcColor", FLinearColor(0.2f, 0.08f, 0.0f, 1.0f));
 
 		/**
 		 * Checkmark that is always white. We can't use the editor style one in some places (which by default is styled blue)
 		 * because the highlight color is also the same blue, so the checkbox would be invisible
 		 */
-		StyleSet->Set( "UsdStageEditor.CheckBoxImage", new IMAGE_BRUSH( "Common/Check", Icon14x14, FLinearColor::White ) );
+		StyleSet->Set("UsdStageEditor.CheckBoxImage", new IMAGE_BRUSH("Common/Check", Icon14x14, FLinearColor::White));
 
-		StyleSet->Set( "UsdStageEditor.ActorPickerFlashBrush", new FSlateRoundedBoxBrush( FLinearColor::White, 4.0f ) );
+		StyleSet->Set("UsdStageEditor.ActorPickerFlashBrush", new FSlateRoundedBoxBrush(FLinearColor::White, 4.0f));
 
 		/**
 		 * Button without a background, border or foreground color that doesn't move when pressed.
 		 * No foreground color is important to let the automatic slate foreground color propagate down.
 		 */
 		const FButtonStyle Style = FButtonStyle()
-			.SetNormal( FSlateNoResource() )
-			.SetHovered( FSlateNoResource() )
-			.SetPressed( FSlateNoResource() )
-			.SetDisabled( FSlateNoResource() )
-			.SetNormalPadding( FMargin( 2, 2, 2, 2 ) )
-			.SetPressedPadding( FMargin( 2, 2, 2, 2 ) );
-		StyleSet->Set( "NoBorder", Style );
+									   .SetNormal(FSlateNoResource())
+									   .SetHovered(FSlateNoResource())
+									   .SetPressed(FSlateNoResource())
+									   .SetDisabled(FSlateNoResource())
+									   .SetNormalPadding(FMargin(2, 2, 2, 2))
+									   .SetPressedPadding(FMargin(2, 2, 2, 2));
+		StyleSet->Set("NoBorder", Style);
 	}
 
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet.Get());

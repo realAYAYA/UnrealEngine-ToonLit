@@ -6,18 +6,16 @@
 #include "VPScoutingMode.generated.h"
 
 
-UCLASS(meta=(DisplayName="Virtual Scouting Mode"))
+UCLASS(meta=(DisplayName="Legacy Virtual Scouting"))
 class UVPScoutingMode : public UVREditorMode
 {
 	GENERATED_BODY()
 
 public:
-	UVPScoutingMode(const FObjectInitializer& ObjectInitializer);
+	UVPScoutingMode();
 
 	//~ Begin UVREditorMode interface
 	virtual bool NeedsSyntheticDpad() override;
-
-	virtual bool ShouldDisplayExperimentalWarningOnEntry() const override { return false; }
 
 	virtual void Enter() override;
 	//~ End UVREditorMode interface

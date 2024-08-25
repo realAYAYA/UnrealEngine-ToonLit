@@ -18,6 +18,7 @@
 #include "UObject/WeakObjectPtrTemplates.h"
 
 class UMovieSceneFolder;
+class FActorDragDropOp;
 
 namespace UE
 {
@@ -26,9 +27,10 @@ namespace Sequencer
 
 class FLayerBarModel;
 class FSequenceModel;
+class FSequencerOutlinerDragDropOp;
 
 class FFolderModel
-	: public FOutlinerItemModel
+	: public FMuteSoloOutlinerItemModel
 	, public IRenameableExtension
 	, public ITrackAreaExtension
 	, public IGroupableExtension
@@ -41,7 +43,7 @@ class FFolderModel
 public:
 
 	UE_SEQUENCER_DECLARE_CASTABLE(FFolderModel
-		, FOutlinerItemModel
+		, FMuteSoloOutlinerItemModel
 		, IRenameableExtension
 		, ITrackAreaExtension
 		, IGroupableExtension
@@ -74,7 +76,7 @@ public:
 	const FSlateBrush* GetIconBrush() const override;
 	FSlateColor GetIconTint() const override;
 	FSlateColor GetLabelColor() const override;
-	TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams) override;
+	TSharedPtr<SWidget> CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName) override;
 
 	/*~ ITrackAreaExtension */
 	FTrackAreaParameters GetTrackAreaParameters() const override;
@@ -117,6 +119,9 @@ private:
 	void OnColorPickerCancelled(FLinearColor NewFolderColor);
 
 	void RepopulateChildren();
+
+	void PerformDropActors(const FViewModelPtr& TargetModel, TSharedPtr<FActorDragDropOp> ActorDragDropEvent, TSharedPtr<FViewModel> AttachAfter);
+	void PerformDropOutliner(const FViewModelPtr& TargetModel, TSharedPtr<FSequencerOutlinerDragDropOp> OutlinerDragDropEvent, TSharedPtr<FViewModel> AttachAfter);
 
 private:
 

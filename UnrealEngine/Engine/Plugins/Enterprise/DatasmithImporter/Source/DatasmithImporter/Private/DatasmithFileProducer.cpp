@@ -597,17 +597,6 @@ void UDatasmithFileProducer::PreventNameCollision()
 				}
 				else if( UMaterialInstance* MaterialInstance = Cast<UMaterialInstance>(Object) )
 				{
-					if (UMaterial* SourceMaterial = Cast< UMaterial >(MaterialInstance))
-					{
-						for (const FMaterialFunctionInfo& MaterialFunctionInfo : SourceMaterial->GetCachedExpressionData().FunctionInfos)
-						{
-							if (MaterialFunctionInfo.Function && MaterialFunctionInfo.Function->GetOutermost() == SourceMaterial->GetOutermost())
-							{
-								MaterialFunctions.Add( MaterialFunctionInfo.Function );
-							}
-						}
-					}
-
 					if ( UMaterialInterface* MaterialParent = MaterialInstance->Parent )
 					{
 						FString MaterialInstancePath = MaterialInstance->GetOutermost()->GetName();

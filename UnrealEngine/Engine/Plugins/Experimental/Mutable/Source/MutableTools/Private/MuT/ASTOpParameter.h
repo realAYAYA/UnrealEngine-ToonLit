@@ -18,7 +18,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//! Parameter operation.
 	//---------------------------------------------------------------------------------------------
-	class ASTOpParameter : public ASTOp
+	class ASTOpParameter final : public ASTOp
 	{
 	public:
 

@@ -74,7 +74,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity,should collide with floor and not fall through.
 		FSingleParticlePhysicsProxy* CollidingCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		FRigidBodyHandle_External& CollidingCubeParticle = CollidingCubeProxy->GetGameThreadAPI();
-		TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> CollidingCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		Chaos::FImplicitObjectPtr CollidingCubeGeom(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		CollidingCubeParticle.SetGeometry(CollidingCubeGeom);
 		Solver->RegisterObject(CollidingCubeProxy);
 		CollidingCubeParticle.SetGravityEnabled(false);
@@ -86,7 +86,7 @@ namespace ChaosTest
 		// Simulated cube with downward velocity, collision ignore disables collision with floor, should fall through.
 		FSingleParticlePhysicsProxy* NonCollidableProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		FRigidBodyHandle_External& NonCollidableParticle = NonCollidableProxy->GetGameThreadAPI();
-		TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> NonCollidableCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		Chaos::FImplicitObjectPtr NonCollidableCubeGeom(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		NonCollidableParticle.SetGeometry(NonCollidableCubeGeom);
 		Solver->RegisterObject(NonCollidableProxy);
 		NonCollidableParticle.SetGravityEnabled(false);
@@ -98,7 +98,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		FRigidBodyHandle_External& FloorParticle = FloorProxy->GetGameThreadAPI();
-		TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		Chaos::FImplicitObjectPtr FloorGeom(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -157,7 +157,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity,should collide with floor and not fall through.
 		FSingleParticlePhysicsProxy* CollidingCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		FRigidBodyHandle_External& CollidingCubeParticle = CollidingCubeProxy->GetGameThreadAPI();
-		TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> CollidingCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		Chaos::FImplicitObjectPtr CollidingCubeGeom(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		CollidingCubeParticle.SetGeometry(CollidingCubeGeom);
 		Solver->RegisterObject(CollidingCubeProxy);
 		CollidingCubeParticle.SetGravityEnabled(false);
@@ -169,7 +169,7 @@ namespace ChaosTest
 		// Simulated cube with downward velocity, collision ignore disables collision with floor, should fall through.
 		FSingleParticlePhysicsProxy* NonCollidableProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		FRigidBodyHandle_External& NonCollidableParticle = NonCollidableProxy->GetGameThreadAPI();
-		TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> NonCollidableCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		Chaos::FImplicitObjectPtr NonCollidableCubeGeom(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		NonCollidableParticle.SetGeometry(NonCollidableCubeGeom);
 		Solver->RegisterObject(NonCollidableProxy);
 		NonCollidableParticle.SetGravityEnabled(false);
@@ -181,7 +181,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		FRigidBodyHandle_External& FloorParticle = FloorProxy->GetGameThreadAPI();
-		TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		Chaos::FImplicitObjectPtr FloorGeom(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));

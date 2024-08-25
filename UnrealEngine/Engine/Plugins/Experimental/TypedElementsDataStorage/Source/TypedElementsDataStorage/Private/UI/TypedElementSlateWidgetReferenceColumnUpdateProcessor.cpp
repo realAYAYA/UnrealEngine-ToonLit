@@ -5,7 +5,7 @@
 #include "Elements/Columns/TypedElementSlateWidgetColumns.h"
 #include "Elements/Framework/TypedElementQueryBuilder.h"
 
-void UTypedElementSlateWidgetReferenceColumnUpdateFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const
+void UTypedElementSlateWidgetReferenceColumnUpdateFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage)
 {
 	RegisterDeleteRowOnWidgetDeleteQuery(DataStorage);
 	RegisterDeleteColumnOnWidgetDeleteQuery(DataStorage);
@@ -17,21 +17,21 @@ void UTypedElementSlateWidgetReferenceColumnUpdateFactory::RegisterDeleteRowOnWi
 	using DSI = ITypedElementDataStorageInterface;
 
 	DataStorage.RegisterQuery(
-		Select(
-			TEXT("Delete row with deleted widget"),
-			FPhaseAmble(FPhaseAmble::ELocation::Preamble, DSI::EQueryTickPhase::FrameEnd),
-			[](DSI::IQueryContext& Context, TypedElementRowHandle Row, const FTypedElementSlateWidgetReferenceColumn& WidgetReference)
-			{
-				if (!WidgetReference.Widget.IsValid())
-				{
-					Context.RemoveRow(Row);
-				}
-			}
-		)
-		.Where()
-			.All<FTypedElementSlateWidgetReferenceDeletesRowTag>()
-		.Compile()
-	);
+    	Select(
+    		TEXT("Delete row with deleted widget"),
+    		FPhaseAmble(FPhaseAmble::ELocation::Preamble, DSI::EQueryTickPhase::FrameEnd),
+    		[](DSI::IQueryContext& Context, TypedElementRowHandle Row, const FTypedElementSlateWidgetReferenceColumn& WidgetReference)
+    		{
+    			if (!WidgetReference.TedsWidget.IsValid())
+    			{
+    				Context.RemoveRow(Row);
+    			}
+    		}
+    	)
+    	.Where()
+    		.All<FTypedElementSlateWidgetReferenceDeletesRowTag>()
+    	.Compile()
+    	);
 }
 
 void UTypedElementSlateWidgetReferenceColumnUpdateFactory::RegisterDeleteColumnOnWidgetDeleteQuery(ITypedElementDataStorageInterface& DataStorage) const
@@ -41,11 +41,11 @@ void UTypedElementSlateWidgetReferenceColumnUpdateFactory::RegisterDeleteColumnO
 
 	DataStorage.RegisterQuery(
 		Select(
-			TEXT("Delete widget column for deleted widget"),
+			TEXT("Delete widget columns for deleted widget"),
 			FPhaseAmble(FPhaseAmble::ELocation::Preamble, DSI::EQueryTickPhase::FrameEnd),
 			[](DSI::IQueryContext& Context, TypedElementRowHandle Row, const FTypedElementSlateWidgetReferenceColumn& WidgetReference)
 			{
-				if (!WidgetReference.Widget.IsValid())
+				if (!WidgetReference.TedsWidget.IsValid())
 				{
 					Context.RemoveColumns<FTypedElementSlateWidgetReferenceColumn>(Row);
 				}

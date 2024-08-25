@@ -85,7 +85,7 @@ void UGameplayBehavior_AnimationBased::EndBehavior(AActor& InAvatar, const bool 
 			{
 				PlaybackData->AbilityComponent->StopMontageIfCurrent(*PlaybackData->AnimMontage);
 			}
-			ActivePlayback.RemoveSingleSwap(*PlaybackData, /*bAllowShrinking=*/false);
+			ActivePlayback.RemoveSingleSwap(*PlaybackData, EAllowShrinking::No);
 		}
 	}
 
@@ -104,7 +104,7 @@ void UGameplayBehavior_AnimationBased::OnMontageFinished(UAnimMontage* Montage, 
 		if (bInterrupted == true || PlaybackData->bLoop == false
 			|| PlaybackData->AbilityComponent == nullptr)
 		{
-			ActivePlayback.RemoveSingleSwap(*PlaybackData, /*bAllowShrinking=*/false);
+			ActivePlayback.RemoveSingleSwap(*PlaybackData, EAllowShrinking::No);
 			EndBehavior(*InAvatar, bInterrupted);
 		}
 		else

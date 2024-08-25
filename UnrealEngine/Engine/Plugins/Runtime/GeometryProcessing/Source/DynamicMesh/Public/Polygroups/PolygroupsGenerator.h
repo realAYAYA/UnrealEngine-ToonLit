@@ -57,12 +57,13 @@ public:
 
 	/**
 	 * Find Polygroups by randomly picking initial seed triangles and then flood-filling outwards,
-	 * stopping when the opening angle at an edge is larger than the angle defined by the DotTolerance.
+	 * stopping when the opening angle at an edge is larger than the angle defined by the OneMinusCosAngleTolerance.
 	 */
 	bool FindPolygroupsFromFaceNormals(
-		double DotTolerance = 0.0001,
+		double OneMinusCosAngleTolerance = 0.0001,
 		bool bRespectUVSeams = false,
-		bool bRespectNormalSeams = false);
+		bool bRespectNormalSeams = false,
+		bool bUseAveragePolygroupNormals = false);
 
 	/**
 	 * Find Polygroups based on UV Islands, ie each UV Island becomes a Polygroup
@@ -112,6 +113,32 @@ public:
 		FVector3d WeightingCoeffs = FVector3d::One(),
 		FPolygroupSet* StartingGroups = nullptr);
 
+	/**
+	*
+	* Similar to the technique used in FindPolygroupsFromFurthestPointSampling, except this algorithm
+	* attempts to select sample points in connected mesh regions based on the rough area of each region,
+	* granting more initial points to larger regions and fewer points to smaller regions, minium of one.
+	* This approach handles cases better when there is a large varience in region sizes and a large number
+	* of small regions compared to large regions. In this case, the alternative routine can over focus on
+	* small regions, granting the larger regions too few points. This leads to a relative over sampling of
+	* small regions and creates large polygroups out of the larger regions instead of more equitably breaking
+	* up larger regions into multiple groups. 
+	* 
+	* In this algorithm, NumPoints is less a strict target of final patches, but a rough guideline to direct
+	* the area sampler on how much total area each sample should occupy. E.g. a value of 100 would indicate
+	* we ideally want 100 equal sized regions of the mesh. However, since each connected region must have at
+	* least one sample, the final count may not be exactly NumPoints. Instead, each region, and it's area, is
+	* considered independently according to this desired "sample density". A "perfect" mesh (with one connected
+	* region and a high tesselation of equal sized triangles) should generate equal sized patches of NumPoints
+	* in count. A poorer quality mesh will result in a best effort take at this, while ensuring all triangles
+	* are part of a group.
+	* 
+	*/
+	bool FindPolygroupsFromAreaDensityPointSampling(
+		int32 NumPoints,
+		EWeightingType WeightingType,
+		FVector3d WeightingCoeffs = FVector3d::One(),
+		FPolygroupSet* StartingGroups = nullptr);
 
 	/**
 	* Copy the computed Polygroups to the input Mesh. Will be automatically called by the 

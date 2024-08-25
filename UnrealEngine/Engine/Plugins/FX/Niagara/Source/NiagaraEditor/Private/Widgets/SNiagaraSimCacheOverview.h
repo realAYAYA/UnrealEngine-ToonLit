@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "NiagaraTypes.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/SWidget.h"
 #include "Widgets/Text/STextBlock.h"
@@ -17,6 +18,7 @@ enum class ENiagaraSimCacheOverviewItemType
 	System,
 	Emitter,
 	Component,
+	DataInterface,
 	MAX,
 };
 
@@ -34,7 +36,7 @@ struct FNiagaraSimCacheOverviewItem : public TSharedFromThis<FNiagaraSimCacheOve
 		return DisplayName;
 	}
 
-	void SetDisplayName(FText NewName)
+	void SetDisplayName(const FText& NewName)
 	{
 		DisplayName = NewName;
 	}
@@ -49,6 +51,11 @@ struct FNiagaraSimCacheOverviewItem : public TSharedFromThis<FNiagaraSimCacheOve
 		BufferIndex = NewIndex;
 	}
 
+	virtual FNiagaraVariableBase GetDataInterface()
+	{
+		return FNiagaraVariableBase();
+	}
+
 	virtual ENiagaraSimCacheOverviewItemType GetType () { return ENiagaraSimCacheOverviewItemType::MAX; }
 
 	virtual TSharedRef<SWidget> GetRowWidget()
@@ -60,14 +67,22 @@ struct FNiagaraSimCacheOverviewItem : public TSharedFromThis<FNiagaraSimCacheOve
 	FText DisplayName;
 };
 
-struct FNiagaraSimCacheOverviewSystemItem : public FNiagaraSimCacheOverviewItem
+struct FNiagaraSimCacheOverviewSystemItem : FNiagaraSimCacheOverviewItem
 {
 	virtual ENiagaraSimCacheOverviewItemType GetType () override { return ENiagaraSimCacheOverviewItemType::System; }
 };
 
-struct FNiagaraSimCacheOverviewEmitterItem : public FNiagaraSimCacheOverviewItem
+struct FNiagaraSimCacheOverviewEmitterItem : FNiagaraSimCacheOverviewItem
 {
 	virtual ENiagaraSimCacheOverviewItemType GetType() override {return ENiagaraSimCacheOverviewItemType::Emitter; }
+};
+
+struct FNiagaraSimCacheOverviewDataInterfaceItem : FNiagaraSimCacheOverviewItem
+{
+	virtual ENiagaraSimCacheOverviewItemType GetType() override {return ENiagaraSimCacheOverviewItemType::DataInterface; }
+	virtual FNiagaraVariableBase GetDataInterface() override { return DataInterfaceReference; }
+
+	FNiagaraVariableBase DataInterfaceReference;
 };
 
 class SNiagaraSimCacheOverview : public SCompoundWidget

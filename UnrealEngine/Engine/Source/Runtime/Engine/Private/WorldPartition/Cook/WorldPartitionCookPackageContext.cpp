@@ -18,6 +18,11 @@ void FWorldPartitionCookPackageContext::RegisterPackageCookPackageGenerator(IWor
 	check(!PackagesToCookByGenerator.Contains(CookPackageGenerator));
 }
 
+void FWorldPartitionCookPackageContext::UnregisterPackageCookPackageGenerator(IWorldPartitionCookPackageGenerator* CookPackageGenerator)
+{
+	verify(CookPackageGenerators.Remove(CookPackageGenerator));
+}
+
 const FWorldPartitionCookPackage* FWorldPartitionCookPackageContext::AddLevelStreamingPackageToGenerate(IWorldPartitionCookPackageGenerator* CookPackageGenerator, const FString& Root, const FString& RelativePath)
 {
 	return AddPackageToGenerateInternal(CookPackageGenerator, Root, RelativePath, FWorldPartitionCookPackage::EType::Level);

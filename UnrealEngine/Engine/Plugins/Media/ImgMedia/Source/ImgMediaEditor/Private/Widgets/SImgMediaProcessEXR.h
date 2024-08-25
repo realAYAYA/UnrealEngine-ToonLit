@@ -98,12 +98,10 @@ private:
 	 * @param bInEnableMips		Turn on mip mapping.
 	 * @param ImageParameters	Contains information on the image.
 	 * @param InName			Full path and name of file to write.
-	 * @param bIsCustomFormat	True to output in our custom format.
 	 */
 	void ProcessImageCustom(const FImage& InImage,
 		int32 InTileWidth, int32 InTileHeight, int32 InTileBorder, 
-		bool bInEnableMips, const FImageParameters& ImageParameters, const FString& InName,
-		bool bIsCustomFormat);
+		bool bInEnableMips, const FImageParameters& ImageParameters, const FString& InName);
 
 	/**
 	 * Processess a single image and writes out a file.
@@ -119,12 +117,11 @@ private:
 	 * @param bInEnableMips		Turn on mip mapping.
 	 * @param ImageParameters	Contains information on the image.
 	 * @param InName			Full path and name of file to write.
-	 * @param bIsCustomFormat	True to output in our custom format.
 	 */
 	void ProcessImageCustomRawData(TArray64<uint8>& RawData,
 		int32 Width, int32 Height,
 		int32 InTileWidth, int32 InTileHeight, int32 InTileBorder, bool bInEnableMips,
-		const FImageParameters& ImageParameters, const FString& InName, bool bIsCustomFormat);
+		const FImageParameters& ImageParameters, const FString& InName);
 
 	/**
 	 * Removes the alpha channel from a buffer.

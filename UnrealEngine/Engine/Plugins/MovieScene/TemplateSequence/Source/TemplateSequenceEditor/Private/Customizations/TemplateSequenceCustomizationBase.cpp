@@ -2,8 +2,11 @@
 
 #include "TemplateSequenceCustomizationBase.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "Framework/MultiBox/MultiBoxExtender.h"
 #include "GameFramework/Actor.h"
 #include "ISequencer.h"
+#include "LevelSequenceFBXInterop.h"
 #include "Misc/TemplateSequenceEditorUtil.h"
 #include "ScopedTransaction.h"
 #include "TemplateSequence.h"
@@ -20,6 +23,7 @@ void FTemplateSequenceCustomizationBase::RegisterSequencerCustomization(FSequenc
 
 	FSequencerCustomizationInfo BaseInfo;
 	BaseInfo.OnPaste.BindRaw(this, &FTemplateSequenceCustomizationBase::OnPaste);
+	BaseInfo.OnBuildObjectBindingContextMenu = FOnGetSequencerMenuExtender::CreateRaw(this, &FTemplateSequenceCustomizationBase::CreateObjectBindingContextMenuExtender);
 	Builder.AddCustomization(BaseInfo);
 }
 
@@ -70,6 +74,51 @@ ESequencerPasteSupport FTemplateSequenceCustomizationBase::OnPaste()
 {
 	// We don't support pasting folders or new object bindings.
 	return ESequencerPasteSupport::Tracks | ESequencerPasteSupport::Sections;
+}
+
+TSharedPtr<FExtender> FTemplateSequenceCustomizationBase::CreateObjectBindingContextMenuExtender(UE::Sequencer::FViewModelPtr InViewModel)
+{
+	using namespace UE::Sequencer;
+
+	TSharedRef<FExtender> Extender = MakeShared<FExtender>();
+	TSharedPtr<FObjectBindingModel> ObjectBindingModel = InViewModel->CastThisShared<FObjectBindingModel>();
+	Extender->AddMenuExtension(
+			"ObjectBindingActions", EExtensionHook::Before, nullptr,
+			FMenuExtensionDelegate::CreateRaw(this, &FTemplateSequenceCustomizationBase::ExtendObjectBindingContextMenu, ObjectBindingModel));
+	return Extender.ToSharedPtr();
+}
+
+void FTemplateSequenceCustomizationBase::ExtendObjectBindingContextMenu(FMenuBuilder& MenuBuilder, TSharedPtr<UE::Sequencer::FObjectBindingModel> ObjectBindingModel)
+{
+	using namespace UE::Sequencer;
+
+	MenuBuilder.BeginSection("Import/Export", LOCTEXT("ImportExportMenuSectionName", "Import/Export"));
+
+	TSharedPtr<ISequencer> SequencerPtr = Sequencer->AsShared();
+
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("ImportFBX", "Import..."),
+		LOCTEXT("ImportFBXTooltip", "Import FBX animation to this object"),
+		FSlateIcon(),
+		FUIAction(
+			FExecuteAction::CreateLambda([=] {
+					FLevelSequenceFBXInterop Interop(SequencerPtr);
+					Interop.ImportFBXOntoSelectedNodes();
+				})
+		));
+
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("ExportFBX", "Export..."),
+		LOCTEXT("ExportFBXTooltip", "Export FBX animation from this object"),
+		FSlateIcon(),
+		FUIAction(
+			FExecuteAction::CreateLambda([=] {
+					FLevelSequenceFBXInterop Interop(SequencerPtr);
+					Interop.ExportFBX();
+				})
+		));
+
+	MenuBuilder.EndSection();
 }
 
 void FTemplateSequenceCustomizationBase::OnMovieSceneDataChanged(EMovieSceneDataChangeType ChangeType)

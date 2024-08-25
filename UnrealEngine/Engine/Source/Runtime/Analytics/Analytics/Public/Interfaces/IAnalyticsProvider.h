@@ -122,6 +122,34 @@ public:
 	 */
 	virtual FString GetUserID() const = 0;
 
+
+	/**
+	 * Sets an array of attributes that will automatically be appended to any event that is sent.
+	 * Logical effect is like adding them to all events before calling RecordEvent.
+	 * Practically, it is implemented much more efficiently from a storage and allocation perspective.
+	 */
+	virtual void SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes) = 0;
+
+	/**
+	 * @return the current array of default attributes.
+	 */
+	virtual TArray<FAnalyticsEventAttribute> GetDefaultEventAttributesSafe() const = 0;
+
+	/**
+	 * Used with GetDefaultAttribute to iterate over the default attributes.
+	 *
+	 * @return the number of default attributes are currently being applied.
+	 */
+	virtual int32 GetDefaultEventAttributeCount() const = 0;
+
+	/**
+	 * Used with GetDefaultEventAttributeCount to iterate over the default attributes.
+	 *
+	 * Range checking is not done, similar to TArray. Use GetDefaultAttributeCount() first!
+	 * @return one attribute of the default attributes so we don't have to copy the entire attribute array.
+	 */
+	virtual FAnalyticsEventAttribute GetDefaultEventAttribute(int AttributeIndex) const = 0;
+
 	/**
 	 * Sets a user defined string as the build information/version for the session
 	 */

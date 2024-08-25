@@ -43,7 +43,7 @@ void FWebRemoteControlEditorRoutes::RegisterRoutes(FWebRemoteControlModule* WebR
 			TEXT("Create a connection until an event is triggered."),
 			FHttpPath(TEXT("/remote/object/event")),
 			EHttpServerRequestVerbs::VERB_PUT,
-			FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlEditorRoutes::HandleObjectEventRoute)
+			FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlEditorRoutes::HandleObjectEventRoute)
 		));
 
 		EventDispatchers.AddDefaulted((int32)ERemoteControlEvent::EventCount);
@@ -54,7 +54,7 @@ void FWebRemoteControlEditorRoutes::RegisterRoutes(FWebRemoteControlModule* WebR
 		TEXT("Get an object's thumbnail"),
 		FHttpPath(TEXT("/remote/object/thumbnail")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlEditorRoutes::HandleGetThumbnailRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlEditorRoutes::HandleGetThumbnailRoute)
 	));
 }
 

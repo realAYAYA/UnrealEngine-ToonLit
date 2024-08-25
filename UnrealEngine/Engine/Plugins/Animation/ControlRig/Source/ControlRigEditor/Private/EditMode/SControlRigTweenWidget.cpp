@@ -12,7 +12,6 @@
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
 #include "ScopedTransaction.h"
-#include "ControlRig.h"
 #include "UnrealEdGlobals.h"
 #include "Tools/ControlRigPose.h"
 #include "ISequencer.h"
@@ -26,11 +25,17 @@
 
 void SControlRigTweenSlider::Construct(const FArguments& InArgs)
 {
-
 	PoseBlendValue = 0.0f;
 	bIsBlending = false;
 	bSliderStartedTransaction = false;
 	AnimSlider = InArgs._InAnimSlider;
+	WeakEditMode = InArgs._InWeakEditMode;
+	
+	ULevelSequence* LevelSequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence();
+	IAssetEditorInstance* AssetEditor = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(LevelSequence, false);
+	ILevelSequenceEditorToolkit* LevelSequenceEditor = static_cast<ILevelSequenceEditorToolkit*>(AssetEditor);
+	WeakSequencer = LevelSequenceEditor ? LevelSequenceEditor->GetSequencer() : nullptr;
+	
 	ChildSlot
 	[
 		SNew(SVerticalBox)
@@ -132,12 +137,7 @@ void SControlRigTweenSlider::OnBeginSliderMovement()
 bool SControlRigTweenSlider::Setup()
 {
 	//if getting sequencer from level sequence need to use the current(leader), not the focused
-	ULevelSequence* LevelSequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence();
-	IAssetEditorInstance* AssetEditor = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(LevelSequence, false);
-	ILevelSequenceEditorToolkit* LevelSequenceEditor = static_cast<ILevelSequenceEditorToolkit*>(AssetEditor);
-	WeakSequencer = LevelSequenceEditor ? LevelSequenceEditor->GetSequencer() : nullptr;
-
-	return AnimSlider->Setup(WeakSequencer);
+	return AnimSlider->Setup(WeakSequencer, WeakEditMode);
 	
 }
 
@@ -158,7 +158,6 @@ void SControlRigTweenSlider::OnEndSliderMovement(double NewValue)
 			User.SetFocus(ThisRef->GetParentWidget().ToSharedRef());
 		}
 	});
-	WeakSequencer = nullptr;
 }
 
 
@@ -252,9 +251,16 @@ void SControlRigTweenWidget::Construct(const FArguments& InArgs)
 	TSharedPtr<FBaseAnimSlider> PushPullPtr = MakeShareable(new FPushPullSlider());
 	AnimBlendTools.RegisterAnimSlider(PushPullPtr);
 	OwningToolkit = InArgs._InOwningToolkit;
+	OwningEditMode = InArgs._InOwningEditMode;
+	
 	TSharedPtr<FBaseAnimSlider> TweenPtr = MakeShareable(new FControlsToTween());
 	AnimBlendTools.RegisterAnimSlider(TweenPtr);
-
+	TSharedPtr<FBaseAnimSlider> BlendRelativePtr = MakeShareable(new FBlendRelativeSlider());
+	AnimBlendTools.RegisterAnimSlider(BlendRelativePtr);
+	TSharedPtr<FBaseAnimSlider> BlendToEasePtr = MakeShareable(new FBlendToEaseSlider());
+	AnimBlendTools.RegisterAnimSlider(BlendToEasePtr);
+	TSharedPtr<FBaseAnimSlider> SmoothRoughPtr = MakeShareable(new FSmoothRoughSlider());
+	AnimBlendTools.RegisterAnimSlider(SmoothRoughPtr);
 
 	// Combo Button to swap sliders 
 	TSharedRef<SComboButton> SliderComoboBtn = SNew(SComboButton)
@@ -326,7 +332,9 @@ void SControlRigTweenWidget::Construct(const FArguments& InArgs)
 		.VAlign(VAlign_Center)
 		.Padding(2.0f, 2.0f, 2.0f, 2.0f)
 		[
-			SAssignNew(SliderWidget,SControlRigTweenSlider).InAnimSlider(SliderPtr)
+			SAssignNew(SliderWidget,SControlRigTweenSlider)
+			.InAnimSlider(SliderPtr)
+			.InWeakEditMode(OwningEditMode)
 		];
 	
 	ChildSlot

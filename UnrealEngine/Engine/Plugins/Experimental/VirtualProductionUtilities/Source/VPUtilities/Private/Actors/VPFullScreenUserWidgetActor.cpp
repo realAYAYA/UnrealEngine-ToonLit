@@ -119,4 +119,13 @@ void AFullScreenUserWidgetActor::RequestGameDisplay()
 	}
 }
 
+UUserWidget* AFullScreenUserWidgetActor::GetUserWidget() const
+{
+	if (ScreenUserWidget)
+	{
+		return ScreenUserWidget->GetWidget();
+	}
+	return nullptr;
+}
+
 #undef LOCTEXT_NAMESPACE

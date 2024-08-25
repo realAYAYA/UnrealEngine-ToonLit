@@ -91,9 +91,16 @@ FVulkanView* FVulkanView::InitAsTypedBufferView(FVulkanResourceMultiBuffer* Buff
 		InSize = FMath::Min<uint64>(InSize, Buffer->GetCurrentSize());
 	}
 
+	const uint32 TypeSize = GetNumBitsPerPixel(Format) / 8u;
+	// View size has to be a multiple of element size
+	// Commented out because there are multiple places in the high level rendering code which re-purpose buffers for a new format while there are still
+	// views with the old format lying around, and then lock them with a size computed based on the new stride, triggering this assert when the old views
+	// are re-created. These places need to be fixed before re-enabling this check (UE-211785).
+	//check(IsAligned(InSize, TypeSize));
+
 	//#todo-rco: Revisit this if buffer views become VK_BUFFER_USAGE_STORAGE_BUFFER_BIT instead of VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT
 	const VkPhysicalDeviceLimits& Limits = Device.GetLimits();
-	const uint64 MaxSize = (uint64)Limits.maxTexelBufferElements * GetNumBitsPerPixel(Format) / 8;
+	const uint64 MaxSize = (uint64)Limits.maxTexelBufferElements * TypeSize;
 	ViewInfo.range = FMath::Min<uint64>(InSize, MaxSize);
 	// TODO: add a check() for exceeding MaxSize, to catch code which blindly makes views without checking the platform limits.
 
@@ -436,7 +443,7 @@ void FVulkanShaderResourceView::UpdateView()
 
 		uint32 ArrayFirst = Info.ArrayRange.First;
 		uint32 ArrayNum = Info.ArrayRange.Num;
-		if (Texture->GetDesc().IsTextureCube())
+		if (Info.Dimension == FRHIViewDesc::EDimension::TextureCube || Info.Dimension == FRHIViewDesc::EDimension::TextureCubeArray)
 		{
 			ArrayFirst *= 6;
 			ArrayNum *= 6;
@@ -526,7 +533,7 @@ void FVulkanUnorderedAccessView::UpdateView()
 
 		uint32 ArrayFirst = Info.ArrayRange.First;
 		uint32 ArrayNum = Info.ArrayRange.Num;
-		if (Texture->GetDesc().IsTextureCube())
+		if (Info.Dimension == FRHIViewDesc::EDimension::TextureCube || Info.Dimension == FRHIViewDesc::EDimension::TextureCubeArray)
 		{
 			ArrayFirst *= 6;
 			ArrayNum *= 6;

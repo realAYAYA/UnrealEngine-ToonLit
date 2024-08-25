@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Containers/StringFwd.h"
 #include "Serialization/AsyncLoading2.h"
 #include "IO/PackageStore.h"
 #include "IO/IoDispatcher.h"
@@ -205,6 +206,15 @@ private:
 class FPackageStoreOptimizer
 {
 public:
+	struct FScriptObjectData
+	{
+		FName ObjectName;
+		FString FullName;
+		FPackageObjectIndex GlobalIndex;
+		FPackageObjectIndex OuterIndex;
+		FPackageObjectIndex CDOClassIndex;
+	};
+
 	uint64 GetTotalScriptObjectCount() const
 	{
 		return TotalScriptObjectCount;
@@ -220,15 +230,11 @@ public:
 	IOSTOREUTILITIES_API FIoBuffer CreateScriptObjectsBuffer() const;
 	void LoadScriptObjectsBuffer(const FIoBuffer& ScriptObjectsBuffer);
 
+	IOSTOREUTILITIES_API static void FindScriptObjects(TMap<FPackageObjectIndex, FScriptObjectData>& OutScriptObjectsMap);
+	IOSTOREUTILITIES_API static void AppendPathForPublicExportHash(UObject* Object, FStringBuilderBase& OutPath);
+	IOSTOREUTILITIES_API static bool TryGetPublicExportHash(FStringView PackageRelativeExportPath, uint64& OutPublicExportHash);
+
 private:
-	struct FScriptObjectData
-	{
-		FName ObjectName;
-		FString FullName;
-		FPackageObjectIndex GlobalIndex;
-		FPackageObjectIndex OuterIndex;
-		FPackageObjectIndex CDOClassIndex;
-	};
 
 	struct FCookedHeaderData
 	{
@@ -253,7 +259,8 @@ private:
 	TArray<FPackageStorePackage::FExportGraphNode*> SortExportGraphNodesInLoadOrder(FPackageStorePackage* Package, FExportGraphEdges& Edges) const;
 	void CreateExportBundle(FPackageStorePackage* Package) const;
 	void FinalizePackageHeader(FPackageStorePackage* Package) const;
-	void FindScriptObjectsRecursive(FPackageObjectIndex OuterIndex, UObject* Object);
+	static void FindScriptObjectsRecursive(TMap<FPackageObjectIndex, FScriptObjectData>& OutScriptObjectsMap,
+		FPackageObjectIndex OuterIndex, UObject* Object);
 	void FindScriptObjects();
 
 	TMap<FPackageObjectIndex, FScriptObjectData> ScriptObjectsMap;

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "/Engine/Private/Common.ush"
-#include "/Engine/Public/StrataPublic.ush"
+#include "/Engine/Public/SubstratePublic.ush"
 
 #define NDICOLLISIONQUERY_USE_GBUFFER_NORMAL    (FEATURE_LEVEL >= FEATURE_LEVEL_SM5)
 
@@ -31,12 +31,12 @@ void NDICollisionQuery_QuerySceneDepthGPU(in float3 In_SamplePos, in float3 In_L
 	Out_WorldPos = float3(0.0, 0.0, 0.0);
 	Out_WorldNormal = float3(0.0, 0.0, 1.0);
 	Out_IsInsideView = true;
-	FLWCVector3 CameraPos = PrimaryView.WorldCameraOrigin;
+	FLWCVector3 CameraPos = PrimaryView.TileOffset.WorldCameraOrigin;
 	LWCSetTile(CameraPos, LWCGetTile(CameraPos) - In_LWCTile); // convert to simulation space
 	Out_CameraPosWorld = LWCToFloat(CameraPos);
 
 	FLWCVector3 LwcSamplePos = MakeLWCVector3(In_LWCTile, In_SamplePos);
-	float4 SamplePosition = float4(LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.PreViewTranslation)), 1); // TODO[mg]: LWCToFloat here?
+	float4 SamplePosition = float4(LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.TileOffset.PreViewTranslation)), 1); // TODO[mg]: LWCToFloat here?
 	float4 ClipPosition = mul(SamplePosition, View.TranslatedWorldToClip);
 	float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
 
@@ -49,9 +49,9 @@ void NDICollisionQuery_QuerySceneDepthGPU(in float3 In_SamplePos, in float3 In_L
 		FLWCVector3 WorldPosition = WorldPositionFromSceneDepth(ScreenPosition.xy, SceneDepth);
 
 #if NDICOLLISIONQUERY_USE_GBUFFER_NORMAL
-#if STRATA_ENABLED
+#if Substrate_ENABLED
 		uint2 ScreenPos = uint2(ScreenUV * View.BufferSizeAndInvSize.xy);
-		float3 WorldNormal = StrataPublic_GetWorldNormal(ScreenPos);
+		float3 WorldNormal = SubstratePublic_GetWorldNormal(ScreenPos);
 #else
 		float3 WorldNormal = Texture2DSampleLevel(SceneTexturesStruct.GBufferATexture, SceneTexturesStruct_GBufferATextureSampler, ScreenUV, 0).xyz * 2.0 - 1.0;
 #endif
@@ -93,12 +93,12 @@ void NDICollisionQuery_QueryScenePartialDepthGPU(in float3 In_SamplePos, in floa
 	Out_WorldPos = float3(0.0, 0.0, 0.0);
 	Out_WorldNormal = float3(0.0, 0.0, 1.0);
 	Out_IsInsideView = true;
-	FLWCVector3 CameraPos = PrimaryView.WorldCameraOrigin;
+	FLWCVector3 CameraPos = PrimaryView.TileOffset.WorldCameraOrigin;
 	LWCSetTile(CameraPos, LWCGetTile(CameraPos) - In_LWCTile); // convert to simulation space
 	Out_CameraPosWorld = LWCToFloat(CameraPos);
 
 	FLWCVector3 LwcSamplePos = MakeLWCVector3(In_LWCTile, In_SamplePos);
-	float4 SamplePosition = float4(LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.PreViewTranslation)), 1); // TODO[mg]: LWCToFloat here?
+	float4 SamplePosition = float4(LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.TileOffset.PreViewTranslation)), 1); // TODO[mg]: LWCToFloat here?
 	float4 ClipPosition = mul(SamplePosition, View.TranslatedWorldToClip);
 	float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
 
@@ -151,12 +151,12 @@ void NDICollisionQuery_QueryCustomDepthGPU(in float3 In_SamplePos, in float3 In_
 	Out_WorldPos = float3(0.0, 0.0, 0.0);
 	Out_WorldNormal = float3(0.0, 0.0, 1.0);
 	Out_IsInsideView = true;
-	FLWCVector3 CameraPos = PrimaryView.WorldCameraOrigin;
+	FLWCVector3 CameraPos = PrimaryView.TileOffset.WorldCameraOrigin;
 	LWCSetTile(CameraPos, LWCGetTile(CameraPos) - In_LWCTile); // convert to simulation space
 	Out_CameraPosWorld = LWCToFloat(CameraPos);
 
 	FLWCVector3 LwcSamplePos = MakeLWCVector3(In_LWCTile, In_SamplePos);
-	float4 SamplePosition = float4(LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.PreViewTranslation)), 1); // TODO[mg]: LWCToFloat here?
+	float4 SamplePosition = float4(LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.TileOffset.PreViewTranslation)), 1); // TODO[mg]: LWCToFloat here?
 	float4 ClipPosition = mul(SamplePosition, View.TranslatedWorldToClip);
 	float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
 
@@ -202,7 +202,7 @@ void NDICollisionQuery_QueryMeshDistanceFieldGPU(in float3 In_SamplePos, in floa
 {
 #if PLATFORM_SUPPORTS_DISTANCE_FIELDS
 	FLWCVector3 LwcSamplePos = MakeLWCVector3(In_LWCTile, In_SamplePos);
-	float3 SamplePosition = LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.PreViewTranslation));
+	float3 SamplePosition = LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.TileOffset.PreViewTranslation));
 	
 	Out_DistanceToNearestSurface = GetDistanceToNearestSurfaceGlobal(SamplePosition);
 	Out_FieldGradient = GetDistanceFieldGradientGlobal(SamplePosition);

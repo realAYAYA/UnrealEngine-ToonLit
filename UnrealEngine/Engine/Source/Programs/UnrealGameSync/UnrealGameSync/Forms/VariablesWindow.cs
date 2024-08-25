@@ -36,7 +36,7 @@ namespace UnrealGameSync
 			ListViewGroup environmentGroup = new ListViewGroup("Environment");
 			MacrosList.Groups.Add(environmentGroup);
 
-			foreach(KeyValuePair<string, string> pair in variables)
+			foreach (KeyValuePair<string, string> pair in variables)
 			{
 				if (!s_legacyVariables.Contains(pair.Key))
 				{
@@ -47,10 +47,10 @@ namespace UnrealGameSync
 				}
 			}
 
-			foreach(DictionaryEntry entry in Environment.GetEnvironmentVariables().OfType<DictionaryEntry>())
+			foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables().OfType<DictionaryEntry>())
 			{
 				string? key = entry.Key?.ToString();
-				if(key != null && entry.Value != null && !variables.ContainsKey(key))
+				if (key != null && entry.Value != null && !variables.ContainsKey(key))
 				{
 					ListViewItem item = new ListViewItem(String.Format("$({0})", key));
 					item.SubItems.Add(entry.Value.ToString());
@@ -70,10 +70,10 @@ namespace UnrealGameSync
 
 		private void MacrosList_MouseDoubleClick(object sender, MouseEventArgs args)
 		{
-			if(args.Button == MouseButtons.Left)
+			if (args.Button == MouseButtons.Left)
 			{
 				ListViewHitTestInfo hitTest = MacrosList.HitTest(args.Location);
-				if(hitTest.Item != null && OnInsertVariable != null)
+				if (hitTest.Item != null && OnInsertVariable != null)
 				{
 					OnInsertVariable(hitTest.Item.Text);
 				}
@@ -82,7 +82,7 @@ namespace UnrealGameSync
 
 		private void InsertButton_Click(object sender, EventArgs e)
 		{
-			if(MacrosList.SelectedItems.Count > 0 && OnInsertVariable != null)
+			if (MacrosList.SelectedItems.Count > 0 && OnInsertVariable != null)
 			{
 				OnInsertVariable(MacrosList.SelectedItems[0].Text);
 			}

@@ -4,12 +4,20 @@
 
 #if WITH_EDITOR
 
+#include "UObject/TopLevelAssetPath.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "WorldPartition/WorldPartitionActorContainerID.h"
 #include "UObject/FortniteSeasonBranchObjectVersion.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/UE5ReleaseStreamObjectVersion.h"
+#include "UObject/MetaData.h"
+#include "ExternalPackageHelper.h"
 
 FArchive& operator<<(FArchive& Ar, FDataLayerInstanceDesc& Desc)
 {
@@ -38,7 +46,7 @@ FArchive& operator<<(FArchive& Ar, FDataLayerInstanceDesc& Desc)
 	// Fixup redirected data layer asset path
 	if (Ar.IsLoading() && Desc.bIsUsingAsset)
 	{
-		FWorldPartitionHelpers::FixupRedirectedAssetPath(Desc.AssetPath);
+		UAssetRegistryHelpers::FixupRedirectedAssetPath(Desc.AssetPath);
 	}
 
 	if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::WorldPartitionActorFilter)
@@ -199,6 +207,8 @@ void FDataLayerInstanceDesc::Init(UDataLayerInstance* InDataLayerInstance)
 
 FWorldDataLayersActorDesc::FWorldDataLayersActorDesc()
 : bIsValid(false)
+, bIsExternalDataLayerWorldDataLayers(false)
+, bUseExternalPackageDataLayerInstances(false)
 {}
 
 void FWorldDataLayersActorDesc::Init(const AActor* InActor)
@@ -206,12 +216,14 @@ void FWorldDataLayersActorDesc::Init(const AActor* InActor)
 	FWorldPartitionActorDesc::Init(InActor);
 
 	const AWorldDataLayers* WorldDataLayers = CastChecked<AWorldDataLayers>(InActor);
-	WorldDataLayers->ForEachDataLayer([this](UDataLayerInstance* DataLayerInstance)
+	bUseExternalPackageDataLayerInstances = WorldDataLayers->IsUsingExternalPackageDataLayerInstances();
+	bIsExternalDataLayerWorldDataLayers = WorldDataLayers->IsExternalDataLayerWorldDataLayers();
+	const IDataLayerInstanceProvider* DataLayerInstanceProvider = CastChecked<IDataLayerInstanceProvider>(WorldDataLayers);
+	for (UDataLayerInstance* DataLayerInstance : DataLayerInstanceProvider->GetDataLayerInstances())
 	{
 		FDataLayerInstanceDesc& DataLayerInstanceDesc = DataLayerInstances.Emplace_GetRef();
 		DataLayerInstanceDesc.Init(DataLayerInstance);
-		return true;
-	});
+	}
 
 	bIsValid = true;
 }
@@ -221,7 +233,9 @@ bool FWorldDataLayersActorDesc::Equals(const FWorldPartitionActorDesc* Other) co
 	if (FWorldPartitionActorDesc::Equals(Other))
 	{
 		const FWorldDataLayersActorDesc* OtherDesc = (FWorldDataLayersActorDesc*)Other;
-		return CompareUnsortedArrays(DataLayerInstances, OtherDesc->DataLayerInstances);
+		return (bUseExternalPackageDataLayerInstances == OtherDesc->bUseExternalPackageDataLayerInstances) && 
+			   (bIsExternalDataLayerWorldDataLayers == OtherDesc->bIsExternalDataLayerWorldDataLayers) &&
+			   CompareUnsortedArrays(DataLayerInstances, OtherDesc->DataLayerInstances);
 	}
 	return false;
 }
@@ -230,6 +244,7 @@ void FWorldDataLayersActorDesc::Serialize(FArchive& Ar)
 {
 	Ar.UsingCustomVersion(FFortniteSeasonBranchObjectVersion::GUID);
 	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
+	Ar.UsingCustomVersion(FUE5ReleaseStreamObjectVersion::GUID);
 
 	FWorldPartitionActorDesc::Serialize(Ar);
 
@@ -240,31 +255,137 @@ void FWorldDataLayersActorDesc::Serialize(FArchive& Ar)
 			Ar << DataLayerInstances;
 			bIsValid = true;
 		}
+		if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::AddDataLayerInstanceExternalPackage)
+		{
+			Ar << bUseExternalPackageDataLayerInstances;
+		}
+		if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) >= FUE5ReleaseStreamObjectVersion::WorldPartitionExternalDataLayers)
+		{
+			Ar << bIsExternalDataLayerWorldDataLayers;
+		}
+	}
+}
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+void FWorldDataLayersActorDesc::OnUnloadingInstance(const FWorldPartitionActorDescInstance* InActorDescInstance) const
+{
+	if (AWorldDataLayers* WorldDataLayers = Cast<AWorldDataLayers>(InActorDescInstance->GetActor()))
+	{
+		if (WorldDataLayers->IsUsingExternalPackageDataLayerInstances())
+		{
+			WorldDataLayers->ForEachDataLayerInstance([this](UDataLayerInstance* DataLayerInstance)
+			{
+				check(DataLayerInstance->IsPackageExternal())
+				ForEachObjectWithPackage(DataLayerInstance->GetPackage(), [](UObject* Object)
+				{
+					if (Object->HasAnyFlags(RF_Public | RF_Standalone))
+					{
+						CastChecked<UMetaData>(Object)->ClearFlags(RF_Public | RF_Standalone);
+					}
+					return true;
+				}, false);
+
+				return true;
+			});
+		}
+	}
+	FWorldPartitionActorDesc::OnUnloadingInstance(InActorDescInstance);
+}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+bool FWorldDataLayersActorDesc::IsRuntimeRelevant(const FWorldPartitionActorDescInstance* InActorDescInstance) const 
+{
+	if (!FWorldPartitionActorDesc::IsRuntimeRelevant(InActorDescInstance))
+	{
+		return false;
+	}
+
+	// ExternalDataLayer WorldDataLayers (used to store data layers for an ExternalDataLayer) are not used at runtime.
+	return !bIsExternalDataLayerWorldDataLayers;
+}
+
+const TArray<FDataLayerInstanceDesc>& FWorldDataLayersActorDesc::GetExternalPackageDataLayerInstances() const
+{
+	check(bUseExternalPackageDataLayerInstances);
+	if (!ExternalPackageDataLayerInstances.IsSet())
+	{
+		TArray<FDataLayerInstanceDesc> FoundDataLayerInstances;
+		if (ULevel::GetIsLevelPartitionedFromPackage(ActorPath.GetLongPackageFName()))
+		{
+			FTopLevelAssetPath MapAssetName = ActorPath.GetAssetPath();
+			FString ExternalObjectsPath = FExternalPackageHelper::GetExternalObjectsPath(MapAssetName.GetPackageName().ToString());
+			
+			// Do a synchronous scan of the world external objects path.			
+			IAssetRegistry & AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+			AssetRegistry.ScanSynchronous({ ExternalObjectsPath }, TArray<FString>());
+
+			FARFilter Filter;
+			Filter.bRecursivePaths = true;
+			Filter.bIncludeOnlyOnDiskAssets = true;
+			Filter.ClassPaths.Add(UDataLayerInstance::StaticClass()->GetClassPathName());
+			Filter.bRecursiveClasses = true;
+			Filter.PackagePaths.Add(*ExternalObjectsPath);
+			TArray<FAssetData> Assets;
+			FExternalPackageHelper::GetSortedAssets(Filter, Assets);
+
+			for (const FAssetData& Asset : Assets)
+			{
+				FDataLayerInstanceDesc DataLayerInstanceDesc;
+				if (UDataLayerInstance::GetAssetRegistryInfoFromPackage(Asset, DataLayerInstanceDesc))
+				{
+					FoundDataLayerInstances.Add(DataLayerInstanceDesc);
+				}
+			}
+		}
+		ExternalPackageDataLayerInstances = MoveTemp(FoundDataLayerInstances);
+	}
+	return ExternalPackageDataLayerInstances.GetValue();
+}
+
+const TArray<FDataLayerInstanceDesc>& FWorldDataLayersActorDesc::GetDataLayerInstances() const
+{
+	return bUseExternalPackageDataLayerInstances ? GetExternalPackageDataLayerInstances() : DataLayerInstances;
+}
+
+void FWorldDataLayersActorDesc::ForEachDataLayerInstanceDesc(TFunctionRef<bool(const FDataLayerInstanceDesc&)> Func) const
+{
+	for (const FDataLayerInstanceDesc& DataLayerInstance : GetDataLayerInstances())
+	{
+		if (!Func(DataLayerInstance))
+		{
+			return;
+		}
 	}
 }
 
 const FDataLayerInstanceDesc* FWorldDataLayersActorDesc::GetDataLayerInstanceFromInstanceName(FName InDataLayerInstanceName) const
 {
-	for (const FDataLayerInstanceDesc& DataLayerInstance : DataLayerInstances)
+	const FDataLayerInstanceDesc* FoundDataLayerInstanceDesc = nullptr;
+	ForEachDataLayerInstanceDesc([InDataLayerInstanceName, &FoundDataLayerInstanceDesc](const FDataLayerInstanceDesc& DataLayerInstance)
 	{
 		if (DataLayerInstance.GetName().IsEqual(InDataLayerInstanceName, ENameCase::CaseSensitive))
 		{
-			return &DataLayerInstance;
+			FoundDataLayerInstanceDesc = &DataLayerInstance;
+			return false;
 		}
-	}
-	return nullptr;
+		return true;
+	});
+	return FoundDataLayerInstanceDesc;
 }
 
 const FDataLayerInstanceDesc* FWorldDataLayersActorDesc::GetDataLayerInstanceFromAssetPath(FName InDataLayerAssetPath) const
 {
-	for (const FDataLayerInstanceDesc& DataLayerInstance : DataLayerInstances)
+	const FDataLayerInstanceDesc* FoundDataLayerInstanceDesc = nullptr;
+	ForEachDataLayerInstanceDesc([InDataLayerAssetPath, &FoundDataLayerInstanceDesc](const FDataLayerInstanceDesc& DataLayerInstance)
 	{
 		if (FName(DataLayerInstance.GetAssetPath()) == InDataLayerAssetPath)
 		{
-			return &DataLayerInstance;
+			FoundDataLayerInstanceDesc = &DataLayerInstance;
+			return false;
 		}
-	}
-	return nullptr;
+		return true;
+	});
+	return FoundDataLayerInstanceDesc;
 }
 
 #endif

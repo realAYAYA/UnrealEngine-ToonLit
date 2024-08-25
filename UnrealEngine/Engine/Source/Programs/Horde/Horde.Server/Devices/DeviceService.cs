@@ -6,8 +6,12 @@ using System.Linq;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
-using EpicGames.Horde.Api;
-using Horde.Server.Acls;
+using EpicGames.Core;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Devices;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Users;
 using Horde.Server.Jobs;
 using Horde.Server.Jobs.Graphs;
 using Horde.Server.Notifications;
@@ -15,7 +19,6 @@ using Horde.Server.Projects;
 using Horde.Server.Server;
 using Horde.Server.Streams;
 using Horde.Server.Users;
-using Horde.Server.Utilities;
 using HordeCommon;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -55,32 +58,14 @@ namespace Horde.Server.Devices
 		{
 			Pool = pool;
 			Read = read;
-			Write = write;				
+			Write = write;
 		}
-	}
-
-	/// <summary>
-	/// Platform map required by V1 API
-	/// </summary>
-	[SingletonDocument("device-platform-map", "6165a2e26fd5f104e31e6862")]
-	public class DevicePlatformMapV1 : SingletonBase
-	{
-		/// <summary>
-		/// Platform V1 => Platform Id
-		/// </summary>
-		public Dictionary<string, DevicePlatformId> PlatformMap { get; set; } = new Dictionary<string, DevicePlatformId>();
-
-		/// <summary>
-		/// Perfspec V1 => Model
-		/// </summary>
-		public Dictionary<DevicePlatformId, string> PerfSpecHighMap { get; set; } = new Dictionary<DevicePlatformId, string>();
-		
 	}
 
 	/// <summary>
 	/// Device management service
 	/// </summary>
-	public sealed class DeviceService : IHostedService, IDisposable
+	public sealed class DeviceService : IHostedService, IAsyncDisposable
 	{
 		readonly INotificationService _notificationService;
 		readonly JobService _jobService;
@@ -94,22 +79,17 @@ namespace Horde.Server.Devices
 		readonly IOptionsMonitor<ServerSettings> _settings;
 		readonly IOptionsMonitor<GlobalConfig> _globalConfig;
 
-		/// <summary>
-		/// Platform map V1 singleton
-		/// </summary>
-		readonly ISingletonDocument<DevicePlatformMapV1> _platformMapSingleton;
-
-		bool runUpgrade = true;
+		bool _runUpgrade = true;
 
 		/// <summary>
 		/// The number of days shared device sheckouts are held
 		/// </summary>
-		public int sharedDeviceCheckoutDays => _settings.CurrentValue.SharedDeviceCheckoutDays;
+		public int SharedDeviceCheckoutDays => _settings.CurrentValue.SharedDeviceCheckoutDays;
 
 		/// <summary>
 		/// Device service constructor
 		/// </summary>
-		public DeviceService(IDeviceCollection devices, ISingletonDocument<DevicePlatformMapV1> platformMapSingleton, IUserCollection userCollection, JobService jobService, IStreamCollection streamCollection, IOptionsMonitor<ServerSettings> settings, IOptionsMonitor<GlobalConfig> globalConfig, INotificationService notificationService, IClock clock, Tracer tracer, ILogger<DeviceService> logger)
+		public DeviceService(IDeviceCollection devices, IUserCollection userCollection, JobService jobService, IStreamCollection streamCollection, IOptionsMonitor<ServerSettings> settings, IOptionsMonitor<GlobalConfig> globalConfig, INotificationService notificationService, IClock clock, Tracer tracer, ILogger<DeviceService> logger)
 		{
 			_userCollection = userCollection;
 			_devices = devices;
@@ -122,7 +102,6 @@ namespace Horde.Server.Devices
 			_logger = logger;
 			_settings = settings;
 			_globalConfig = globalConfig;
-			_platformMapSingleton = platformMapSingleton;
 		}
 
 		/// <inheritdoc/>
@@ -140,10 +119,10 @@ namespace Horde.Server.Devices
 		}
 
 		/// <inheritdoc/>
-		public void Dispose() 
-		{ 
-			_ticker.Dispose(); 
-			_telemetryTicker.Dispose(); 
+		public async ValueTask DisposeAsync()
+		{
+			await _ticker.DisposeAsync();
+			await _telemetryTicker.DisposeAsync();
 		}
 
 		/// <summary>
@@ -151,74 +130,42 @@ namespace Horde.Server.Devices
 		/// </summary>
 		async ValueTask TickTelemetryAsync(CancellationToken stoppingToken)
 		{
-			try
-			{
-				GlobalConfig globalConfig = _globalConfig.CurrentValue;
-				if (globalConfig.Devices != null)
-				{
-					await _platformMapSingleton.UpdateAsync(platformMap => {
-
-						platformMap.PlatformMap.Clear();
-						platformMap.PerfSpecHighMap.Clear();
-
-						foreach (DevicePlatformConfig platform in globalConfig.Devices.Platforms)
-						{
-							DevicePlatformId id = new DevicePlatformId(platform.Id);
-							foreach (string name in platform.Names)
-							{
-								platformMap.PlatformMap[name] = id;
-							}
-
-							if (platform.LegacyPerfSpecHighModel != null)
-							{
-								platformMap.PerfSpecHighMap[id] = platform.LegacyPerfSpecHighModel;
-							}
-						}
-					} );
-				}				
-			}
-			catch (Exception ex)
-			{
-				_logger.LogError(ex, "Exception while updating platform map: {Message}", ex.Message);
-			}
-
 			if (!stoppingToken.IsCancellationRequested)
 			{
 				using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(DeviceService)}.{nameof(TickTelemetryAsync)}");
 				_logger.LogInformation("Updating pool telemetry");
-				await _devices.CreatePoolTelemetrySnapshot();
+				await _devices.CreatePoolTelemetrySnapshotAsync(GetPools(), _settings.CurrentValue.DeviceProblemCooldownMinutes);
 			}
 		}
 
 		/// <summary>
 		/// Ticks service
 		/// </summary>
-		async ValueTask TickAsync(CancellationToken stoppingToken)
+		async ValueTask TickAsync(CancellationToken cancellationToken)
 		{
-			if (!stoppingToken.IsCancellationRequested)
+			if (!cancellationToken.IsCancellationRequested)
 			{
 				using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(DeviceService)}.{nameof(TickAsync)}");
 
 				GlobalConfig globalConfig = _globalConfig.CurrentValue;
 
-				if (runUpgrade)
+				if (_runUpgrade)
 				{
 					try
 					{
 						await _devices.UpgradeAsync();
-						runUpgrade = false;
+						_runUpgrade = false;
 					}
 					catch (Exception ex)
 					{
 						_logger.LogError(ex, "Exception while upgrading device collection: {Message}", ex.Message);
 					}
-
 				}
 
 				try
 				{
 					_logger.LogDebug("Expiring reservations");
-					await _devices.ExpireReservationsAsync();
+					await ExpireReservationsAsync(cancellationToken);
 				}
 				catch (Exception ex)
 				{
@@ -235,7 +182,7 @@ namespace Horde.Server.Devices
 					{
 						foreach ((UserId, IDevice) expiredDevice in expireNotifications)
 						{
-							await NotifyDeviceServiceAsync(globalConfig, $"Device {expiredDevice.Item2.PlatformId.ToString().ToUpperInvariant()} / {expiredDevice.Item2.Name} checkout will expire in 24 hours.  Please visit https://horde.devtools.epicgames.com/devices to renew the checkout if needed.", null, null, null, expiredDevice.Item1);
+							await NotifyDeviceServiceAsync(globalConfig, $"Device {expiredDevice.Item2.PlatformId.ToString().ToUpperInvariant()} / {expiredDevice.Item2.Name} checkout will expire in 24 hours.  Please visit {_settings.CurrentValue.DashboardUrl}/devices to renew the checkout if needed.", null, null, null, expiredDevice.Item1, cancellationToken);
 						}
 					}
 
@@ -245,7 +192,7 @@ namespace Horde.Server.Devices
 					{
 						foreach ((UserId, IDevice) expiredDevice in expireCheckouts)
 						{
-							await NotifyDeviceServiceAsync(globalConfig, $"Device {expiredDevice.Item2.PlatformId.ToString().ToUpperInvariant()} / {expiredDevice.Item2.Name} checkout has expired.  The device has been returned to the shared pool and should no longer be accessed.  Please visit https://horde.devtools.epicgames.com/devices to checkout devices as needed.", null, null, null, expiredDevice.Item1);
+							await NotifyDeviceServiceAsync(globalConfig, $"Device {expiredDevice.Item2.PlatformId.ToString().ToUpperInvariant()} / {expiredDevice.Item2.Name} checkout has expired.  The device has been returned to the shared pool and should no longer be accessed.  Please visit {_settings.CurrentValue.DashboardUrl}/devices to checkout devices as needed.", null, null, null, expiredDevice.Item1, cancellationToken);
 						}
 					}
 				}
@@ -262,108 +209,162 @@ namespace Horde.Server.Devices
 			await TickTelemetryAsync(CancellationToken.None);
 		}
 
-		/// <summary>
-		/// Create a new device platform
-		/// </summary>
-		public Task<IDevicePlatform?> TryCreatePlatformAsync(DevicePlatformId id, string name)
+		static bool CheckReservedNodesComplete(IJob job, List<JobStepId> reservedStepIds)
 		{
-			return _devices.TryAddPlatformAsync(id, name);
+			List<JobStepState> states = new List<JobStepState>() { JobStepState.Ready, JobStepState.Running, JobStepState.Waiting };
+
+			// check batches in case step state has an issue
+			bool batchesComplete = true;
+			foreach (JobStepId stepId in reservedStepIds)
+			{
+				foreach (IJobStepBatch batch in job.Batches)
+				{
+					if (batch.Steps.Any(s => s.Id == stepId))
+					{
+						if (batch.State != JobStepBatchState.Complete && batch.State != JobStepBatchState.Stopping)
+						{
+							batchesComplete = false;
+						}
+					}
+				}
+			}
+
+			if (batchesComplete)
+			{
+				return true;
+			}
+
+			if (!reservedStepIds.Any(s =>
+			{
+				IJobStep? step;
+				if (!job.TryGetStep(s, out step))
+				{
+					return false;
+				}
+
+				return states.Contains(step.State);
+			}))
+			{
+				return true;
+			}
+
+			return false;
+		}
+
+		async Task<bool> ExpireReservationsAsync(CancellationToken cancellationToken)
+		{
+			List<IDeviceReservation> reserves = await _devices.FindAllReservationsAsync();
+			List<IDeviceReservation> expired = new List<IDeviceReservation>();
+
+			DateTime utcNow = DateTime.UtcNow;
+
+			List<IDeviceReservation> nodeReserves = reserves.FindAll(r => r.JobId != null && r.ReservedStepIds != null && r.ReservedStepIds.Count > 0).ToList();
+
+			for (int i = 0; i < reserves.Count; i++)
+			{
+				IDeviceReservation r = reserves[i];
+
+				// timeout
+				if (!nodeReserves.Contains(r))
+				{
+					if ((utcNow - r.UpdateTimeUtc).TotalMinutes > 10)
+					{
+						expired.Add(r);
+					}
+				}
+				else
+				{
+					// expire when all reserve steps have completed
+					IJob? job = await _jobService.GetJobAsync(JobId.Parse(r.JobId!), cancellationToken);
+
+					if (job == null || CheckReservedNodesComplete(job, r.ReservedStepIds!))
+					{
+						expired.Add(r);
+					}
+				}
+			}
+
+			bool result = true;
+			foreach (IDeviceReservation reservation in expired)
+			{
+				if (!await DeleteReservationAsync(reservation.Id, true))
+				{
+					result = false;
+				}
+			}
+
+			return result;
 		}
 
 		/// <summary>
 		/// Get a list of existing device platforms
 		/// </summary>
-		public Task<List<IDevicePlatform>> GetPlatformsAsync()
+		public List<IDevicePlatform> GetPlatforms()
 		{
-			return _devices.FindAllPlatformsAsync();
+			return _globalConfig.CurrentValue.Devices?.Platforms.ConvertAll(x => (IDevicePlatform)x) ?? new List<IDevicePlatform>();
 		}
-
-		/// <summary>
-		/// Update an existing platform
-		/// </summary>
-		public Task<bool> UpdatePlatformAsync(DevicePlatformId platformId, string[]? modelIds)
-		{
-			return _devices.UpdatePlatformAsync(platformId, modelIds);
-		}
-
 		/// <summary>
 		/// Get a specific device platform
 		/// </summary>
-		public Task<IDevicePlatform?> GetPlatformAsync(DevicePlatformId id)
+		public IDevicePlatform? GetPlatform(DevicePlatformId id)
 		{
-			return _devices.GetPlatformAsync(id);
+			return GetPlatforms().FirstOrDefault(p => p.Id == id);
 		}
 
 		/// <summary>
 		/// Get a device pool by id
 		/// </summary>
-		public Task<IDevicePool?> GetPoolAsync(DevicePoolId id)
+		public IDevicePool? GetPool(DevicePoolId id)
 		{
-			return _devices.GetPoolAsync(id);
-		}
-
-		/// <summary>
-		/// Create a new device pool
-		/// </summary>
-		public Task<IDevicePool?> TryCreatePoolAsync(DevicePoolId id, string name, DevicePoolType poolType, List<ProjectId>? projectIds)
-		{
-			return _devices.TryAddPoolAsync(id, name, poolType, projectIds);
-		}
-
-		/// <summary>
-		/// Update a device pool
-		/// </summary>
-		public Task UpdatePoolAsync(DevicePoolId id, List<ProjectId>? projectIds)
-		{
-			return _devices.UpdatePoolAsync(id, projectIds);
+			return GetPools().FirstOrDefault(p => p.Id == id);
 		}
 
 		/// <summary>
 		/// Get a list of existing device pools
 		/// </summary>
-		public Task<List<IDevicePool>> GetPoolsAsync()
+		public List<IDevicePool> GetPools()
 		{
-			return _devices.FindAllPoolsAsync();
+			return _globalConfig.CurrentValue.Devices?.Pools.ConvertAll(x => (IDevicePool)x) ?? new List<IDevicePool>();
 		}
 
 		/// <summary>
 		/// Get a list of devices, optionally filtered to provided ids
 		/// </summary>
-		public Task<List<IDevice>> GetDevicesAsync(List<DeviceId>? deviceIds = null, DevicePoolId? poolId = null, DevicePlatformId? platformId = null)
+		public async Task<List<IDevice>> GetDevicesAsync(List<DeviceId>? deviceIds = null, DevicePoolId? poolId = null, DevicePlatformId? platformId = null)
 		{
-			return _devices.FindAllDevicesAsync(deviceIds, poolId, platformId);
+			return await _devices.FindAllDevicesAsync(deviceIds, poolId, platformId);
 		}
 
 		/// <summary>
 		/// Get device telemetry
 		/// </summary>
-		public Task<List<IDeviceTelemetry>> GetDeviceTelemetryAsync(DeviceId[]? deviceIds = null, DateTimeOffset? minCreateTime=null, DateTimeOffset? maxCreateTime=null, int? index = null, int? count = null)
+		public async Task<List<IDeviceTelemetry>> GetDeviceTelemetryAsync(DeviceId[]? deviceIds = null, DateTimeOffset? minCreateTime = null, DateTimeOffset? maxCreateTime = null, int? index = null, int? count = null)
 		{
-			return _devices.FindDeviceTelemetryAsync(deviceIds, minCreateTime, maxCreateTime, index, count);
+			return await _devices.FindDeviceTelemetryAsync(deviceIds, minCreateTime, maxCreateTime, index, count);
 		}
 
 		/// <summary>
 		/// Get device pool telemetry
 		/// </summary>
-		public Task<List<IDevicePoolTelemetry>> GetDevicePoolTelemetryAsync(DateTimeOffset? minCreateTime = null, DateTimeOffset? maxCreateTime = null, int? index = null, int? count = null)
+		public async Task<List<IDevicePoolTelemetry>> GetDevicePoolTelemetryAsync(DateTimeOffset? minCreateTime = null, DateTimeOffset? maxCreateTime = null, int? index = null, int? count = null)
 		{
-			return _devices.FindPoolTelemetryAsync(minCreateTime, maxCreateTime, index, count);
+			return await _devices.FindPoolTelemetryAsync(minCreateTime, maxCreateTime, index, count);
 		}
 
 		/// <summary>
 		/// Get a specific device
 		/// </summary>
-		public Task<IDevice?> GetDeviceAsync(DeviceId id)
+		public async Task<IDevice?> GetDeviceAsync(DeviceId id)
 		{
-			return _devices.GetDeviceAsync(id);
+			return await _devices.GetDeviceAsync(id);
 		}
 
 		/// <summary>
 		/// Get a device by name
 		/// </summary>
-		public Task<IDevice?> GetDeviceByNameAsync(string deviceName)
+		public async Task<IDevice?> GetDeviceByNameAsync(string deviceName)
 		{
-			return _devices.GetDeviceByNameAsync(deviceName);
+			return await _devices.GetDeviceByNameAsync(deviceName);
 		}
 
 		/// <summary>
@@ -384,112 +385,258 @@ namespace Horde.Server.Devices
 		/// <param name="enabled">Whether the device is enabled</param>
 		/// <param name="address">Address or hostname of device</param>
 		/// <param name="modelId">Vendor model id</param>
-        /// <param name="userId">User adding the device</param>
+		/// <param name="userId">User adding the device</param>
 		/// <returns></returns>
-		public Task<IDevice?> TryCreateDeviceAsync(DeviceId id, string name, DevicePlatformId platformId, DevicePoolId poolId, bool? enabled, string? address, string? modelId, UserId? userId = null)
+		public async Task<IDevice?> TryCreateDeviceAsync(DeviceId id, string name, DevicePlatformId platformId, DevicePoolId poolId, bool? enabled, string? address, string? modelId, UserId? userId = null)
 		{
-			return _devices.TryAddDeviceAsync(id, name, platformId, poolId, enabled, address, modelId, userId);
+			return await _devices.TryAddDeviceAsync(id, name, platformId, poolId, enabled, address, modelId, userId);
 		}
 
 		/// <summary>
 		/// Update a device
 		/// </summary>
-		public Task UpdateDeviceAsync(DeviceId deviceId, DevicePoolId? newPoolId = null, string? newName = null, string? newAddress = null, string? newModelId = null, string? newNotes = null, bool? newEnabled = null, bool? newProblem = null, bool? newMaintenance = null, UserId? modifiedByUserId = null)
+		public async Task UpdateDeviceAsync(DeviceId deviceId, DevicePoolId? newPoolId = null, string? newName = null, string? newAddress = null, string? newModelId = null, string? newNotes = null, bool? newEnabled = null, bool? newProblem = null, bool? newMaintenance = null, UserId? modifiedByUserId = null)
 		{
-			return _devices.UpdateDeviceAsync(deviceId, newPoolId, newName, newAddress, newModelId, newNotes, newEnabled, newProblem, newMaintenance, modifiedByUserId);
+			if (newProblem == true)
+			{
+				IDeviceReservation? reservation = await TryGetDeviceReservationAsync(deviceId);
+				if (reservation != null)
+				{
+					await TryUpdateReservationAsync(reservation.Id, problemDevice: deviceId);
+				}
+			}
+			await _devices.UpdateDeviceAsync(deviceId, newPoolId, newName, newAddress, newModelId, newNotes, newEnabled, newProblem, newMaintenance, modifiedByUserId);
 		}
 
 		/// <summary>
 		/// Checkout a device
 		/// </summary>
-		public Task CheckoutDeviceAsync(DeviceId deviceId, UserId? userId)
+		public async Task CheckoutDeviceAsync(DeviceId deviceId, UserId? userId)
 		{
-            return _devices.CheckoutDeviceAsync(deviceId, userId);
-        }
+			await _devices.CheckoutDeviceAsync(deviceId, userId);
+		}
 
 		/// <summary>
 		/// Try to create a reservation satisfying the specified device platforms and models
 		/// </summary>
-		public async Task<IDeviceReservation?> TryCreateReservationAsync(DevicePoolId pool, List<DeviceRequestData> request, string? hostname = null, string? reservationDetails = null, string? jobId = null, string? stepId = null)
+		public async Task<(IDeviceReservation?, string? errorMessage, bool installRequired)> TryCreateReservationAsync(DevicePoolId poolId, List<DeviceRequestData> request, string? hostname = null, string? reservationDetails = null, JobId? jobId = null, JobStepId? stepId = null, CancellationToken cancellationToken = default)
 		{
-			string? streamId = null;
-			string? jobName = null;
+			IJob? job = null;
+			IGraph? graph = null;
 			string? stepName = null;
+
+			List<JobStepId>? reserveStepIds = null;
 
 			if (jobId != null)
 			{
-				IJob? job = await _jobService.GetJobAsync(JobId.Parse(jobId));
-				if (job != null)
-				{					
-					streamId = job.StreamId.ToString();
-					jobName = job.Name;
+				IJobStepBatch? stepBatch = null;
+				IJobStep? jobStep = null;
+				INode? stepNode = null;
 
+				job = await _jobService.GetJobAsync(jobId.Value, cancellationToken);
+				if (job != null)
+				{
 					if (stepId != null)
 					{
-						SubResourceId id = SubResourceId.Parse(stepId);
-						IGraph graph = await _jobService.GetGraphAsync(job);
+						graph = await _jobService.GetGraphAsync(job, cancellationToken);
 						foreach (IJobStepBatch batch in job.Batches)
 						{
-							IJobStep? step;							
-							if (batch.TryGetStep(id, out step))
+							IJobStep? step;
+							if (batch.TryGetStep(stepId.Value, out step))
 							{
+								jobStep = step;
+								stepBatch = batch;
+								stepNode = graph.Groups[batch.GroupIdx].Nodes[step.NodeIdx];
 								stepName = graph.Groups[batch.GroupIdx].Nodes[step.NodeIdx].Name;
 								break;
 							}
 						}
 					}
+
+					if (stepBatch != null && stepNode != null && stepNode.Annotations != null)
+					{
+						List<IJobStep> reserveSteps = new List<IJobStep>();
+
+						// List of reserve nodes
+						string? reserveNodesValue;
+						if (stepNode.Annotations.TryGetValue("DeviceReserveNodes", out reserveNodesValue) && reserveNodesValue.Length > 0)
+						{
+							List<string> reserveNodes = reserveNodesValue.Split(',').Select(x => x.Trim()).ToList();
+
+							reserveNodes.ForEach(nodeName =>
+							{
+								NodeRef? nodeRef;
+
+								if (graph!.TryFindNode(nodeName, out nodeRef))
+								{
+									IJobStep? jobStep = null;
+									if (job.TryGetStepForNode(nodeRef, out jobStep))
+									{
+										reserveSteps.Add(jobStep);
+									}
+								}
+							});
+
+							if (jobStep != null && !reserveSteps.Any(s => s.Id == stepId))
+							{
+								reserveSteps.Insert(0, jobStep);
+							}
+						}
+
+						// Reserve begin/end markers
+						string? deviceReserve;
+						if (stepNode.Annotations.TryGetValue("DeviceReserve", out deviceReserve) && String.Equals(deviceReserve, "Begin", StringComparison.OrdinalIgnoreCase))
+						{
+							int index = stepBatch.Steps.FindIndex(x => x.Id == jobStep!.Id);
+							for (int i = index; i < stepBatch.Steps.Count; i++)
+							{
+								INode node = graph!.Groups[stepBatch.GroupIdx].Nodes[stepBatch.Steps[i].NodeIdx];
+								// An end or begin starts a new reservation block
+								if (i != index && node.Annotations.TryGetValue("DeviceReserve", out deviceReserve) && (String.Equals(deviceReserve, "End", StringComparison.OrdinalIgnoreCase) || String.Equals(deviceReserve, "Begin", StringComparison.OrdinalIgnoreCase)))
+								{
+									if (String.Equals(deviceReserve, "End", StringComparison.OrdinalIgnoreCase))
+									{
+										reserveSteps.Add(stepBatch.Steps[i]);
+									}
+
+									break;
+								}
+
+								reserveSteps.Add(stepBatch.Steps[i]);
+							}
+						}
+
+						reserveStepIds = reserveSteps.Select(s => s.Id).ToList();
+					}
+				}
+				else
+				{
+					return (null, $"Unable to find job for reservation, {jobId}", false);
 				}
 			}
 
-			return await _devices.TryAddReservationAsync(pool, request, hostname, reservationDetails, streamId, jobId, stepId, jobName, stepName);
+			IDevicePool? pool = GetPool(poolId);
+
+			if (pool == null || pool.PoolType != DevicePoolType.Automation)
+			{
+				string? errorMessage;
+				if (pool == null)
+				{
+					errorMessage = $"Unable to find pool for reservation, {poolId}";
+				}
+				else
+				{
+					errorMessage = $"Attempted to reserve a device from a non-automation pool, {poolId}";
+				}
+
+				return (null, errorMessage, false);
+			}
+
+			(IDeviceReservation? reservation, bool installRequired) = await _devices.TryAddReservationAsync(poolId, request, _settings.CurrentValue.DeviceProblemCooldownMinutes, hostname, reservationDetails, job, stepId, stepName, reserveStepIds);
+
+			// check that only one step is running
+			if (job != null && reservation != null && reservation.ReservedStepIds != null)
+			{
+				List<IJobStep> reserveSteps = new List<IJobStep>();
+
+				foreach (JobStepId id in reservation.ReservedStepIds)
+				{
+					IJobStep? step;
+					if (job!.TryGetStep(id, out step))
+					{
+						reserveSteps.Add(step);
+					}
+				}
+
+				if (reserveSteps.Count(s => s.State == JobStepState.Running) > 1)
+				{
+					List<string> errorSteps = new List<string>();
+					foreach (IJobStep step in reserveSteps)
+					{
+						if (step.State != JobStepState.Running)
+						{
+							continue;
+						}
+
+						foreach (IJobStepBatch batch in job.Batches)
+						{
+							if (batch.Steps.Any(s => s.Id == step.Id))
+							{
+								stepName = graph!.Groups[batch.GroupIdx].Nodes[step.NodeIdx].Name;
+								errorSteps.Add(stepName);
+							}
+						}
+					}
+
+					return (null, $"Reserved nodes must not run in parallel: {String.Join(',', errorSteps)}", false);
+				}
+			}
+
+			if (reservation == null)
+			{
+				return (null, $"Unable to add reservation for {jobId}:{stepId}", false);
+			}
+
+			return (reservation, null, installRequired);
 		}
 
 		/// <summary>
 		/// Update/renew an existing reservation
 		/// </summary>
-		public Task<bool> TryUpdateReservationAsync(ObjectId id)
+		public Task<IDeviceReservation?> TryUpdateReservationAsync(ObjectId id, DeviceId? problemDevice = null)
 		{
-			return _devices.TryUpdateReservationAsync(id);
+			return _devices.TryUpdateReservationAsync(id, problemDevice: problemDevice);
 		}
 
 		/// <summary>
 		///  Delete an existing reservation
 		/// </summary>
-		public Task<bool> DeleteReservationAsync(ObjectId id)
+		public async Task<bool> DeleteReservationAsync(ObjectId id, bool force = false)
 		{
-			return _devices.DeleteReservationAsync(id);
+			if (!force)
+			{
+				IDeviceReservation? reservation = await _devices.TryGetReservationAsync(id);
+
+				if (reservation != null && reservation.JobId != null && reservation.ReservedStepIds != null && reservation.ReservedStepIds.Count > 0)
+				{
+					// will be deleted in tick
+					return false;
+				}
+			}
+
+			return await _devices.DeleteReservationAsync(id);
 		}
 
 		/// <summary>
 		/// Get a reservation from a legacy guid
 		/// </summary>
-		public Task<IDeviceReservation?> TryGetReservationFromLegacyGuidAsync(string legacyGuid)
+		public async Task<IDeviceReservation?> TryGetReservationFromLegacyGuidAsync(string legacyGuid)
 		{
-			return _devices.TryGetReservationFromLegacyGuidAsync(legacyGuid);
+			return await _devices.TryGetReservationFromLegacyGuidAsync(legacyGuid);
 		}
 
 		/// <summary>
 		/// Get a reservation from a device id
 		/// </summary>
-		public Task<IDeviceReservation?> TryGetDeviceReservation(DeviceId deviceId)
+		public async Task<IDeviceReservation?> TryGetDeviceReservationAsync(DeviceId deviceId)
 		{
-			return _devices.TryGetDeviceReservationAsync(deviceId);
+			return await _devices.TryGetDeviceReservationAsync(deviceId);
 		}
 
 		/// <summary>
 		/// Get a list of existing device reservations
 		/// </summary>
-		public Task<List<IDeviceReservation>> GetReservationsAsync()
+		public async Task<List<IDeviceReservation>> GetReservationsAsync()
 		{
-			return _devices.FindAllReservationsAsync();
+			return await _devices.FindAllReservationsAsync();
 		}
 
 		/// <summary>
 		/// 
 		/// </summary>
-		public async Task NotifyDeviceServiceAsync(GlobalConfig globalConfig, string message, DeviceId? deviceId = null, string? jobId = null, string? stepId = null, UserId? userId = null)
+		public async Task NotifyDeviceServiceAsync(GlobalConfig globalConfig, string message, DeviceId? deviceId = null, string? jobId = null, string? stepId = null, UserId? userId = null, CancellationToken cancellationToken = default)
 		{
-			try 
+			try
 			{
 				IDevice? device = null;
 				IDevicePool? pool = null;
@@ -501,7 +648,7 @@ namespace Horde.Server.Devices
 
 				if (userId.HasValue)
 				{
-					user = await _userCollection.GetUserAsync(userId.Value);
+					user = await _userCollection.GetUserAsync(userId.Value, cancellationToken);
 					if (user == null)
 					{
 						_logger.LogError("Unable to send device notification, can't find User {UserId}", userId.Value);
@@ -512,12 +659,12 @@ namespace Horde.Server.Devices
 				if (deviceId.HasValue)
 				{
 					device = await GetDeviceAsync(deviceId.Value);
-					pool = await GetPoolAsync(device!.PoolId);
+					pool = GetPool(device!.PoolId);
 				}
 
 				if (jobId != null)
 				{
-					job = await _jobService.GetJobAsync(JobId.Parse(jobId));
+					job = await _jobService.GetJobAsync(JobId.Parse(jobId), cancellationToken);
 
 					if (job != null)
 					{
@@ -525,9 +672,9 @@ namespace Horde.Server.Devices
 
 						if (stepId != null)
 						{
-							IGraph graph = await _jobService.GetGraphAsync(job)!;
+							IGraph graph = await _jobService.GetGraphAsync(job, cancellationToken)!;
 
-							SubResourceId stepIdValue = SubResourceId.Parse(stepId);
+							JobStepId stepIdValue = JobStepId.Parse(stepId);
 							IJobStepBatch? batch = job.Batches.FirstOrDefault(b => b.Steps.FirstOrDefault(s => s.Id == stepIdValue) != null);
 							if (batch != null)
 							{
@@ -544,9 +691,9 @@ namespace Horde.Server.Devices
 			}
 			catch (Exception ex)
 			{
-                _logger.LogError(ex, "Error on device notification {Message}", ex.Message);
-            }
-        }
+				_logger.LogError(ex, "Error on device notification {Message}", ex.Message);
+			}
+		}
 
 		/// <summary>
 		/// Authorize device action
@@ -583,11 +730,11 @@ namespace Horde.Server.Devices
 		/// <param name="user"></param>
 		/// <param name="globalConfig"></param>
 		/// <returns></returns>
-		public async Task<List<DevicePoolAuthorization>> GetUserPoolAuthorizationsAsync(ClaimsPrincipal user, GlobalConfig globalConfig)
+		public List<DevicePoolAuthorization> GetUserPoolAuthorizations(ClaimsPrincipal user, GlobalConfig globalConfig)
 		{
 			List<DevicePoolAuthorization> authPools = new List<DevicePoolAuthorization>();
 
-			List<IDevicePool> allPools = await GetPoolsAsync();
+			List<IDevicePool> allPools = GetPools();
 			IReadOnlyList<ProjectConfig> projects = globalConfig.Projects;
 
 			// Set of projects associated with device pools
@@ -623,7 +770,7 @@ namespace Horde.Server.Devices
 			}
 
 			foreach (IDevicePool pool in allPools)
-			{				
+			{
 				if (pool.ProjectIds == null || pool.ProjectIds.Count == 0)
 				{
 					if (pool.PoolType == DevicePoolType.Shared && !globalPoolAccess)
@@ -668,26 +815,10 @@ namespace Horde.Server.Devices
 		/// <param name="user"></param>
 		/// <param name="globalConfig"></param>
 		/// <returns></returns>
-		public async Task<DevicePoolAuthorization?> GetUserPoolAuthorizationAsync(DevicePoolId id, ClaimsPrincipal user, GlobalConfig globalConfig)
+		public DevicePoolAuthorization? GetUserPoolAuthorization(DevicePoolId id, ClaimsPrincipal user, GlobalConfig globalConfig)
 		{
-			List<DevicePoolAuthorization> auth = await GetUserPoolAuthorizationsAsync(user, globalConfig);
+			List<DevicePoolAuthorization> auth = GetUserPoolAuthorizations(user, globalConfig);
 			return auth.Where(x => x.Pool.Id == id).FirstOrDefault();
-		}
-
-		/// <summary>
-		/// Update a device
-		/// </summary>
-		public async Task UpdateDevicePoolAsync(DevicePoolId poolId, List<ProjectId>? projectIds)
-		{
-			await _devices.UpdatePoolAsync(poolId, projectIds);
-		}
-
-		/// <summary>
-		/// Get Platform mappings for V1 API
-		/// </summary>		
-		public async Task<DevicePlatformMapV1> GetPlatformMapV1()
-		{
-			return await _platformMapSingleton.GetAsync();
 		}
 	}
 }

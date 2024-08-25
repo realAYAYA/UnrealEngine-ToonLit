@@ -62,6 +62,9 @@ public:
 	bool bExistsInCurrentWorldAndPIE;
 
 protected:
+	/** For use by derived classes, as it allows for passing down their own type. */
+	FActorTreeItem(FSceneOutlinerTreeItemType TypeIn, AActor* InActor);
+
 	virtual void UpdateDisplayString();
 
 	/** Cached display string */

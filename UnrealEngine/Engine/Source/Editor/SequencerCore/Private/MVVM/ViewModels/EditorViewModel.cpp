@@ -121,6 +121,16 @@ bool FEditorViewModel::IsReadOnly() const
 	return false;
 }
 
+FViewDensityInfo FEditorViewModel::GetViewDensity() const
+{
+	return ViewDensity;
+}
+
+void FEditorViewModel::SetViewDensity(const FViewDensityInfo& InViewDensity)
+{
+	ViewDensity = InViewDensity;
+}
+
 } // namespace Sequencer
 } // namespace UE
 

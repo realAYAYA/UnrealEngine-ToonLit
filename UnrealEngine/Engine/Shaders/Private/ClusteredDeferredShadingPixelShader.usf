@@ -1,38 +1,38 @@
-
+// Copyright Epic Games, Inc. All Rights Reserved.
 /*=============================================================================
 	ClusteredDeferredShadingPixelShader - applies all local lights in the
 	LightGrid in a full-screen pass, not directional ones as they are done
 	in the traditional deferred passes.
 =============================================================================*/
 
-// Following the lead of Tiled Deferred
+// Following the lead of Tiled Deferred 
 #define SUPPORT_CONTACT_SHADOWS 0
-#define USE_IES_PROFILE 0
+#define USE_IES_PROFILE 1
 #define NON_DIRECTIONAL_DIRECT_LIGHTING 0
-#define STRATA_SSS_TRANSMISSION USE_TRANSMISSION
+#define SUBSTRATE_SSS_TRANSMISSION USE_TRANSMISSION
 
 // Used in RectLight.ush, and requires a per-light texture which we cannot support at present.
 // If the textures are atlased or something like that in the future it should be ok to turn on.
 #define USE_SOURCE_TEXTURE 0
 
-#if STRATA_ENABLED
-  #if STRATA_TILETYPE == 0
-	#define STRATA_FASTPATH 1
-  #elif STRATA_TILETYPE == 1
-	#define STRATA_SINGLEPATH 1
-  #elif STRATA_TILETYPE == 2
+#if SUBSTRATE_ENABLED
+  #if SUBSTRATE_TILETYPE == 0
+	#define SUBSTRATE_FASTPATH 1
+  #elif SUBSTRATE_TILETYPE == 1
+	#define SUBSTRATE_SINGLEPATH 1
+  #elif SUBSTRATE_TILETYPE == 2
 	// COMPLEX PATH
-  #elif STRATA_TILETYPE == 3
+  #elif SUBSTRATE_TILETYPE == 3
 	// COMPLEX PATH
-	#define STRATA_COMPLEXSPECIALPATH 1
+	#define SUBSTRATE_COMPLEXSPECIALPATH 1
   #else
-	#error Strata tile type non-implemented
+	#error Substrate tile type non-implemented
   #endif
 #endif
 
 #include "HairStrands/HairStrandsVisibilityCommonStruct.ush" 
 #include "Common.ush"
-#include "Strata/Strata.ush"
+#include "Substrate/Substrate.ush"
 #include "DeferredShadingCommon.ush"  
 #include "BRDF.ush"
 #include "ShadingModels.ush"
@@ -40,8 +40,9 @@
 #include "DeferredLightingCommon.ush"
 #include "LightData.ush"
 #include "VirtualShadowMaps/VirtualShadowMapTransmissionCommon.ush"
-#include "Strata/StrataEvaluation.ush"
-#include "Strata/StrataDeferredLighting.ush"
+#include "VirtualShadowMaps/VirtualShadowMapMaskBitsCommon.ush"
+#include "Substrate/SubstrateEvaluation.ush"
+#include "Substrate/SubstrateDeferredLighting.ush"
 
 #if USE_HAIR_LIGHTING == 1
 	#include "HairStrands/HairStrandsCommon.ush"
@@ -53,7 +54,7 @@
 
 // Causes the shader to run one pass over the light list per shading model, which cuts down peak register pressure.
 // Moves some overhead out of the inner loop (testing for shading model) which ought to be a good thing also.
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	#define USE_PASS_PER_SHADING_MODEL 0
 #else
 	// Only enable on non-FXC compilers since FXC takes ages to compile all the shader model passes.
@@ -61,7 +62,7 @@
 #endif
 
 // Temporary work around for shader compilation issue
-#define SUPPORT_STRATA_LIGHTING (COMPILER_DXC == 1 || COMPILER_PSSL == 1 || COMPILER_METAL == 1)
+#define SUPPORT_SUBSTRATE_LIGHTING (COMPILER_DXC == 1 || COMPILER_PSSL == 1 || COMPILER_METAL == 1)
 
 // Extracts out the simple lights into their own loop that is executed first, independently of shading model.
 #define ENABLE_SEPARATE_SIMPLE_LIGHT_LOOP 0
@@ -69,7 +70,9 @@
 // Enable cluster debug visualization
 #define GRID_DEBUG_ENABLE 0
 
-Texture2D< uint4 > ShadowMaskBits;
+uint bHasLightChannels;
+Texture2D<uint> LightingChannelsTexture;
+Texture2D<uint4> ShadowMaskBits;
 
 #if USE_HAIR_LIGHTING
 uint				HairTransmittanceBufferMaxCount;
@@ -115,9 +118,9 @@ bool GetClusterDebugColor(float2 LocalPosition, float SceneDepth, FCulledLightsG
  * Adds local lighting of simple lights and returns the index at which non-simple light should starts
  */
 float4 GetSimpleLightLighting(
-#if STRATA_ENABLED && USE_HAIR_LIGHTING == 0
-	FStrataAddressing StrataAddressing,
-	FStrataPixelHeader StrataPixelHeader,
+#if SUBSTRATE_ENABLED && USE_HAIR_LIGHTING == 0
+	FSubstrateAddressing SubstrateAddressing,
+	FSubstratePixelHeader SubstratePixelHeader,
 	inout float3 OutOpaqueRoughRefractionSceneColor,
 	inout float3 OutSubSurfaceSceneColor,
 #else
@@ -136,13 +139,13 @@ float4 GetSimpleLightLighting(
 
 	// Limit max to ForwardLightData.NumLocalLights.
 	// This prevents GPU hangs when the PS tries to read from uninitialized NumCulledLightsGrid buffer
-	const uint NumLocalLights = min(CulledLightGridData.NumLocalLights, GetNumLocalLights(EyeIndex));
+	const uint NumLightsInGridCell = min(CulledLightGridData.NumLights, GetMaxLightsPerCell(EyeIndex));
 
-	uint LocalLightListIndex = 0;
+	uint GridLightListIndex = 0;
 	LOOP
-	for (; LocalLightListIndex < NumLocalLights; LocalLightListIndex++)
+	for (; GridLightListIndex < NumLightsInGridCell; GridLightListIndex++)
 	{
-		const FLocalLightData LocalLight = GetLocalLightData(CulledLightGridData.DataStartIndex + LocalLightListIndex, EyeIndex);
+		const FLocalLightData LocalLight = GetLocalLightData(CulledLightGridData.DataStartIndex + GridLightListIndex, EyeIndex);
 		if (!LocalLight.bIsSimpleLight)
 		{
 			break;
@@ -153,31 +156,33 @@ float4 GetSimpleLightLighting(
 			continue;
 		}
 
-	#if STRATA_ENABLED && USE_HAIR_LIGHTING == 0
+	#if SUBSTRATE_ENABLED && USE_HAIR_LIGHTING == 0
 		FDeferredLightData LightData = ConvertToDeferredLight(LocalLight);
 		LightData.ShadowedBits = 1;
-		const FShadowTerms ShadowTerms = { StrataGetAO(StrataPixelHeader), 1.0, 1.0, InitHairTransmittanceData() };
+		LightData.bRectLight = LightData.bRectLight && USE_RECT_LIGHT;
 
-		const float3 ToLight = LightData.TranslatedWorldPosition - TranslatedWorldPosition;
-		const float3 L = normalize(ToLight);
+		FSubstrateShadowTermInputParameters SubstrateShadowTermInputParameters	= GetInitialisedSubstrateShadowTermInputParameters();
+		SubstrateShadowTermInputParameters.bEvaluateShadowTerm					= false;
+
 		const float3 V = -CameraVector;
+		float3 ToLight, L;
 		const float LightMask = GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
 
-		FStrataDeferredLighting StrataLighting = StrataDeferredLighting(
+		FSubstrateDeferredLighting SubstrateLighting = SubstrateDeferredLighting(
 			LightData,
 			V,
 			L,
 			ToLight,
 			LightMask,
-			ShadowTerms,
-			Strata.MaterialTextureArray,
-			StrataAddressing,
-			StrataPixelHeader).SceneColor;
+			SubstrateShadowTermInputParameters,
+			Substrate.MaterialTextureArray,
+			SubstrateAddressing,
+			SubstratePixelHeader).SceneColor;
 
-		CompositedLighting += StrataLighting.SceneColor;
-	#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
-		OutOpaqueRoughRefractionSceneColor += StrataLighting.OpaqueRoughRefractionSceneColor;
-		OutSubSurfaceSceneColor += StrataLighting.SubSurfaceSceneColor;
+		CompositedLighting += SubstrateLighting.SceneColor;
+	#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
+		OutOpaqueRoughRefractionSceneColor += SubstrateLighting.OpaqueRoughRefractionSceneColor;
+		OutSubSurfaceSceneColor += SubstrateLighting.SubSurfaceSceneColor;
 	#endif
 
 	#else
@@ -188,17 +193,17 @@ float4 GetSimpleLightLighting(
 		SimpleLightData.Color = UnpackLightColor(LocalLight.LightColorAndIdAndFalloffExponent.xy);
 		SimpleLightData.FalloffExponent = LocalLight.LightColorAndIdAndFalloffExponent.w;
 		SimpleLightData.bInverseSquared = SimpleLightData.FalloffExponent == 0;
-		FStrataDeferredLighting StrataLighting = GetSimpleDynamicLighting(TranslatedWorldPosition, CameraVector, ScreenSpaceData.GBuffer.WorldNormal, ScreenSpaceData.AmbientOcclusion, ScreenSpaceData.GBuffer.DiffuseColor, ScreenSpaceData.GBuffer.SpecularColor, ScreenSpaceData.GBuffer.Roughness, SimpleLightData);
+		FSubstrateDeferredLighting SubstrateLighting = GetSimpleDynamicLighting(TranslatedWorldPosition, CameraVector, ScreenSpaceData.GBuffer.WorldNormal, ScreenSpaceData.AmbientOcclusion, ScreenSpaceData.GBuffer.DiffuseColor, ScreenSpaceData.GBuffer.SpecularColor, ScreenSpaceData.GBuffer.Roughness, SimpleLightData);
 
-		CompositedLighting += StrataLighting.SceneColor;
-	#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
-		OutOpaqueRoughRefractionSceneColor += StrataLighting.OpaqueRoughRefractionSceneColor;
-		OutSubSurfaceSceneColor += StrataLighting.SubSurfaceSceneColor;
+		CompositedLighting += SubstrateLighting.SceneColor;
+	#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
+		OutOpaqueRoughRefractionSceneColor += SubstrateLighting.OpaqueRoughRefractionSceneColor;
+		OutSubSurfaceSceneColor += SubstrateLighting.SubSurfaceSceneColor;
 	#endif
 
 	#endif
 	}
-	FirstNonSimpleLightIndex = LocalLightListIndex;
+	FirstNonSimpleLightIndex = GridLightListIndex;
 #endif // ENABLE_SEPARATE_SIMPLE_LIGHT_LOOP
 
 	return CompositedLighting;
@@ -209,9 +214,9 @@ float4 GetSimpleLightLighting(
  * Does not support dynamic shadows, as these require the per-light shadow mask.
  */
 float4 GetLightGridLocalLighting(
-#if STRATA_ENABLED && USE_HAIR_LIGHTING == 0
-	FStrataAddressing StrataAddressing,
-	FStrataPixelHeader StrataPixelHeader,
+#if SUBSTRATE_ENABLED && USE_HAIR_LIGHTING == 0
+	FSubstrateAddressing SubstrateAddressing,
+	FSubstratePixelHeader SubstratePixelHeader,
 	inout float3 OutOpaqueRoughRefractionSceneColor,
 	inout float3 OutSubSurfaceSceneColor,
 #else 
@@ -220,27 +225,38 @@ float4 GetLightGridLocalLighting(
 	const FCulledLightsGridData InLightGridData, 
 	float3 TranslatedWorldPosition, 
 	float3 CameraVector, 
-	float2 ScreenUV, 
+	float2 ScreenUV,
+	float SceneDepth,
 	uint EyeIndex, 
 	float Dither, 
 	uint FirstNonSimpleLightIndex, 
 	uint SampleIndex=0, 
 	uint TotalSampleCount=0, 
-	uint2 PixelCoord=0)
+	uint2 PixelCoord=0,
+	uint HairLightChannelMask=0)
 {
 	float4 DirectLighting = 0;
 
 	// Limit max to ForwardLightData.NumLocalLights.
 	// This prevents GPU hangs when the PS tries to read from uninitialized NumCulledLightsGrid buffer
-	const uint NumLocalLights = min(InLightGridData.NumLocalLights, GetNumLocalLights(EyeIndex));
+	const uint NumLightsInGridCell = min(InLightGridData.NumLights, GetMaxLightsPerCell(EyeIndex));
 
 	int2 PixelPos = int2( ScreenUV.xy * View.BufferSizeAndInvSize.xy );
-	uint4 ShadowMask = ~ShadowMaskBits[ PixelPos ];
+	uint4 ShadowMask = ShadowMaskBits[ PixelPos ];
+	uint LightChannelMask = LIGHTING_CHANNEL_MASK;
+	#if USE_HAIR_LIGHTING
+	LightChannelMask = HairLightChannelMask;
+	#else
+	if (bHasLightChannels)
+	{
+		LightChannelMask = LightingChannelsTexture.Load(uint3(PixelPos, 0)).x;
+	}
+	#endif
 	
 	LOOP
-	for (uint LocalLightListIndex = FirstNonSimpleLightIndex; LocalLightListIndex < NumLocalLights; LocalLightListIndex++)
+	for (uint GridLightListIndex = FirstNonSimpleLightIndex; GridLightListIndex < NumLightsInGridCell; GridLightListIndex++)
 	{
-		const FLocalLightData LocalLight = GetLocalLightData(InLightGridData.DataStartIndex + LocalLightListIndex, EyeIndex);
+		const FLocalLightData LocalLight = GetLocalLightData(InLightGridData.DataStartIndex + GridLightListIndex, EyeIndex);
 
 		// The lights are sorted such that all that support clustered deferred are at the beginning, there might be others
 		// (e.g., lights with dynamic shadows) so we break out when the condition fails.
@@ -254,39 +270,47 @@ float4 GetLightGridLocalLighting(
 			continue;
 		}
 
+		if ((LightChannelMask & UnpackLightingChannelMask(LocalLight)) == 0)
+		{
+			continue;
+		}
+
 		FDeferredLightData LightData = ConvertToDeferredLight(LocalLight);
 		LightData.ShadowedBits = 1;
+		LightData.bRectLight = LightData.bRectLight && USE_RECT_LIGHT;
+		#if USE_IES_PROFILE
+		LightData.Color *= ComputeLightProfileMultiplier(TranslatedWorldPosition, LightData.TranslatedWorldPosition, -LightData.Direction, LightData.Tangent, LightData.IESAtlasIndex);
+		#endif
 		float4 LightAttenuation = float4(1, 1, 1, 1);
-		if (LocalLightListIndex < GetPackedShadowMaskMaxLightCount())
+
+		// Find packed VSM projection result if present
+		// NOTE: We have to do the search as in the deferred pass again currently as the shadow masks
+		// are packed according to a prune light list that contains only shadow-casting lights.
+		uint VSMGridLightListIndex = GridLightListIndex;
+		if (LocalLight.VirtualShadowMapId != INDEX_NONE)
 		{
-			LightAttenuation = UnpackShadowMask(ShadowMask, LocalLightListIndex, Dither).xxxx;
-		}
-		else if (LocalLight.VirtualShadowMapId != INDEX_NONE)
-		{
-			// Single sample VSM lookup
-			// TODO: Normal bias? Screen space ray? Etc? Do we need a path that does more of that stuff
-			// unified but without SMRT? For now we'll just keep this as a simple lookup to avoid potential performance tradeoffs
-			// as this is meant to be the fallback path on overflowing tiles.
-			FVirtualShadowMapSampleResult VSMResult = SampleVirtualShadowMapTranslatedWorld(
+			LightAttenuation = GetVirtualShadowMapMaskForLight(
+				ShadowMask,
+				uint2(PixelPos),
+				SceneDepth,
 				LocalLight.VirtualShadowMapId,
 				TranslatedWorldPosition,
-				30.0f // RayStartDistance TODO... maybe at least make this a proportional screen offset like the contact shadow trace
-			);
-			LightAttenuation = VSMResult.ShadowFactor.xxxx;
+				VSMGridLightListIndex).xxxx;
 		}
 
 		#if USE_HAIR_LIGHTING
-		LightAttenuation = 1.0f; // TODO: use shadow mask bits (e.g., subpixel shadow mask)
 		if (LightAttenuation.x > 0)
 		{
 			const float3 L = normalize(LightData.TranslatedWorldPosition - TranslatedWorldPosition);
 			const float3 V = normalize(-CameraVector);
 
 			// Fetch precomputed transmittance
+			// * Transmittance data are only computed for shadowed lights with VSM
+			// * Transmittance mask index is computed using VSM light index remapping. This needs to match HairStrandsDeepTransmittanceMask.usf
 			FHairTransmittanceMask TransmittanceMask = InitHairTransmittanceMask();
-			if (LocalLightListIndex < GetPackedShadowMaskMaxLightCount())
+			if (LocalLight.VirtualShadowMapId != INDEX_NONE && VSMGridLightListIndex < GetPackedShadowMaskMaxLightCount())
 			{
-				const uint TransmittanceSampleIndex = SampleIndex + LocalLightListIndex * TotalSampleCount;
+				const uint TransmittanceSampleIndex = SampleIndex + VSMGridLightListIndex * TotalSampleCount;
 				const uint TransmittanceSampleMaxCount = TotalSampleCount * GetPackedShadowMaskMaxLightCount();
 				if (TransmittanceSampleIndex < TransmittanceSampleMaxCount)
 				{
@@ -309,38 +333,38 @@ float4 GetLightGridLocalLighting(
 		}
 		#endif
 
-	#if STRATA_ENABLED && USE_HAIR_LIGHTING == 0
-		FShadowTerms ShadowTerms = { StrataGetAO(StrataPixelHeader), 1.0, 1.0, InitHairTransmittanceData() };
+	#if SUBSTRATE_ENABLED && USE_HAIR_LIGHTING == 0
 
-		const uint FakeShadingModelID = 0;
-		const float FakeContactShadowOpacity = 1.0f;
-		const float SceneDepth = CalcSceneDepth(ScreenUV);
-		const float3 ToLight = LightData.TranslatedWorldPosition - TranslatedWorldPosition;
-		const float3 L = normalize(ToLight);
+		FSubstrateShadowTermInputParameters SubstrateShadowTermInputParameters	= GetInitialisedSubstrateShadowTermInputParameters();
+		SubstrateShadowTermInputParameters.bEvaluateShadowTerm					= true;
+		SubstrateShadowTermInputParameters.SceneDepth							= CalcSceneDepth(ScreenUV);
+		SubstrateShadowTermInputParameters.PrecomputedShadowFactors				= SubstrateReadPrecomputedShadowFactors(SubstratePixelHeader, PixelPos, SceneTexturesStruct.GBufferETexture);
+		SubstrateShadowTermInputParameters.TranslatedWorldPosition				= TranslatedWorldPosition;
+		SubstrateShadowTermInputParameters.LightAttenuation						= LightAttenuation;
+		SubstrateShadowTermInputParameters.Dither								= Dither;
+
 		const float3 V = -CameraVector;
-		float4 PrecomputedShadowFactors = StrataReadPrecomputedShadowFactors(StrataPixelHeader, PixelPos, SceneTexturesStruct.GBufferETexture);
-		GetShadowTerms(SceneDepth, PrecomputedShadowFactors, FakeShadingModelID, FakeContactShadowOpacity, LightData, TranslatedWorldPosition, L, LightAttenuation, Dither, ShadowTerms);
+		float3 ToLight, L;
+		const float LightMask = GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
 
-		const float LightMask = 1;
-
-		FStrataDeferredLighting StrataLighting = (FStrataDeferredLighting)0;
-	#if SUPPORT_STRATA_LIGHTING
-		StrataLighting = StrataDeferredLighting(
+		FSubstrateDeferredLighting SubstrateLighting = (FSubstrateDeferredLighting)0;
+	#if SUPPORT_SUBSTRATE_LIGHTING
+		SubstrateLighting = SubstrateDeferredLighting(
 			LightData,
 			V,
 			L,
 			ToLight,
 			LightMask,
-			ShadowTerms,
-			Strata.MaterialTextureArray,
-			StrataAddressing,
-			StrataPixelHeader);
+			SubstrateShadowTermInputParameters,
+			Substrate.MaterialTextureArray,
+			SubstrateAddressing,
+			SubstratePixelHeader);
 	#endif
 
-		DirectLighting += StrataLighting.SceneColor;
-	#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
-		OutOpaqueRoughRefractionSceneColor += StrataLighting.OpaqueRoughRefractionSceneColor;
-		OutSubSurfaceSceneColor += StrataLighting.SubSurfaceSceneColor;
+		DirectLighting += SubstrateLighting.SceneColor;
+	#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
+		OutOpaqueRoughRefractionSceneColor += SubstrateLighting.OpaqueRoughRefractionSceneColor;
+		OutSubSurfaceSceneColor += SubstrateLighting.SubSurfaceSceneColor;
 	#endif
 
 	#elif 1
@@ -356,11 +380,11 @@ float4 GetLightGridLocalLighting(
 		SimpleLightData.FalloffExponent = LightData.FalloffExponent;
 		SimpleLightData.bInverseSquared = LightData.bInverseSquared;
 		DirectLighting += GetSimpleDynamicLighting(TranslatedWorldPosition, CameraVector, ScreenSpaceData.GBuffer.WorldNormal, ScreenSpaceData.AmbientOcclusion, ScreenSpaceData.GBuffer.DiffuseColor, ScreenSpaceData.GBuffer.SpecularColor, ScreenSpaceData.GBuffer.Roughness, SimpleLightData);
-	#endif // STRATA_ENABLED
+	#endif // SUBSTRATE_ENABLED
 	}
 
 	// For debugging
-	//DirectLighting = InLightGridData.NumLocalLights / (float)ForwardLightData.MaxCulledLightsPerCell;
+	//DirectLighting = InLightGridData.NumLights / (float)ForwardLightData.MaxCulledLightsPerCell;
 	return DirectLighting;
 }
 
@@ -380,19 +404,19 @@ float4 GetLightGridLocalLighting(
 		float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;	\
 		float3 CameraVector = normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);	\
 		ScreenSpaceData.GBuffer.ShadingModelID = ShadingModelId;	\
-		CompositedLighting += GetLightGridLocalLighting(ScreenSpaceData, LightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, 0, Dither, FirstNonSimpleLightIndex); \
+		CompositedLighting += GetLightGridLocalLighting(ScreenSpaceData, LightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, SceneDepth, 0, Dither, FirstNonSimpleLightIndex); \
 	}	\
 }
 
 #endif // USE_PASS_PER_SHADING_MODEL
 
-#if STRATA_ENABLED && USE_HAIR_LIGHTING == 0
+#if SUBSTRATE_ENABLED && USE_HAIR_LIGHTING == 0
 void ClusteredShadingPixelShader(
 	float2 ScreenUV : TEXCOORD0,
 	float3 ScreenVector : TEXCOORD1,
 	in float4 SvPosition : SV_Position,
 	out float4 OutColor : SV_Target0
-#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
+#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
 	, out float3 OutOpaqueRoughRefractionSceneColor : SV_Target1
 	, out float3 OutSubSurfaceSceneColor : SV_Target2
 #endif
@@ -410,18 +434,25 @@ void ClusteredShadingPixelShader(
 
 	// Debug output
 	#if GRID_DEBUG_ENABLE
-	if (GetClusterDebugColor(LocalPosition, SceneDepth, CulledLightGridData, OutColor) return;
+	if (GetClusterDebugColor(LocalPosition, SceneDepth, CulledLightGridData, OutColor)) return;
 	#endif
 
-	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-	FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+
+	// NOTE: this early out helps with the case where there are no lights in the grid cell.
+	if (CulledLightGridData.NumLights == 0 || !SubstratePixelHeader.IsSubstrateMaterial())
+	{
+		OutColor = 0;
+		return;
+	}
 	
 	float4 CompositedLighting = 0;
 	float3 OpaqueRoughRefractionSceneColor = 0;
 	float3 SubSurfaceSceneColor = 0;
 
 	BRANCH
-	if (StrataPixelHeader.BSDFCount > 0 || CulledLightGridData.NumLocalLights == 0)
+	if (SubstratePixelHeader.ClosureCount > 0 || CulledLightGridData.NumLights == 0)
 	{
 		const float2 ScreenPosition = ViewportUVToScreenPos(ScreenUV);
 		const float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
@@ -429,20 +460,20 @@ void ClusteredShadingPixelShader(
 		uint FirstNonSimpleLightIndex = 0;
 
 		// Simple lights
-		CompositedLighting += GetSimpleLightLighting(StrataAddressing, StrataPixelHeader, OpaqueRoughRefractionSceneColor, SubSurfaceSceneColor,
+		CompositedLighting += GetSimpleLightLighting(SubstrateAddressing, SubstratePixelHeader, OpaqueRoughRefractionSceneColor, SubSurfaceSceneColor,
 			CulledLightGridData, TranslatedWorldPosition, CameraVector, EyeIndex, FirstNonSimpleLightIndex);
 
 		// Regular lights
-		CompositedLighting += GetLightGridLocalLighting(StrataAddressing, StrataPixelHeader, OpaqueRoughRefractionSceneColor, SubSurfaceSceneColor,
-			CulledLightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, EyeIndex, Dither, FirstNonSimpleLightIndex);
+		CompositedLighting += GetLightGridLocalLighting(SubstrateAddressing, SubstratePixelHeader, OpaqueRoughRefractionSceneColor, SubSurfaceSceneColor,
+			CulledLightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, SceneDepth, EyeIndex, Dither, FirstNonSimpleLightIndex);
 	}
 	
 #if !VISUALIZE_LIGHT_CULLING
 	CompositedLighting *= View.PreExposure;
-#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
+#endif
+#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
 	OutOpaqueRoughRefractionSceneColor = OpaqueRoughRefractionSceneColor * View.PreExposure;
 	OutSubSurfaceSceneColor = SubSurfaceSceneColor * View.PreExposure;
-#endif
 #endif
 	OutColor = CompositedLighting;
 }
@@ -473,7 +504,7 @@ void ClusteredShadingPixelShader(
 	#endif
 
 	// NOTE: this early out helps with the case where there are no lights in the grid cell.
-	if (CulledLightGridData.NumLocalLights == 0 || PixelShadingModelID == SHADINGMODELID_UNLIT)
+	if (CulledLightGridData.NumLights == 0 || PixelShadingModelID == SHADINGMODELID_UNLIT)
 	{
 		OutColor = 0;
 		return;
@@ -508,7 +539,7 @@ void ClusteredShadingPixelShader(
 	// Change-end
 	
 #else // !USE_PASS_PER_SHADING_MODEL
-	CompositedLighting += GetLightGridLocalLighting(GetScreenSpaceData(ScreenUV), CulledLightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, 0, Dither, FirstNonSimpleLightIndex);
+	CompositedLighting += GetLightGridLocalLighting(GetScreenSpaceData(ScreenUV), CulledLightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, SceneDepth, 0, Dither, FirstNonSimpleLightIndex);
 #endif // USE_PASS_PER_SHADING_MODEL
 	
 #if !VISUALIZE_LIGHT_CULLING
@@ -555,7 +586,7 @@ void ClusteredShadingPixelShader(
 	const uint GridIndex = ComputeLightGridCellIndex(uint2(LocalPosition.x, LocalPosition.y), SceneDepth);
 	const FCulledLightsGridData CulledLightGridData = GetCulledLightsGrid(GridIndex, EyeIndex);
 	// NOTE: this early out helps with the case where there are no lights in the grid cell.
-	if (CulledLightGridData.NumLocalLights == 0)
+	if (CulledLightGridData.NumLights == 0)
 	{		
 		return;
 	}
@@ -565,7 +596,7 @@ void ClusteredShadingPixelShader(
 
 	float4 CompositedLighting = 0;
 	uint FirstNonSimpleLightIndex = 0;
-	CompositedLighting += GetLightGridLocalLighting(ScreenSpaceData, CulledLightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, 0, Dither, FirstNonSimpleLightIndex, SampleIndex, TotalSampleCount, PixelCoord);
+	CompositedLighting += GetLightGridLocalLighting(ScreenSpaceData, CulledLightGridData, TranslatedWorldPosition, CameraVector, ScreenUV, SceneDepth, 0, Dither, FirstNonSimpleLightIndex, SampleIndex, TotalSampleCount, PixelCoord, Sample.LightChannelMask);
 #if !VISUALIZE_LIGHT_CULLING
 	CompositedLighting *= View.PreExposure;
 #endif

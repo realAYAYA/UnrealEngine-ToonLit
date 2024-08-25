@@ -3,8 +3,6 @@
 #include "Containers/VersePath.h"
 #include "Misc/Char.h"
 
-#if UE_USE_VERSE_PATHS
-
 namespace UE::VersePath::Private
 {
 	struct FNullTerminal
@@ -42,7 +40,7 @@ namespace UE::VersePath::Private
 	bool ParseLabel(const TCHAR*& Ptr, EndType End)
 	{
 		const TCHAR* LocalPtr = Ptr;
-		if (LocalPtr == End || !Alpha(*LocalPtr))
+		if (LocalPtr == End || !AlphaNum(*LocalPtr))
 		{
 			return false;
 		}
@@ -121,8 +119,6 @@ namespace UE::VersePath::Private
 				return true;
 			}
 		}
-
-		return true;
 	}
 
 	template <typename EndType>
@@ -284,5 +280,3 @@ FString UE::Core::MangleGuidToVerseIdent(const FString& Guid)
 	Ident.ReplaceInline(TEXT("}"), TEXT(""), ESearchCase::CaseSensitive);
 	return Ident;
 }
-
-#endif // #if UE_USE_VERSE_PATHS

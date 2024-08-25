@@ -10,10 +10,10 @@
 #include "InterchangePythonPipelineBase.generated.h"
 
 /*
- * This class represent a python pipeline. It is use by the TSoftClassPtr of the PythonPipeline asset.
+ * This class represents a Python pipeline. It is used by the TSoftClassPtr of the PythonPipeline asset.
  *
  */
-UCLASS(BlueprintType, Abstract, Experimental, MinimalAPI)
+UCLASS(BlueprintType, Abstract, MinimalAPI)
 class UInterchangePythonPipelineBase : public UInterchangePipelineBase
 {
 	GENERATED_BODY()
@@ -35,15 +35,15 @@ struct FPropertyData
 };
 
 /*
- * This class is a helper class for python pipeline. It allow picker to filter correctly the content browser instance we want to support
+ * This class is a helper class for Python pipelines. It allows the class picker to filter the Content Browser instance we want to support
  * in the pipeline stack.
  *
- * Use this class factory to be able to create an instance of a python pipeline in the content browser.
- * A python pipeline do not have any locked properties and all default value must be set in the python script.
- * This restriction exist because python class are transient, so any assets create from a python class cannot be save.
+ * Use this class factory to be able to create an instance of a Python pipeline in the Content Browser.
+ * A Python pipeline does not have any locked properties, and all default values must be set in the Python script.
+ * This restriction exists because Python classes are transient, so any assets created from a Python class cannot be saved.
  * 
  */
-UCLASS(BlueprintType, Experimental, MinimalAPI)
+UCLASS(BlueprintType, MinimalAPI)
 class UInterchangePythonPipelineAsset : public UObject
 {
 	GENERATED_BODY()
@@ -58,11 +58,11 @@ public:
 
 	INTERCHANGEENGINE_API void SetupFromPipeline(const UInterchangePythonPipelineBase* PythonPipeline, const bool bRegeneratePipeline = true);
 
-	/** The python class we want to use has a pipeline */
+	/** The Python class we want to use as a pipeline. */
 	UPROPERTY(EditAnywhere, Category = "Interchange|Python")
 	TSoftClassPtr<UInterchangePythonPipelineBase> PythonClass;
 
-	/** The transient pipeline we generate when we load the python pipeline */
+	/** The transient pipeline we generate when we load the Python pipeline. */
 	UPROPERTY(VisibleAnywhere, Transient, Category = "Interchange|Python")
 	TObjectPtr<UInterchangePythonPipelineBase> GeneratedPipeline;
 

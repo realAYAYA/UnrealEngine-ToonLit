@@ -156,21 +156,65 @@ public:
 	 *
 	 * @return engine platform extensions directory
 	 */
+	UE_DEPRECATED(5.4, "Use EnginePlatformExtensionDir(Platform) instead - ProjectPlatformExtensionsDir did not handle programs properly, so for consistency this is being removed as well")
 	static CORE_API FString EnginePlatformExtensionsDir();
+
+	/**
+	 * Returns the directory where the engine's platform extensions resides for the given platform
+	 *
+	 * @param Platform the platform to get the extension directory for
+	 * @return engine's platform extension directory
+	 */
+	static CORE_API FString EnginePlatformExtensionDir(const TCHAR* Platform)
+	{
+		return ConvertPath(FPaths::EngineDir(), EPathConversion::Engine_PlatformExtension, Platform);
+	}
 
 	/**
 	 * Returns the directory where the project's platform extensions reside
 	 *
 	 * @return project platform extensions directory
 	 */
+	UE_DEPRECATED(5.4, "Use ProjectPlatformExtensionDir(Platform) instead - this function does not handle Programs properly")
 	static CORE_API FString ProjectPlatformExtensionsDir();
 
 	/**
-	 * Returns platform and restricted extensions that are present and valid (for platforms, it uses FDataDrivePlatformInfo to determine valid platforms, it doesn't just use what's present)
+	 * Returns the directory where the project's platform extensions resides for the given platform
+	 *
+	 * @param Platform the platform to get the extension directory for
+	 * @return project's platform extension directory
+	 */
+	static CORE_API FString ProjectPlatformExtensionDir(const TCHAR* Platform)
+	{
+		return ConvertPath(FPaths::ProjectDir(), EPathConversion::Project_PlatformExtension, Platform);
+	}
+	
+	enum class EPathConversion : uint8
+	{
+		// ExtraData is name of platform
+		Engine_PlatformExtension,
+		Engine_NotForLicensees,
+		Engine_NoRedist,
+
+		Project_First,
+		Project_PlatformExtension = Project_First,
+		Project_NotForLicensees,
+		Project_NoRedist,
+	};
+	
+	/**
+	  * Converts a path with the given method. Initially used for converting from normal paths to platform extensions (programs make it confusing, so haveing
+	  * one source of truth is a good idea)
+	 */
+	static CORE_API FString ConvertPath(const FString& Path, EPathConversion Method, const TCHAR* ExtraData=nullptr, const TCHAR* OverrideProjectDir=nullptr);
+	
+	/**
+	 * Returns platform and restricted extensions that are present and if bCheckValid is set, valid
+     * (for platforms, it uses FDataDrivePlatformInfo to determine valid platforms, it doesn't just use what's present)
 	 *
 	 * @return BaseDir and usable extension directories under BaseDir (either Engine or Project)
 	 */
-	static CORE_API TArray<FString> GetExtensionDirs(const FString& BaseDir, const FString& SubDir=FString());
+	static CORE_API TArray<FString> GetExtensionDirs(const FString& BaseDir, const FString& SubDir=FString(), bool bCheckValid=true);
 
 	/**
 	 * Returns the root directory of the engine directory tree

@@ -23,11 +23,13 @@ namespace AVEncoder
 FThreadSafeCounter			FVideoDecoderFactory::NextID = 1;
 bool						FVideoDecoderFactory::bDebugDontRegisterDefaultCodecs = false;
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FVideoDecoderFactory& FVideoDecoderFactory::Get()
 {
 	static FVideoDecoderFactory Singleton;
 	return Singleton;
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 FVideoDecoderFactory::FVideoDecoderFactory()
 {
@@ -50,10 +52,14 @@ void FVideoDecoderFactory::Debug_SetDontRegisterDefaultCodecs()
 }
 
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoDecoderFactory::Register(const FVideoDecoderInfo& InInfo, const CreateDecoderCallback& InCreateEncoder)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	AvailableDecoders.Push(InInfo);
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	AvailableDecoders.Last().ID = NextID.Increment();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	CreateDecoders.Push(InCreateEncoder);
 }
 
@@ -75,11 +81,15 @@ void FVideoDecoderFactory::RegisterDefaultCodecs()
 #endif
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 bool FVideoDecoderFactory::GetInfo(uint32 InID, FVideoDecoderInfo& OutInfo) const
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	for (int32 Index = 0; Index < AvailableDecoders.Num(); ++Index)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (AvailableDecoders[Index].ID == InID)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			OutInfo = AvailableDecoders[Index];
 			return true;
@@ -88,20 +98,27 @@ bool FVideoDecoderFactory::GetInfo(uint32 InID, FVideoDecoderInfo& OutInfo) cons
 	return false;
 }
 
-
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FVideoDecoder* FVideoDecoderFactory::Create(uint32 InID, const FVideoDecoder::FInit& InInit)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoder* Result = nullptr;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	for (int32 Index = 0; Index < AvailableDecoders.Num(); ++Index)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (AvailableDecoders[Index].ID == InID)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			Result = CreateDecoders[Index]();
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (Result && !Result->Setup(InInit))
 			{
 				Result->Shutdown();
 				Result = nullptr;
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			break;
 		}
 	}

@@ -3,8 +3,9 @@
 #pragma once
 
 #include "CoreTypes.h"
+#include "HAL/PlatformMath.h"
 #include "Misc/AssertionMacros.h"
-#include "Math/NumericLimits.h"
+#include <limits>
 #include <type_traits>
 
 /**
@@ -28,7 +29,7 @@
  *
  * Checked integers keep both the integer value and a "valid" flag. Default-constructed guarded ints
  * are invalid, and guarded integers constructed from an integer value are valid and hold that value.
- * Guarded integers are somewhat analogous to a TOptional<SignedType> in semantics, and borrow some of
+ * Guarded integers are somewhat analogous to a TOptional<IntType> in semantics, and borrow some of
  * the function names.
  *
  * The main feature of guarded integers is that all arithmetic on them is overflow-checked. Any arithmetic
@@ -48,32 +49,31 @@
  * As-is, the current approach is not the fastest, but it's not presently intended to be used in contexts
  * where speed of arithmetic operations is a major concern.
  */
-template<typename SignedType>
-class TGuardedSignedInt
+template<typename IntType>
+class TGuardedInt
 {
 private:
-	static_assert(std::is_integral_v<SignedType> && std::is_signed_v<SignedType>, "Only defined for signed ints");
-	typedef typename std::make_unsigned_t<SignedType> UnsignedType;
+	static_assert(std::is_integral_v<IntType>, "Only defined for integer types");
+	typedef typename std::make_unsigned_t<IntType> UnsignedType;
 
-	static constexpr SignedType MinValue = TNumericLimits<SignedType>::Min();
-	static constexpr SignedType MaxValue = TNumericLimits<SignedType>::Max();
-	static constexpr SignedType NumBits = SignedType((sizeof(SignedType) / sizeof(char)) * 8); // Using sizeof to guess the bit count, ugh.
-	static constexpr UnsignedType UnsignedMSB = (UnsignedType)MinValue; // Assuming two's complement
+	static constexpr IntType MinValue = std::numeric_limits<IntType>::min();
+	static constexpr IntType MaxValue = std::numeric_limits<IntType>::max();
+	static constexpr IntType NumBits = IntType((sizeof(IntType) / sizeof(char)) * 8); // Using sizeof to guess the bit count, ugh.
 
-	SignedType Value = 0;
+	IntType Value = 0;
 	bool bIsValid = false;
 
 public:
-	/** Construct a TGuardedSignedInt with an invalid value. */
-	TGuardedSignedInt() = default;
+	/** Construct a TGuardedInt with an invalid value. */
+	TGuardedInt() = default;
 
-	/** Construct a TGuardedSignedInt from a regular signed integer value. If it's out of range, it results in an invalid value. */
+	/** Construct a TGuardedInt from a regular signed integer value. If it's out of range, it results in an invalid value. */
 	template<
-		typename ValueType,
-		std::enable_if_t<std::is_integral_v<ValueType>>* = nullptr
+		typename ValueType
+		UE_REQUIRES(std::is_integral_v<ValueType>)
 	>
-	explicit TGuardedSignedInt(ValueType InValue)
-		: Value((SignedType)InValue), bIsValid(false)
+	explicit TGuardedInt(ValueType InValue)
+		: Value((IntType)InValue), bIsValid(false)
 	{
 		if constexpr (std::is_signed_v<ValueType>)
 		{
@@ -85,17 +85,17 @@ public:
 		}
 	}
 
-	/** Copy-construct a TGuardedSignedInt from another of matching type. */
-	TGuardedSignedInt(const TGuardedSignedInt& Other) = default;
+	/** Copy-construct a TGuardedInt from another of matching type. */
+	TGuardedInt(const TGuardedInt& Other) = default;
 
-	/** Assign a TGuardedSignedInt to another. */
-	TGuardedSignedInt& operator=(const TGuardedSignedInt& Other) = default;
+	/** Assign a TGuardedInt to another. */
+	TGuardedInt& operator=(const TGuardedInt& Other) = default;
 
 	/** @return true if current value is valid (assigned and no overflows or other errors occurred), false otherwise. */
 	bool IsValid() const { return bIsValid; }
 
 	/** @return The value if valid, DefaultValue otherwise. */
-	const SignedType Get(const SignedType DefaultValue) const
+	const IntType Get(const IntType DefaultValue) const
 	{
 		return IsValid() ? Value : DefaultValue;
 	}
@@ -103,14 +103,14 @@ public:
 	/** @return Returns the value if valid, DefaultValue otherwise, but also check()s that the value is valid.
 	 * Intended for cases where the value is not expected to be invalid.
 	 */
-	const SignedType GetChecked(const SignedType DefaultValue = 0) const
+	const IntType GetChecked(const IntType DefaultValue = 0) const
 	{
-		checkf(IsValid(), TEXT("Invalid value in TGuardedSignedInt::GetChecked."));
+		checkf(IsValid(), TEXT("Invalid value in TGuardedInt::GetChecked."));
 		return Get(DefaultValue);
 	}
 
 	/** @return true if *this and Other are either both invalid or both valid and have the same value, false otherwise. */
-	bool operator ==(const TGuardedSignedInt Other) const
+	bool operator ==(const TGuardedInt Other) const
 	{
 		if (bIsValid != Other.bIsValid)
 		{
@@ -121,7 +121,7 @@ public:
 	}
 
 	/** @return true if *this and Other either have different "valid" states or are both valid and have different values, false otherwise (logical negation of ==). */
-	bool operator !=(const TGuardedSignedInt Other) const
+	bool operator !=(const TGuardedInt Other) const
 	{
 		if (bIsValid != Other.bIsValid)
 		{
@@ -135,13 +135,13 @@ public:
 	// to decide what to do about validity as well. Instead, do this.
 
 	/** @return true if *this and Other are both valid so they can be compared. */
-	bool ComparisonValid(const TGuardedSignedInt Other) const { return bIsValid && Other.bIsValid; }
+	bool ComparisonValid(const TGuardedInt Other) const { return bIsValid && Other.bIsValid; }
 
 	/** @return true if *this and Other are both valid and *this is less than Other. */
 	template<typename ValueType>
 	bool ValidAndLessThan(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return ComparisonValid(CheckedOther) && Value < CheckedOther.Value;
 	}
 
@@ -149,7 +149,7 @@ public:
 	template<typename ValueType>
 	bool ValidAndLessOrEqual(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return ComparisonValid(CheckedOther) && Value <= CheckedOther.Value;
 	}
 
@@ -157,7 +157,7 @@ public:
 	template<typename ValueType>
 	bool ValidAndGreaterThan(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return ComparisonValid(CheckedOther) && Value > CheckedOther.Value;
 	}
 
@@ -165,7 +165,7 @@ public:
 	template<typename ValueType>
 	bool ValidAndGreaterOrEqual(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return ComparisonValid(CheckedOther) && Value >= CheckedOther.Value;
 	}
 
@@ -173,7 +173,7 @@ public:
 	template<typename ValueType>
 	bool InvalidOrLessThan(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return !ComparisonValid(CheckedOther) || Value < CheckedOther.Value;
 	}
 
@@ -181,7 +181,7 @@ public:
 	template<typename ValueType>
 	bool InvalidOrLessOrEqual(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return !ComparisonValid(CheckedOther) || Value <= CheckedOther.Value;
 	}
 
@@ -189,7 +189,7 @@ public:
 	template<typename ValueType>
 	bool InvalidOrGreaterThan(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return !ComparisonValid(CheckedOther) || Value > CheckedOther.Value;
 	}
 
@@ -197,240 +197,200 @@ public:
 	template<typename ValueType>
 	bool InvalidOrGreaterOrEqual(const ValueType Other) const
 	{
-		TGuardedSignedInt CheckedOther{ Other };
+		TGuardedInt CheckedOther{ Other };
 		return !ComparisonValid(CheckedOther) || Value >= CheckedOther.Value;
 	}
 
 	// Arithmetic operations
 
 	/** @return The negated value. */
-	TGuardedSignedInt operator-() const
+	TGuardedInt operator-() const
 	{
-		// Unary negation (for two's complement) overflows iff the operand is MinValue.
-		return (bIsValid && Value > MinValue) ? TGuardedSignedInt(-Value) : TGuardedSignedInt();
+		if constexpr (std::is_signed_v<IntType>)
+		{
+			// Unary negation (for two's complement) overflows iff the operand is MinValue.
+			return (bIsValid && Value > MinValue) ? TGuardedInt(-Value) : TGuardedInt();
+		}
+		else
+		{
+			// Negating anything but zero overflows unsigned integers.
+			return (bIsValid && Value == 0) ? TGuardedInt(-Value) : TGuardedInt();
+		}
 	}
 
 	/** @return The sum of the two operands. */
-	TGuardedSignedInt operator +(const TGuardedSignedInt Other) const
+	TGuardedInt operator +(const TGuardedInt Other) const
 	{
 		// Any sum involving an invalid value is invalid.
 		if (!bIsValid || !Other.bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
-		// This follows Hacker's Delight, Chapter 2-12
-		// Signed->unsigned conversion and unsigned addition have defined behavior always
-		const UnsignedType UnsignedA = (UnsignedType)Value;
-		const UnsignedType UnsignedB = (UnsignedType)Other.Value;
-		const UnsignedType UnsignedSum = UnsignedA + UnsignedB;
-
-		// Check for signed overflow.
-		// The underlying logic here is pretty simple: if A and B had opposite signs, their sum can't
-		// overflow. If they had the same sign and the sum has the opposite value in the sign bit, we
-		// had an overflow. (See Hacker's Delight Chapter 2-12 for more details.)
-		if ((UnsignedSum ^ UnsignedA) & (UnsignedSum ^ UnsignedB) & UnsignedMSB)
-		{
-			return TGuardedSignedInt();
-		}
-
-		return TGuardedSignedInt(Value + Other.Value);
+		IntType Result;
+		return FPlatformMath::AddAndCheckForOverflow<IntType>(Value, Other.Value, Result)
+			? TGuardedInt(Result)
+			: TGuardedInt();
 	}
 
 	/** @return The difference between the two operands. */
-	TGuardedSignedInt operator -(const TGuardedSignedInt Other) const
+	TGuardedInt operator -(const TGuardedInt Other) const
 	{
 		// Any difference involving an invalid value is invalid.
 		if (!bIsValid || !Other.bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
-
-		// This follows Hacker's Delight, Chapter 2-12
-		// Signed->unsigned conversion and unsigned subtraction have defined behavior always
-		const UnsignedType UnsignedA = (UnsignedType)Value;
-		const UnsignedType UnsignedB = (UnsignedType)Other.Value;
-		const UnsignedType UnsignedDiff = UnsignedA - UnsignedB;
-
-		// Check for signed overflow.
-		// If A and B have the same sign, the difference can't overflow. Therefore, we test for cases
-		// where the sign bit differs meaning ((UnsignedA ^ UnsignedB) & UnsignedMSB) != 0, and
-		// simultaneously the sign of the difference differs from the sign of the minuend (which should
-		// keep its sign when we're subtracting a value of the opposite sign), meaning
-		// ((UnsignedDiff ^ UnsignedA) & UnsignedMSB) != 0. Combining the two yields:
-		if ((UnsignedA ^ UnsignedB) & (UnsignedDiff ^ UnsignedA) & UnsignedMSB)
-		{
-			return TGuardedSignedInt();
-		}
-
-		return TGuardedSignedInt(Value - Other.Value);
+		
+		IntType Result;
+		return FPlatformMath::SubtractAndCheckForOverflow<IntType>(Value, Other.Value, Result)
+			? TGuardedInt(Result)
+			: TGuardedInt();
 	}
 
 	/** @return The product of the two operands. */
-	TGuardedSignedInt operator *(const TGuardedSignedInt Other) const
+	TGuardedInt operator *(const TGuardedInt Other) const
 	{
 		// Any product involving invalid values is invalid.
 		if (!bIsValid || !Other.bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
-		// Handle the case where the second factor is 0 specially (why will become clear in a minute).
-		if (Other.Value == 0)
-		{
-			// Anything times 0 is 0.
-			return TGuardedSignedInt(0);
-		}
-
-		// The overflow check is annoying and expensive, but the basic idea is fairly simple:
-		// reduce to an unsigned check of the absolute values. (Again the basic algorithm is
-		// in Hacker's Delight, Chapter 2-12).
-		//
-		// We need the absolute value of the product to be <=MaxValue when the result is positive
-		// (signs of factors same) and <= -MinValue = MaxValue + 1 if the result is negative
-		// (signs of factors opposite).
-		UnsignedType UnsignedA = (UnsignedType)Value;
-		UnsignedType UnsignedB = (UnsignedType)Other.Value;
-		bool bSignsDiffer = false;
-
-		// Determine the unsigned absolute values of A and B carefully (note we can't negate signed
-		// Value or Other.Value, because negating MinValue is UB). We can however subtract their
-		// unsigned values from 0 if the original value was less than zero. While doing this, also
-		// keep track of the sign parity.
-		if (Value < 0)
-		{
-			UnsignedA = UnsignedType(0) - UnsignedA;
-			bSignsDiffer = !bSignsDiffer;
-		}
-
-		if (Other.Value < 0)
-		{
-			UnsignedB = UnsignedType(0) - UnsignedB;
-			bSignsDiffer = !bSignsDiffer;
-		}
-
-		// Determine the unsigned product bound we need based on whether the signs were same or different.
-		const UnsignedType ProductBound = UnsignedType(MaxValue) + (bSignsDiffer ? 1 : 0);
-
-		// We're now in the unsigned case, 0 <= UnsignedA, 0 < UnsignedB (we established b != 0), and for
-		// there not to be overflows we need
-		//   a * b <= ProductBound
-		// <=> a <= ProductBound/b
-		// <=> a <= floor(ProductBound/b)   since a is integer
-		return (UnsignedA <= ProductBound / UnsignedB) ? TGuardedSignedInt(Value * Other.Value) : TGuardedSignedInt();
+		IntType Result;
+		return FPlatformMath::MultiplyAndCheckForOverflow<IntType>(Value, Other.Value, Result)
+			? TGuardedInt(Result)
+			: TGuardedInt();
 	}
 
 	/** @return The quotient when dividing *this by Other. */
-	TGuardedSignedInt operator /(const TGuardedSignedInt Other) const
+	TGuardedInt operator /(const TGuardedInt Other) const
 	{
 		// Any quotient involving invalid values is invalid.
 		if (!bIsValid || !Other.bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
 		// Luckily for us, division generally makes things smaller, so there's only two things to watch
 		// out for: division by zero is not allowed, and division of MinValue by -1 would give -MinValue
 		// which overflows. All other combinations are fine.
-		if (Other.Value == 0 || (Value == MinValue && Other.Value == -1))
+		if (Other.Value == 0 || (std::is_signed_v<IntType> && Value == MinValue && Other.Value == -1))
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
-		return TGuardedSignedInt(Value / Other.Value);
+		return TGuardedInt(Value / Other.Value);
 	}
 
 	/** @return The remainder when dividing *this by Other. */
-	TGuardedSignedInt operator %(const TGuardedSignedInt Other) const
+	TGuardedInt operator %(const TGuardedInt Other) const
 	{
 		// Any quotient involving invalid values is invalid.
 		if (!bIsValid || !Other.bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
 		// Same error cases as for division.
-		if (Other.Value == 0 || (Value == MinValue && Other.Value == -1))
+		if (Other.Value == 0 || (std::is_signed_v<IntType> && Value == MinValue && Other.Value == -1))
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
-		return TGuardedSignedInt(Value % Other.Value);
+		return TGuardedInt(Value % Other.Value);
 	}
 
 	/** @return This value bitwise left-shifted by the operand. */
-	TGuardedSignedInt operator <<(const TGuardedSignedInt Other) const
+	TGuardedInt operator <<(const TGuardedInt Other) const
 	{
 		// Any shift involving invalid values is invalid.
 		if (!bIsValid || !Other.bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
 		// Left-shifts by negative values or >= the width of the type are always invalid.
 		if (Other.Value < 0 || Other.Value >= NumBits)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
-		const int ShiftAmount = Other.Value;
+		if constexpr (std::is_signed_v<IntType>)
+		{
+			const int ShiftAmount = Other.Value;
 
-		// Once again, taking our overflow-prone expression and using algebra to find
-		// a form that doesn't overflow:
-		//
-		// MinValue <= a * 2^b <= MaxValue
-		// <=> MinValue * 2^(-b) <= a <= MaxValue * 2^(-b)
-		//
-		// The LHS is exact because MinValue is -2^(NumBits - 1) for two's complement,
-		// and we just ensured that 0 <= b < NumBits (with b integer).
-		//
-		// The RHS has a fractional part whereas a is integer; therefore, we can
-		// substitute floor(MaxValue * 2^(-b)) for the RHS without changing the result.
-		//
-		// And that gives us our test!
-		return ((MinValue >> ShiftAmount) <= Value && Value <= (MaxValue >> ShiftAmount)) ? TGuardedSignedInt(Value << ShiftAmount) : TGuardedSignedInt();
+			// Once again, taking our overflow-prone expression and using algebra to find
+			// a form that doesn't overflow:
+			//
+			// MinValue <= a * 2^b <= MaxValue
+			// <=> MinValue * 2^(-b) <= a <= MaxValue * 2^(-b)
+			//
+			// The LHS is exact because MinValue is -2^(NumBits - 1) for two's complement,
+			// and we just ensured that 0 <= b < NumBits (with b integer).
+			//
+			// The RHS has a fractional part whereas a is integer; therefore, we can
+			// substitute floor(MaxValue * 2^(-b)) for the RHS without changing the result.
+			//
+			// And that gives us our test!
+			return ((MinValue >> ShiftAmount) <= Value && Value <= (MaxValue >> ShiftAmount)) ? TGuardedInt(Value << ShiftAmount) : TGuardedInt();
+		}
+		else
+		{
+			return (static_cast<IntType>(Value << Other.Value) >> Other.Value) == Value
+				? TGuardedInt(static_cast<IntType>(Value << Other.Value))
+				: TGuardedInt();
+		}
 	}
 
 	/** @return This value bitwise right-shifted by the operand. */
-	TGuardedSignedInt operator >>(const TGuardedSignedInt Other) const
+	TGuardedInt operator >>(const TGuardedInt Other) const
 	{
 		// Any shift involving invalid values is invalid.
 		if (!bIsValid || !Other.bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
 		// Right-shifts by negative values or >= the width of the type are always invalid.
 		if (Other.Value < 0 || Other.Value >= NumBits)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
 		// Right-shifts don't have any overflow conditions, so we're good!
-		return TGuardedSignedInt(Value >> Other.Value);
+		return TGuardedInt(Value >> Other.Value);
 	}
 
 	/** @return The absolute value of *this. */
-	TGuardedSignedInt Abs() const
+	TGuardedInt Abs() const
 	{
 		if (!bIsValid)
 		{
-			return TGuardedSignedInt();
+			return TGuardedInt();
 		}
 
-		// Note the absolute value of MinValue overflows, so this is not completely trivial.
-		// Can't just use TGuardedSignedInt(abs(Value)) here!
-		return (Value < 0) ? -*this : *this;
+		if constexpr (std::is_signed_v<IntType>)
+		{
+			// Note the absolute value of MinValue overflows, so this is not completely trivial.
+			// Can't just use TGuardedInt(abs(Value)) here!
+			return (Value < 0) ? -*this : *this;
+		}
+		else
+		{
+			// Abs on unsigned integers is the identity function, and can't overflow.
+			return TGuardedInt(Value);
+		}
 	}
 
 	// Mixed-type operators and assignment operators reduce to the base operators systematically
 #define UE_GUARDED_SIGNED_INT_IMPL_BINARY_OPERATOR(OP) \
 	/* Mixed-type expressions that coerce both operands to guarded ints */ \
-	TGuardedSignedInt operator OP(SignedType InB) const { return *this OP TGuardedSignedInt(InB); } \
-	friend TGuardedSignedInt operator OP(SignedType InA, TGuardedSignedInt InB) { return TGuardedSignedInt(InA) OP InB; } \
+	TGuardedInt operator OP(IntType InB) const { return *this OP TGuardedInt(InB); } \
+	friend TGuardedInt operator OP(IntType InA, TGuardedInt InB) { return TGuardedInt(InA) OP InB; } \
 	/* Assignment operators, direct and mixed */ \
-	TGuardedSignedInt& operator OP##=(TGuardedSignedInt InB) { return *this = *this OP InB; } \
-	TGuardedSignedInt& operator OP##=(SignedType InB) { return *this = *this OP TGuardedSignedInt(InB); } \
+	TGuardedInt& operator OP##=(TGuardedInt InB) { return *this = *this OP InB; } \
+	TGuardedInt& operator OP##=(IntType InB) { return *this = *this OP TGuardedInt(InB); } \
 	/* end */
 
 	UE_GUARDED_SIGNED_INT_IMPL_BINARY_OPERATOR(+)
@@ -444,8 +404,12 @@ public:
 #undef UE_GUARDED_SIGNED_INT_IMPL_BINARY_OPERATOR
 };
 
+/** Legacy alias for the previously signed-integer-only implementation. */
+template<typename SignedType>
+using TGuardedSignedInt = TGuardedInt<SignedType>;
+
 /** Guarded 32-bit integer class. Used to deal with integer data from untrusted sources in size computations etc. */
-using FGuardedInt32 = TGuardedSignedInt<int32>;
+using FGuardedInt32 = TGuardedInt<int32>;
 
 /** Guarded 64-bit integer class. Used to deal with integer data from untrusted sources in size computations etc. */
-using FGuardedInt64 = TGuardedSignedInt<int64>;
+using FGuardedInt64 = TGuardedInt<int64>;

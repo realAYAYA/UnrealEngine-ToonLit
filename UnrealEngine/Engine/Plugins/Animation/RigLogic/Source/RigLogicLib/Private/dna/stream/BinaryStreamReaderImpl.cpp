@@ -21,15 +21,6 @@
 
 namespace dna {
 
-#ifdef __clang__
-    #pragma clang diagnostic push
-    #pragma clang diagnostic ignored "-Wglobal-constructors"
-#endif
-sc::StatusProvider BinaryStreamReaderImpl::status{SignatureMismatchError, VersionMismatchError, InvalidDataError};
-#ifdef __clang__
-    #pragma clang diagnostic pop
-#endif
-
 BinaryStreamReader::~BinaryStreamReader() = default;
 
 BinaryStreamReader* BinaryStreamReader::create(BoundedIOStream* stream,

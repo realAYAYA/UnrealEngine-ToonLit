@@ -106,7 +106,7 @@ float ShadowRayTraceThroughCulledObjects(
 
 		{
 			FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
-			float4x4 TranslatedWorldToVolume = LWCMultiplyTranslation(LWCNegate(PrimaryView.PreViewTranslation), DFObjectData.WorldToVolume);
+			float4x4 TranslatedWorldToVolume = DFFastToTranslatedWorld(DFObjectData.WorldToVolume, PrimaryView.PreViewTranslation);
 
 			float3 VolumeRayStart = mul(float4(TranslatedWorldRayStart, 1), TranslatedWorldToVolume).xyz;
 			float3 VolumeRayEnd = mul(float4(TranslatedWorldRayEnd, 1), TranslatedWorldToVolume).xyz;
@@ -132,7 +132,7 @@ float ShadowRayTraceThroughCulledObjects(
 				FDFAssetData DFAssetData = LoadDFAssetDataHighestResolution(DFObjectData.AssetIndex);
 
 				const uint NumMips = LoadDFAssetData(DFObjectData.AssetIndex, 0).NumMips;
-				const float ExpandSurfaceDistance = DFObjectData.VolumeSurfaceBias * exp2(DF_MAX_NUM_MIPS - NumMips) * (DFObjectData.bMostlyTwoSided ? TwoSidedMeshDistanceBiasScale : 1);
+				const float ExpandSurfaceDistance = DFObjectData.VolumeSurfaceBias * (exp2(DF_MAX_NUM_MIPS - NumMips) + (DFObjectData.bMostlyTwoSided ? TwoSidedMeshDistanceBiasScale - 1 : 0));
 				const float ExpandSurfaceFalloff = 2.0f * ExpandSurfaceDistance;
 				
 				float MaxEncodedDistance = DFAssetData.DistanceFieldToVolumeScaleBias.x + DFAssetData.DistanceFieldToVolumeScaleBias.y;
@@ -336,7 +336,7 @@ float ShadowRayTraceThroughCulledHeightFieldObjects(
 		}
 
 		FHeightfieldObjectData HeightfieldObject = LoadHeightfieldObjectData(ObjectIndex);
-		float4x4 TranslatedWorldToLocal = LWCMultiplyTranslation(LWCNegate(PrimaryView.PreViewTranslation), HeightfieldObject.WorldToLocal);
+		float4x4 TranslatedWorldToLocal = DFFastToTranslatedWorld(HeightfieldObject.WorldToLocal, PrimaryView.PreViewTranslation);
 		float2 HeightFieldSize = HeightfieldObject.SizeScale.xy;
 		float WorldToLocalScale = HeightfieldObject.SizeScale.z;
 

@@ -66,6 +66,12 @@ public:
 		return PixelFormat;
 	}
 
+	/** Get number of components. */
+	uint32 GetComponentDepth() const
+	{
+		return ComponentDepth;
+	}
+
 private:
 	// RAW data of the texture. Mips not supported now
 	void* TextureData = nullptr;
@@ -75,6 +81,9 @@ private:
 	
 	// Height of the texture.
 	uint32_t Height = 0;
+
+	// Number of components
+	uint32 ComponentDepth = 0;
 	
 	// Format in which mip data is stored.
 	EPixelFormat PixelFormat = EPixelFormat::PF_Unknown;

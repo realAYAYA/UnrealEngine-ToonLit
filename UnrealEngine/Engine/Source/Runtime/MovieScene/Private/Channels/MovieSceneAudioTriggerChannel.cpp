@@ -97,6 +97,16 @@ void FMovieSceneAudioTriggerChannel::Optimize(const FKeyDataOptimizationParams& 
 	UE::MovieScene::Optimize(this, InParameters);
 }
 
+FKeyHandle FMovieSceneAudioTriggerChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneAudioTriggerChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
+}
+
 void FMovieSceneAudioTriggerChannel::Offset(FFrameNumber DeltaPosition)
 {
 	GetData().Offset(DeltaPosition);

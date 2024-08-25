@@ -184,12 +184,12 @@ TSharedPtr<IDetailTreeNode> FRCPanelWidgetRegistry::GetStructTreeNode(const TSha
 	return WidgetRegistryUtils::FindNode(Generator->GetRootTreeNodes(), InField, InFindMethod);
 }
 
-void FRCPanelWidgetRegistry::Refresh(UObject* InObject)
+void FRCPanelWidgetRegistry::Refresh(UObject* InObject, bool bForceRefresh)
 {
 	if (TSharedPtr<IPropertyRowGenerator>* Generator = ObjectToRowGenerator.Find({InObject}))
 	{
 		const TArray<TWeakObjectPtr<UObject>>& SelectedObjects = (*Generator)->GetSelectedObjects();
-		if (SelectedObjects.Num() != 1 || SelectedObjects[0] != InObject)
+		if (bForceRefresh || SelectedObjects.Num() != 1 || SelectedObjects[0] != InObject)
 		{
 			(*Generator)->SetObjects({InObject});
 		}

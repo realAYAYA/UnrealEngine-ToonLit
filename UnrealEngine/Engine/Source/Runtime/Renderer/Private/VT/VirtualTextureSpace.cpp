@@ -107,15 +107,15 @@ void FVirtualTextureSpace::FreeVirtualTexture(FAllocatedVirtualTexture* VirtualT
 	Allocator.Free(VirtualTexture);
 }
 
-void FVirtualTextureSpace::InitRHI(FRHICommandListBase&)
+void FVirtualTextureSpace::InitRHI(FRHICommandListBase& RHICmdList)
 {
 	for (uint32 TextureIndex = 0u; TextureIndex < GetNumPageTableTextures(); ++TextureIndex)
 	{
 		FTextureEntry& TextureEntry = PageTable[TextureIndex];
-		TextureEntry.TextureReferenceRHI = RHICreateTextureReference();
+		TextureEntry.TextureReferenceRHI = RHICmdList.CreateTextureReference();
 	}
-	PageTableIndirection.TextureReferenceRHI = RHICreateTextureReference();
-	RHIUpdateTextureReference(PageTableIndirection.TextureReferenceRHI, GBlackUintTexture->TextureRHI);
+	PageTableIndirection.TextureReferenceRHI = RHICmdList.CreateTextureReference();
+	RHICmdList.UpdateTextureReference(PageTableIndirection.TextureReferenceRHI, GBlackUintTexture->TextureRHI);
 }
 
 void FVirtualTextureSpace::ReleaseRHI()

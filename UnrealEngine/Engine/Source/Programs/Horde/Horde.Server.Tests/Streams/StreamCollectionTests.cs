@@ -1,8 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System.Collections.Generic;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
 using Horde.Server.Streams;
-using Horde.Server.Utilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Horde.Server.Tests.Streams
@@ -10,8 +11,8 @@ namespace Horde.Server.Tests.Streams
 	[TestClass]
 	public class StreamCollectionTests : TestSetup
 	{
-		private readonly StreamId _streamId = new ("bogusStreamId");
-		
+		private readonly StreamId _streamId = new("bogusStreamId");
+
 		[TestMethod]
 		public void ValidateUndefinedTemplateIdInTabs()
 		{
@@ -19,10 +20,10 @@ namespace Horde.Server.Tests.Streams
 			{
 				Tabs = new()
 				{
-					new JobsTabConfig { Templates = new List<TemplateId> { new ("foo") }},
-					new JobsTabConfig { Templates = new List<TemplateId> { new ("bar") }}
+					new TabConfig { Templates = new List<TemplateId> { new ("foo") }},
+					new TabConfig { Templates = new List<TemplateId> { new ("bar") }}
 				},
-				Templates = new () { new TemplateRefConfig { Id = new TemplateId("foo") } }
+				Templates = new() { new TemplateRefConfig { Id = new TemplateId("foo") } }
 			};
 
 			Assert.ThrowsException<InvalidStreamException>(() => Horde.Server.Streams.StreamCollection.Validate(_streamId, config));

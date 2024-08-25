@@ -27,6 +27,7 @@ namespace UE::MLDeformer
 		Set("MLDeformer.Timeline.PauseIcon", new MLDEFORMER_IMAGE_BRUSH("Icons/Pause_40x", Icon20x20));
 		Set("MLDeformer.Timeline.TabIcon", new MLDEFORMER_IMAGE_BRUSH("Icons/TimelineTab_40x", Icon16x16));
 		Set("MLDeformer.VizSettings.TabIcon", new MLDEFORMER_IMAGE_BRUSH("Icons/VizSettingsTab_40x", Icon40x40));
+		Set("MLDeformer.Debug.RefreshIcon", new MLDEFORMER_IMAGE_BRUSH("Icons/Refresh_40x", Icon40x40));
 
 		// Colors and sizes.
 		Set("MLDeformer.BaseMesh.WireframeColor", FLinearColor(0.0f, 1.0f, 0.0f));
@@ -37,6 +38,9 @@ namespace UE::MLDeformer
 
 		Set("MLDeformer.MLDeformedMesh.WireframeColor", FLinearColor(1.0f, 0.0f, 0.0f));
 		Set("MLDeformer.MLDeformedMesh.LabelColor", FLinearColor(1.0f, 0.0f, 0.0f));
+
+		Set("MLDeformer.MLCompareMesh.WireframeColor", FLinearColor(1.0f, 0.4f, 0.0f));
+		Set("MLDeformer.MLCompareMesh.LabelColor", FLinearColor(1.0f, 0.4f, 0.0f));
 
 		Set("MLDeformer.GroundTruth.WireframeColor", FLinearColor(0.0f, 0.0f, 1.0f));
 		Set("MLDeformer.GroundTruth.LabelColor", FLinearColor(0.0f, 0.0f, 1.0f));
@@ -59,6 +63,9 @@ namespace UE::MLDeformer
 
 		Set("MLDeformer.InputsWidget.HighlightColor", FLinearColor(0.0f, 1.0f, 0.0f));
 		Set("MLDeformer.InputsWidget.ErrorColor", FLinearColor(1.0f, 0.5f, 0.0f));
+
+		Set("MLDeformer.Debug.ActiveDebugColor", FLinearColor(0.0f, 1.0f, 0.0f));
+		Set("MLDeformer.Debug.EditorSelectedMarkColor", FLinearColor(1.0f, 1.0f, 0.0f));
 
 		FSlateStyleRegistry::RegisterSlateStyle(*this);
 	}

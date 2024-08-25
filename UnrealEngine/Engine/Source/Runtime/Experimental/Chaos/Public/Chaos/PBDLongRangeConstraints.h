@@ -22,6 +22,25 @@ public:
 	}
 
 	FPBDLongRangeConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TConstArrayView<TTuple<int32, int32, FRealSingle>>>& InTethers,
+		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+		const FCollectionPropertyConstFacade& PropertyCollection,
+		FSolverReal MeshScale)
+		: FPBDLongRangeConstraintsBase(
+			Particles,
+			InTethers,
+			WeightMaps.FindRef(GetTetherStiffnessString(PropertyCollection, TetherStiffnessName.ToString())),
+			WeightMaps.FindRef(GetTetherScaleString(PropertyCollection, TetherScaleName.ToString())),
+			FSolverVec2(GetWeightedFloatTetherStiffness(PropertyCollection, 1.f)),
+			FSolverVec2(GetWeightedFloatTetherScale(PropertyCollection, 1.f)),  // Scale clamping done in constructor
+			FPBDStiffness::DefaultPBDMaxStiffness,
+			MeshScale)
+		, TetherStiffnessIndex(PropertyCollection)
+		, TetherScaleIndex(PropertyCollection)
+	{}
+
+	FPBDLongRangeConstraints(
 		const FSolverParticles& Particles,
 		const int32 InParticleOffset,
 		const int32 InParticleCount,
@@ -108,7 +127,8 @@ public:
 		SetProperties(PropertyCollection, TMap<FString, TConstArrayView<FRealSingle>>(), (FSolverReal)1.);
 	}
 
-	CHAOS_API void Apply(FSolverParticles& Particles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const;
 
 private:
 	using Base::MinTetherScale;

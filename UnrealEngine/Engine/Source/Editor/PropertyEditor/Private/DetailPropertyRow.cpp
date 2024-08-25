@@ -15,6 +15,8 @@
 #include "Modules/ModuleManager.h"
 #include "Widgets/Layout/SSpacer.h"
 
+#include "UObject/PropertyOptional.h"
+
 #define LOCTEXT_NAMESPACE	"DetailPropertyRow"
 
 FDetailPropertyRow::FDetailPropertyRow(TSharedPtr<FPropertyNode> InPropertyNode, TSharedRef<FDetailCategoryImpl> InParentCategory, TSharedPtr<FComplexPropertyNode> InExternalRootNode)
@@ -26,6 +28,40 @@ FDetailPropertyRow::FDetailPropertyRow(TSharedPtr<FPropertyNode> InPropertyNode,
 	, bForceAutoExpansion( false )
 	, bCachedCustomTypeInterface(false)
 {
+	// Is this a set optional property?
+	TSharedPtr<FPropertyNode> ValueNode = PropertyNode.IsValid() ? PropertyNode->GetOptionalValueNode() : nullptr;
+	if (ValueNode.IsValid())
+	{
+		// If we are selecting multiple options with different states (ie set/unset) dont use the
+		// Value node so optional multi-select logic is displayed (see SPropertyEditorOptional.h).
+		uint8 MixedValues = 0;
+		FProperty* MyProperty = PropertyNode->GetProperty();
+		if (FOptionalProperty* OptionalProperty = CastField<FOptionalProperty>(MyProperty))
+		{
+			void* Optional = NULL;
+			FReadAddressList Addresses;
+			if (PropertyNode->GetReadAddress(Addresses))
+			{
+				for (int i = 0; i < Addresses.Num(); i++)
+				{
+					Optional = Addresses.GetAddress(i);
+					MixedValues |= OptionalProperty->IsSet(Optional) ? 1 : 2;
+					if (MixedValues == 3)
+					{
+						break;
+					}
+				}
+			}
+		}
+
+		if (MixedValues != 3)
+		{
+			// Swap our property node with the value node.
+			// Note: We still use the display name of the option for this row. 
+			PropertyNode = ValueNode;
+		}
+	}
+
 	PropertyHandle = InParentCategory->GetParentLayoutImpl()->GetPropertyHandle(PropertyNode);
 
 	if (PropertyNode.IsValid())
@@ -39,7 +75,7 @@ FDetailPropertyRow::FDetailPropertyRow(TSharedPtr<FPropertyNode> InPropertyNode,
 			MakePropertyEditor(PropertyNodeRef, Utilities, PropertyEditor);
 		}
 		
-		if (PropertyNode->AsObjectNode() && ExternalRootNode.IsValid())
+		if (PropertyNode->AsComplexNode() && ExternalRootNode.IsValid()) // AsComplexNode works both for objects and structs
 		{
 			// We are showing an entirely different object inline.  Generate a layout for it now.
 			if (IDetailsViewPrivate* DetailsView = InParentCategory->GetDetailsView())
@@ -106,6 +142,12 @@ IDetailPropertyRow& FDetailPropertyRow::EditCondition( TAttribute<bool> EditCond
 	return *this;
 }
 
+IDetailPropertyRow& FDetailPropertyRow::EditConditionHides(bool bEditConditionHidesValue)
+{
+	bCustomEditConditionHides = bEditConditionHidesValue;
+	return *this;
+}
+
 IDetailPropertyRow& FDetailPropertyRow::IsEnabled( TAttribute<bool> InIsEnabled )
 {
 	CustomIsEnabledAttrib = InIsEnabled;
@@ -134,6 +176,15 @@ IDetailPropertyRow& FDetailPropertyRow::DragDropHandler(TSharedPtr<IDetailDragDr
 {
 	CustomDragDropHandler = InDragDropHandler;
 	return *this;
+}
+
+bool FDetailPropertyRow::IsExpanded() const
+{
+	if (GetPropertyNode())
+	{
+		return GetPropertyNode()->HasNodeFlags(EPropertyNodeFlags::Expanded);
+	}
+	return false;
 }
 
 void FDetailPropertyRow::GetDefaultWidgets( TSharedPtr<SWidget>& OutNameWidget, TSharedPtr<SWidget>& OutValueWidget, bool bAddWidgetDecoration )
@@ -175,8 +226,7 @@ bool FDetailPropertyRow::ShowOnlyChildren() const
 
 bool FDetailPropertyRow::RequiresTick() const
 {
-	return PropertyVisibility.IsBound() || 
-		(PropertyEditor.IsValid() && PropertyEditor->IsOnlyVisibleWhenEditConditionMet());
+	return PropertyVisibility.IsBound() || IsOnlyVisibleWhenEditConditionMet();
 }
 
 FDetailWidgetRow& FDetailPropertyRow::CustomWidget( bool bShowChildren )
@@ -539,7 +589,7 @@ void FDetailPropertyRow::MakeExternalPropertyRowCustomization(TSharedPtr<FStruct
 	InitParams.ArrayOffset = 0;
 	InitParams.ArrayIndex = INDEX_NONE;
 	InitParams.bForceHiddenPropertyVisibility = Parameters.ShouldForcePropertyVisible() || FPropertySettings::Get().ShowHiddenProperties();
-	InitParams.bCreateCategoryNodes = false;
+	InitParams.bCreateCategoryNodes = PropertyName == NAME_None;
 	InitParams.bAllowChildren = false;
 
 	Parameters.OverrideAllowChildren(InitParams.bAllowChildren);
@@ -551,20 +601,13 @@ void FDetailPropertyRow::MakeExternalPropertyRowCustomization(TSharedPtr<FStruct
 
 	if (PropertyName != NAME_None)
 	{
-		RootPropertyNode->RebuildChildren();
-
-		for (int32 ChildIdx = 0; ChildIdx < RootPropertyNode->GetNumChildNodes(); ++ChildIdx)
+		TSharedPtr<FPropertyNode> PropertyNode = RootPropertyNode->GenerateSingleChild(PropertyName);
+		if (PropertyNode.IsValid())
 		{
-			TSharedPtr< FPropertyNode > PropertyNode = RootPropertyNode->GetChildNode(ChildIdx);
-			if (FProperty* Property = PropertyNode->GetProperty())
-			{
-				if (Property->GetFName() == PropertyName)
-				{
-					OutCustomization.PropertyRow = MakeShareable(new FDetailPropertyRow(PropertyNode, ParentCategory, RootPropertyNode));
-					OutCustomization.PropertyRow->SetCustomExpansionId(Parameters.GetUniqueId());
-					break;
-				}
-			}
+			PropertyNode->RebuildChildren();
+
+			OutCustomization.PropertyRow = MakeShared<FDetailPropertyRow>(PropertyNode, ParentCategory, RootPropertyNode);
+			OutCustomization.PropertyRow->SetCustomExpansionId(Parameters.GetUniqueId());
 		}
 	}
 	else
@@ -596,6 +639,47 @@ void FDetailPropertyRow::MakeExternalPropertyRowCustomization(TSharedPtr<FStruct
 	}
 }
 
+void FDetailPropertyRow::MakeExternalPropertyRowCustomization(TSharedPtr<IStructureDataProvider> StructDataProvider, FName PropertyName, TSharedRef<FDetailCategoryImpl> ParentCategory, struct FDetailLayoutCustomization& OutCustomization, const FAddPropertyParams& Parameters)
+{
+	TSharedRef<FStructurePropertyNode> RootPropertyNode = MakeShared<FStructurePropertyNode>();
+
+	//SET
+	RootPropertyNode->SetStructure(StructDataProvider);
+
+	FPropertyNodeInitParams InitParams;
+	InitParams.ParentNode = nullptr;
+	InitParams.Property = nullptr;
+	InitParams.ArrayOffset = 0;
+	InitParams.ArrayIndex = INDEX_NONE;
+	InitParams.bAllowChildren = true;
+	InitParams.bForceHiddenPropertyVisibility = Parameters.ShouldForcePropertyVisible() || FPropertySettings::Get().ShowHiddenProperties();
+	InitParams.bCreateCategoryNodes = PropertyName == NAME_None;
+
+	Parameters.OverrideAllowChildren(InitParams.bAllowChildren);
+	Parameters.OverrideCreateCategoryNodes(InitParams.bCreateCategoryNodes);
+
+	RootPropertyNode->InitNode(InitParams);
+
+	ParentCategory->GetParentLayoutImpl()->AddExternalRootPropertyNode(RootPropertyNode);
+
+	if (PropertyName != NAME_None)
+	{
+		TSharedPtr<FPropertyNode> PropertyNode = RootPropertyNode->GenerateSingleChild(PropertyName);
+		if (PropertyNode.IsValid())
+		{
+			PropertyNode->RebuildChildren();
+
+			OutCustomization.PropertyRow = MakeShared<FDetailPropertyRow>(PropertyNode, ParentCategory, RootPropertyNode);
+			OutCustomization.PropertyRow->SetCustomExpansionId(Parameters.GetUniqueId());
+		}
+	}
+	else
+	{
+		OutCustomization.PropertyRow = MakeShared<FDetailPropertyRow>(RootPropertyNode, ParentCategory, RootPropertyNode);
+		OutCustomization.PropertyRow->SetCustomExpansionId(Parameters.GetUniqueId());
+	}
+}
+
 void FDetailPropertyRow::MakeExternalPropertyRowCustomization(const TArray<UObject*>& InObjects, FName PropertyName, TSharedRef<FDetailCategoryImpl> ParentCategory, struct FDetailLayoutCustomization& OutCustomization, const FAddPropertyParams& Parameters)
 {
 	TSharedRef<FObjectPropertyNode> RootPropertyNode = MakeShared<FObjectPropertyNode>();
@@ -619,15 +703,24 @@ void FDetailPropertyRow::MakeExternalPropertyRowCustomization(const TArray<UObje
 
 	RootPropertyNode->InitNode(InitParams);
 
-	ParentCategory->GetParentLayoutImpl()->AddExternalRootPropertyNode(RootPropertyNode);
 
 	if (PropertyName != NAME_None)
 	{
 		TSharedPtr<FPropertyNode> PropertyNode = RootPropertyNode->GenerateSingleChild(PropertyName);
 		if(PropertyNode.IsValid())
 		{
+			// This is useless as PropertyNode should already be in the child nodes
 			RootPropertyNode->AddChildNode(PropertyNode);
 
+			if (InitParams.bCreateCategoryNodes)
+			{
+				PropertyNode->SetNodeFlags(EPropertyNodeFlags::ShowCategories, true);
+			}
+			else
+			{
+				PropertyNode->SetNodeFlags(EPropertyNodeFlags::ShowCategories, false);
+			}
+			
 			PropertyNode->RebuildChildren();
 
 			OutCustomization.PropertyRow = MakeShared<FDetailPropertyRow>(PropertyNode, ParentCategory, RootPropertyNode);
@@ -639,13 +732,19 @@ void FDetailPropertyRow::MakeExternalPropertyRowCustomization(const TArray<UObje
 		OutCustomization.PropertyRow = MakeShared<FDetailPropertyRow>(RootPropertyNode, ParentCategory, RootPropertyNode);
 		OutCustomization.PropertyRow->SetCustomExpansionId(Parameters.GetUniqueId());
 	}
+	
+	ParentCategory->GetParentLayoutImpl()->AddExternalRootPropertyNode(RootPropertyNode);
 }
 
 EVisibility FDetailPropertyRow::GetPropertyVisibility() const
 {
-	if (PropertyEditor.IsValid() && PropertyEditor->IsOnlyVisibleWhenEditConditionMet() && !PropertyEditor->IsEditConditionMet())
+	if (IsOnlyVisibleWhenEditConditionMet() && !IsEditConditionMet())
 	{
 		return EVisibility::Collapsed;
+	}
+	else if (CustomPropertyWidget.IsValid() && CustomPropertyWidget->VisibilityAttr.IsBound())
+	{
+		return CustomPropertyWidget->VisibilityAttr.Get();
 	}
 
 	return PropertyVisibility.Get();
@@ -661,20 +760,32 @@ bool FDetailPropertyRow::GetEnabledState() const
 	bool Result = IsParentEnabled.Get(true);
 
 	Result = Result && CustomIsEnabledAttrib.Get(true);
+	Result = Result && IsEditConditionMet();
 
+	return Result;
+}
+
+bool FDetailPropertyRow::IsEditConditionMet() const
+{
 	if (HasEditCondition())
 	{
 		if (CustomEditConditionValue.IsSet())
 		{
-			Result = Result && CustomEditConditionValue.Get();
+			return CustomEditConditionValue.Get();
 		}
 		else if (PropertyEditor.IsValid())
 		{
-			Result = Result && PropertyEditor->IsEditConditionMet();
+			return PropertyEditor->IsEditConditionMet();
 		}
 	}
 
-	return Result;
+	// Default to True, matching the default output of FPropertyNode::IsEditConditionMet().
+	return true;
+}
+
+bool FDetailPropertyRow::IsOnlyVisibleWhenEditConditionMet() const
+{
+	return (PropertyEditor.IsValid() && PropertyEditor->IsOnlyVisibleWhenEditConditionMet()) || (bCustomEditConditionHides && HasEditCondition());
 }
 
 TSharedPtr<IPropertyTypeCustomization>& FDetailPropertyRow::GetTypeInterface()
@@ -805,6 +916,17 @@ void FDetailPropertyRow::MakeNameOrKeyWidget( FDetailWidgetRow& Row, const TShar
 				.ShowPropertyButtons(false);
 		}
 
+	}
+	else if (PropertyNode->IsOptionalValueNode())
+	{
+		TSharedRef<FPropertyEditor> ParentEditor = FPropertyEditor::Create(
+			PropertyNode->GetParentNode()->AsShared(), 
+			ParentCategory.Pin()->GetParentLayoutImpl()->GetPropertyUtilities()
+		);
+
+		NameWidget = 
+			SNew( SPropertyNameWidget, ParentEditor )
+			.IsEnabled( IsEnabledAttrib );
 	}
 	else if (InCustomRow.IsValid())
 	{

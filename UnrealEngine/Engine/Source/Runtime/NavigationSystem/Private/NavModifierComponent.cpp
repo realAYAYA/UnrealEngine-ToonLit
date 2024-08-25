@@ -123,9 +123,72 @@ void UNavModifierComponent::PopulateComponentBounds(FTransform InParentTransform
 	}
 }
 
+void UNavModifierComponent::CalculateBounds() const
+{
+	const AActor* MyOwner = GetOwner();
+	if (!MyOwner)
+	{
+		return;
+	}
+
+	Bounds = FBox(ForceInit);
+    ComponentBounds.Reset();
+    for (UActorComponent* Component : MyOwner->GetComponents())
+    {
+    	UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component);
+    	if (PrimComp && PrimComp->IsRegistered() && PrimComp->IsCollisionEnabled() && PrimComp->CanEverAffectNavigation())
+    	{
+    		UBodySetup* BodySetup = PrimComp->GetBodySetup();
+    		if (BodySetup)
+    		{
+    			Bounds += PrimComp->Bounds.GetBox();
+    				
+    			const FTransform& ParentTM = PrimComp->GetComponentTransform();
+    			PopulateComponentBounds(ParentTM, *BodySetup);
+    		}
+    		else if (const UGeometryCollectionComponent* GeometryCollection = Cast<UGeometryCollectionComponent>(PrimComp))
+    		{
+    			// If it's a GC, use the bodySetups from the proxyMeshes.
+    			if (const TObjectPtr<const UGeometryCollection> RestCollection = GeometryCollection->RestCollection)
+    			{
+    				Bounds += GeometryCollection->Bounds.GetBox();
+
+    				for (const TObjectPtr<UStaticMesh>& ProxyMesh : RestCollection->RootProxyData.ProxyMeshes)
+    				{
+    					if (ProxyMesh != nullptr)
+    					{
+    						const UBodySetup* Body = ProxyMesh->GetBodySetup();
+    						if (Body)
+    						{
+    							const FTransform& ParentTM = PrimComp->GetComponentTransform();
+    							PopulateComponentBounds(ParentTM, *Body);	
+    						}
+    					}
+    				}
+    			}
+    		}	
+    	}
+    }
+
+    if (ComponentBounds.Num() == 0)
+    {
+    	Bounds = FBox::BuildAABB(MyOwner->GetActorLocation(), FailsafeExtent);
+    	ComponentBounds.Add(FRotatedBox(Bounds, MyOwner->GetActorQuat()));
+    }
+
+    for (int32 Idx = 0; Idx < ComponentBounds.Num(); Idx++)
+    {
+    	const FVector BoxOrigin = ComponentBounds[Idx].Box.GetCenter();
+    	const FVector BoxExtent = ComponentBounds[Idx].Box.GetExtent();
+
+    	const FVector NavModBoxOrigin = FTransform(ComponentBounds[Idx].Quat).InverseTransformPosition(BoxOrigin);
+    	ComponentBounds[Idx].Box = FBox::BuildAABB(NavModBoxOrigin, BoxExtent);
+    }
+}
+
 void UNavModifierComponent::CalcAndCacheBounds() const
 {
-	AActor* MyOwner = GetOwner();
+	const AActor* MyOwner = GetOwner();
 	if (MyOwner)
 	{
 		CachedTransform = MyOwner->GetActorTransform();
@@ -139,61 +202,9 @@ void UNavModifierComponent::CalcAndCacheBounds() const
 			// We're filtering for nav relevancy in OnTransformUpdated.
 			TransformUpdateHandle = MyOwner->GetRootComponent()->TransformUpdated.AddUObject(const_cast<UNavModifierComponent*>(this), &UNavModifierComponent::OnTransformUpdated);
 		}
-
-		Bounds = FBox(ForceInit);
-		ComponentBounds.Reset();
-		for (UActorComponent* Component : MyOwner->GetComponents())
-		{
-			UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component);
-			if (PrimComp && PrimComp->IsRegistered() && PrimComp->IsCollisionEnabled() && PrimComp->CanEverAffectNavigation())
-			{
-				UBodySetup* BodySetup = PrimComp->GetBodySetup();
-				if (BodySetup)
-				{
-					Bounds += PrimComp->Bounds.GetBox();
-					
-					const FTransform& ParentTM = PrimComp->GetComponentTransform();
-					PopulateComponentBounds(ParentTM, *BodySetup);
-				}
-				else if (const UGeometryCollectionComponent* GeometryCollection = Cast<UGeometryCollectionComponent>(PrimComp))
-				{
-					// If it's a GC, use the bodySetups from the proxyMeshes.
-					if (const TObjectPtr<const UGeometryCollection> RestCollection = GeometryCollection->RestCollection)
-					{
-						Bounds += GeometryCollection->Bounds.GetBox();
-
-						for (const TObjectPtr<UStaticMesh> ProxyMesh : RestCollection->RootProxyData.ProxyMeshes)
-						{
-							if (ProxyMesh != nullptr)
-							{
-								const UBodySetup* Body = ProxyMesh->GetBodySetup();
-								if (Body)
-								{
-									const FTransform& ParentTM = PrimComp->GetComponentTransform();
-									PopulateComponentBounds(ParentTM, *Body);	
-								}
-							}
-						}
-					}
-				}	
-			}
-		}
-
-		if (ComponentBounds.Num() == 0)
-		{
-			Bounds = FBox::BuildAABB(MyOwner->GetActorLocation(), FailsafeExtent);
-			ComponentBounds.Add(FRotatedBox(Bounds, MyOwner->GetActorQuat()));
-		}
-
-		for (int32 Idx = 0; Idx < ComponentBounds.Num(); Idx++)
-		{
-			const FVector BoxOrigin = ComponentBounds[Idx].Box.GetCenter();
-			const FVector BoxExtent = ComponentBounds[Idx].Box.GetExtent();
-
-			const FVector NavModBoxOrigin = FTransform(ComponentBounds[Idx].Quat).InverseTransformPosition(BoxOrigin);
-			ComponentBounds[Idx].Box = FBox::BuildAABB(NavModBoxOrigin, BoxExtent);
-		}
 	}
+
+	CalculateBounds();
 
 	UE_SUPPRESS(LogNavigation, VeryVerbose,
 	{

@@ -8,6 +8,7 @@
 const TCHAR* UInterchangeShaderPortsAPI::InputPrefix = TEXT("Inputs");
 const TCHAR* UInterchangeShaderPortsAPI::InputSeparator = TEXT(":");
 const TCHAR* UInterchangeShaderPortsAPI::OutputByIndex = TEXT("__ByIndex__");
+const TCHAR* UInterchangeShaderPortsAPI::ParameterSuffix = TEXT("Parameter");
 
 FString UInterchangeShaderPortsAPI::MakeInputConnectionKey(const FString& InputName)
 {
@@ -33,6 +34,18 @@ FString UInterchangeShaderPortsAPI::MakeInputValueKey(const FString& InputName)
 	return StringBuilder.ToString();
 }
 
+FString UInterchangeShaderPortsAPI::MakeInputParameterKey(const FString& InputName)
+{
+	TStringBuilder<128> StringBuilder;
+	StringBuilder.Append(InputPrefix);
+	StringBuilder.Append(InputSeparator);
+	StringBuilder.Append(InputName);
+	StringBuilder.Append(InputSeparator);
+	StringBuilder.Append(ParameterSuffix);
+
+	return StringBuilder.ToString();
+}
+
 FString UInterchangeShaderPortsAPI::MakeInputName(const FString& InputKey)
 {
 	FString InputName;
@@ -46,11 +59,20 @@ FString UInterchangeShaderPortsAPI::MakeInputName(const FString& InputKey)
 
 bool UInterchangeShaderPortsAPI::IsAnInput(const FString& AttributeKey)
 {
-	TStringBuilder<128> StringBuilder;
-	StringBuilder.Append(InputPrefix);
-	StringBuilder.Append(InputSeparator);
+	TStringBuilder<128> PrefixStringBuilder;
+	PrefixStringBuilder.Append(InputPrefix);
+	PrefixStringBuilder.Append(InputSeparator);
 
-	return AttributeKey.StartsWith(StringBuilder.ToString());
+	return AttributeKey.StartsWith(PrefixStringBuilder.ToString());
+}
+
+bool UInterchangeShaderPortsAPI::IsAParameter(const FString& AttributeKey)
+{
+	TStringBuilder<128> StringBuilder;
+	StringBuilder.Append(InputSeparator);
+	StringBuilder.Append(ParameterSuffix);
+
+	return AttributeKey.EndsWith(StringBuilder.ToString());
 }
 
 bool UInterchangeShaderPortsAPI::HasInput(const UInterchangeBaseNode* InterchangeNode, const FName& InInputName)
@@ -67,6 +89,12 @@ bool UInterchangeShaderPortsAPI::HasInput(const UInterchangeBaseNode* Interchang
 	}
 
 	return false;
+}
+
+bool UInterchangeShaderPortsAPI::HasParameter(const UInterchangeBaseNode* InterchangeNode, const FName& InInputName)
+{
+	FString ParameterKey = MakeInputParameterKey(InInputName.ToString());
+	return InterchangeNode->HasAttribute(UE::Interchange::FAttributeKey(ParameterKey));
 }
 
 void UInterchangeShaderPortsAPI::GatherInputs(const UInterchangeBaseNode* InterchangeNode, TArray<FString>& OutInputNames)
@@ -112,9 +140,16 @@ bool UInterchangeShaderPortsAPI::ConnectOuputToInputByIndex(UInterchangeBaseNode
 	return InterchangeNode->AddStringAttribute(MakeInputConnectionKey(InputName), StringBuilder.ToString());
 }
 
-UE::Interchange::EAttributeTypes UInterchangeShaderPortsAPI::GetInputType(const UInterchangeBaseNode* InterchangeNode, const FString& InputName)
+UE::Interchange::EAttributeTypes UInterchangeShaderPortsAPI::GetInputType(const UInterchangeBaseNode* InterchangeNode, const FString& InputName, bool bIsAParameter /*= false*/)
 {
-	return InterchangeNode->GetAttributeType(UE::Interchange::FAttributeKey(MakeInputValueKey(InputName)));
+	if (bIsAParameter)
+	{
+		return InterchangeNode->GetAttributeType(UE::Interchange::FAttributeKey(MakeInputParameterKey(InputName)));
+	}
+	else
+	{
+		return InterchangeNode->GetAttributeType(UE::Interchange::FAttributeKey(MakeInputValueKey(InputName)));
+	}
 }
 
 bool UInterchangeShaderPortsAPI::GetInputConnection(const UInterchangeBaseNode* InterchangeNode, const FString& InputName, FString& OutExpressionUid, FString& OutputName)
@@ -178,6 +213,51 @@ FString UInterchangeShaderNode::GetTypeName() const
 {
 	const FString TypeName = TEXT("ShaderNode");
 	return TypeName;
+}
+
+bool UInterchangeShaderNode::AddFloatInput(const FString& InputName, const float& AttributeValue, bool bIsAParameter /*= false*/)
+{
+	bool bResult;
+	if (bIsAParameter)
+	{
+		bResult = AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(InputName), AttributeValue);
+	}
+	else
+	{
+		bResult = AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputName), AttributeValue);
+	}
+
+	return bResult;
+}
+
+bool UInterchangeShaderNode::AddLinearColorInput(const FString& InputName, const FLinearColor& AttributeValue, bool bIsAParameter /*= false*/)
+{
+	bool bResult;
+	if (bIsAParameter)
+	{
+		bResult = AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(InputName), AttributeValue);
+	}
+	else
+	{
+		bResult = AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputName), AttributeValue);
+	}
+
+	return bResult;
+}
+
+bool UInterchangeShaderNode::AddStringInput(const FString& InputName, const FString& AttributeValue, bool bIsAParameter)
+{
+	bool bResult;
+	if (bIsAParameter)
+	{
+		bResult = AddStringAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(InputName), AttributeValue);
+	}
+	else
+	{
+		bResult = AddStringAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputName), AttributeValue);
+	}
+
+	return bResult;
 }
 
 bool UInterchangeShaderNode::GetCustomShaderType(FString& AttributeValue) const
@@ -262,6 +342,16 @@ bool UInterchangeShaderGraphNode::GetCustomScreenSpaceReflections(bool& Attribut
 bool UInterchangeShaderGraphNode::SetCustomScreenSpaceReflections(const bool& AttributeValue)
 {
 	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(ScreenSpaceReflections, bool);
+}
+
+bool UInterchangeShaderGraphNode::GetCustomBlendMode(int& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(BlendMode, int);
+}
+
+bool UInterchangeShaderGraphNode::SetCustomBlendMode(int AttributeValue)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(BlendMode, int);
 }
 
 FString UInterchangeFunctionCallShaderNode::GetTypeName() const

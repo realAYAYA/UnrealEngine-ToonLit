@@ -23,6 +23,7 @@
 class UControlRig;
 class FControlRigEditMode;
 class UControlRigPoseAsset;
+class FControlRigEditModeToolkit;
 
 namespace ESelectedControlAsset
 {
@@ -43,7 +44,7 @@ public:
 	SLATE_BEGIN_ARGS(SControlRigBaseListWidget)
 
 	{}
-
+	SLATE_ARGUMENT(TWeakPtr<FControlRigEditModeToolkit>, InSharedToolkit)
 	SLATE_END_ARGS()
 public:
 	void Construct(const FArguments& InArgs);
@@ -133,4 +134,5 @@ private:
 	/** Utility function to display notifications to the user */
 	void NotifyUser(FNotificationInfo& NotificationInfo);
 
+	TWeakPtr<FControlRigEditModeToolkit> WeakToolkit;
 };

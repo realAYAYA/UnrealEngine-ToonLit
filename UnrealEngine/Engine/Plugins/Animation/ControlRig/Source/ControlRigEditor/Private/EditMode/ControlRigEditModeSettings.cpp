@@ -17,8 +17,7 @@ void UControlRigEditModeSettings::PostEditChangeProperty(struct FPropertyChanged
 #if WITH_EDITOR
 	if (PropertyChangedEvent.Property && PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(UControlRigEditModeSettings, GizmoScale))
 	{
-		FEditorModeTools& Tools = GLevelEditorModeTools();
-		Tools.SetWidgetScale(GizmoScale);
+		GizmoScaleDelegate.Broadcast(GizmoScale);
 	}
 #endif
 	if (PropertyChangedEvent.ChangeType != EPropertyChangeType::Interactive)
@@ -31,8 +30,7 @@ void UControlRigEditModeSettings::PostEditChangeProperty(struct FPropertyChanged
 #if WITH_EDITOR
 void UControlRigEditModeSettings::PostEditUndo()
 {
-	FEditorModeTools& Tools = GLevelEditorModeTools();
-	Tools.SetWidgetScale(GizmoScale);
+	GizmoScaleDelegate.Broadcast(GizmoScale);
 }
 #endif
 

@@ -1,11 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CoreMinimal.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/SoftObjectPtr.h"
-#include "UObject/PropertyPortFlags.h"
 #include "UObject/UnrealType.h"
+
 #include "UObject/LinkerLoad.h"
+#include "UObject/SoftObjectPtr.h"
+#if WITH_EDITOR
+#include "Misc/EditorPathHelper.h"
+#endif
 
 /*-----------------------------------------------------------------------------
 	FSoftObjectProperty.
@@ -27,6 +28,19 @@ FString FSoftObjectProperty::GetCPPTypeCustom(FString* ExtendedTypeText, uint32 
 	ensure(!InnerNativeTypeName.IsEmpty());
 	return FString::Printf(TEXT("TSoftObjectPtr<%s>"), *InnerNativeTypeName);
 }
+
+FString FSoftObjectProperty::GetCPPType(FString* ExtendedTypeText, uint32 CPPExportFlags) const
+{
+	if (ensureMsgf(PropertyClass, TEXT("Soft object property missing PropertyClass: %s"), *GetFullNameSafe(this)))
+	{
+		return Super::GetCPPType(ExtendedTypeText, CPPExportFlags);
+	}
+	else
+	{
+		return TEXT("TSoftObjectPtr<UObject>");
+	}
+}
+
 FString FSoftObjectProperty::GetCPPMacroType( FString& ExtendedTypeText ) const
 {
 	ExtendedTypeText = FString::Printf(TEXT("TSoftObjectPtr<%s%s>"), PropertyClass->GetPrefixCPP(), *PropertyClass->GetName());
@@ -116,8 +130,13 @@ void FSoftObjectProperty::ExportText_Internal( FString& ValueStr, const void* Pr
 
 	if (Object)
 	{
+#if WITH_EDITOR
+		// Use object in case name has changed. Export editor path if feature is enabled.
+		SoftObjectPath = FEditorPathHelper::GetEditorPathFromReferencer(Object, Parent);
+#else
 		// Use object in case name has changed.
 		SoftObjectPath = FSoftObjectPath(Object);
+#endif
 	}
 	else
 	{
@@ -146,6 +165,17 @@ const TCHAR* FSoftObjectProperty::ImportText_Internal( const TCHAR* InBuffer, vo
 
 	if (bImportTextSuccess)
 	{
+#if WITH_EDITOR
+		// If EditorPath feature is enabled. Make sure we import a proper Editor Path if Object has a EditorPathOwner
+		if (FEditorPathHelper::IsEnabled())
+		{
+			if (UObject* Object = SoftObjectPath.ResolveObject())
+			{
+				SoftObjectPath = FEditorPathHelper::GetEditorPathFromReferencer(Object, Parent);
+			}
+		}
+#endif
+
 		if (PropertyPointerType == EPropertyPointerType::Container && HasSetter())
 		{
 			FSoftObjectPtr SoftObjectPtr(SoftObjectPath);
@@ -209,20 +239,24 @@ EConvertFromTypeResult FSoftObjectProperty::ConvertFromType(const FPropertyTag& 
 		FSerializedPropertyScope SerializedProperty(Archive, this);
 		return PropertyValue->GetUniqueID().SerializeFromMismatchedTag(Tag, Slot) ? EConvertFromTypeResult::Converted : EConvertFromTypeResult::UseSerializeItem;
 	}
-	else if (Tag.Type == NAME_StructProperty && (Tag.StructName == NAME_SoftObjectPath || Tag.StructName == NAME_SoftClassPath || Tag.StructName == NAME_StringAssetReference || Tag.StructName == NAME_StringClassReference))
+	else if (Tag.Type == NAME_StructProperty)
 	{
-		// This property used to be a FSoftObjectPath but is now a TSoftObjectPtr<Foo>
-		FSoftObjectPath PreviousValue;
-		// explicitly call Serialize to ensure that the various delegates needed for cooking are fired
-		FSerializedPropertyScope SerializedProperty(Archive, this);
-		PreviousValue.Serialize(Slot);
+		const FName StructName = Tag.GetType().GetParameterName(0);
+		if (StructName == NAME_SoftObjectPath || StructName == NAME_SoftClassPath || StructName == NAME_StringAssetReference || StructName == NAME_StringClassReference)
+		{
+			// This property used to be a FSoftObjectPath but is now a TSoftObjectPtr<Foo>
+			FSoftObjectPath PreviousValue;
+			// explicitly call Serialize to ensure that the various delegates needed for cooking are fired
+			FSerializedPropertyScope SerializedProperty(Archive, this);
+			PreviousValue.Serialize(Slot);
 
-		// now copy the value into the object's address space
-		FSoftObjectPtr PreviousValueSoftObjectPtr;
-		PreviousValueSoftObjectPtr = PreviousValue;
-		SetPropertyValue_InContainer(Data, PreviousValueSoftObjectPtr, Tag.ArrayIndex);
+			// now copy the value into the object's address space
+			FSoftObjectPtr PreviousValueSoftObjectPtr;
+			PreviousValueSoftObjectPtr = PreviousValue;
+			SetPropertyValue_InContainer(Data, PreviousValueSoftObjectPtr, Tag.ArrayIndex);
 
-		return EConvertFromTypeResult::Converted;
+			return EConvertFromTypeResult::Converted;
+		}
 	}
 
 	return EConvertFromTypeResult::UseSerializeItem;

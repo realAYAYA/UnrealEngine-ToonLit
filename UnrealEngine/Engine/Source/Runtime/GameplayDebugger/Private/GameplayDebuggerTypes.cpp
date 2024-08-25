@@ -2,6 +2,7 @@
 
 #include "GameplayDebuggerTypes.h"
 #include "InputCoreTypes.h"
+#include "Misc/Compression.h"
 #include "SceneView.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/MemoryReader.h"
@@ -665,7 +666,7 @@ void FGameplayDebuggerCanvasContext::PrintAt(float PosX, float PosY, const FColo
 \
 	/* first, try using the stack buffer */ \
 	Buffer = StackBuffer; \
-	GET_VARARGS_RESULT( Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
+	GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
 \
 	/* if that fails, then use heap allocation to make enough space */ \
 	while(Result == -1) \
@@ -673,7 +674,7 @@ void FGameplayDebuggerCanvasContext::PrintAt(float PosX, float PosY, const FColo
 		FMemory::SystemFree(AllocatedBuffer); \
 		/* We need to use malloc here directly as GMalloc might not be safe. */ \
 		Buffer = AllocatedBuffer = (TCHAR*) FMemory::SystemMalloc( BufferSize * sizeof(TCHAR) ); \
-		GET_VARARGS_RESULT( Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
+		GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
 		BufferSize *= 2; \
 	}; \
 	Buffer[Result] = 0; \
@@ -715,7 +716,7 @@ void FGameplayDebuggerCanvasContext::MeasureString(const FString& String, float&
 			{
 				if (BracketEnd > BracketStart)
 				{
-					StringWithoutFormatting.RemoveAt(BracketStart, BracketEnd - BracketStart + 1, false);
+					StringWithoutFormatting.RemoveAt(BracketStart, BracketEnd - BracketStart + 1, EAllowShrinking::No);
 				}
 			}
 		}

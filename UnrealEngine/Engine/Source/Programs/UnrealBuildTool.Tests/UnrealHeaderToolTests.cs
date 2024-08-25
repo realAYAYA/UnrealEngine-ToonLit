@@ -1,12 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#if DISABLE
 using System.Reflection;
 using EpicGames.Core;
 using EpicGames.UHT.Utils;
 using Microsoft.Extensions.Logging;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using UnrealBuildBase;
 using UnrealBuildTool.Modes;
+#endif
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace UnrealBuildToolTests
 {

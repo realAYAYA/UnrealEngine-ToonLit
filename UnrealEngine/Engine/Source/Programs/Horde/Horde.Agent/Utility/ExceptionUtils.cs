@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using Grpc.Core;
 
 namespace Horde.Agent.Utility

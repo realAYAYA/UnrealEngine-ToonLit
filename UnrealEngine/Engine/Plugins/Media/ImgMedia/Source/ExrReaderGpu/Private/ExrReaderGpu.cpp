@@ -343,8 +343,7 @@ void FExrReader::CalculateTileOffsets
 				if (DimensionInTiles_PartialTiles.X != DimensionInTiles_CompleteTiles.X)
 				{
 					// If true - this is a partial tile in X dimension.
-					if (TileIndex != 0 &&
-						((TileIndex + 1) % DimensionInTiles_PartialTiles.X) == 0)
+					if (((TileIndex + 1) % DimensionInTiles_PartialTiles.X) == 0)
 					{
 						TileDim.X = PartialTileResolution.X;
 					}

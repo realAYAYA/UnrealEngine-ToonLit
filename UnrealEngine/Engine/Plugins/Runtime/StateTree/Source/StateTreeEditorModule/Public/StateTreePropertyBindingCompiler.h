@@ -34,6 +34,15 @@ struct STATETREEEDITORMODULE_API FStateTreePropertyBindingCompiler
 	 */
 	[[nodiscard]] bool CompileBatch(const FStateTreeBindableStructDesc& TargetStruct, TConstArrayView<FStateTreePropertyPathBinding> PropertyBindings, int32& OutBatchIndex);
 
+	/**
+	  * Compiles references for selected struct
+	  * @param TargetStruct - Description of the structs which contains the target properties.
+	  * @param PropertyReferenceBindings - Array of bindings to compile, all bindings that point to TargetStructs will be added.
+	  * @param InstanceDataView - view to the instance data
+	  * @return True on success, false on failure.
+	 */
+	[[nodiscard]] bool CompileReferences(const FStateTreeBindableStructDesc& TargetStruct, TConstArrayView<FStateTreePropertyPathBinding> PropertyReferenceBindings, FStateTreeDataView InstanceDataView);
+
 	/** Finalizes compilation, should be called once all batches are compiled. */
 	void Finalize();
 
@@ -46,12 +55,19 @@ struct STATETREEEDITORMODULE_API FStateTreePropertyBindingCompiler
 	int32 AddSourceStruct(const FStateTreeBindableStructDesc& SourceStruct);
 
 	/** @return Index of a source struct by specified ID, or INDEX_NONE if not found. */
+	UE_DEPRECATED(5.4, "Use GetSourceStructDescByID() instead.")
 	int32 GetSourceStructIndexByID(const FGuid& ID) const;
 
 	/** @return Reference to a source struct based on ID. */
+	UE_DEPRECATED(5.4, "Use GetSourceStructDescByID() instead.")
 	const FStateTreeBindableStructDesc& GetSourceStructDesc(const int32 Index) const
 	{
 		return SourceStructs[Index];
+	}
+
+	const FStateTreeBindableStructDesc* GetSourceStructDescByID(const FGuid& ID) const
+	{
+		return SourceStructs.FindByPredicate([ID](const FStateTreeBindableStructDesc& Structs) { return (Structs.ID == ID); });
 	}
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -88,6 +104,17 @@ protected:
 
 	UPROPERTY()
 	TArray<FStateTreeBindableStructDesc> SourceStructs;
+
+	/**
+	 * Representation of compiled reference.
+	 */
+	struct FCompiledReference
+	{
+		FStateTreePropertyPath Path;
+		FStateTreeIndex16 Index;
+	};
+
+	TArray<FCompiledReference> CompiledReferences;
 
 	FStateTreePropertyBindings* PropertyBindings = nullptr;
 

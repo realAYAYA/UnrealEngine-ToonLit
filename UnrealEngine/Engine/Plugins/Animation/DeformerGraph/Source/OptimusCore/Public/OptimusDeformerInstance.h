@@ -8,6 +8,7 @@
 
 #include "OptimusDeformerInstance.generated.h"
 
+class UOptimusComponentSource;
 enum class EOptimusNodeGraphType;
 struct FOptimusPersistentStructuredBuffer;
 class FRDGBuffer;
@@ -18,6 +19,28 @@ class UOptimusDeformer;
 class UOptimusVariableContainer;
 class UOptimusVariableDescription;
 class UOptimusComponentSourceBinding;
+
+
+struct FOptimusDeformerInstanceComponentLodContext
+{
+	TArray<int32> LodIndexPerComponent;
+
+	friend uint32 GetTypeHash(const FOptimusDeformerInstanceComponentLodContext& InContext)
+	{
+		uint32 Hash = GetTypeHash(InContext.LodIndexPerComponent.Num());
+		
+		for (int32 LodIndex : InContext.LodIndexPerComponent)
+		{
+			Hash = HashCombineFast(Hash, GetTypeHash(LodIndex));
+		}
+		return Hash;
+	}
+
+	bool operator==(const FOptimusDeformerInstanceComponentLodContext& InOther) const
+	{
+		return LodIndexPerComponent == InOther.LodIndexPerComponent;
+	}
+};
 
 class FOptimusPersistentBufferPool
 {
@@ -35,13 +58,42 @@ public:
 		int32 InElementStride,
 		int32 InRawStride,
 		TArray<int32> const& InElementCounts,
-		TArray<FRDGBuffer*>& OutBuffers );
+		TArray<FRDGBuffer*>& OutBuffers,
+		bool& bOutJustAllocated);
+
+	void GetImplicitPersistentBuffers(
+		FRDGBuilder& GraphBuilder,
+		FName DataInterfaceName,
+		int32 LODIndex,
+		int32 InElementStride,
+		int32 InRawStride,
+		TArray<int32> const& InElementCounts,
+		TArray<FRDGBuffer*>& OutBuffers,
+		bool& bOutJustAllocated);
 
 	/** Release _all_ resources allocated by this pool */
 	void ReleaseResources();
 	
 private:
+	 void AllocateBuffers(
+		FRDGBuilder& GraphBuilder,
+		int32 InElementStride,
+		int32 InRawStride,
+		TArray<int32> const& InElementCounts,
+		TArray<FOptimusPersistentStructuredBuffer>& OutResourceBuffers,
+		TArray<FRDGBuffer*>& OutBuffers
+		);
+
+	void ValidateAndGetBuffers(
+		FRDGBuilder& GraphBuilder,
+		int32 InElementStride,
+		TArray<int32> const& InElementCounts,
+		const TArray<FOptimusPersistentStructuredBuffer>& InResourceBuffers,
+		TArray<FRDGBuffer*>& OutBuffers
+		) const;
+	
 	TMap<FName, TMap<int32, TArray<FOptimusPersistentStructuredBuffer>>> ResourceBuffersMap;
+	TMap<FName, TMap<int32, TArray<FOptimusPersistentStructuredBuffer>>> ImplicitBuffersMap;
 };
 using FOptimusPersistentBufferPoolPtr = TSharedPtr<FOptimusPersistentBufferPool>;
 
@@ -194,12 +246,11 @@ public:
 	
 	
 	/** Directly set a graph constant value. */
-	void SetConstantValueDirect(FString const& InVariableName, TArray<uint8> const& InValue);
+	void SetConstantValueDirect(TSoftObjectPtr<UObject> InSourceObject, TArray<uint8> const& InValue);
 
 	FOptimusPersistentBufferPoolPtr GetBufferPool() const { return BufferPool; }
 
 	void SetCanBeActive(bool bInCanBeActive);
-
 protected:
 	/** Implementation of UMeshDeformerInstance. */
 	void AllocateResources() override;
@@ -222,12 +273,19 @@ private:
 	/** Storage for variable data. */
 	UPROPERTY()
 	TObjectPtr<UOptimusVariableContainer> Variables;
+
+	UPROPERTY()
+	TArray<TWeakObjectPtr<UActorComponent>> WeakBoundComponents;
+	
+	UPROPERTY()
+	TArray<TWeakObjectPtr<const UOptimusComponentSource>> WeakComponentSources;
 	
 	// List of graphs that should be run on the next tick. 
 	TSet<FName> GraphsToRunOnNextTick;
 	FCriticalSection GraphsToRunOnNextTickLock;
 
 	FOptimusPersistentBufferPoolPtr BufferPool;
+	FSceneInterface* Scene = nullptr;
 
 	bool bCanBeActive = true;
 };

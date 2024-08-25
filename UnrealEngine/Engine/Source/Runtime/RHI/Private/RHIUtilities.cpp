@@ -12,10 +12,11 @@ RHIUtilities.cpp:
 #include "HAL/Runnable.h"
 #include "HAL/RunnableThread.h"
 #include "HAL/PlatformFramePacer.h"
-#include "DataDrivenShaderPlatformInfo.h"
+#include "Misc/CommandLine.h"
 #include "RHIAccess.h"
 #include "RHIFwd.h"
 #include "RHIStrings.h"
+#include "Tasks/Task.h"
 
 #define USE_FRAME_OFFSET_THREAD 1
 
@@ -161,8 +162,18 @@ class FRHIFrameFlipTrackingRunnable : public FRunnable
 	FCriticalSection CS;
 	struct FFramePair
 	{
+		FFramePair(uint64 InPresentIndex, const UE::Tasks::FTaskEvent& InEvent)
+			: PresentIndex(InPresentIndex)
+			, Event(InEvent)
+		{}
+
+		~FFramePair()
+		{
+			Event.Trigger();
+		}
+
 		uint64 PresentIndex;
-		FGraphEventRef Event;
+		UE::Tasks::FTaskEvent Event;
 	};
 	TArray<FFramePair> FramePairs;
 
@@ -175,7 +186,7 @@ public:
 	static void Initialize();
 	static void Shutdown();
 
-	static void CompleteGraphEventOnFlip(uint64 PresentIndex, FGraphEventRef Event);
+	static void TriggerTaskEventOnFlip(uint64 PresentIndex, UE::Tasks::FTaskEvent Event);
 };
 
 FRHIFrameFlipTrackingRunnable::FRHIFrameFlipTrackingRunnable()
@@ -399,16 +410,13 @@ uint32 FRHIFrameFlipTrackingRunnable::Run()
 		}
 
 		bool bUpdateRHIFrameTime = false;
-		// Complete any relevant task graph events.
+		// Complete any relevant task events.
 		FScopeLock Lock(&CS);
 		for (int32 PairIndex = FramePairs.Num() - 1; PairIndex >= 0; --PairIndex)
 		{
-			auto const& Pair = FramePairs[PairIndex];
+			auto& Pair = FramePairs[PairIndex];
 			if (Pair.PresentIndex <= SyncFrame)
 			{
-				// "Complete" the task graph event
-				Pair.Event->DispatchSubsequents();
-
 				FramePairs.RemoveAtSwap(PairIndex);
 				bUpdateRHIFrameTime = true;
 			}
@@ -467,13 +475,6 @@ void FRHIFrameFlipTrackingRunnable::Shutdown()
 
 	FScopeLock Lock(&Singleton.CS);
 
-	// Signal any remaining events
-	for (auto const& Pair : Singleton.FramePairs)
-	{
-		// "Complete" the task graph event
-		Pair.Event->DispatchSubsequents();
-	}
-
 	Singleton.FramePairs.Empty();
 
 #if USE_FRAME_OFFSET_THREAD
@@ -481,7 +482,7 @@ void FRHIFrameFlipTrackingRunnable::Shutdown()
 #endif
 }
 
-void FRHIFrameFlipTrackingRunnable::CompleteGraphEventOnFlip(uint64 PresentIndex, FGraphEventRef Event)
+void FRHIFrameFlipTrackingRunnable::TriggerTaskEventOnFlip(uint64 PresentIndex, UE::Tasks::FTaskEvent Event)
 {
 	if ( ! FPlatformMisc::UseRenderThread() )
 	{
@@ -492,11 +493,7 @@ void FRHIFrameFlipTrackingRunnable::CompleteGraphEventOnFlip(uint64 PresentIndex
 
 	if (Thread)
 	{
-		FFramePair Pair;
-		Pair.PresentIndex = PresentIndex;
-		Pair.Event = Event;
-
-		Singleton.FramePairs.Add(Pair);
+		Singleton.FramePairs.Emplace(PresentIndex, MoveTemp(Event));
 
 #if USE_FRAME_OFFSET_THREAD
 		FRHIFrameOffsetThread::Signal();
@@ -508,7 +505,7 @@ void FRHIFrameFlipTrackingRunnable::CompleteGraphEventOnFlip(uint64 PresentIndex
 	{
 		// Platform does not support flip tracking.
 		// Signal the event now...
-		Event->DispatchSubsequents();
+		Event.Trigger();
 	}
 }
 
@@ -543,9 +540,9 @@ void RHIGetPresentThresholds(float& OutTopPercent, float& OutBottomPercent)
 	OutBottomPercent = FMath::Clamp(CVarRHIPresentThresholdBottom.GetValueOnAnyThread(), 0.0f, 1.0f);
 }
 
-void RHICompleteGraphEventOnFlip(uint64 PresentIndex, FGraphEventRef Event)
+void RHITriggerTaskEventOnFlip(uint64 PresentIndex, const UE::Tasks::FTaskEvent& Event)
 {
-	FRHIFrameFlipTrackingRunnable::CompleteGraphEventOnFlip(PresentIndex, Event);
+	FRHIFrameFlipTrackingRunnable::TriggerTaskEventOnFlip(PresentIndex, Event);
 }
 
 void RHISetFrameDebugInfo(uint64 PresentIndex, uint64 FrameIndex, uint64 InputTime)

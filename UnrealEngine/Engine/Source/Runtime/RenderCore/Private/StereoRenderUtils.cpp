@@ -5,6 +5,7 @@
 #include "ShaderPlatformCachedIniValue.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "RHI.h"
+#include "RenderUtils.h"
 
 // enable this to printf-debug stereo rendering aspects on a device
 #define UE_DEBUG_STEREO_ASPECTS			(!UE_BUILD_SHIPPING && !UE_BUILD_TEST && !UE_EDITOR)
@@ -56,12 +57,11 @@ RENDERCORE_API FStereoShaderAspects::FStereoShaderAspects(EShaderPlatform Platfo
 	// Would be nice to use URendererSettings, but not accessible in RenderCore
 	static FShaderPlatformCachedIniValue<bool> CVarInstancedStereo(TEXT("vr.InstancedStereo"));
 	static FShaderPlatformCachedIniValue<bool> CVarMobileMultiView(TEXT("vr.MobileMultiView"));
-	static FShaderPlatformCachedIniValue<bool> CVarMobileHDR(TEXT("r.MobileHDR"));
-
+	
 	const bool bInstancedStereo = CVarInstancedStereo.Get(Platform);
 
 	const bool bMobilePlatform = IsMobilePlatform(Platform);
-	const bool bMobilePostprocessing = CVarMobileHDR.Get(Platform);
+	const bool bMobilePostprocessing = IsMobileHDR();
 	const bool bMobileMultiView = CVarMobileMultiView.Get(Platform);
 	// If we're in a non-rendering run (cooker, DDC commandlet, anything with -nullrhi), don't check GRHI* setting, as it reflects runtime RHI capabilities.
 	const bool bMultiViewportCapable = (GRHISupportsArrayIndexFromAnyShader || !FApp::CanEverRender()) && RHISupportsMultiViewport(Platform);
@@ -78,7 +78,7 @@ RENDERCORE_API FStereoShaderAspects::FStereoShaderAspects(EShaderPlatform Platfo
 	UE_DEBUG_SSA_LOG_BOOL(bInstancedStereoNative);
 	UE_DEBUG_SSA_LOG(Log, TEXT("---"));
 
-	const bool bMobileMultiViewCoreSupport = bMobilePlatform && bMobileMultiView && !bMobilePostprocessing;
+	const bool bMobileMultiViewCoreSupport = bMobilePlatform && bMobileMultiView; 
 	if (bMobileMultiViewCoreSupport)
 	{
 		UE_DEBUG_SSA_LOG(Log, TEXT("RHISupportsMobileMultiView(%s) = %d."), *LexToString(Platform), RHISupportsMobileMultiView(Platform));

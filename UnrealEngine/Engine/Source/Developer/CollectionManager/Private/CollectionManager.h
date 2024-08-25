@@ -255,8 +255,10 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual FText GetLastError() const override { return LastError; }
 	virtual void HandleFixupRedirectors(ICollectionRedirectorFollower& InRedirectorFollower) override;
 	virtual bool HandleRedirectorDeleted(const FSoftObjectPath& ObjectPath) override;
+	virtual bool HandleRedirectorsDeleted(TConstArrayView<FSoftObjectPath> ObjectPaths) override;
 	virtual void HandleObjectRenamed(const FSoftObjectPath& OldObjectPath, const FSoftObjectPath& NewObjectPath) override;
 	virtual void HandleObjectDeleted(const FSoftObjectPath& ObjectPath) override;
+	virtual void HandleObjectsDeleted(TConstArrayView<FSoftObjectPath> ObjectPaths) override;
 
 	/** Event for when collections are created */
 	DECLARE_DERIVED_EVENT( FCollectionManager, ICollectionManager::FCollectionCreatedEvent, FCollectionCreatedEvent );
@@ -313,8 +315,11 @@ private:
 	/** Replaces an object with another in any collections that contain it */
 	void ReplaceObjectInCollections(const FSoftObjectPath& OldObjectPath, const FSoftObjectPath& NewObjectPath, TArray<FCollectionNameType>& OutUpdatedCollections);
 
-	/** Internal common functionality for saving a collection */
-	bool InternalSaveCollection(const TSharedRef<FCollection>& CollectionRef, FText& OutError);
+	/** Internal common functionality for saving a collection
+	 * bForceCommitToRevisionControl - If the collection's storage mode will save it to source control, then bForceCommitToRevisionControl will ensure that it is committed
+	 * after save.  If this is false, then the collection will be left as a modified file which can be advantageous for slow source control servers.
+	 */
+	bool InternalSaveCollection(const TSharedRef<FCollection>& CollectionRef, FText& OutError, bool bForceCommitToRevisionControl);
 
 private:
 	/** The folders that contain collections */

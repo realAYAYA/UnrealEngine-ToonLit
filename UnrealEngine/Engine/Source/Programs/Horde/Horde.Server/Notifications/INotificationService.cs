@@ -4,14 +4,17 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Claims;
+using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Horde.Jobs;
+using Horde.Server.Agents;
 using Horde.Server.Devices;
+using Horde.Server.Issues;
 using Horde.Server.Jobs;
 using Horde.Server.Jobs.Graphs;
-using Horde.Server.Issues;
+using Horde.Server.Streams;
 using Horde.Server.Users;
 using MongoDB.Bson;
-using Horde.Server.Streams;
 
 namespace Horde.Server.Notifications
 {
@@ -29,10 +32,10 @@ namespace Horde.Server.Notifications
 	{
 		/// <summary>Job ID</summary>
 		public string JobId { get; }
-		
+
 		/// <summary>Job name</summary>
 		public string JobName { get; }
-		
+
 		/// <summary>Pool name job got scheduled in</summary>
 		public string PoolName { get; }
 
@@ -52,17 +55,32 @@ namespace Horde.Server.Notifications
 		/// <inheritdoc />
 		public bool Equals(JobScheduledNotification? other)
 		{
-			if (ReferenceEquals(null, other)) { return false; }
-			if (ReferenceEquals(this, other)) { return true; }
+			if (ReferenceEquals(null, other))
+			{
+				return false;
+			}
+			if (ReferenceEquals(this, other))
+			{
+				return true;
+			}
 			return JobId == other.JobId && JobName == other.JobName && PoolName == other.PoolName;
 		}
 
 		/// <inheritdoc />
 		public override bool Equals(object? obj)
 		{
-			if (ReferenceEquals(null, obj)) { return false; }
-			if (ReferenceEquals(this, obj)) { return true; }
-			if (obj.GetType() != GetType()) { return false; }
+			if (ReferenceEquals(null, obj))
+			{
+				return false;
+			}
+			if (ReferenceEquals(this, obj))
+			{
+				return true;
+			}
+			if (obj.GetType() != GetType())
+			{
+				return false;
+			}
 			return Equals((JobScheduledNotification)obj);
 		}
 
@@ -72,7 +90,7 @@ namespace Horde.Server.Notifications
 			return HashCode.Combine(JobId, JobName, PoolName);
 		}
 	}
-	
+
 	/// <summary>
 	/// Interface for the notification service
 	/// </summary>
@@ -85,16 +103,18 @@ namespace Horde.Server.Notifications
 		/// <param name="user"></param>
 		/// <param name="email">Whether to receive email notifications</param>
 		/// <param name="slack">Whether to receive Slack notifications</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		Task<bool> UpdateSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user, bool? email, bool? slack);
+		Task<bool> UpdateSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user, bool? email, bool? slack, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Gets the current subscriptions for a user
 		/// </summary>
 		/// <param name="triggerId"></param>
 		/// <param name="user"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Subscriptions for that user</returns>
-		Task<INotificationSubscription?> GetSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user);
+		Task<INotificationSubscription?> GetSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Notify all subscribers that a job step has finished
@@ -104,8 +124,8 @@ namespace Horde.Server.Notifications
 		/// <param name="batchId">The batch id</param>
 		/// <param name="stepId">The step id</param>
 		/// <returns>Async task</returns>
-		void NotifyJobStepComplete(IJob job, IGraph graph, SubResourceId batchId, SubResourceId stepId);
-		
+		void NotifyJobStepComplete(IJob job, IGraph graph, JobStepBatchId batchId, JobStepId stepId);
+
 		/// <summary>
 		/// Notify all subscribers that a job step's outcome has changed
 		/// </summary>
@@ -151,9 +171,24 @@ namespace Horde.Server.Notifications
 		void NotifyDeviceService(string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null);
 
 		/// <summary>
+		/// Post a notification for device issues
+		/// </summary>
+		/// <param name="report">The report data to send</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		Task SendDeviceIssueReportAsync(DeviceIssueReport report, CancellationToken cancellationToken);
+
+		/// <summary>
+		/// Post a notification for any agents encountering issues
+		/// </summary>
+		/// <param name="report">The report data to send</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		Task SendAgentReportAsync(AgentReport report, CancellationToken cancellationToken);
+
+		/// <summary>
 		/// Post a notification for the open issues in a stream
 		/// </summary>
 		/// <param name="report">The report data to send</param>
-		Task SendIssueReportAsync(IssueReportGroup report);
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		Task SendIssueReportAsync(IssueReportGroup report, CancellationToken cancellationToken);
 	}
 }

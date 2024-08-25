@@ -85,11 +85,23 @@ void FOnlineSubsystemModule::StartupModule()
 	GConfig->GetString(TEXT("OnlineSubsystem"), TEXT("NativePlatformService"), InterfaceString, GEngineIni);
 	NativePlatformService = FName(*InterfaceString);
 
-	LoadDefaultSubsystem();
+	// Some default OSSes may rely on the native OSS for functionality. This config is to ensure the native is loaded first in cases where this is desired
 
-	ProcessConfigDefinedSubsystems();
+	bool bLoadNativeOSSBeforeDefault = false;
+	GConfig->GetBool(TEXT("OnlineSubsystem"), TEXT("bLoadNativeOSSBeforeDefault"), bLoadNativeOSSBeforeDefault, GEngineIni);
 
-	IOnlineSubsystem::GetByPlatform();
+	if(bLoadNativeOSSBeforeDefault)
+	{
+		IOnlineSubsystem::GetByPlatform();
+		LoadDefaultSubsystem();
+		ProcessConfigDefinedSubsystems();
+	}
+	else
+	{
+		LoadDefaultSubsystem();
+		ProcessConfigDefinedSubsystems();
+		IOnlineSubsystem::GetByPlatform();
+	}
 }
 
 void FOnlineSubsystemModule::PreUnloadCallback()

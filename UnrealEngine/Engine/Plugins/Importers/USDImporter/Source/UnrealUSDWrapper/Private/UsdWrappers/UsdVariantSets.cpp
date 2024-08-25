@@ -7,17 +7,15 @@
 #include "UsdWrappers/UsdPrim.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/usd/prim.h"
-	#include "pxr/usd/usd/variantSets.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/variantSets.h"
 #include "USDIncludesEnd.h"
 
 #include <map>
 #include <utility>
 #include <vector>
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -57,7 +55,7 @@ namespace UE
 			// and the variant set name independently and fetch the object on demand.
 			TUsdStore<pxr::UsdPrim> PxrUsdPrim;
 			std::string VariantSetName;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 		};
 
 		class FUsdVariantSetsImpl
@@ -82,10 +80,9 @@ namespace UE
 			// so copy and move constructing from a pxr::UsdVariantSets object
 			// are not supported.
 			TUsdStore<pxr::UsdPrim> PxrUsdPrim;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 		};
-	}
-
+	}	  // namespace Internal
 
 	// FUsdVariantSet
 
@@ -97,10 +94,8 @@ namespace UE
 	FUsdVariantSet::FUsdVariantSet(const FUsdVariantSet& Other)
 	{
 #if USE_USD_SDK
-		Impl = MakeUnique<Internal::FUsdVariantSetImpl>(
-			Other.Impl->PxrUsdPrim.Get(),
-			Other.Impl->VariantSetName);
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdVariantSetImpl>(Other.Impl->PxrUsdPrim.Get(), Other.Impl->VariantSetName);
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdVariantSet::FUsdVariantSet(FUsdVariantSet&& Other) = default;
@@ -108,10 +103,8 @@ namespace UE
 	FUsdVariantSet& FUsdVariantSet::operator=(const FUsdVariantSet& Other)
 	{
 #if USE_USD_SDK
-		Impl = MakeUnique<Internal::FUsdVariantSetImpl>(
-			Other.Impl->PxrUsdPrim.Get(),
-			Other.Impl->VariantSetName);
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdVariantSetImpl>(Other.Impl->PxrUsdPrim.Get(), Other.Impl->VariantSetName);
+#endif	  // #if USE_USD_SDK
 
 		return *this;
 	}
@@ -171,7 +164,7 @@ namespace UE
 	{
 		Impl = MakeUnique<Internal::FUsdVariantSetImpl>(InPrim, InVariantSetName);
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	bool FUsdVariantSet::AddVariant(const FString& VariantName, EUsdListPosition Position)
 	{
@@ -183,11 +176,9 @@ namespace UE
 		{
 			const std::string UsdVariantName(TCHAR_TO_ANSI(*VariantName));
 
-			return UsdVariantSet.AddVariant(
-				UsdVariantName,
-				static_cast<pxr::UsdListPosition>(Position));
+			return UsdVariantSet.AddVariant(UsdVariantName, static_cast<pxr::UsdListPosition>(Position));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -215,7 +206,7 @@ namespace UE
 				VariantNames.Emplace(ANSI_TO_TCHAR(UsdVariantName.c_str()));
 			}
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return VariantNames;
 	}
@@ -232,7 +223,7 @@ namespace UE
 
 			return UsdVariantSet.HasAuthoredVariant(UsdVariantName);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -249,7 +240,7 @@ namespace UE
 
 			return FString(ANSI_TO_TCHAR(UsdVariantSelection.c_str()));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return FString{};
 	}
@@ -272,7 +263,7 @@ namespace UE
 
 			return bResult;
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -289,7 +280,7 @@ namespace UE
 
 			return UsdVariantSet.SetVariantSelection(UsdVariantName);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -304,7 +295,7 @@ namespace UE
 		{
 			return UsdVariantSet.ClearVariantSelection();
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -319,7 +310,7 @@ namespace UE
 		{
 			return UsdVariantSet.BlockVariantSelection();
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -334,7 +325,7 @@ namespace UE
 		{
 			return FUsdPrim(UsdVariantSet.GetPrim());
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return FUsdPrim{};
 	}
@@ -351,7 +342,7 @@ namespace UE
 
 			return FString(ANSI_TO_TCHAR(UsdVariantName.c_str()));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return FString{};
 	}
@@ -360,11 +351,10 @@ namespace UE
 	{
 #if USE_USD_SDK
 		return Impl->GetInner().IsValid();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
-
 
 	// FUsdVariantSets
 
@@ -376,9 +366,8 @@ namespace UE
 	FUsdVariantSets::FUsdVariantSets(const FUsdVariantSets& Other)
 	{
 #if USE_USD_SDK
-		Impl = MakeUnique<Internal::FUsdVariantSetsImpl>(
-			Other.Impl->PxrUsdPrim.Get());
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdVariantSetsImpl>(Other.Impl->PxrUsdPrim.Get());
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdVariantSets::FUsdVariantSets(FUsdVariantSets&& Other) = default;
@@ -386,9 +375,8 @@ namespace UE
 	FUsdVariantSets& FUsdVariantSets::operator=(const FUsdVariantSets& Other)
 	{
 #if USE_USD_SDK
-		Impl = MakeUnique<Internal::FUsdVariantSetsImpl>(
-			Other.Impl->PxrUsdPrim.Get());
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdVariantSetsImpl>(Other.Impl->PxrUsdPrim.Get());
+#endif	  // #if USE_USD_SDK
 
 		return *this;
 	}
@@ -411,7 +399,7 @@ namespace UE
 		return (bool)Impl->PxrUsdPrim.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 #if USE_USD_SDK
@@ -430,7 +418,7 @@ namespace UE
 	{
 		Impl = MakeUnique<Internal::FUsdVariantSetsImpl>(InPrim);
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	FUsdVariantSet FUsdVariantSets::AddVariantSet(const FString& VariantName, EUsdListPosition Position)
 	{
@@ -441,13 +429,10 @@ namespace UE
 
 		const std::string UsdVariantName(TCHAR_TO_ANSI(*VariantName));
 
-		return FUsdVariantSet(
-			UsdVariantSets.AddVariantSet(
-				UsdVariantName,
-				static_cast<pxr::UsdListPosition>(Position)));
+		return FUsdVariantSet(UsdVariantSets.AddVariantSet(UsdVariantName, static_cast<pxr::UsdListPosition>(Position)));
 #else
 		return FUsdVariantSet{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	TArray<FString> FUsdVariantSets::GetNames() const
@@ -458,7 +443,7 @@ namespace UE
 		FScopedUsdAllocs UsdAllocs;
 
 		pxr::UsdVariantSets UsdVariantSets = Impl->GetInner();
-		
+
 		const std::vector<std::string> UsdVariantSetNames = UsdVariantSets.GetNames();
 		if (UsdVariantSetNames.empty())
 		{
@@ -471,7 +456,7 @@ namespace UE
 		{
 			VariantSetNames.Emplace(ANSI_TO_TCHAR(UsdVariantSetName.c_str()));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return VariantSetNames;
 	}
@@ -488,7 +473,7 @@ namespace UE
 		return FUsdVariantSet(UsdVariantSets.GetVariantSet(UsdVariantSetName));
 #else
 		return FUsdVariantSet{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdVariantSets::HasVariantSet(const FString& VariantSetName) const
@@ -497,13 +482,13 @@ namespace UE
 		FScopedUsdAllocs UsdAllocs;
 
 		pxr::UsdVariantSets UsdVariantSets = Impl->GetInner();
-		
+
 		const std::string UsdVariantSetName(TCHAR_TO_ANSI(*VariantSetName));
 
 		return UsdVariantSets.HasVariantSet(UsdVariantSetName);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FString FUsdVariantSets::GetVariantSelection(const FString& VariantSetName) const
@@ -520,7 +505,7 @@ namespace UE
 		return FString(ANSI_TO_TCHAR(UsdVariantSelection.c_str()));
 #else
 		return FString{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdVariantSets::SetSelection(const FString& VariantSetName, const FString& VariantName)
@@ -536,7 +521,7 @@ namespace UE
 		return UsdVariantSets.SetSelection(UsdVariantSetName, UsdVariantName);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	TMap<FString, FString> FUsdVariantSets::GetAllVariantSelections() const
@@ -558,12 +543,10 @@ namespace UE
 
 		for (const std::pair<const std::string, std::string>& UsdVariantSelection : UsdVariantSelections)
 		{
-			VariantSelections.Emplace(
-				ANSI_TO_TCHAR(UsdVariantSelection.first.c_str()),
-				ANSI_TO_TCHAR(UsdVariantSelection.second.c_str()));
+			VariantSelections.Emplace(ANSI_TO_TCHAR(UsdVariantSelection.first.c_str()), ANSI_TO_TCHAR(UsdVariantSelection.second.c_str()));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return VariantSelections;
 	}
-}
+}	 // namespace UE

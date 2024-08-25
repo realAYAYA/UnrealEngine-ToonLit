@@ -55,7 +55,7 @@ private:
 	 * For example if you have the threshold set to 2, it will evaluate until including LOD 2 (based on 0 index). In case the LOD level gets set to 3, it will stop evaluating the post-process AnimBP.
 	 * Setting it to -1 will always evaluate it and disable LODing.
 	 */
-	UPROPERTY(EditAnywhere, Category = RigLogic)
+	UPROPERTY(EditAnywhere, Category = RigLogic, meta = (PinHiddenByDefault))
 	int32 LODThreshold = INDEX_NONE;
 
 private:

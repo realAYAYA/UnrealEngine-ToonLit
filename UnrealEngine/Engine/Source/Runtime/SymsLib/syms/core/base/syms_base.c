@@ -7,8 +7,7 @@
 //~ rjf: Library Metadata
 
 SYMS_API SYMS_String8
-syms_version_string(void)
-{
+syms_version_string(void){
   return syms_str8_lit(SYMS_VERSION_STR);
 }
 
@@ -22,8 +21,7 @@ syms_make_u64_range(SYMS_U64 min, SYMS_U64 max){
 }
 
 SYMS_API SYMS_U64Range
-syms_make_u64_inrange(SYMS_U64Range range, SYMS_U64 offset, SYMS_U64 size)
-{
+syms_make_u64_inrange(SYMS_U64Range range, SYMS_U64 offset, SYMS_U64 size){
   SYMS_ASSERT(range.min + offset + size <= range.max);
   SYMS_U64Range result = syms_make_u64_range(range.min + offset, range.min + offset + size);
   return result;
@@ -460,8 +458,12 @@ syms_u64_from_string(SYMS_String8 str, SYMS_U32 radix){
     for (; ptr < opl; ptr += 1){
       SYMS_U8 x = *ptr;
       SYMS_B8 mask = m_from_c[x >> 3];
+      if (!mask){
+        result = 0;
+        break;
+      }
       SYMS_U8 value = (v_from_c[(x - 0x30)%0x20]);
-      if (!mask || value > radix){
+      if (value >= radix){
         result = 0;
         break;
       }
@@ -597,6 +599,63 @@ syms_u64_range_array_from_list(SYMS_Arena *arena, SYMS_U64RangeList *list){
   }
   return(result);
 }
+
+////////////////////////////////
+//~ nick: U64 List Functions
+
+SYMS_API void
+syms_u64_list_push_node(SYMS_U64Node *node, SYMS_U64List *list, SYMS_U64 v){
+  SYMS_QueuePush(list->first, list->last, node);
+  list->count += 1;
+  node->u64 = v;
+}
+
+SYMS_API void
+syms_u64_list_push(SYMS_Arena *arena, SYMS_U64List *list, SYMS_U64 v){
+  SYMS_U64Node *node = syms_push_array(arena, SYMS_U64Node, 1);
+  syms_u64_list_push_node(node, list, v);
+}
+
+SYMS_API void
+syms_u64_list_concat_in_place(SYMS_U64List *dst, SYMS_U64List *src){
+  if (dst->last == 0){
+    *dst = *src;
+  }
+  else if (src->first != 0){
+    dst->last->next = src->first;
+    dst->last = src->last;
+    dst->count += src->count;
+  }
+  syms_memzero_struct(src);
+}
+
+SYMS_API SYMS_U64Array
+syms_u64_array_from_list(SYMS_Arena *arena, SYMS_U64List *list){
+  SYMS_U64Array result = {0};
+  result.u64 = syms_push_array(arena, SYMS_U64, list->count);
+  result.count = list->count;
+  SYMS_U64 *ptr = result.u64;
+  for (SYMS_U64Node *node = list->first;
+       node != 0;
+       node = node->next, ptr += 1){
+    *ptr = node->u64;
+  }
+  return(result);
+}
+
+
+////////////////////////////////
+//~ allen: Array Functions
+
+SYMS_API SYMS_U64
+syms_1based_checked_lookup_u64(SYMS_U64 *u64, SYMS_U64 count, SYMS_U64 n){
+  SYMS_U64 result = 0;
+  if (1 <= n && n <= count){
+    result = u64[n - 1];
+  }
+  return(result);
+}
+
 
 ////////////////////////////////
 //~ allen: Arena Functions

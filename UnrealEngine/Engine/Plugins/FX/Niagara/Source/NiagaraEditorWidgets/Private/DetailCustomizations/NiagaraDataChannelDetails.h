@@ -37,3 +37,12 @@ private:
 	TWeakObjectPtr<UNiagaraDataInterfaceDataChannelRead> ReadDataInterfaceWeak;
 	TWeakObjectPtr<UNiagaraSystem> NiagaraSystemWeak;
 };
+
+
+/** Details customization for Blueprint nodes. */
+class FNiagaraDataChannelBPNodeDetails : public IDetailCustomization
+{
+public:
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+	static TSharedRef<IDetailCustomization> MakeInstance();
+};

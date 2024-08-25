@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import templateCache from '../backend/TemplateCache';
-import { AgentData, AgentQuery, ArtifactData, AuditLogEntry, AuditLogQuery, BatchUpdatePoolRequest, ChangeSummaryData, CreateDeviceRequest, CreateDeviceResponse, CreateExternalIssueRequest, CreateExternalIssueResponse, CreateJobRequest, CreateJobResponse, CreateNoticeRequest, CreatePoolRequest, CreateSoftwareResponse, CreateSubscriptionRequest, CreateSubscriptionResponse, CreateZipRequest, DashboardPreference, DevicePoolTelemetryQuery, DeviceTelemetryQuery, EventData, FindArtifactsResponse, FindIssueResponse, FindJobTimingsResponse, GetAgentSoftwareChannelResponse, GetArtifactDirectoryResponse, GetArtifactZipRequest, GetDashboardConfigResponse, GetDevicePlatformResponse, GetDevicePoolResponse, GetDevicePoolTelemetryResponse, GetDeviceReservationResponse, GetDeviceResponse, GetDeviceTelemetryResponse, GetExternalIssueProjectResponse, GetExternalIssueResponse, GetGraphResponse, GetIssueStreamResponse, GetJobsTabResponse, GetJobStepRefResponse, GetJobStepTraceResponse, GetJobTimingResponse, GetLogEventResponse, GetNoticeResponse, GetNotificationResponse, GetPerforceServerStatusResponse, GetPoolResponse, GetServerInfoResponse, GetServerSettingsResponse, GetSoftwareResponse, GetSubscriptionResponse, GetTestDataDetailsResponse, GetTestDataRefResponse, GetTestMetaResponse, GetTestResponse, GetTestsRequest, GetTestStreamResponse, GetToolSummaryResponse, GetUserResponse, GetUtilizationTelemetryResponse, GlobalConfig, IssueData, IssueQuery, IssueQueryV2, JobData, JobQuery, JobsTabColumnType, JobStepOutcome, JobStreamQuery, JobTimingsQuery, LeaseData, LogData, LogLineData, PoolData, ProjectData, ScheduleData, ScheduleQuery, SearchLogFileResponse, ServerUpdateResponse, SessionData, StreamData, TabType, TestData, UpdateAgentRequest, UpdateDeviceRequest, UpdateGlobalConfigRequest, UpdateIssueRequest, UpdateJobRequest, UpdateLeaseRequest, UpdateNoticeRequest, UpdateNotificationsRequest, UpdatePoolRequest, UpdateServerSettingsRequest, UpdateStepRequest, UpdateStepResponse, UpdateTemplateRefRequest, UpdateUserRequest, UsersQuery } from './Api';
-import dashboard from './Dashboard';
+import { AccountClaimMessage, AgentData, AgentQuery, ApproveAgentsRequest, ArtifactData, AuditLogEntry, AuditLogQuery, BatchUpdatePoolRequest, ChangeSummaryData, CreateAccountRequest, CreateBisectTaskRequest, CreateBisectTaskResponse, CreateDeviceRequest, CreateDeviceResponse, CreateExternalIssueRequest, CreateExternalIssueResponse, CreateJobRequest, CreateJobResponse, CreateNoticeRequest, CreatePoolRequest, CreateServiceAccountRequest, CreateServiceAccountResponse, CreateSoftwareResponse, CreateSubscriptionRequest, CreateSubscriptionResponse, CreateZipRequest, DashboardPreference, DevicePoolTelemetryQuery, DeviceTelemetryQuery, EventData, FindArtifactsResponse, FindIssueResponse, FindJobTimingsResponse, GetAccountResponse, GetArtifactDirectoryResponse, GetArtifactZipRequest, GetBisectTaskResponse, GetDashboardConfigResponse, GetDevicePlatformResponse, GetDevicePoolResponse, GetDevicePoolTelemetryResponse, GetDeviceReservationResponse, GetDeviceResponse, GetDeviceTelemetryResponse, GetExternalIssueProjectResponse, GetExternalIssueResponse, GetGraphResponse, GetIssueStreamResponse, GetJobsTabResponse, GetJobStepRefResponse, GetJobStepTraceResponse, GetJobTimingResponse, GetLogEventResponse, GetLogFileResponse, GetNoticeResponse, GetNotificationResponse, GetPendingAgentsResponse, GetPerforceServerStatusResponse, GetPoolResponse, GetPoolSummaryResponse, GetServerInfoResponse, GetServerSettingsResponse, GetServiceAccountResponse, GetSoftwareResponse, GetSubscriptionResponse, GetTelemetryMetricsResponse, GetTestDataDetailsResponse, GetTestDataRefResponse, GetTestMetaResponse, GetTestResponse, GetTestsRequest, GetTestStreamResponse, GetToolSummaryResponse, GetUserResponse, GetUtilizationTelemetryResponse, GlobalConfig, IssueData, IssueQuery, IssueQueryV2, JobData, JobQuery, JobsTabColumnType, JobStepOutcome, JobStreamQuery, JobTimingsQuery, LeaseData, LogData, LogEventQuery, LogLineData, MetricsQuery, PoolData, PoolQuery, PreflightConfigResponse, ProjectData, ScheduleData, ScheduleQuery, SearchLogFileResponse, ServerStatusResponse, ServerUpdateResponse, SessionData, StreamData, TabType, TestData, UpdateAccountRequest, UpdateAgentRequest, UpdateBisectTaskRequest, UpdateCurrentAccountRequest, UpdateDeviceRequest, UpdateGlobalConfigRequest, UpdateIssueRequest, UpdateJobRequest, UpdateLeaseRequest, UpdateNoticeRequest, UpdateNotificationsRequest, UpdatePoolRequest, UpdateServerSettingsRequest, UpdateServiceAccountRequest, UpdateServiceAccountResponse, UpdateStepRequest, UpdateStepResponse, UpdateTemplateRefRequest, UpdateUserRequest, UsersQuery } from './Api';
+import dashboard, { Dashboard } from './Dashboard';
 import { ChallengeStatus, Fetch } from './Fetch';
 import graphCache, { GraphQuery } from './GraphCache';
 import { projectStore } from './ProjectStore';
@@ -103,14 +103,50 @@ export class Backend {
         });
     }
 
-    getPools(): Promise<PoolData[]> {
+    getPools(filter?: string): Promise<PoolData[]> {
+
+        const params: any = {
+            filter: filter
+        };
+
         return new Promise<PoolData[]>((resolve, reject) => {
-            this.backend.get("/api/v1/pools").then((response) => {
+            this.backend.get("/api/v1/pools", { params: params }).then((response) => {
                 const pools = response.data as PoolData[];
                 resolve(pools);
             }).catch(reason => { reject(reason); });
         });
     }
+
+    getPoolsV2(query: PoolQuery): Promise<GetPoolSummaryResponse[]> {
+
+        return new Promise<GetPoolSummaryResponse[]>((resolve, reject) => {
+            this.backend.get("/api/v2/pools", { params: query }).then((response) => {
+                const pools = response.data as GetPoolSummaryResponse[];
+                resolve(pools);
+            }).catch(reason => { reject(reason); });
+        });
+    }
+
+    getAgentRegistrationRequests(): Promise<GetPendingAgentsResponse> {
+        return new Promise<GetPendingAgentsResponse>((resolve, reject) => {
+            this.backend.get(`/api/v1/enrollment`).then((response) => {
+                const agent = response.data as GetPendingAgentsResponse;
+                resolve(agent);
+            }).catch(reason => { reject(reason); });
+        });
+    }
+
+    // create a new account
+    registerAgents(request: ApproveAgentsRequest): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.backend.post(`/api/v1/enrollment`, request).then(() => {
+                resolve();
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+    
 
     getAgent(id: string): Promise<AgentData> {
         return new Promise<AgentData>((resolve, reject) => {
@@ -137,6 +173,14 @@ export class Backend {
                 //this.backend.get(`/api/v1/agents`).then((response) => {
                 const agents = response.data as AgentData[];
                 resolve(agents);
+            }).catch(reason => { reject(reason); });
+        });
+    }
+
+    async getLeaseLog(leaseId: string): Promise<GetLogFileResponse> {
+        return new Promise<GetLogFileResponse>((resolve, reject) => {
+            this.backend.get(`/api/v1/leases/${leaseId}/log`).then((response) => {
+                resolve(response.data as GetLogFileResponse);
             }).catch(reason => { reject(reason); });
         });
     }
@@ -251,12 +295,13 @@ export class Backend {
 
     }
 
-    getJob(id: string, query?: JobQuery, includeGraph = true): Promise<JobData> {
+    getJob(id: string, query?: JobQuery, includeGraph = true, show404Error = false): Promise<JobData> {
 
         return new Promise<JobData>((resolve, reject) => {
 
             this.backend.get(`/api/v1/jobs/${id}`, {
-                params: query
+                params: query,
+                show404Error: show404Error
             }).then((value) => {
 
                 const response = value.data as JobData;
@@ -265,7 +310,7 @@ export class Backend {
                 }
 
                 if (!includeGraph) {
-                    resolve(response); 
+                    resolve(response);
                     return;
                 }
 
@@ -465,11 +510,11 @@ export class Backend {
 
     }
 
-    getLogEvents(logId: string): Promise<EventData[]> {
+    getLogEvents(logId: string, query?: LogEventQuery): Promise<EventData[]> {
 
         return new Promise<EventData[]>((resolve, reject) => {
 
-            this.backend.get(`/api/v1/logs/${logId}/events`).then((value) => {
+            this.backend.get(`/api/v1/logs/${logId}/events`, { params: query }).then((value) => {
                 resolve(value.data as EventData[]);
             }).catch(reason => {
                 reject(reason);
@@ -583,42 +628,37 @@ export class Backend {
         });
     }
 
-    downloadArtifactV2(artifactId: string, path: string, filename: string): Promise<boolean> {
-
-        return new Promise<any>((resolve, reject) => {
-            this.backend.get(`/api/v2/artifacts/${artifactId}/file`, { params: { path: path }, responseBlob: true }).then(response => {
-                const url = window.URL.createObjectURL(response.data);
-                const link = document.createElement('a');
-                link.href = url;
-                link.setAttribute('download', filename);
-                link.click();
-                setTimeout(() => {
-                    window.URL.revokeObjectURL(url);
-                }, 100);
-                resolve(true);
+    getArtifactV2(artifactId: string, path: string): Promise<object> {
+        const url = `/api/v2/artifacts/${artifactId}/file?path=${encodeURIComponent(path)}`;
+        return new Promise<object>((resolve, reject) => {
+            this.backend.get(url).then((value) => {
+                resolve(value.data as object);
             }).catch(reason => {
-                reject(reason);
+                resolve([]);
+                if (reason !== "Not Found") {
+                    console.error(reason);
+                }
             });
         });
+
     }
 
-    downloadArtifactZipV2(artifactId: string, request: CreateZipRequest, filename: string): Promise<boolean> {
 
-        return new Promise<any>((resolve, reject) => {
-            this.backend.post(`/api/v2/artifacts/${artifactId}/zip`, request, { responseBlob: true }).then(response => {
-                const url = window.URL.createObjectURL(response.data);
-                const link = document.createElement('a');
-                link.href = url;
-                link.setAttribute('download', filename);
-                link.click();
-                setTimeout(() => {
-                    window.URL.revokeObjectURL(url);
-                }, 100);
-                resolve(true);
-            }).catch(reason => {
-                reject(reason);
-            });
-        });
+    downloadArtifactV2(artifactId: string, path: string) {
+        const url = `/api/v2/artifacts/${artifactId}/file?path=${encodeURIComponent(path)}`;
+        window.location.assign(url);
+    }
+
+    downloadArtifactZipV2(artifactId: string, request: CreateZipRequest) {
+
+        const filter = request.filter.map(f => `filter=${encodeURIComponent(f)}`).join("&")
+
+        let url = `/api/v2/artifacts/${artifactId}/zip`;
+        if (filter.length) {
+            url += "?" + filter;
+        }
+
+        window.location.assign(url);
 
     }
 
@@ -992,7 +1032,11 @@ export class Backend {
                 // apply defaults
                 const current = data.dashboardSettings.preferences.get(DashboardPreference.Darktheme);
                 if (current !== "true" && current !== "false") {
-                    data.dashboardSettings.preferences.set(DashboardPreference.Darktheme, "true");
+                    const value = Dashboard.userPrefersDarkTheme ? "true" : "false";
+                    data.dashboardSettings.preferences.set(DashboardPreference.Darktheme, value);
+                    localStorage.setItem("horde_darktheme", value);
+                } else {
+                    localStorage.setItem("horde_darktheme", current);
                 }
 
                 resolve(data);
@@ -1292,30 +1336,7 @@ export class Backend {
         }
 
     }
-
-    downloadAgentZip() {
-        try {
-            const url = `${this.serverUrl}/api/v1/agentsoftware/default/zip`;
-            const link = document.createElement('a');
-            link.href = url;
-            document.body.appendChild(link);
-            link.click();
-        } catch (reason) {
-            console.error(reason);
-        }
-    }
-
-    getAgentSoftwareChannel(name: string = "default"): Promise<GetAgentSoftwareChannelResponse> {
-        return new Promise<GetAgentSoftwareChannelResponse>((resolve, reject) => {
-            this.backend.get(`/api/v1/agentsoftware/${name}`, { suppress404: true }).then((value) => {
-                resolve(value.data as GetAgentSoftwareChannelResponse);
-            }).catch(reason => {
-                reject(reason);
-            });
-        });
-    }
-
-
+    
     updateJobStep(jobId: string, batchId: string, stepId: string, request: UpdateStepRequest): Promise<UpdateStepResponse> {
         return new Promise<UpdateStepResponse>((resolve, reject) => {
             this.backend.put(`api/v1/jobs/${jobId}/batches/${batchId}/steps/${stepId}`, request).then((value) => {
@@ -1411,6 +1432,26 @@ export class Backend {
         });
     }
 
+    getMetrics(telemetryStoreId: string, query: MetricsQuery): Promise<GetTelemetryMetricsResponse[]> {
+        query.id = query.id.map(id => encodeURIComponent(id));
+        return new Promise<GetTelemetryMetricsResponse[]>((resolve, reject) => {
+            this.backend.get(`api/v1/telemetry/${telemetryStoreId}/metrics`, { params: query }).then((response) => {
+                const result = response.data as GetTelemetryMetricsResponse[];
+                result?.forEach(r => {
+                    r?.metrics.forEach(m => {
+                        if (m.time) {
+                            m.time = new Date(m.time);
+                        } else {
+                            console.warn("Metrics missing time property");
+                            m.time = new Date();
+                        }
+                    })
+                })
+                resolve(result);
+            }).catch(reason => { reject(reason); });
+        });
+    }
+
     getPerforceServerStatus(): Promise<GetPerforceServerStatusResponse[]> {
 
         return new Promise<GetPerforceServerStatusResponse[]>((resolve, reject) => {
@@ -1420,7 +1461,20 @@ export class Backend {
                 reject(reason);
             });
         });
+    }
 
+    getServerStatus(): Promise<ServerStatusResponse> {
+
+        return new Promise<ServerStatusResponse>((resolve, reject) => {
+            this.backend.get(`/api/v1/server/status`).then((value) => {
+                const result = value.data as ServerStatusResponse;
+                // convert from string date to Date
+                result.statuses.forEach(s => s.updates.forEach(u => u.updatedAt = new Date(u.updatedAt)))
+                resolve(result);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
     }
 
     getDevices(): Promise<GetDeviceResponse[]> {
@@ -1654,6 +1708,194 @@ export class Backend {
         });
     }
 
+    // create job bisection
+    createBisectTask(create: CreateBisectTaskRequest): Promise<CreateBisectTaskResponse> {
+        return new Promise<CreateBisectTaskResponse>((resolve, reject) => {
+            this.backend.post(`/api/v1/bisect`, create).then((response) => {
+                resolve(response.data);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // get a bisection task
+    getBisectTask(id: string): Promise<GetBisectTaskResponse> {
+        return new Promise<GetBisectTaskResponse>((resolve, reject) => {
+            this.backend.get(`/api/v1/bisect/${id}`).then((value) => {
+                resolve(value.data as GetBisectTaskResponse);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    getBisections(query: { id?: string[], ownerId?: string, jobId?: string, minCreateTime?: string, maxCreateTime?: string, index?: number, count?: number }) {
+
+        return new Promise<GetBisectTaskResponse[]>((resolve, reject) => {
+            this.backend.get(`/api/v1/bisect`, { params: query }).then((value) => {
+                resolve(value.data as GetBisectTaskResponse[]);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // update a visection task
+    updateBisectTask(id: string, request: UpdateBisectTaskRequest): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.backend.patch(`/api/v1/bisect/${id}`, request).then(() => {
+                resolve();
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // get a job's bisection tasks
+    getJobBisectTasks(jobId: string): Promise<GetBisectTaskResponse[]> {
+        return new Promise<GetBisectTaskResponse[]>((resolve, reject) => {
+            this.backend.get(`/api/v1/bisect/job/${jobId}`).then((value) => {
+                resolve(value.data as GetBisectTaskResponse[]);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    checkPreflightConfig(shelvedChange: number): Promise<PreflightConfigResponse> {
+
+        return new Promise<PreflightConfigResponse>((resolve, reject) => {
+            this.backend.post(`/api/v1/server/preflightconfig`, { shelvedChange: shelvedChange }).then((value) => {
+                resolve(value.data as PreflightConfigResponse);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+
+    }
+
+    // Accounts
+
+    getAccountEntitlements(): Promise<any> {
+        return new Promise<any>((resolve, reject) => {
+            this.backend.get(`/account/entitlements`).then((value) => {
+                resolve(value.data as any);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+    
+    // update current account 
+    updateCurrentAccount(request: UpdateCurrentAccountRequest): Promise<boolean> {
+        return new Promise<boolean>((resolve, reject) => {
+            this.backend.put(`/api/v1/accounts/current`, request).then(() => {
+                resolve(true);
+            }).catch((reason) => {
+                reject(reason);
+            });
+        });
+    }
+
+    getAccounts(): Promise<GetAccountResponse[]> {
+        return new Promise<GetAccountResponse[]>((resolve, reject) => {
+            this.backend.get(`/api/v1/accounts`).then((value) => {
+                resolve(value.data as GetAccountResponse[]);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    getAccountGroups(): Promise<AccountClaimMessage[]> {
+        return new Promise<AccountClaimMessage[]>((resolve, reject) => {
+            this.backend.get(`/api/v1/dashboard/accountgroups`).then((value) => {
+                resolve(value.data as AccountClaimMessage[]);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // create a new account
+    createAccount(request: CreateAccountRequest): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.backend.post(`/api/v1/accounts`, request).then(() => {
+                resolve();
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // delete an account
+    deleteAccount(id: string): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.backend.delete(`/api/v1/accounts/${id}`).then(() => {
+                resolve();
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // update an account
+    updateAccount(id: string, request: UpdateAccountRequest): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.backend.put(`/api/v1/accounts/${id}`, request).then(() => {
+                resolve();
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // Service Accounts
+
+    getServiceAccounts(): Promise<GetServiceAccountResponse[]> {
+        return new Promise<GetServiceAccountResponse[]>((resolve, reject) => {
+            this.backend.get(`/api/v1/serviceaccounts`).then((value) => {
+                resolve(value.data as GetServiceAccountResponse[]);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // create a new account
+    createServiceAccount(request: CreateServiceAccountRequest): Promise<CreateServiceAccountResponse> {
+        return new Promise<CreateServiceAccountResponse>((resolve, reject) => {
+            this.backend.post(`/api/v1/serviceaccounts`, request).then((value) => {
+                resolve(value.data as CreateServiceAccountResponse);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // delete an account
+    deleteServiceAccount(id: string): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.backend.delete(`/api/v1/serviceaccounts/${id}`).then(() => {
+                resolve();
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
+    // update an account
+    updateServiceAccount(id: string, request: UpdateServiceAccountRequest): Promise<UpdateServiceAccountResponse> {
+        return new Promise<UpdateServiceAccountResponse>((resolve, reject) => {
+            this.backend.put(`/api/v1/serviceaccounts/${id}`, request).then((value) => {
+                resolve(value.data as UpdateServiceAccountResponse);
+            }).catch(reason => {
+                reject(reason);
+            });
+        });
+    }
+
     private async update() {
 
         if (this.updateID === "updating") {
@@ -1675,7 +1917,7 @@ export class Backend {
     async serverLogout(redirect: string) {
         try {
             this.backend.logout = true;
-            await this.backend.get("/api/v1/dashboard/logout");
+            await this.backend.get("/api/v1/dashboard/logout", { params: { dashboard: true } });
             window.location.assign(redirect);
 
         } catch (err) {

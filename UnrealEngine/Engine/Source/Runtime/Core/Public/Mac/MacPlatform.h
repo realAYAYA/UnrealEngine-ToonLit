@@ -67,7 +67,10 @@ typedef FMacPlatformTypes FPlatformTypes;
 #endif
 #define PLATFORM_HAS_BSD_TIME							1
 #define PLATFORM_HAS_BSD_IPV6_SOCKETS					1
+#define PLATFORM_HAS_BSD_SOCKET_FEATURE_IOCTL			1
+#define PLATFORM_HAS_BSD_SOCKET_FEATURE_POLL			1
 //#define PLATFORM_USE_PTHREADS							1
+#define PLATFORM_HAS_MULTITHREADED_PREMAIN				1
 #define PLATFORM_MAX_FILEPATH_LENGTH_DEPRECATED			MAC_MAX_PATH
 #define PLATFORM_SUPPORTS_TBB							1
 #define PLATFORM_SUPPORTS_MIMALLOC						PLATFORM_64BITS
@@ -75,24 +78,25 @@ typedef FMacPlatformTypes FPlatformTypes;
 #define PLATFORM_HAS_BSD_SOCKET_FEATURE_MSG_DONTWAIT	1
 #define PLATFORM_IS_ANSI_MALLOC_THREADSAFE				1
 #define PLATFORM_SUPPORTS_VIRTUAL_TEXTURE_STREAMING		1
-
+#define PLATFORM_SUPPORTS_MESH_SHADERS                  1
+#define PLATFORM_SUPPORTS_BINDLESS_RENDERING            1
+#define PLATFORM_SUPPORTS_GEOMETRY_SHADERS              1
+ 
 #define PLATFORM_ENABLE_POPCNT_INTRINSIC				1
 
 #define PLATFORM_GLOBAL_LOG_CATEGORY					LogMac
 
+#if WITH_EDITOR
+#define PLATFORM_FILE_READER_BUFFER_SIZE				(256*1024)
+#endif
+
 #if PLATFORM_MAC_X86
 	#define PLATFORM_BREAK()							__asm__("int $3")
 #else
-    #define PLATFORM_BREAK()                            __builtin_trap()
+    #define PLATFORM_BREAK()                            __builtin_debugtrap()
 #endif
 
 #define PLATFORM_CODE_SECTION(Name)						__attribute__((section("__TEXT,__" Name ",regular,pure_instructions")))
-
-#if __has_feature(cxx_decltype_auto)
-	#define PLATFORM_COMPILER_HAS_DECLTYPE_AUTO			1
-#else
-	#define PLATFORM_COMPILER_HAS_DECLTYPE_AUTO			0
-#endif
 
 // Function type macros.
 #define VARARGS															/* Functions with variable arguments */

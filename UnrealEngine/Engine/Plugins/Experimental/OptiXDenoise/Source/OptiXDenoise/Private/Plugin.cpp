@@ -3,11 +3,28 @@
 #include "OptiXDenoiser.h"
 #include "HAL/IConsoleManager.h"
 #include "PathTracingDenoiser.h"
+#include "RenderGraphBuilder.h"
+#include "SceneView.h"
 #include <mutex>
 
 #define LOCTEXT_NAMESPACE "FOptiXDenoiseModule"
 
 DEFINE_LOG_CATEGORY(LogOptiXDenoise);
+
+BEGIN_SHADER_PARAMETER_STRUCT(FDenoiseTextureExtParameters, )
+	RDG_TEXTURE_ACCESS(InputTexture, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(InputAlbedo, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(InputNormal, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(InputFlow, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(InputPreviousOutput, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(OutputTexture, ERHIAccess::CopyDest)
+END_SHADER_PARAMETER_STRUCT()
+
+BEGIN_SHADER_PARAMETER_STRUCT(FMotionVectorParameters, )
+	RDG_TEXTURE_ACCESS(InputFrameTexture, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(ReferenceFrameTexture, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(OutputTexture, ERHIAccess::CopyDest)
+END_SHADER_PARAMETER_STRUCT()
 
 namespace
 {
@@ -117,7 +134,10 @@ static void Denoise(
 	FRHITexture* AlbedoTex,
 	FRHITexture* NormalTex,
 	FRHITexture* OutputTex,
-	const FDenoisingArgumentsExt* DenoisingArgumentExt,
+	FRHITexture* FlowTex,
+	FRHITexture* PreviousOutputTex,
+	int DenoisingFrameId,
+	bool bForceSpatialDenoiserOnly,
 	FRHIGPUMask GPUMask)
 {
 	FOptiXCudaFunctionList::Get().InitializeCudaModule();
@@ -136,7 +156,7 @@ static void Denoise(
 		});
 
 	// (Re)initialize the denoiser if this is the first frame (e.g., new cut) or the image size has changed
-	if (DenoisingArgumentExt->bForceSpatialDenoiserOnly ||
+	if (bForceSpatialDenoiserOnly ||
 		FOptiXDenoiseModule::Denoiser->IsImageSizeChanged(Size.X, Size.Y))
 	{
 		FOptiXDenoiseModule::Denoiser->Finish();
@@ -148,12 +168,12 @@ static void Denoise(
 			CVarOptixDenoiseTileHeight.GetValueOnAnyThread());
 
 		UE_LOG(LogOptiXDenoise, Log, TEXT("Denoising Frame %d (%d x %d) Spatially"),
-			DenoisingArgumentExt->DenoisingFrameId, Size.X, Size.Y);
+			DenoisingFrameId, Size.X, Size.Y);
 	}
 	else
 	{
 		UE_LOG(LogOptiXDenoise, Log, TEXT("Denoising Frame %d (%d x %d) temporally"),
-			DenoisingArgumentExt->DenoisingFrameId, Size.X, Size.Y);
+			DenoisingFrameId, Size.X, Size.Y);
 	}
 
 	const CUstream& CudaStream = FOptiXDenoiseModule::Denoiser->GetCudaStream();
@@ -191,8 +211,8 @@ static void Denoise(
 		UploadTextureToDenoiser(ColorTex, EDenoisingImageType::COLOR, TEXT("ColorTex"));
 		UploadTextureToDenoiser(AlbedoTex, EDenoisingImageType::ALBEDO, TEXT("AlbedoTex"));
 		UploadTextureToDenoiser(NormalTex, EDenoisingImageType::NORMAL, TEXT("NormalTex"));
-		UploadTextureToDenoiser(DenoisingArgumentExt->FlowTex, EDenoisingImageType::FLOW, TEXT("FlowTex"));
-		UploadTextureToDenoiser(DenoisingArgumentExt->PreviousOutputTex, EDenoisingImageType::PREVOUTPUT, TEXT("PreviousOutputTex"));
+		UploadTextureToDenoiser(FlowTex, EDenoisingImageType::FLOW, TEXT("FlowTex"));
+		UploadTextureToDenoiser(PreviousOutputTex, EDenoisingImageType::PREVOUTPUT, TEXT("PreviousOutputTex"));
 		UploadTextureToDenoiser(OutputTex, EDenoisingImageType::OUTPUT, TEXT("OutputTex"));
 	}
 
@@ -209,6 +229,86 @@ static void Denoise(
 	FOptiXDenoiseModule::OptiXImageFactory->FlushImages();
 }
 
+using namespace UE::Renderer::Private;
+
+class FOptiXDenosier : public IPathTracingSpatialTemporalDenoiser
+{
+public:
+	class FHistory : public IHistory
+	{
+	public:
+		FHistory(const TCHAR* DebugName) : DebugName(DebugName) { }
+
+		virtual ~FHistory() { }
+
+		const TCHAR* GetDebugName() const override { return DebugName; };
+
+	private:
+		const TCHAR* DebugName;
+	};
+
+	~FOptiXDenosier() {}
+
+	const TCHAR* GetDebugName() const override { return *DebugName; }
+
+	virtual FOutputs AddPasses(FRDGBuilder& GraphBuilder, const FSceneView& View, const FInputs& Inputs) const
+	{
+		FDenoiseTextureExtParameters* DenoiseParameters = GraphBuilder.AllocParameters<FDenoiseTextureExtParameters>();
+		DenoiseParameters->InputTexture = Inputs.ColorTex;
+		DenoiseParameters->InputAlbedo = Inputs.AlbedoTex;
+		DenoiseParameters->InputNormal = Inputs.NormalTex;
+		DenoiseParameters->InputFlow = Inputs.FlowTex;
+		DenoiseParameters->InputPreviousOutput = Inputs.PreviousOutputTex;
+		DenoiseParameters->OutputTexture = Inputs.OutputTex;
+
+		const int DenoisingFrameId = Inputs.DenoisingFrameId;
+		const bool bForceSpatialDenoiserOnly = Inputs.bForceSpatialDenoiserOnly;
+
+		// Need to read GPU mask outside Pass function, as the value is not refreshed inside the pass
+		GraphBuilder.AddPass(RDG_EVENT_NAME("Path Tracer Denoiser Ext Plugin"), DenoiseParameters, ERDGPassFlags::Readback,
+			[DenoiseParameters, DenoisingFrameId, bForceSpatialDenoiserOnly, GPUMask = View.GPUMask](FRHICommandListImmediate& RHICmdList)
+		{
+			Denoise(RHICmdList,
+				DenoiseParameters->InputTexture->GetRHI()->GetTexture2D(),
+				DenoiseParameters->InputAlbedo->GetRHI()->GetTexture2D(),
+				DenoiseParameters->InputNormal->GetRHI()->GetTexture2D(),
+				DenoiseParameters->OutputTexture->GetRHI()->GetTexture2D(),
+				DenoiseParameters->InputFlow ? DenoiseParameters->InputFlow->GetRHI()->GetTexture2D() : nullptr,
+				DenoiseParameters->InputPreviousOutput ? DenoiseParameters->InputPreviousOutput->GetRHI()->GetTexture2D() : nullptr,
+				DenoisingFrameId,
+				bForceSpatialDenoiserOnly,
+				GPUMask);
+		});
+
+		return {};
+	}
+
+	virtual void AddMotionVectorPass(FRDGBuilder& GraphBuilder, const FSceneView& View, const FMotionVectorInputs& Inputs) const
+	{
+		FMotionVectorParameters* DenoiseParameters = GraphBuilder.AllocParameters<FMotionVectorParameters>();
+		DenoiseParameters->InputFrameTexture = Inputs.InputFrameTex;
+		DenoiseParameters->ReferenceFrameTexture = Inputs.ReferenceFrameTex;
+		DenoiseParameters->OutputTexture = Inputs.OutputTex;
+
+		const float PreExposure = Inputs.PreExposure;
+		
+		GraphBuilder.AddPass(RDG_EVENT_NAME("OptiX Motion Vector Pass"), DenoiseParameters, ERDGPassFlags::Readback,
+			[DenoiseParameters, PreExposure, GPUMask = View.GPUMask](FRHICommandListImmediate& RHICmdList)
+		{
+
+			OpticalFlow(RHICmdList,
+				DenoiseParameters->InputFrameTexture->GetRHI()->GetTexture2D(),
+				DenoiseParameters->ReferenceFrameTexture->GetRHI()->GetTexture2D(),
+				DenoiseParameters->OutputTexture->GetRHI()->GetTexture2D(),
+				PreExposure,
+				GPUMask);
+		});
+	}
+
+private:
+	inline static const FString DebugName = TEXT("FOptiXDenosier");
+};
+
 void FOptiXDenoiseModule::StartupModule()
 {
 #if WITH_EDITOR
@@ -224,8 +324,7 @@ void FOptiXDenoiseModule::StartupModule()
 	OptiXDenoiseBaseDLLHandle = FPlatformProcess::GetDllHandle(*OptiXDenoiseBaseDllPath);
 	FOptiXCudaFunctionList::Get().RegisterFunctionInstance<FOptiXDenoiserFunctionInstance>();
 
-	GPathTracingSpatialTemporalDenoiserFunc = &Denoise;
-	GPathTracingMotionVectorFunc = &OpticalFlow;
+	GPathTracingSpatialTemporalDenoiserPlugin = MakeUnique<FOptiXDenosier>();
 }
 
 void FOptiXDenoiseModule::ShutdownModule()
@@ -233,8 +332,8 @@ void FOptiXDenoiseModule::ShutdownModule()
 #if WITH_EDITOR
 	UE_LOG(LogOptiXDenoise, Log, TEXT("OptiXDenoise shutting down"));
 #endif
-	GPathTracingSpatialTemporalDenoiserFunc = nullptr;
-	GPathTracingMotionVectorFunc = nullptr;
+
+	GPathTracingSpatialTemporalDenoiserPlugin.Reset();
 
 	// Assure resources related to CUDA is released before the releasing of CUDA module.
 	Denoiser.Reset();

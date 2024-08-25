@@ -24,6 +24,11 @@ namespace Private
 } // SVT
 } // UE
 
+uint32 UE::SVT::PackX11Y11Z10(const FIntVector3& Value)
+{
+	return (Value.X & 0x7FFu) | ((Value.Y & 0x7FFu) << 11u) | ((Value.Z & 0x3FFu) << 22u);
+}
+
 uint32 UE::SVT::PackPageTableEntry(const FIntVector3& Coord)
 {
 	uint32 Result = (Coord.X & 0xFFu) | ((Coord.Y & 0xFFu) << 8u) | ((Coord.Z & 0xFFu) << 16u);
@@ -192,4 +197,19 @@ bool UE::SVT::IsSupportedFormat(EPixelFormat Format)
 	default:
 		return false;
 	}
+}
+
+bool UE::SVT::IsInBounds(const FIntVector3& Point, const FIntVector3& Min, const FIntVector3& Max)
+{
+	return Point.X >= Min.X && Point.Y >= Min.Y && Point.Z >= Min.Z
+		&& Point.X < Max.X && Point.Y < Max.Y && Point.Z < Max.Z;
+}
+
+FIntVector3 UE::SVT::ShiftRightAndMax(const FIntVector3& Value, uint32 ShiftBy, int32 MinValue)
+{
+	FIntVector3 Result = FIntVector3(
+		FMath::Max(Value.X >> ShiftBy, MinValue),
+		FMath::Max(Value.Y >> ShiftBy, MinValue),
+		FMath::Max(Value.Z >> ShiftBy, MinValue));
+	return Result;
 }

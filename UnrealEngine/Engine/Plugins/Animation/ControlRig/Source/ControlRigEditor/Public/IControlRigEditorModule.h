@@ -5,6 +5,10 @@
 #include "CoreMinimal.h"
 #include "IControlRigEditor.h"
 #include "RigVMEditorModule.h"
+#include "Kismet2/StructureEditorUtils.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "ClassViewerModule.h"
+#include "ClassViewerFilter.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogControlRigEditor, Log, All);
 
@@ -13,6 +17,25 @@ class UControlRigBlueprint;
 class UControlRigGraphNode;
 class UControlRigGraphSchema;
 class FConnectionDrawingPolicy;
+
+class CONTROLRIGEDITOR_API FControlRigClassFilter : public IClassViewerFilter
+{
+public:
+	FControlRigClassFilter(bool bInCheckSkeleton, bool bInCheckAnimatable, bool bInCheckInversion, USkeleton* InSkeleton);
+	virtual bool IsClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const UClass* InClass, TSharedRef< FClassViewerFilterFuncs > InFilterFuncs) override;
+	virtual bool IsUnloadedClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const TSharedRef< const IUnloadedBlueprintData > InUnloadedClassData, TSharedRef< FClassViewerFilterFuncs > InFilterFuncs) override;	
+
+private:
+	bool MatchesFilter(const FAssetData& AssetData);
+
+private:
+	bool bFilterAssetBySkeleton;
+	bool bFilterExposesAnimatableControls;
+	bool bFilterInversion;
+
+	USkeleton* Skeleton;
+	const IAssetRegistry& AssetRegistry;
+};
 
 class IControlRigEditorModule : public FRigVMEditorModule
 {

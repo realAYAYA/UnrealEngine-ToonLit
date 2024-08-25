@@ -127,6 +127,11 @@ namespace FNavigationSystem
 	class FDelegates
 	{
 	public:
+		FObjectBasedSignature RegisterNavRelevantObject;
+		FObjectBasedSignature UpdateNavRelevantObject;
+		FObjectBasedSignature UnregisterNavRelevantObject;
+		FObjectBoundsChangedSignature OnObjectBoundsChanged;
+
 		FActorBasedSignature UpdateActorData;
 		FActorComponentBasedSignature UpdateComponentData;
 		FSceneComponentBasedSignature UpdateComponentDataAfterMove;
@@ -146,7 +151,6 @@ namespace FNavigationSystem
 		FNavDataConfigBasedSignature GetDefaultSupportedAgent;
 		FNavDataConfigAndWorldSignature GetBiggestSupportedAgent;
 		FActorBooleBasedSignature UpdateActorAndComponentData;
-		FComponentBoundsChangeSignature OnComponentBoundsChanged;
 		FNavDataForActorSignature GetNavDataForActor;
 		FNavDataClassFetchSignature GetDefaultNavDataClass;
 		FWorldBoolBasedSignature VerifyNavigationRenderingComponents;
@@ -155,6 +159,11 @@ namespace FNavigationSystem
 		FOnNavigationInitSignature OnNavigationInitDone;
 		FOnNavAreaGenericEvent OnNavAreaRegistered;
 		FOnNavAreaGenericEvent OnNavAreaUnregistered;
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		FComponentBoundsChangeSignature OnComponentBoundsChanged;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		
 #if WITH_EDITOR
 		FWorldBasedSignature OnPIEStart;
 		FWorldBasedSignature OnPIEEnd;
@@ -167,6 +176,11 @@ namespace FNavigationSystem
 
 		FDelegates()
 		{
+			RegisterNavRelevantObject.BindLambda([](UObject&) {});
+			UpdateNavRelevantObject.BindLambda([](UObject&) {});
+			UnregisterNavRelevantObject.BindLambda([](UObject&) {});
+			OnObjectBoundsChanged.BindLambda([](UObject&, const FBox&, TConstArrayView<FBox>) {});
+
 			UpdateActorData.BindLambda([](AActor&) {});
 			UpdateComponentData.BindLambda([](UActorComponent&) {});
 			UpdateComponentDataAfterMove.BindLambda([](UActorComponent&) {});
@@ -207,13 +221,18 @@ namespace FNavigationSystem
 
 	void ResetDelegates() { new(&Delegates)FDelegates(); }
 
+	void RegisterNavRelevantObject(UObject& Object) { Delegates.RegisterNavRelevantObject.Execute(Object); }
+	void UpdateNavRelevantObject(UObject& Object) { Delegates.UpdateNavRelevantObject.Execute(Object); }
+	void UnregisterNavRelevantObject(UObject& Object) { Delegates.UnregisterNavRelevantObject.Execute(Object); }
+	void OnObjectBoundsChanged(UObject& Object, const FBox& NewBounds, const TConstArrayView<FBox> DirtyAreas) { Delegates.OnObjectBoundsChanged.Execute(Object, NewBounds, DirtyAreas); }
+
 	void UpdateActorData(AActor& Actor) { Delegates.UpdateActorData.Execute(Actor); }
 	void UpdateComponentData(UActorComponent& Comp) { Delegates.UpdateComponentData.Execute(Comp); }
 	void UpdateActorAndComponentData(AActor& Actor, bool bUpdateAttachedActors) { Delegates.UpdateActorAndComponentData.Execute(Actor, bUpdateAttachedActors); }
 	void UpdateComponentDataAfterMove(USceneComponent& Comp) { Delegates.UpdateComponentDataAfterMove.Execute(Comp); }
 	void OnActorBoundsChanged(AActor& Actor) { Delegates.OnActorBoundsChanged.Execute(Actor); }
 	void OnPostEditActorMove(AActor& Actor) { Delegates.OnPostEditActorMove.Execute(Actor); }
-	void OnComponentBoundsChanged(UActorComponent& Comp, const FBox& NewBounds, const FBox& DirtyArea) { Delegates.OnComponentBoundsChanged.Execute(Comp, NewBounds, DirtyArea); }
+	void OnComponentBoundsChanged(UActorComponent& Comp, const FBox& NewBounds, const FBox& DirtyArea) { OnObjectBoundsChanged(Comp, NewBounds, { DirtyArea }); }
 	void OnComponentTransformChanged(USceneComponent& Comp) { Delegates.OnComponentTransformChanged.Execute(Comp); }
 	void OnActorRegistered(AActor& Actor) { Delegates.OnActorRegistered.Execute(Actor); }
 	void OnActorUnregistered(AActor& Actor) { Delegates.OnActorUnregistered.Execute(Actor); }
@@ -387,6 +406,12 @@ void UNavigationSystemBase::SetDefaultObstacleArea(TSubclassOf<UNavAreaBase> InA
 
 
 void UNavigationSystemBase::ResetEventDelegates() { FNavigationSystem::ResetDelegates(); }
+
+FNavigationSystem::FObjectBasedSignature& UNavigationSystemBase::RegisterNavRelevantObjectDelegate() { return FNavigationSystem::Delegates.RegisterNavRelevantObject; }
+FNavigationSystem::FObjectBasedSignature& UNavigationSystemBase::UpdateNavRelevantObjectDelegate() { return FNavigationSystem::Delegates.UpdateNavRelevantObject; }
+FNavigationSystem::FObjectBasedSignature& UNavigationSystemBase::UnregisterNavRelevantObjectDelegate() { return FNavigationSystem::Delegates.UnregisterNavRelevantObject; }
+FNavigationSystem::FObjectBoundsChangedSignature& UNavigationSystemBase::OnObjectBoundsChangedDelegate() { return FNavigationSystem::Delegates.OnObjectBoundsChanged; }
+
 FNavigationSystem::FActorBasedSignature& UNavigationSystemBase::UpdateActorDataDelegate() { return FNavigationSystem::Delegates.UpdateActorData; }
 FNavigationSystem::FActorComponentBasedSignature& UNavigationSystemBase::UpdateComponentDataDelegate() { return FNavigationSystem::Delegates.UpdateComponentData; }
 FNavigationSystem::FSceneComponentBasedSignature& UNavigationSystemBase::UpdateComponentDataAfterMoveDelegate() { return FNavigationSystem::Delegates.UpdateComponentDataAfterMove; }
@@ -404,7 +429,6 @@ FNavigationSystem::FBoolActorComponentBasedSignature& UNavigationSystemBase::Has
 FNavigationSystem::FNavDataConfigBasedSignature& UNavigationSystemBase::GetDefaultSupportedAgentDelegate() { return FNavigationSystem::Delegates.GetDefaultSupportedAgent; }
 FNavigationSystem::FNavDataConfigAndWorldSignature& UNavigationSystemBase::GetBiggestSupportedAgentDelegate() { return FNavigationSystem::Delegates.GetBiggestSupportedAgent; }
 FNavigationSystem::FActorBooleBasedSignature& UNavigationSystemBase::UpdateActorAndComponentDataDelegate() { return FNavigationSystem::Delegates.UpdateActorAndComponentData; }
-FNavigationSystem::FComponentBoundsChangeSignature& UNavigationSystemBase::OnComponentBoundsChangedDelegate() { return FNavigationSystem::Delegates.OnComponentBoundsChanged; }
 FNavigationSystem::FNavDataForActorSignature& UNavigationSystemBase::GetNavDataForActorDelegate() { return FNavigationSystem::Delegates.GetNavDataForActor; }
 FNavigationSystem::FNavDataClassFetchSignature& UNavigationSystemBase::GetDefaultNavDataClassDelegate() { return FNavigationSystem::Delegates.GetDefaultNavDataClass; }
 FNavigationSystem::FWorldBoolBasedSignature& UNavigationSystemBase::VerifyNavigationRenderingComponentsDelegate() { return FNavigationSystem::Delegates.VerifyNavigationRenderingComponents; }
@@ -413,6 +437,11 @@ FNavigationSystem::FOnNavigationInitSignature& UNavigationSystemBase::OnNavigati
 FNavigationSystem::FOnNavigationInitSignature& UNavigationSystemBase::OnNavigationInitDoneStaticDelegate() { return FNavigationSystem::Delegates.OnNavigationInitDone; }
 FNavigationSystem::FOnNavAreaGenericEvent& UNavigationSystemBase::OnNavAreaRegisteredDelegate() { return FNavigationSystem::Delegates.OnNavAreaRegistered; }
 FNavigationSystem::FOnNavAreaGenericEvent& UNavigationSystemBase::OnNavAreaUnregisteredDelegate() { return FNavigationSystem::Delegates.OnNavAreaUnregistered; }
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+FNavigationSystem::FComponentBoundsChangeSignature& UNavigationSystemBase::OnComponentBoundsChangedDelegate() { return FNavigationSystem::Delegates.OnComponentBoundsChanged; }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 #if WITH_EDITOR
 FNavigationSystem::FWorldBasedSignature& UNavigationSystemBase::OnPIEStartDelegate() { return FNavigationSystem::Delegates.OnPIEStart; }
 FNavigationSystem::FWorldBasedSignature& UNavigationSystemBase::OnPIEEndDelegate() { return FNavigationSystem::Delegates.OnPIEEnd; }

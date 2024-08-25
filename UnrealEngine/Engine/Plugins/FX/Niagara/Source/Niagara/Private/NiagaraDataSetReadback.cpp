@@ -4,6 +4,7 @@
 #include "NiagaraComputeExecutionContext.h"
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraEmitterInstance.h"
+#include "NiagaraEmitterInstanceImpl.h"
 #include "NiagaraSystemInstance.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
 #include "NiagaraGPUInstanceCountManager.h"
@@ -25,7 +26,7 @@ void FNiagaraDataSetReadback::EnqueueReadback(FNiagaraEmitterInstance* EmitterIn
 	check(IsReady());
 
 	SourceName = EmitterInstance->GetEmitterHandle().GetName();
-	DataSet.Init(&EmitterInstance->GetData().GetCompiledData());
+	DataSet.Init(&EmitterInstance->GetParticleData().GetCompiledData());
 	if ( FNiagaraComputeExecutionContext* GPUExecContext = EmitterInstance->GetGPUContext() )
 	{
 		ParameterStore = GPUExecContext->CombinedParamStore;
@@ -43,16 +44,20 @@ void FNiagaraDataSetReadback::EnqueueReadback(FNiagaraEmitterInstance* EmitterIn
 	}
 	else
 	{
-		const FNiagaraDataSet& SourceDataSet = EmitterInstance->GetData();
+		const FNiagaraDataSet& SourceDataSet = EmitterInstance->GetParticleData();
 		if (FNiagaraDataBuffer* SourceDataBuffer = SourceDataSet.GetCurrentData())
 		{
-			EmitterInstance->GetData().CopyTo(DataSet, 0, SourceDataBuffer->GetNumInstances());
+			EmitterInstance->GetParticleData().CopyTo(DataSet, 0, SourceDataBuffer->GetNumInstances());
 		}
 		else
 		{
 			DataSet.CopyFromGPUReadback(nullptr, nullptr, nullptr, 0, 0, 0, 0, 0);
 		}
-		ParameterStore = EmitterInstance->GetUpdateExecutionContext().Parameters;
+		//-TODO:Stateless
+		if (FNiagaraEmitterInstanceImpl* StatefulEmitterInstance = EmitterInstance->AsStateful())
+		{
+			ParameterStore = StatefulEmitterInstance->GetUpdateExecutionContext().Parameters;
+		}
 	}
 }
 
@@ -136,7 +141,11 @@ void FNiagaraDataSetReadback::GPUReadbackInternal(FRHICommandListImmediate& RHIC
 	Transitions.Emplace(ReadbackBuffers[0].Buffer, FNiagaraGPUInstanceCountManager::kCountBufferDefaultState, ERHIAccess::CopySrc);
 	for (int32 i=1; i < ReadbackBuffers.Num(); ++i)
 	{
-		Transitions.Emplace(ReadbackBuffers[i].Buffer, ERHIAccess::SRVMask, ERHIAccess::CopySrc);
+		Transitions.Emplace(
+			ReadbackBuffers[i].Buffer,
+			(i == IDtoIndexBufferIndex) ? ERHIAccess::SRVCompute : ERHIAccess::SRVMask,
+			ERHIAccess::CopySrc
+		);
 	}
 	RHICmdList.Transition(Transitions);
 

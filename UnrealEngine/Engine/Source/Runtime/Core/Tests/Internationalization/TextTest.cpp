@@ -546,6 +546,7 @@ public:
 					FormattedTestLayer2_OriginalLanguageSourceString = FormattedTestLayer2.BuildSourceString();
 
 #if ENABLE_LOC_TESTING
+					if (FTextLocalizationManager::IsDisplayStringSupportEnabled()) // Leetification requires display strings
 					{
 						// Swap to "LEET" culture to check if rebuilding works (verify the whole)
 						I18N.SetCurrentCulture(FLeetCulture::StaticGetName());

@@ -20,8 +20,9 @@ struct FBone
 	FVector Position;
 	FQuat Rotation;
 	FVector Scale; // just passed through, not modified
-	FVector LocalPositionOrig;
-	FQuat LocalRotationOrig;
+	FVector LocalPositionFromInput;
+	FQuat LocalRotationFromInput;
+	FRotator LocalRotationInitial;
 
 	// initialized - these fields are null/empty until after Solver::Initialize()
 	FRigidBody* Body = nullptr;
@@ -91,6 +92,9 @@ struct FRigidBody
 	float Mass = 0.f;
 
 	float MaxAngle = 0.0f;
+
+	bool bIsLockedBySubSolve = false;
+	bool bIsPartOfSubChain = false;
 	
 private:
 
@@ -110,11 +114,11 @@ public:
 
 	FRigidBody* GetParentBody() const;
 
-	float GetInverseMass();
+	bool IsAllowedToRotate() const;
 
 	void ApplyPushToRotateBody(const FVector& Push, const FVector& Offset);
 	
-	void ApplyPushToPosition(const FVector& Push);
+	void ApplyPositionDelta(const FVector& InDeltaP);
 
 	void ApplyRotationDelta(const FQuat& InDelta);
 };

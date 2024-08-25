@@ -28,7 +28,7 @@ namespace
 		const FPositionVertexBuffer& VertexBuffer = LodRenderData.StaticVertexBuffers.PositionVertexBuffer;
 		const uint32 VertexCount = LodRenderData.StaticVertexBuffers.PositionVertexBuffer.GetNumVertices();
 
-		Buffer.SetNum(MaxAdjacencyCount * VertexCount, true);
+		Buffer.SetNum(MaxAdjacencyCount * VertexCount, EAllowShrinking::Yes);
 		FMemory::Memset(Buffer.GetData(), 0xFF, Buffer.Num() * sizeof(uint32));
 
 		int32 BaseTriangle = 0;

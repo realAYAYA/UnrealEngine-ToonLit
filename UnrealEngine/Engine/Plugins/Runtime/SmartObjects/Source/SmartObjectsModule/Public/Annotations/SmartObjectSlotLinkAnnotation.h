@@ -25,6 +25,6 @@ struct SMARTOBJECTSMODULE_API FSmartObjectSlotLinkAnnotation : public FSmartObje
 	FGameplayTag Tag;
 
 	/** The slot the annotation points at. */
-	UPROPERTY(EditAnywhere, Category="Default")
+	UPROPERTY(EditAnywhere, Category="Default", meta = (NoBinding))
 	FSmartObjectSlotReference LinkedSlot;
 };

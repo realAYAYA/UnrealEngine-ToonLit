@@ -11,14 +11,14 @@
 #include "WorldPartition/DataLayer/DataLayersID.h"
 #include "WorldPartition/DataLayer/DataLayerInstance.h"
 
+#if WITH_EDITOR
+
 extern ENGINE_API bool GRuntimeSpatialHashUseAlignedGridLevels;
 extern ENGINE_API bool GRuntimeSpatialHashSnapNonAlignedGridLevelsToLowerLevels;
 extern ENGINE_API bool GRuntimeSpatialHashPlaceSmallActorsUsingLocation;
 extern ENGINE_API bool GRuntimeSpatialHashPlacePartitionActorsUsingLocation;
-extern ENGINE_API bool GRuntimeSpatialHashUseAlignedGridLevelsEffective;
-extern ENGINE_API bool GRuntimeSpatialHashSnapNonAlignedGridLevelsToLowerLevelsEffective;
-extern ENGINE_API bool GRuntimeSpatialHashPlaceSmallActorsUsingLocationEffective;
-extern ENGINE_API bool GRuntimeSpatialHashPlacePartitionActorsUsingLocationEffective;
+
+#endif
 
 /**
   * Square 2D grid helper
@@ -393,7 +393,10 @@ struct FSquare2DGridHelper
 		TMap<int64, int64> CellsMapping;
 	};
 
+	UE_DEPRECATED(5.4, "Use version with bUseAlignedGridLevels param")
 	ENGINE_API FSquare2DGridHelper(const FBox& InWorldBounds, const FVector& InOrigin, int64 InCellSize);
+
+	ENGINE_API FSquare2DGridHelper(const FBox& InWorldBounds, const FVector& InOrigin, int64 InCellSize, bool bUseAlignedGridLevels);
 
 	// Returns the lowest grid level
 	inline FGridLevel& GetLowestLevel() { return Levels[0]; }
@@ -475,6 +478,13 @@ public:
 };
 
 #if WITH_EDITOR
+
+FSquare2DGridHelper GetGridHelper(const FBox& WorldBounds, const FVector& GridOrigin, int64 GridCellSize, bool bUseAlignedGridLevels);
+FSquare2DGridHelper GetPartitionedActors(const FBox& WorldBounds, const FSpatialHashRuntimeGrid& Grid, const TArray<const IStreamingGenerationContext::FActorSetInstance*>& ActorSetInstances, const FSpatialHashSettings& Settings);
+
+UE_DEPRECATED(5.4, "Use version with bUseAlignedGridLevels param")
 FSquare2DGridHelper GetGridHelper(const FBox& WorldBounds, const FVector& GridOrigin, int64 GridCellSize);
+
+UE_DEPRECATED(5.4, "Use version with Settings param")
 FSquare2DGridHelper GetPartitionedActors(const FBox& WorldBounds, const FSpatialHashRuntimeGrid& Grid, const TArray<const IStreamingGenerationContext::FActorSetInstance*>& ActorSetInstances);
 #endif // #if WITH_EDITOR

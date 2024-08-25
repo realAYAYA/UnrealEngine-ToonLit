@@ -136,6 +136,15 @@ public:
 
 		/** For the top shaders (descending), number of shadermaps in which they are used. Expected to be limited to a small number (10) */
 		TArray<int32> TopShaderUsages;
+
+		/** Number of shaers per frequency. */
+		int32 NumShadersPerFrequency[SF_NumFrequencies];
+
+		/** Uncompressed size of all shaders of a given frequency. */
+		uint64 UncompressedSizePerFrequency[SF_NumFrequencies];
+
+		/** Compressed (individually) size of all shaders of a given frequency. */
+		uint64 CompressedSizePerFrequency[SF_NumFrequencies];
 	};
 #endif
 

@@ -327,7 +327,6 @@ class CONTENTBROWSER_API FFrontendFilter_UsedInAnyLevel: public FFrontendFilter
 public:
 	/** Constructor/Destructor */
 	FFrontendFilter_UsedInAnyLevel(TSharedPtr<FFrontendFilterCategory> InCategory);
-	virtual ~FFrontendFilter_UsedInAnyLevel();
 
 	// FFrontendFilter implementation
 	virtual FString GetName() const override { return TEXT("UsedInAnyLevel"); }
@@ -343,13 +342,12 @@ private:
 	TSet<FName> LevelsDependencies;
 };
 
-/** A filter that only displays assets used by any level */
+/** A filter that only displays assets not used by any level */
 class CONTENTBROWSER_API FFrontendFilter_NotUsedInAnyLevel : public FFrontendFilter
 {
 public:
 	/** Constructor/Destructor */
 	FFrontendFilter_NotUsedInAnyLevel(TSharedPtr<FFrontendFilterCategory> InCategory);
-	virtual ~FFrontendFilter_NotUsedInAnyLevel();
 
 	// FFrontendFilter implementation
 	virtual FString GetName() const override { return TEXT("NotUsedInAnyLevel"); }
@@ -363,6 +361,25 @@ public:
 private:
 	class IAssetRegistry* AssetRegistry;
 	TSet<FName> LevelsDependencies;
+};
+
+/** A filter that only displays assets not used in another asset (Note It does not update itself automatically) */
+class CONTENTBROWSER_API FFrontendFilter_NotUsedInAnyAsset : public FFrontendFilter
+{
+public:
+	/** Constructor/Destructor */
+	FFrontendFilter_NotUsedInAnyAsset(TSharedPtr<FFrontendFilterCategory> InCategory);
+
+	// FFrontendFilter implementation
+	virtual FString GetName() const override { return TEXT("NotUsedInAnyAsset"); }
+	virtual FText GetDisplayName() const override { return LOCTEXT("FFrontendFilter_NotUsedInAnyAsset", "Not Used In Any Asset"); }
+	virtual FText GetToolTipText() const override { return LOCTEXT("FFrontendFilter_NotUsedInAnyAssetTooltip", "Show only the assets that aren't used by another asset."); }
+
+	// IFilter implementation
+	virtual bool PassesFilter(FAssetFilterType InItem) const override;
+
+private:
+	class IAssetRegistry* AssetRegistry = nullptr;
 };
 
 /** A filter that displays recently opened assets */

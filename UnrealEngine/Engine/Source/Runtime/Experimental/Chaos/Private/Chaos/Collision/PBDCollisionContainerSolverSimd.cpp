@@ -292,8 +292,6 @@ namespace Chaos
 						StaticFrictionRatio,
 						Dt);
 				}
-
-				Constraint->EndTick();
 			}
 		}
 
@@ -365,7 +363,7 @@ namespace Chaos
 			// Make sure we have enough constraint rows for these constraints (space is pre-allocated)
 			if (SimdData.SimdConstraints.Num() < IslandLaneNumConstraints + IslandConstraints.Num())
 			{
-				SimdData.SimdConstraints.SetNumZeroed(IslandLaneNumConstraints + IslandConstraints.Num(), false);
+				SimdData.SimdConstraints.SetNumZeroed(IslandLaneNumConstraints + IslandConstraints.Num(), EAllowShrinking::No);
 			}
 
 			// Add all the constraints in the island to the selected lane
@@ -392,7 +390,7 @@ namespace Chaos
 			const int32 NumSolvers = SimdData.SimdNumConstraints.GetMaxValue();
 
 			// Allocate the solvers (NOTE: unitialized data)
-			SimdData.SimdSolvers.SetNum(NumSolvers, false);
+			SimdData.SimdSolvers.SetNum(NumSolvers, EAllowShrinking::No);
 
 			// Determine how many manifold point rows we need and tell each solver where its points are
 			int32 NumManifoldPoints = 0;
@@ -418,15 +416,15 @@ namespace Chaos
 
 			// Allocate the manifold point solver rows (NOTE: all data cleared to zero)
 			// @todo(chaos): we could be more selective about what gets zeroed
-			SimdData.SimdManifoldPoints.SetNumZeroed(NumManifoldPoints, false);
+			SimdData.SimdManifoldPoints.SetNumZeroed(NumManifoldPoints, EAllowShrinking::No);
 
 
 #if !CHAOS_SIMDCOLLISIONSOLVER_USEDUMMYSOLVERBODY
 			// Allocate the body pointers (NOTE: set to null so that we don't have to visit lanes with no constraint again)
-			SimdData.SimdSolverBodies.SetNumZeroed(NumSolvers, false);
+			SimdData.SimdSolverBodies.SetNumZeroed(NumSolvers, EAllowShrinking::No);
 #else
 			// Allocate the body pointers (NOTE: set to point to a dummy body so that even unused lanes have a valid body)
-			SimdData.SimdSolverBodies.SetNumUninitialized(NumSolvers, false);
+			SimdData.SimdSolverBodies.SetNumUninitialized(NumSolvers, EAllowShrinking::No);
 			for (TSolverBodyPtrPairSimd<4>& BodyPtrPair : SimdData.SimdSolverBodies)
 			{
 				for (int32 LaneIndex = 0; LaneIndex < GetNumLanes(); ++LaneIndex)

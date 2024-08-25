@@ -66,7 +66,7 @@ private:
 	TSharedPtr<IEditableSkeleton> EditableSkeleton;
 
 	/** The mesh we are editing */
-	USkeletalMesh* Mesh;
+	TWeakObjectPtr <USkeletalMesh> Mesh;
 
 	/** The anim blueprint we are editing */
 	UAnimBlueprint* AnimBlueprint;

@@ -34,9 +34,6 @@ public:
 	/** Constructs this widget with InArgs */
 	void Construct(const FArguments& InArgs, TSharedRef<FRCBehaviourConditionalModel> InBehaviourItem);
 
-	/** Shutdown panel  (used to clear static shared pointers for the Conditions List) */
-	static void Shutdown();
-
 	/** Refreshes the Comparand input field.
 	* This needs to be performed each time the user creates a new Action, because the previous Comparand field has been consumed
 	*and so we create a new virtual property Comparand with whose memory the UI widget needs to be rebound.*/

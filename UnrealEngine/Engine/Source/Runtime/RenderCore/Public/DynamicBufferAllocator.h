@@ -11,6 +11,7 @@ DynamicBufferAllocator.h: Classes for allocating transient rendering data.
 #include "RHI.h"
 #include "RHIUtilities.h"
 #include "RenderResource.h"
+#include "Async/Mutex.h"
 
 struct FDynamicReadBufferPool;
 
@@ -83,26 +84,17 @@ public:
 	RENDERCORE_API FGlobalDynamicReadBuffer();
 	RENDERCORE_API ~FGlobalDynamicReadBuffer();
 	
-	RENDERCORE_API FAllocation AllocateHalf(FRHICommandListBase& RHICmdList, uint32 Num);
-	RENDERCORE_API FAllocation AllocateFloat(FRHICommandListBase& RHICmdList, uint32 Num);
-	RENDERCORE_API FAllocation AllocateInt32(FRHICommandListBase& RHICmdList, uint32 Num);
-	RENDERCORE_API FAllocation AllocateUInt32(FRHICommandListBase& RHICmdList, uint32 Num);
-
-	UE_DEPRECATED(5.3, "AllocateHalf now requires a command list.")
-	FAllocation AllocateHalf(uint32 Num) { return AllocateHalf(FRHICommandListImmediate::Get(), Num); }
-	UE_DEPRECATED(5.3, "AllocateFloat now requires a command list.")
-	FAllocation AllocateFloat(uint32 Num) { return AllocateFloat(FRHICommandListImmediate::Get(), Num); }
-	UE_DEPRECATED(5.3, "AllocateInt32 now requires a command list.")
-	FAllocation AllocateInt32(uint32 Num) { return AllocateInt32(FRHICommandListImmediate::Get(), Num); }
-	UE_DEPRECATED(5.3, "AllocateUInt32 now requires a command list.")
-	FAllocation AllocateUInt32(uint32 Num) { return AllocateUInt32(FRHICommandListImmediate::Get(), Num); }
+	RENDERCORE_API FAllocation AllocateHalf(uint32 Num);
+	RENDERCORE_API FAllocation AllocateFloat(uint32 Num);
+	RENDERCORE_API FAllocation AllocateInt32(uint32 Num);
+	RENDERCORE_API FAllocation AllocateUInt32(uint32 Num);
 
 	/**
 	* Commits allocated memory to the GPU.
 	*		WARNING: Once this buffer has been committed to the GPU, allocations
 	*		remain valid only until the next call to Allocate!
 	*/
-	RENDERCORE_API void Commit(FRHICommandListBase& RHICmdList);
+	RENDERCORE_API void Commit(FRHICommandListImmediate& RHICmdList);
 
 	UE_DEPRECATED(5.3, "Commit now requires a command list.")
 	void Commit() { Commit(FRHICommandListImmediate::Get()); }
@@ -115,6 +107,12 @@ protected:
 	RENDERCORE_API virtual void ReleaseRHI() override;
 	RENDERCORE_API void Cleanup();
 	RENDERCORE_API void IncrementTotalAllocations(uint32 Num);
+
+	template<EPixelFormat Format, typename Type>
+	FAllocation AllocateInternal(FDynamicReadBufferPool* BufferPool, uint32 Num);
+
+	UE::FMutex Mutex;
+	FRHICommandListBase* RHICmdList = nullptr;
 
 	/** The pools of read buffers from which allocations are made. */
 	FDynamicReadBufferPool* HalfBufferPool;

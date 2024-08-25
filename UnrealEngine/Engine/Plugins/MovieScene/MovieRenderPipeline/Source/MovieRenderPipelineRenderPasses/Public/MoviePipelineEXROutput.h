@@ -23,20 +23,54 @@ THIRD_PARTY_INCLUDES_END
 #include "MoviePipelineEXROutput.generated.h"
 
 class UMoviePipelineColorSetting;
+class FEXRImageWriteTask;
 
+namespace UE
+{
+	namespace MoviePipeline
+	{
+		/** Collection of color space metadata for EXR. */
+		struct FEXRColorSpaceMetadata
+		{
+			FString SourceName;
+			FString DestinationName;
+			TArray<FVector2d> Chromaticities;
+		};
+
+		/** Update the image write task with color space metadata from the OpenColorIO transform. */
+		void UpdateColorSpaceMetadata(const FOpenColorIOColorConversionSettings& InConversionSettings, FEXRImageWriteTask& InOutImageTask);
+
+		/** Update the image write task with color space metadata from the render capture source mode. */
+		void UpdateColorSpaceMetadata(ESceneCaptureSource InSceneCaptureSource, FEXRImageWriteTask& InOutImageTask);
+	}
+}
+
+// Exr compression format options. Exactly matches the exr library Imf::Compression enum.
 UENUM(BlueprintType)
 enum class EEXRCompressionFormat : uint8
 {
 	/** No compression is applied. */
-	None,
+	None = 0,
+	/** This compression method is fast, and works well for images with large flat areas but yields worse results for grainy images. Lossless. */
+	RLE = 1,
+	/** This compression method is similar to ZIP but compresses only one image row at a time. Lossless. */
+	ZIPS = 2 UMETA(DisplayName = "ZIP (1 scanline)"),
+	/** Good compression quality for images with low amounts of noise. This compression method operates in in blocks of 16 scan lines. Lossless. */
+	ZIP = 3  UMETA(DisplayName = "ZIP (16 scanlines)"),
 	/** Good compression quality for grainy images. Lossless.*/
-	PIZ,
-	/** Good compression quality for images with low amounts of noise. Lossless. */
-	ZIP,
+	PIZ = 4,
+	/** This format only stores 24 bits of the 32 bit data and has subsequently a significant loss of precision. This method is only applied when saving in FLOAT color depth. HALF and UINT remain unchanged. Lossy. */
+	PXR24 = 5,
+	/** This compression method only applies to images stored in HALF color depth. Blocks of 4×4 pixels are stored with using only 14 byte each (instead of the 32 byte they would normally need). Each block is compressed to the exact same size. Different images with the same dimensions require the same storage space regardless of image content. Lossy. */
+	B44 = 6,
+	/** A modified version of B44. If all pixels in a 4*4 block have the same color it will use only 3 instead of 14 byte. */
+	B44A = 7,
 	/** Lossy DCT-based compression for RGB channels. Alpha and other channels are uncompressed. More efficient than DWAB for partial buffer access on read in 3rd party tools. */
-	DWAA,
+	DWAA = 8,
 	/** Similar to DWAA but goes in blocks of 256 scanlines instead of 32. More efficient disk space and faster to decode than DWAA. */
-	DWAB
+	DWAB = 9,
+
+	Max UMETA(Hidden)
 };
 
 #if WITH_UNREALEXR
@@ -69,6 +103,9 @@ public:
 
 	/** The image data to write. Supports multiple layers of different bitdepths. */
 	TArray<TUniquePtr<FImagePixelData>> Layers;
+
+	/** Per-layer array of preprocessors to apply serially to the pixel data when this task is executed. */
+	TSortedMap<int32, TArray<FPixelPreProcessor>> PixelPreprocessors;
 
 	/** Optional. A mapping between the FImagePixelData and a name. The standard is that the default layer is nameless (at which point it would be omitted) and other layers are prefixed. */
 	TMap<FImagePixelData*, FString> LayerNames;
@@ -112,6 +149,11 @@ private:
 	*/
 	void AddFileMetadata(Imf::Header& InHeader);
 
+	/**
+	 * Run over all the processors for the pixel data
+	 */
+	void PreProcess();
+
 	template <Imf::PixelType OutputFormat>
 	int64 CompressRaw(Imf::Header& InHeader, Imf::FrameBuffer& InFrameBuffer, FImagePixelData* InLayer);
 };
@@ -149,16 +191,4 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EXR")
 	bool bMultilayer;
 
-protected:
-	struct FColorSpaceMetadata
-	{
-		FString SourceName;
-		FString DestinationName;
-		TArray<FVector2d> Chromaticities;
-	};
-
-	/**
-	* Get color space chromaticities, source and destination names from the color settings or working color space.
-	*/
-	static FColorSpaceMetadata GetColorSpaceMetadata(UMoviePipelineColorSetting* InColorSettings);
 };

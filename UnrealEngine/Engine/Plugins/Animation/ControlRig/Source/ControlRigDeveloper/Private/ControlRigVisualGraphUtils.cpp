@@ -181,7 +181,7 @@ FString FControlRigVisualGraphUtils::DumpRigHierarchyToDotGraph(URigHierarchy* I
 				}
 			}
 
-			NodeIndex = OutGraph.AddNode(NodeName, InElement->GetName(), Color, Shape);
+			NodeIndex = OutGraph.AddNode(NodeName, InElement->GetFName(), Color, Shape);
 
 			if(NodeIndex != INDEX_NONE)
 			{

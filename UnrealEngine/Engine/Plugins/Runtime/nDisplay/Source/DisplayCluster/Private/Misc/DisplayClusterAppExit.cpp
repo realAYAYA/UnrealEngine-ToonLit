@@ -47,6 +47,8 @@ void FDisplayClusterAppExit::ExitApplication(const FString& Msg, EExitType ExitT
 		}
 		else if(ExitType == EExitType::KillImmediately)
 		{
+			UE_LOG(LogDisplayClusterModule, Error, TEXT("KillImmediately requested - %s"), *Msg);
+
 			FProcHandle hProc = FPlatformProcess::OpenProcess(FPlatformProcess::GetCurrentProcessId());
 			FPlatformProcess::TerminateProc(hProc, true);
 		}

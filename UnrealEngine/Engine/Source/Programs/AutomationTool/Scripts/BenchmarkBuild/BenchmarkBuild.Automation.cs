@@ -102,7 +102,7 @@ namespace AutomationTool.Benchmark
 			public List<string> CookArgs = new List<string>();
 			public List<string> PIEArgs = new List<string>();
 			public List<string> LaunchArgs = new List<string>();
-			public string FileName = string.Format("{0}_Results.csv", Environment.MachineName);
+			public string FileName = string.Format("{0}_Results.csv", Unreal.MachineName);
 
 
 			public SortedSet<XGETaskOptions> XGEOptions = new SortedSet<XGETaskOptions>();
@@ -325,7 +325,7 @@ namespace AutomationTool.Benchmark
 
 				// parse map args
 				{
-					// master arg that sets all three
+					// primary arg that sets all three
 					var EditorMaps = ParseMapList("editor-maps");
 
 					if (EditorMaps.Any())
@@ -738,7 +738,7 @@ namespace AutomationTool.Benchmark
 				List<string> Lines = new List<string>();
 
 				// first line is machine name,CPU count,Iteration 1, Iteration 2 etc
-				string FirstLine = string.Format("{0},{1} Cores,StartTime", Environment.MachineName, Environment.ProcessorCount);
+				string FirstLine = string.Format("{0},{1} Cores,StartTime", Unreal.MachineName, Environment.ProcessorCount);
 
 				if (InTasks.Count() > 0)
 				{

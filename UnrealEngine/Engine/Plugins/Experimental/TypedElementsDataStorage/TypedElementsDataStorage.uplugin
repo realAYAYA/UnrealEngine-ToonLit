@@ -22,6 +22,10 @@
 		{
 			"Name": "TypedElementsDataStorageUI",
 			"Type": "Editor"
+		},
+		{
+			"Name": "TypedElementsDataStorageRevisionControl",
+			"Type": "Editor"
 		}
 	],
 	"Plugins": [

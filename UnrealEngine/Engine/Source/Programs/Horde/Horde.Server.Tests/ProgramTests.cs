@@ -21,14 +21,14 @@ namespace Horde.Server.Tests
 				// Test only works on Windows as .FriendlyName cannot be set on Unix.
 				return;
 			}
-			
+
 			string friendlyName = "A testing cert";
 			byte[] tempCertData = CertificateUtils.CreateSelfSignedCert("testing.epicgames.com", friendlyName);
 			string tempCertPath = Path.GetTempFileName();
 			File.WriteAllBytes(tempCertPath, tempCertData);
-			
+
 			// No cert given
-			Assert.IsNull(ServerCommand.ReadGrpcCertificate(new () { ServerPrivateCert = null }));
+			Assert.IsNull(ServerCommand.ReadGrpcCertificate(new() { ServerPrivateCert = null }));
 
 			// Cert as file path
 			{
@@ -42,9 +42,9 @@ namespace Horde.Server.Tests
 				string tempCertBase64 = Convert.ToBase64String(tempCertData);
 				X509Certificate2? cert = ServerCommand.ReadGrpcCertificate(new() { ServerPrivateCert = "base64:" + tempCertBase64 });
 				Assert.IsNotNull(cert);
-				Assert.AreEqual(friendlyName, cert!.FriendlyName);	
+				Assert.AreEqual(friendlyName, cert!.FriendlyName);
 			}
-			
+
 			File.Delete(tempCertPath);
 		}
 	}

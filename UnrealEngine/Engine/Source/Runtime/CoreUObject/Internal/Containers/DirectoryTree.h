@@ -6,7 +6,9 @@
 #include "Containers/StringView.h"
 #include "Containers/UnrealString.h"
 #include "HAL/Platform.h"
+#include "Misc/EnumClassFlags.h"
 #include "Misc/PathViews.h"
+#include "Misc/ScopeExit.h"
 #include "Misc/StringBuilder.h"
 #include "Templates/TypeCompatibleBytes.h"
 #include "Templates/UniquePtr.h"
@@ -19,6 +21,36 @@ COREUOBJECT_API int32 FindInsertionIndex(int32 NumChildNodes, const TUniquePtr<F
 	FStringView FirstPathComponent, bool& bOutExists);
 
 }
+
+enum class EDirectoryTreeGetFlags
+{
+	None = 0,
+	/**
+	 * If Recursive flag is present, GetChildren will return direct subpaths of a discovered directory and their
+	 * transitive subpaths. If false, it will return only the direct subpaths.
+	 *
+	 * Recursive=false and ImpliedChildren=false is an exception to this simple definition. In that case the
+	 * reported results for a requested directory will include the highest level childpaths under it that have been
+	 * added to the tree. These may be in transitive subpaths of the parent directory, and in that case their
+	 * parent directories in between the requested directory and their path will not be reported because they are
+	 * implied directories.
+	 */
+	Recursive = 0x1,
+	/**
+	 * If ImpliedParent flag is present, then the requested directory will return results even if it is an
+	 * implied directory (directory with child paths but not added itself, @see TDirectoryTree).
+	 * If not present, only directories that have been added to the tree will return non-empty results.
+	 */
+	ImpliedParent = 0x1 << 1,
+	/**
+	 * If ImpliedChildren is present, then all child paths discovered (either direct or recursive, depending on whether
+	 * Recursive flag is present) will be reported in the results, even if they are implied directories (directory
+	 * with child paths but not added itself, @see TDirectoryTree). If not present, only files and directories that
+	 * have been added to the tree will be returned in the results.
+	 */
+	ImpliedChildren = 0x1 << 2,
+};
+ENUM_CLASS_FLAGS(EDirectoryTreeGetFlags);
 
 /**
  * Container for path -> value that can efficiently report whether a parent directory of a given path exists.
@@ -41,6 +73,10 @@ COREUOBJECT_API int32 FindInsertionIndex(int32 NumChildNodes, const TUniquePtr<F
  * 
  * For functions that return Values by reference or by pointer, that reference or pointer can be invalidated
  * by any functions that modify the tree, and should be discarded before calling any such functions.
+ * 
+ * Some functions that report results for directories behave differently for added directories versus implied
+ * directories. An added directory is one that was added specifically via FindOrAdd or other mutators. An implied
+ * directory is a directory that is not added, but that has a child path that is added to the tree.
  */
 template <typename ValueType>
 class TDirectoryTree
@@ -54,6 +90,8 @@ public:
 	 * This reference can be invalidated by any operations that modify the tree.
 	 */
 	ValueType& FindOrAdd(FStringView Path, bool* bOutExisted = nullptr);
+	/** Remove all paths and all memory usage from the tree. */
+	void Empty();
 	/** Remove a path from the tree and optionally report whether it existed. */
 	void Remove(FStringView Path, bool* bOutExisted = nullptr);
 	/** Free unused slack memory throughout the tree by reallocating containers tightly to their current size. */
@@ -105,6 +143,16 @@ public:
 	 */
 	bool TryFindClosestPath(FStringView Path, FString& OutPath, ValueType** OutValue);
 
+	/**
+	 * Report the children (optionally recursive or not, optionally implied or not) in the tree of a given Path
+	 * (optionally skipped if implied). @see EDirectoryTreeGetFlags.
+	 * Relative paths of discovered children will be appended to OutRelativeChildNames.
+	 * 
+	 * @return true iff (the path is found in the tree and either it is an added path or ImpliedParent was requested).
+	 */
+	bool TryGetChildren(FStringView Path, TArray<FString>& OutRelativeChildNames,
+		EDirectoryTreeGetFlags Flags = EDirectoryTreeGetFlags::None) const;
+
 private:
 
 	/**
@@ -148,6 +196,9 @@ private:
 		/** Return pointer to the Value stored in RelPath, if RelPath exists in the tree. */
 		ValueType* Find(FStringView InRelPath);
 
+		bool TryGetChildren(FStringBuilderBase& ReportedPathPrefix, TCHAR InPathSeparator, FStringView InRelPath,
+			TArray<FString>& OutRelativeChildNames, EDirectoryTreeGetFlags Flags) const;
+
 		/**
 		 * Recursively search the node's subtree to find the given RelPath. Return whether the path or any parent is
 		 * found, and if any is found and Outpath is present, append relative path of the discovered path into OutPath.
@@ -176,6 +227,8 @@ private:
 		void SetDefaultValue();
 		/** Set HasValue=false, and destruct any existing old value. */
 		void RemoveValue();
+
+		void FixupDirectChildrenPathSeparator(TCHAR OldSeparator, TCHAR NewSeparator);
 
 	private:
 		const static uint32 NumFlagBits = 1;
@@ -208,13 +261,17 @@ private:
 	};
 
 private:
+	bool NormalizePathForReading(FStringView& Path, FStringBuilderBase& NormalizeBuffer) const;
+	bool NormalizePathForWriting(FStringView& Path, FStringBuilderBase& NormalizeBuffer);
 	ValueType* TryFindClosestPathInternal(FStringView Path, FStringBuilderBase* OutPath);
+	void InitializePathSeparator(TCHAR InPathSeparator);
 
 private:
 	FTreeNode Root;
 	int32 NumPaths = 0;
 	TCHAR PathSeparator = '/';
 	bool bPathSeparatorInitialized = false;
+	bool bNeedDriveWithoutPathFixup = false;
 };
 
 
@@ -246,15 +303,16 @@ inline ValueType& TDirectoryTree<ValueType>::FindOrAdd(FStringView Path, bool* b
 		int32 UnusedIndex;
 		if (Path.FindChar('/', UnusedIndex))
 		{
-			PathSeparator = '/';
-			bPathSeparatorInitialized = true;
+			InitializePathSeparator('/');
 		}
 		else if (Path.FindChar('\\', UnusedIndex))
 		{
-			PathSeparator = '\\';
-			bPathSeparatorInitialized = true;
+			InitializePathSeparator('\\');
 		}
 	}
+
+	TStringBuilder<16> NormalizeBuffer;
+	NormalizePathForWriting(Path, NormalizeBuffer);
 
 	bool bExisted;
 	ValueType& Result = Root.FindOrAdd(Path, bExisted);
@@ -263,6 +321,15 @@ inline ValueType& TDirectoryTree<ValueType>::FindOrAdd(FStringView Path, bool* b
 		++NumPaths;
 	}
 	return Result;
+}
+
+template <typename ValueType>
+inline void TDirectoryTree<ValueType>::Empty()
+{
+	Root.Reset();
+	NumPaths = 0;
+	PathSeparator = '/';
+	bPathSeparatorInitialized = false;
 }
 
 template <typename ValueType>
@@ -279,6 +346,9 @@ inline void TDirectoryTree<ValueType>::Remove(FStringView Path, bool* bOutExiste
 	}
 	else
 	{
+		TStringBuilder<16> NormalizeBuffer;
+		NormalizePathForReading(Path, NormalizeBuffer);
+
 		Root.Remove(Path, bExisted);
 	}
 	if (bExisted)
@@ -335,6 +405,10 @@ inline ValueType* TDirectoryTree<ValueType>::Find(FStringView Path)
 	{
 		return Root.HasValue() ? &Root.GetValue() : nullptr;
 	}
+
+	TStringBuilder<16> NormalizeBuffer;
+	NormalizePathForReading(Path, NormalizeBuffer);
+
 	return Root.Find(Path);
 }
 
@@ -437,6 +511,9 @@ inline ValueType* TDirectoryTree<ValueType>::TryFindClosestPathInternal(FStringV
 	}
 	if (!Path.IsEmpty())
 	{
+		TStringBuilder<16> NormalizeBuffer;
+		NormalizePathForReading(Path, NormalizeBuffer);
+
 		ValueType* Result = Root.TryFindClosestPath(Path, OutPath, PathSeparator);
 		if (Result)
 		{
@@ -445,6 +522,82 @@ inline ValueType* TDirectoryTree<ValueType>::TryFindClosestPathInternal(FStringV
 	}
 
 	return Root.HasValue() ? &Root.GetValue() : nullptr;
+}
+
+template <typename ValueType>
+inline bool TDirectoryTree<ValueType>::NormalizePathForReading(FStringView& Path,
+	FStringBuilderBase& NormalizeBuffer) const
+{
+	// Drive specifiers without a root are a special case; they break our assumption that if
+	// if	FPathViews::IsParentPathOf(DriveSpecifier, PathInThatDrive)
+	// then DriveSpecifier == FirstComponentOfPathInThatDrive.
+	// 'D:' is a parent path of 'D:/Path' but FirstComponent of 'D:/Path' is 'D:/' != 'D:' 
+	// 
+	// In general usage on e.g. Windows, drive specifiers without a path are interpreted to mean the current
+	// working directory of the given drive. But we don't have that context so that meaning is not applicable.
+	// 
+	// We therefore instead interpret them to mean the root of the drive. Append the PathSeparator to make
+	// them the root.
+	if (FPathViews::IsDriveSpecifierWithoutRoot(Path))
+	{
+		FStringView Volume;
+		FStringView Remainder;
+		FPathViews::SplitVolumeSpecifier(Path, Volume, Remainder);
+		NormalizeBuffer << Volume << PathSeparator << Remainder;
+		Path = NormalizeBuffer.ToView();
+		return true;
+	}
+	return false;
+}
+
+template <typename ValueType>
+inline bool TDirectoryTree<ValueType>::NormalizePathForWriting(FStringView& Path, FStringBuilderBase& NormalizeBuffer)
+{
+	if (NormalizePathForReading(Path, NormalizeBuffer))
+	{
+		// If the call to NormalizePath came from a function that is adding paths to the tree, and
+		// !bPathSeparatorInitialized, then leave a marker that we might need to fix up the added paths
+		// when we encounter the user's desired path separator. 
+		bNeedDriveWithoutPathFixup = !bPathSeparatorInitialized;
+		return true;
+	}
+	return false;
+}
+
+template <typename ValueType>
+inline void TDirectoryTree<ValueType>::InitializePathSeparator(TCHAR InPathSeparator)
+{
+	check(!bPathSeparatorInitialized);
+
+	// If the requested PathSeparator is not the one we guessed it was when we had to
+	// normalize a drive without a path (e.g. 'D:' -> 'D:/'), then fixup all those
+	// drive children to have the desired separator.
+	bNeedDriveWithoutPathFixup &= (InPathSeparator != PathSeparator);
+	if (bNeedDriveWithoutPathFixup)
+	{
+		// The drives without paths will be direct children of the root so we only need
+		// to fixup direct children
+		Root.FixupDirectChildrenPathSeparator(PathSeparator, InPathSeparator);
+		bNeedDriveWithoutPathFixup = false;
+	}
+
+	PathSeparator = InPathSeparator;
+	bPathSeparatorInitialized = true;
+}
+
+template <typename ValueType>
+inline bool TDirectoryTree<ValueType>::TryGetChildren(FStringView Path, TArray<FString>& OutRelativeChildNames,
+	EDirectoryTreeGetFlags Flags) const
+{
+	if (Path.IsEmpty() && !EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::ImpliedParent) && !Root.HasValue())
+	{
+		return false;
+	}
+	TStringBuilder<16> NormalizeBuffer;
+	NormalizePathForReading(Path, NormalizeBuffer);
+
+	TStringBuilder<1024> ReportedPathPrefix;
+	return Root.TryGetChildren(ReportedPathPrefix, PathSeparator, Path, OutRelativeChildNames, Flags);
 }
 
 template <typename ValueType>
@@ -761,6 +914,220 @@ inline ValueType* TDirectoryTree<ValueType>::FTreeNode::Find(FStringView InRelPa
 }
 
 template <typename ValueType>
+inline bool TDirectoryTree<ValueType>::FTreeNode::TryGetChildren(FStringBuilderBase& ReportPathPrefix,
+	TCHAR InPathSeparator, FStringView InRelPath, TArray<FString>& OutRelativeChildNames,
+	EDirectoryTreeGetFlags Flags) const
+{
+	if (InRelPath.IsEmpty())
+	{
+		// RelPath indicates this node, so append the children of this node to the list.
+		// Caller is responsible for not calling TryGetChildren on *this if results for *this
+		// should not be returned due to EDirectoryTreeGetFlags.
+
+		int32 NumChildNodes = GetNumChildNodes();
+		for (int32 Index = 0; Index < NumChildNodes; ++Index)
+		{
+			const FTreeNode& ChildNode = ChildNodes[Index];
+			const FString& ChildRelPath = RelPaths[Index];
+
+			if (EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::ImpliedChildren))
+			{
+				// When ImpliedChildren are supposed to be reported, iterate over every stored child
+				// and report the first component of its RelPath as a child.
+				// If recursive, also report the remaining components of its RelPath, and then
+				// forward the call to it to return its recursive children.
+				FStringView FirstComponent;
+				FStringView RemainingPath;
+				FPathViews::SplitFirstComponent(ChildRelPath, FirstComponent, RemainingPath);
+
+				int32 SavedLen = ReportPathPrefix.Len();
+				FPathViews::Append(ReportPathPrefix, FirstComponent);
+				UE::DirectoryTree::FixupPathSeparator(ReportPathPrefix, SavedLen, InPathSeparator);
+				OutRelativeChildNames.Add(*ReportPathPrefix);
+
+				if (EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::Recursive))
+				{
+					while (!RemainingPath.IsEmpty())
+					{
+						FPathViews::SplitFirstComponent(RemainingPath, FirstComponent, RemainingPath);
+
+						int32 SavedLenForSubPath = ReportPathPrefix.Len();
+						FPathViews::Append(ReportPathPrefix, FirstComponent);
+						UE::DirectoryTree::FixupPathSeparator(ReportPathPrefix, SavedLenForSubPath, InPathSeparator);
+						OutRelativeChildNames.Add(*ReportPathPrefix);
+					}
+
+					(void)ChildNode.TryGetChildren(ReportPathPrefix, InPathSeparator, FStringView(),
+						OutRelativeChildNames, Flags);
+				}
+				ReportPathPrefix.RemoveSuffix(ReportPathPrefix.Len() - SavedLen);
+			}
+			else
+			{
+				// When ImpliedChildren are not supposed to be reported, report each stored child by its full relpath,
+				// unless the child is an implied path. If the child is an implied path, recursively ask the child
+				// to report its added children. Also, if user requested recursive, ask the child to return its
+				// recursive children even if it has a value.
+				int32 SavedLen = ReportPathPrefix.Len();
+				FPathViews::Append(ReportPathPrefix, ChildRelPath);
+				UE::DirectoryTree::FixupPathSeparator(ReportPathPrefix, SavedLen, InPathSeparator);
+
+				if (ChildNode.HasValue())
+				{
+					OutRelativeChildNames.Add(*ReportPathPrefix);
+				}
+				if (!ChildNode.HasValue() || EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::Recursive))
+				{
+					(void)ChildNode.TryGetChildren(ReportPathPrefix, InPathSeparator, FStringView(),
+						OutRelativeChildNames, Flags);
+				}
+				ReportPathPrefix.RemoveSuffix(ReportPathPrefix.Len() - SavedLen);
+			}
+		}
+
+		return true;
+	}
+	else
+	{
+		// We are still looking for the requested InRelPath and are not reporting results yet. Look for an existing
+		// stored child that has the same FirstComponent of its path as InRelPath does.
+		FStringView FirstComponent;
+		FStringView RemainingPath;
+		FPathViews::SplitFirstComponent(InRelPath, FirstComponent, RemainingPath);
+		bool bExists;
+		int32 InsertionIndex = FindInsertionIndex(FirstComponent, bExists);
+		if (!bExists)
+		{
+			// No child has the same FirstComponent as InRelPath, so InRelPath does not exist in the tree, not even as
+			// an implied path.
+			return false;
+		}
+
+		FTreeNode& ChildNode = ChildNodes[InsertionIndex];
+		FString& ChildRelPath = RelPaths[InsertionIndex];
+
+		FStringView ExistingFirstComponent;
+		FStringView ExistingRemainingPath;
+		FPathViews::SplitFirstComponent(ChildRelPath, ExistingFirstComponent, ExistingRemainingPath);
+		check(FPathViews::Equals(FirstComponent, ExistingFirstComponent)); // Otherwise FindInsertionIndex would have returned bExists=false
+
+		for (int32 RunawayLoop = 0; RunawayLoop <= InRelPath.Len(); ++RunawayLoop)
+		{
+			if (ExistingRemainingPath.IsEmpty())
+			{
+				// We've reached the end of the existing path, so InRelPath is either equal to or a child of the
+				// ChildNode. If it is equal to the ChildNode, it is our responsibility to NOT call TryGetChildren
+				// if the ChildNode is an implied path and ImpliedParent flag is not requested.
+				if (RemainingPath.IsEmpty() && !EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::ImpliedParent) &&
+					!ChildNode.HasValue())
+				{
+					return false;
+				}
+
+				return ChildNode.TryGetChildren(ReportPathPrefix, InPathSeparator, RemainingPath,
+					OutRelativeChildNames, Flags);
+			}
+			else if (RemainingPath.IsEmpty())
+			{
+				// We've reached the end of the input path, but not the end of the existing path, so InRelPath is a
+				// parent of the existing path, and is an implied path rather than an added path.
+				if (!EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::ImpliedParent))
+				{
+					return false;
+				}
+
+				if (EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::ImpliedChildren))
+				{
+					// When implied children are supposed to be reported, add the next pathcomponent of the remaining
+					// child path as the first reported child of InRelPath. If recursive, also add all the remaining
+					// components of the existing child path and then forward on to the child path for all of its children.
+					FPathViews::SplitFirstComponent(ExistingRemainingPath, ExistingFirstComponent,
+						ExistingRemainingPath);
+					int32 SavedLen = ReportPathPrefix.Len();
+					FPathViews::Append(ReportPathPrefix, ExistingFirstComponent);
+					UE::DirectoryTree::FixupPathSeparator(ReportPathPrefix, SavedLen, InPathSeparator);
+					OutRelativeChildNames.Add(*ReportPathPrefix);
+
+					if (EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::Recursive))
+					{
+						while (!ExistingRemainingPath.IsEmpty())
+						{
+							FPathViews::SplitFirstComponent(ExistingRemainingPath, ExistingFirstComponent,
+								ExistingRemainingPath);
+
+							int32 SavedLenForSubPath = ReportPathPrefix.Len();
+							FPathViews::Append(ReportPathPrefix, ExistingFirstComponent);
+							UE::DirectoryTree::FixupPathSeparator(ReportPathPrefix, SavedLenForSubPath
+								, InPathSeparator);
+							OutRelativeChildNames.Add(*ReportPathPrefix);
+						}
+
+						(void) ChildNode.TryGetChildren(ReportPathPrefix, InPathSeparator, FStringView(),
+							OutRelativeChildNames, Flags);
+					}
+
+					ReportPathPrefix.RemoveSuffix(ReportPathPrefix.Len() - SavedLen);
+				}
+				else
+				{
+					// When implied children are not supposed to be reported, report the remaining components of the
+					// existing child path as a single string as the first reported child of InRelPath, but only if
+					// it is not an implied path. If recursive, forward to the childnode for all of its children.
+					if (ChildNode.HasValue() || EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::Recursive))
+					{
+						int32 SavedLenForSubPath = ReportPathPrefix.Len();
+						FPathViews::Append(ReportPathPrefix, ExistingRemainingPath);
+						UE::DirectoryTree::FixupPathSeparator(ReportPathPrefix, SavedLenForSubPath, InPathSeparator);
+
+						if (ChildNode.HasValue())
+						{
+							OutRelativeChildNames.Add(*ReportPathPrefix);
+						}
+						if (EnumHasAnyFlags(Flags, EDirectoryTreeGetFlags::Recursive))
+						{
+							(void)ChildNode.TryGetChildren(ReportPathPrefix, InPathSeparator, FStringView(),
+								OutRelativeChildNames, Flags);
+						}
+					}
+				}
+
+				return true;
+			}
+			else
+			{
+				// Both existing and remaining have more directory components
+				FStringView NextFirstComponent;
+				FStringView NextRemainingPath;
+				FPathViews::SplitFirstComponent(RemainingPath, NextFirstComponent, NextRemainingPath);
+				check(!NextFirstComponent.IsEmpty());
+				FStringView NextExistingFirstComponent;
+				FStringView NextExistingRemainingPath;
+				FPathViews::SplitFirstComponent(ExistingRemainingPath, NextExistingFirstComponent, NextExistingRemainingPath);
+				check(!NextExistingFirstComponent.IsEmpty());
+				if (NextFirstComponent == NextExistingFirstComponent)
+				{
+					// Next component is also a match, go to the next loop iteration to handle the new remainingpaths
+					RemainingPath = NextRemainingPath;
+					ExistingRemainingPath = NextExistingRemainingPath;
+
+					continue;
+				}
+				else
+				{
+					// The existing child diverges from the path components of InRelPath, so InRelPath does not exist
+					// in the tree, not even as an implied path.
+					return false;
+				}
+			}
+		}
+		checkf(false, TEXT("Infinite loop trying to split path %.*s into components."), InRelPath.Len(), InRelPath.GetData());
+	}
+
+	check(false); // Only way to get here is from the checkf in the else block.
+	return false;
+}
+
+template <typename ValueType>
 inline ValueType* TDirectoryTree<ValueType>::FTreeNode::TryFindClosestPath(FStringView InRelPath,
 	FStringBuilderBase* OutPath, TCHAR InPathSeparator)
 {
@@ -978,3 +1345,15 @@ inline void TDirectoryTree<ValueType>::FTreeNode::Realloc(int32 NewCapacity)
 	}
 	CapacityChildNodes = NewCapacity;
 }
+
+template <typename ValueType>
+inline void TDirectoryTree<ValueType>::FTreeNode::FixupDirectChildrenPathSeparator(TCHAR OldSeparator,
+	TCHAR NewSeparator)
+{
+	int32 Num = GetNumChildNodes();
+	for (int32 Index = 0; Index < Num; ++Index)
+	{
+		RelPaths[Index].ReplaceCharInline(OldSeparator, NewSeparator);
+	}
+}
+

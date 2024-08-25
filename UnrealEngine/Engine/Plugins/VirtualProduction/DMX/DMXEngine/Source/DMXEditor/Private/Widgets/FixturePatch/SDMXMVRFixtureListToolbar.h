@@ -31,7 +31,7 @@ public:
 	void Construct(const FArguments& InArgs, TWeakPtr<FDMXEditor> InDMXEditor);
 
 	/** Filters items according to the state of the search bar */
-	UE_NODISCARD TArray<TSharedPtr<FDMXMVRFixtureListItem>> FilterItems(const TArray<TSharedPtr<FDMXMVRFixtureListItem>>& Items);
+	[[nodiscard]] TArray<TSharedPtr<FDMXMVRFixtureListItem>> FilterItems(const TArray<TSharedPtr<FDMXMVRFixtureListItem>>& Items);
 
 private:
 	/** Generates the 'Add MVR Fixture' Dropdown Menu */

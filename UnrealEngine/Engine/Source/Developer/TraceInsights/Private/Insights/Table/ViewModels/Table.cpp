@@ -194,7 +194,7 @@ void FTable::GetVisibleColumnsData(const TArray<FBaseTreeNodePtr>& InNodes, cons
 			{
 				OutData += Separator;
 			}
-			FString Value = ColumnRef->GetValueAsText(*Node).ToString().ReplaceCharWithEscapedChar();
+			FString Value = ColumnRef->GetValueAsSerializableString(*Node).ReplaceCharWithEscapedChar();
 			int32 CharIndex;
 			if (Value.FindChar(Separator, CharIndex))
 			{

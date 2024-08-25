@@ -10,7 +10,7 @@
 #if METAL_RHI_RAYTRACING
 
 THIRD_PARTY_INCLUDES_START
-#include "mtlpp.hpp"
+#include "MetalInclude.h"
 THIRD_PARTY_INCLUDES_END
 
 struct FMetalRayTracingGeometryParameters
@@ -43,7 +43,7 @@ public:
 	using FRHIRayTracingGeometry::Initializer;
 	using FRHIRayTracingGeometry::SizeInfo;
 
-	mtlpp::PrimitiveAccelerationStructureDescriptor AccelerationStructureDescriptor;
+	MTL::PrimitiveAccelerationStructureDescriptor* AccelerationStructureDescriptor;
 
 	bool bHasPendingCompactionRequests;
 	uint32_t CompactionSizeIndex;

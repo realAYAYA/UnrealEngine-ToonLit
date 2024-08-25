@@ -271,6 +271,14 @@ class FFieldVariant
 
 	static constexpr uintptr_t UObjectMask = 0x1;
 
+	void ConditionallyMarkAsReachable()
+	{
+		if (IsUObject() && ToUObjectUnsafe() && UE::GC::GIsIncrementalReachabilityPending)
+		{
+			UE::GC::MarkAsReachable(ToUObjectUnsafe());
+		}
+	}
+	
 public:
 
 	FFieldVariant()
@@ -292,11 +300,38 @@ public:
 	{
 		Container.Object = const_cast<UObject*>(ImplicitConv<const UObject*>(InObject));
 		Container.Object = (UObject*)((uintptr_t)Container.Object | UObjectMask);
+		ConditionallyMarkAsReachable();
 	}
 
 	FFieldVariant(TYPE_OF_NULLPTR)
 		: FFieldVariant()
 	{
+	}
+
+	FFieldVariant(const FFieldVariant& Other)
+		: Container(Other.Container)
+	{
+		ConditionallyMarkAsReachable();
+	}
+	
+	FFieldVariant& operator=(const FFieldVariant& Other)
+	{
+		Container = Other.Container;
+		ConditionallyMarkAsReachable();
+		return *this;
+	}
+	
+	FFieldVariant(FFieldVariant&& Other)
+		: Container(Other.Container)
+	{
+		ConditionallyMarkAsReachable();
+	}
+	
+	FFieldVariant& operator=(FFieldVariant&& Other)
+	{
+		Container = Other.Container;
+		ConditionallyMarkAsReachable();
+		return *this;
 	}
 
 	inline bool IsUObject() const
@@ -476,6 +511,8 @@ public:
 	static COREUOBJECT_API FField* Construct(const FFieldVariant& InOwner, const FName& InName, EObjectFlags InFlags);
 	/** Constructs a new field given the name of its class */
 	static COREUOBJECT_API FField* Construct(const FName& FieldTypeName, const FFieldVariant& InOwner, const FName& InName, EObjectFlags InFlags);
+	/** Tries to construct a new field given the name of its class. Returns null if the type does not exist. */
+	static COREUOBJECT_API FField* TryConstruct(const FName& FieldTypeName, const FFieldVariant& InOwner, const FName& InName, EObjectFlags InFlags);
 
 	/** Fixups after duplicating a Field */
 	COREUOBJECT_API virtual void PostDuplicate(const FField& InField);
@@ -900,7 +937,7 @@ public:
 #endif // WITH_EDITORONLY_DATA
 
 	/** Duplicates an FField */
-	static COREUOBJECT_API FField* Duplicate(const FField* InField, FFieldVariant DestOwner, const FName DestName = NAME_None, EObjectFlags FlagMask = RF_AllFlags, EInternalObjectFlags InternalFlagsMask = EInternalObjectFlags::AllFlags);
+	static COREUOBJECT_API FField* Duplicate(const FField* InField, FFieldVariant DestOwner, const FName DestName = NAME_None, EObjectFlags FlagMask = RF_AllFlags, EInternalObjectFlags InternalFlagsMask = EInternalObjectFlags_AllFlags);
 
 	/** Generates a name for a Field of a given type. Each generated name is unique in the current runtime */
 	static COREUOBJECT_API FName GenerateFFieldName(FFieldVariant InOwner, FFieldClass* InClass);
@@ -1016,6 +1053,20 @@ inline void SerializeSingleField(FArchive& Ar, FieldType*& Field, FFieldVariant 
 	}
 }
 
+/**
+ * Gets the name of the provided field. If the field pointer is null, the result is "none"
+ */
+inline FName GetFNameSafe(const FField* InField)
+{
+	if (InField)
+	{
+		return InField->GetFName();
+	}
+	else
+	{
+		return NAME_None;
+	}
+}
 /**
  * Gets the name of the provided field. If the field pointer is null, the result is "none"
  */

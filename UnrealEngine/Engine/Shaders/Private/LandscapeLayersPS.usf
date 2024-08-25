@@ -29,6 +29,99 @@ float ExtractAlpha(float2 InPackedAlpha)
 	return float(Alpha) / 65532.0; // 0xFFFC in float
 }
 
+float4 CalculateNormalsFromHeights(float2 InTextureCoordinates, float4 OutColor)
+{
+	float2 TexelSize = 1.0 / TextureSize;
+
+	float MaskMinBorderX = (InTextureCoordinates.x <= TexelSize.x) ? 0.0f : 1.0f;			// first pixel X
+	float MaskMinBorderY = (InTextureCoordinates.y <= TexelSize.y) ? 0.0f : 1.0f;			// first pixel Y
+	float MaskMaxBorderX = (InTextureCoordinates.x >= 1.0f - TexelSize.x) ? 0.0f : 1.0f;	// last pixel X
+	float MaskMaxBorderY = (InTextureCoordinates.y >= 1.0f - TexelSize.y) ? 0.0f : 1.0f;	// last pixel Y
+
+	// The triangle topology is the following (where C = center, T = top, B = bottom, L = left, R = right and Nx the normals we need to interpolate):
+	// TL ------ TT
+	// | \       | \
+	// |  \      |  \
+	// |   \     |   \
+	// | N0 \ N1 | N3 \
+	// |     \   |     \
+	// |      \  |      \
+	// |       \ |       \
+	// LL ------ CC ------ RR
+	//   \       | \       |
+	//    \      |  \      |
+	//     \     |   \     |
+	//      \ N2 | N4 \ N5 |
+	//       \   |     \   |
+	//        \  |      \  |
+	//         \ |       \ |
+	//           BB ------ BR
+	// So we can retrieve all 7 samples using 4 gathers : 
+	// Make sure we gather the 4 pixels in the bottom right direction by sampling at (0.75, 0.75) of the pixel (gather retrieves the 4 samples that would be used for bilinear interpolation):
+
+	float2 GatherLocation = InTextureCoordinates + 0.25f * TexelSize; 
+	float4 Red0 = ReadTexture1.GatherRed(ReadTexture1Sampler, GatherLocation - TexelSize);
+	float4 Green0 = ReadTexture1.GatherGreen(ReadTexture1Sampler, GatherLocation - TexelSize);
+	float4 Mask0 = ReadTexture1.GatherAlpha(ReadTexture1Sampler, GatherLocation - TexelSize);
+	float4 Red1 = ReadTexture1.GatherRed(ReadTexture1Sampler, GatherLocation);
+	float4 Green1 = ReadTexture1.GatherGreen(ReadTexture1Sampler, GatherLocation);
+	float4 Mask1 = ReadTexture1.GatherAlpha(ReadTexture1Sampler, GatherLocation);
+
+	// [x,y,z] = World Position [w] = valid mask
+	float4 TL = float4((InTextureCoordinates * TextureSize + float2(-1, -1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.w, Green0.w)), Mask0.w);
+	float4 TT = float4((InTextureCoordinates * TextureSize + float2(+0, -1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.z, Green0.z)), Mask0.z);
+	float4 CC = float4((InTextureCoordinates * TextureSize + float2(+0, +0)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.y, Green0.y)), Mask0.y);
+	float4 LL = float4((InTextureCoordinates * TextureSize + float2(-1, +0)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.x, Green0.x)), Mask0.x);
+	float4 RR = float4((InTextureCoordinates * TextureSize + float2(+1, +0)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red1.z, Green1.z)), Mask1.z);
+	float4 BR = float4((InTextureCoordinates * TextureSize + float2(+1, +1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red1.y, Green1.y)), Mask1.y);
+	float4 BB = float4((InTextureCoordinates * TextureSize + float2(+0, +1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red1.x, Green1.x)), Mask1.x);
+
+	// mask out samples that are off the edge of the texture
+	TL.w *= MaskMinBorderX * MaskMinBorderY;
+	TT.w *=                  MaskMinBorderY;
+	// CC should never be off the edge
+	LL.w *= MaskMinBorderX;
+	RR.w *= MaskMaxBorderX;
+	BR.w *= MaskMaxBorderX * MaskMaxBorderY;
+	BB.w *=                  MaskMaxBorderY;
+
+	// HACK [chris.tchou] remove once we have a better boundary normal solution
+	bool bApplyNormalBoundaryOverride = (OutputConfig.w >= 1.5);
+	bool bIsOnBoundary = (TL.w * BR.w == 0.0);
+	if (bApplyNormalBoundaryOverride && bIsOnBoundary)
+	{
+		// Resample heights from the Captured Boundary texture, which is assumed to have height data everywhere
+		Red0 = ReadTexture2.GatherRed(ReadTexture2Sampler, GatherLocation - TexelSize);
+		Green0 = ReadTexture2.GatherGreen(ReadTexture2Sampler, GatherLocation - TexelSize);
+		Red1 = ReadTexture2.GatherRed(ReadTexture2Sampler, GatherLocation);
+		Green1 = ReadTexture2.GatherGreen(ReadTexture2Sampler, GatherLocation);
+
+		// recalculate heights and replace masks with 1.0
+		TL.zw = float2(ExtractAndScaleHeight(float2(Red0.w, Green0.w)), 1.0f);
+		TT.zw = float2(ExtractAndScaleHeight(float2(Red0.z, Green0.z)), 1.0f);
+		CC.zw = float2(ExtractAndScaleHeight(float2(Red0.y, Green0.y)), 1.0f);
+		LL.zw = float2(ExtractAndScaleHeight(float2(Red0.x, Green0.x)), 1.0f);
+		RR.zw = float2(ExtractAndScaleHeight(float2(Red1.z, Green1.z)), 1.0f);
+		BR.zw = float2(ExtractAndScaleHeight(float2(Red1.y, Green1.y)), 1.0f);
+		BB.zw = float2(ExtractAndScaleHeight(float2(Red1.x, Green1.x)), 1.0f);
+	}
+
+	float3 N0 = ComputeNullableTriangleNormal(CC, LL, TL);
+	float3 N1 = ComputeNullableTriangleNormal(TL, TT, CC);
+	float3 N2 = ComputeNullableTriangleNormal(LL, CC, BB);
+	float3 N3 = ComputeNullableTriangleNormal(RR, CC, TT);
+	float3 N4 = ComputeNullableTriangleNormal(BR, BB, CC);
+	float3 N5 = ComputeNullableTriangleNormal(CC, RR, BR);
+
+	// average the normals
+	float3 FinalNormal = normalize(N0 + N1 + N2 + N3 + N4 + N5);
+
+	// Scale back to be 0-1 normal
+	OutColor.ba = (FinalNormal.xy + 1.0) * 0.5;
+
+	return OutColor;
+}
+
 void PSHeightmapMain(float2 InTextureCoordinates : TEXCOORD0, out float4 OutColor : SV_Target0)
 {
 	float LayerVisibility = LayerInfo.y;
@@ -100,76 +193,10 @@ void PSHeightmapMain(float2 InTextureCoordinates : TEXCOORD0, out float4 OutColo
 	}
 
 	// Output normals
-	if (OutputConfig.w == 1.0)
+	bool bGenerateNormals = (OutputConfig.w >= 0.5);
+	if (bGenerateNormals)
 	{
-		float2 TexelSize = 1.0 / TextureSize;
-
-		float MaskMinBorderX = (InTextureCoordinates.x <= TexelSize.x) ? 0.0f : 1.0f;
-		float MaskMinBorderY = (InTextureCoordinates.y <= TexelSize.y) ? 0.0f : 1.0f;
-		float MaskMaxBorderX = (InTextureCoordinates.x >= 1.0f - TexelSize.x) ? 0.0f : 1.0f;
-		float MaskMaxBorderY = (InTextureCoordinates.y >= 1.0f - TexelSize.y) ? 0.0f : 1.0f;
-
-		// The triangle topology is the following (where C = center, T = top, B = bottom, L = left, R = right and Nx the normals we need to interpolate):
-		// TL ------ TT
-		// | \       | \
-		// |  \      |  \
-		// |   \     |   \
-		// | N0 \ N1 | N3 \
-		// |     \   |     \
-		// |      \  |      \
-		// |       \ |       \
-		// LL ------ CC ------ RR
-		//   \       | \       |
-		//    \      |  \      |
-		//     \     |   \     |
-		//      \ N2 | N4 \ N5 |
-		//       \   |     \   |
-		//        \  |      \  |
-		//         \ |       \ |
-		//           BB ------ BR
-		// So we can retrieve all 7 samples using 4 gathers : 
-		// Make sure we gather the 4 pixels in the bottom right direction by sampling at (0.75, 0.75) of the pixel (gather retrieves the 4 samples that would be used for bilinear interpolation):
-
-		float2 GatherLocation = InTextureCoordinates + 0.25f * TexelSize; 
-		float4 Red0 = ReadTexture1.GatherRed(ReadTexture1Sampler, GatherLocation - TexelSize);
-		float4 Green0 = ReadTexture1.GatherGreen(ReadTexture1Sampler, GatherLocation - TexelSize);
-		float4 Mask0 = ReadTexture1.GatherAlpha(ReadTexture1Sampler, GatherLocation - TexelSize);
-		float4 Red1 = ReadTexture1.GatherRed(ReadTexture1Sampler, GatherLocation);
-		float4 Green1 = ReadTexture1.GatherGreen(ReadTexture1Sampler, GatherLocation);
-		float4 Mask1 = ReadTexture1.GatherAlpha(ReadTexture1Sampler, GatherLocation);
-
-		// [x,y,z] = World Position [w] = valid mask
-		float4 TL = float4((InTextureCoordinates * TextureSize + float2(-1, -1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.w, Green0.w)), Mask0.w);
-		float4 TT = float4((InTextureCoordinates * TextureSize + float2(+0, -1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.z, Green0.z)), Mask0.z);
-		float4 CC = float4((InTextureCoordinates * TextureSize + float2(+0, +0)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.y, Green0.y)), Mask0.y);
-		float4 LL = float4((InTextureCoordinates * TextureSize + float2(-1, +0)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red0.x, Green0.x)), Mask0.x);
-		float4 RR = float4((InTextureCoordinates * TextureSize + float2(+1, +0)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red1.z, Green1.z)), Mask1.z);
-		float4 BR = float4((InTextureCoordinates * TextureSize + float2(+1, +1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red1.y, Green1.y)), Mask1.y);
-		float4 BB = float4((InTextureCoordinates * TextureSize + float2(+0, +1)) * LandscapeGridScale.xy, ExtractAndScaleHeight(float2(Red1.x, Green1.x)), Mask1.x);
-
-		// mask out samples that are off the edge of the texture
-		TL.w *= MaskMinBorderX * MaskMinBorderY;
-		TT.w *=                  MaskMinBorderY;
-		// CC should never be off the edge
-		LL.w *= MaskMinBorderX;
-		RR.w *= MaskMaxBorderX;
-		BR.w *= MaskMaxBorderX * MaskMaxBorderY;
-		BB.w *=                  MaskMaxBorderY;
-
-		// compute the normals (zeroing out those that use masked points, so they are ignored)
-		float3 N0 = ComputeNullableTriangleNormal(CC, LL, TL);
-		float3 N1 = ComputeNullableTriangleNormal(TL, TT, CC);
-		float3 N2 = ComputeNullableTriangleNormal(LL, CC, BB);
-		float3 N3 = ComputeNullableTriangleNormal(RR, CC, TT);
-		float3 N4 = ComputeNullableTriangleNormal(BR, BB, CC);
-		float3 N5 = ComputeNullableTriangleNormal(CC, RR, BR);
-
-		// average the normals
-		float3 FinalNormal = normalize(N0 + N1 + N2 + N3 + N4 + N5);
-
-		// Scale back to be 0-1 normal
-		OutColor.b = (FinalNormal.x + 1.0) * 0.5;
-		OutColor.a = (FinalNormal.y + 1.0) * 0.5;
+		OutColor = CalculateNormalsFromHeights(InTextureCoordinates.xy, OutColor);
 	}
 }
 

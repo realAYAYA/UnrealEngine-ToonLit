@@ -108,7 +108,7 @@ void FAnimNode_CurveSource::Evaluate_AnyThread(FPoseContext& Output)
 		}
 #endif
 
-		Output.Curve.LerpTo(Curve, ClampedAlpha);
+		Output.Curve.LerpToValid(Curve, ClampedAlpha);
 	}
 }
 

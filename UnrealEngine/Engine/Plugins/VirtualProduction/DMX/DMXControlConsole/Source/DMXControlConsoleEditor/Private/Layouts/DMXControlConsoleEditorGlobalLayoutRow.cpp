@@ -2,47 +2,56 @@
 
 #include "DMXControlConsoleEditorGlobalLayoutRow.h"
 
-#include "DMXControlConsoleFaderGroup.h"
+#include "Controllers/DMXControlConsoleFaderGroupController.h"
 #include "Layouts/DMXControlConsoleEditorGlobalLayoutBase.h"
 
 
 #define LOCTEXT_NAMESPACE "DMXControlConsoleEditorGlobalLayoutRow"
 
-void UDMXControlConsoleEditorGlobalLayoutRow::AddToLayoutRow(UDMXControlConsoleFaderGroup* FaderGroup)
+UDMXControlConsoleFaderGroupController* UDMXControlConsoleEditorGlobalLayoutRow::CreateFaderGroupController(UDMXControlConsoleFaderGroup* InFaderGroup, const FString& ControllerName, const int32 Index)
 {
-	if (FaderGroup)
+	if (!InFaderGroup)
 	{
-		FaderGroups.Add(FaderGroup);
+		return nullptr;
 	}
+
+	const TArray<UDMXControlConsoleFaderGroup*> FaderGroupAsArray = { InFaderGroup };
+	UDMXControlConsoleFaderGroupController* FaderGroupController = CreateFaderGroupController(FaderGroupAsArray, ControllerName, Index);
+	return FaderGroupController;
 }
 
-void UDMXControlConsoleEditorGlobalLayoutRow::AddToLayoutRow(const TArray<UDMXControlConsoleFaderGroup*> InFaderGroups)
+UDMXControlConsoleFaderGroupController* UDMXControlConsoleEditorGlobalLayoutRow::CreateFaderGroupController(const TArray<UDMXControlConsoleFaderGroup*> InFaderGroups, const FString& ControllerName, const int32 Index)
 {
-	if (!InFaderGroups.IsEmpty())
+	if (InFaderGroups.IsEmpty() || Index > FaderGroupControllers.Num())
 	{
-		FaderGroups.Append(InFaderGroups);
+		return nullptr;
 	}
+
+	UDMXControlConsoleFaderGroupController* FaderGroupController = NewObject<UDMXControlConsoleFaderGroupController>(this, NAME_None, RF_Transactional);
+	FaderGroupController->Possess(InFaderGroups);
+		
+	const FString NewName = ControllerName.IsEmpty() ? FString::FromInt(FaderGroupControllers.Num() + 1) : ControllerName;
+	FaderGroupController->SetUserName(NewName);
+
+	const int32 ValidIndex = Index < 0 ? FaderGroupControllers.Num() : Index;
+	FaderGroupControllers.Insert(FaderGroupController, ValidIndex);
+
+	return FaderGroupController;
 }
 
-void UDMXControlConsoleEditorGlobalLayoutRow::AddToLayoutRow(UDMXControlConsoleFaderGroup* FaderGroup, const int32 Index)
+void UDMXControlConsoleEditorGlobalLayoutRow::DeleteFaderGroupController(UDMXControlConsoleFaderGroupController* FaderGroupController)
 {
-	if (FaderGroup && Index >= 0)
+	if (!ensureMsgf(FaderGroupController, TEXT("Invalid fader group controller, cannot delete from '%s'."), *GetName()))
 	{
-		FaderGroups.Insert(FaderGroup, Index);
+		return;
 	}
-}
 
-void UDMXControlConsoleEditorGlobalLayoutRow::RemoveFromLayoutRow(UDMXControlConsoleFaderGroup* FaderGroup)
-{
-	FaderGroups.Remove(FaderGroup);
-}
-
-void UDMXControlConsoleEditorGlobalLayoutRow::RemoveFromLayoutRow(const int32 Index)
-{
-	if (FaderGroups.IsValidIndex(Index))
+	if (!ensureMsgf(FaderGroupControllers.Contains(FaderGroupController), TEXT("'%s' layout row is not owner of '%s'. Cannot delete fader group controller correctly."), *GetName(), *FaderGroupController->GetUserName()))
 	{
-		FaderGroups.RemoveAt(Index);
+		return;
 	}
+
+	FaderGroupControllers.Remove(FaderGroupController);
 }
 
 int32 UDMXControlConsoleEditorGlobalLayoutRow::GetRowIndex() const
@@ -61,9 +70,14 @@ UDMXControlConsoleEditorGlobalLayoutBase& UDMXControlConsoleEditorGlobalLayoutRo
 	return *Outer;
 }
 
-int32 UDMXControlConsoleEditorGlobalLayoutRow::GetIndex(const UDMXControlConsoleFaderGroup* FaderGroup) const
+UDMXControlConsoleFaderGroupController* UDMXControlConsoleEditorGlobalLayoutRow::GetFaderGroupControllerAt(int32 Index) const
+{ 
+	return FaderGroupControllers.IsValidIndex(Index) ? FaderGroupControllers[Index].Get() : nullptr;
+}
+
+int32 UDMXControlConsoleEditorGlobalLayoutRow::GetIndex(const UDMXControlConsoleFaderGroupController* FaderGroupController) const
 {
-	return FaderGroups.IndexOfByKey(FaderGroup);
+	return FaderGroupControllers.IndexOfByKey(FaderGroupController);
 }
 
 #undef LOCTEXT_NAMESPACE

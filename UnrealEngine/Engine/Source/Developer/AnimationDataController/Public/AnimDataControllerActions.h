@@ -342,6 +342,21 @@ protected:
 	FLinearColor Color;
 };
 
+class ANIMATIONDATACONTROLLER_API FSetCurveCommentAction : public FAnimDataBaseAction
+{
+public:
+	explicit FSetCurveCommentAction(const FAnimationCurveIdentifier& InCurveId, const FString& InComment) : CurveId(InCurveId), Comment(InComment) {}
+	virtual ~FSetCurveCommentAction() {}
+protected:
+	FSetCurveCommentAction() {}
+	virtual TUniquePtr<FChange> ExecuteInternal(IAnimationDataModel* Model, IAnimationDataController* Controller) override;
+	virtual FString ToStringInternal() const override;
+
+protected:
+	FAnimationCurveIdentifier CurveId;
+	FString Comment;
+};
+
 class ANIMATIONDATACONTROLLER_API FAddAtributeAction : public FAnimDataBaseAction
 {
 public:

@@ -23,6 +23,11 @@ namespace UnsyncUI
 			DataContext = new MainWindowModel();
 			var version = System.Reflection.Assembly.GetEntryAssembly().GetName().Version;
 			Title = $"UnsyncUI v{version.Major}.{version.Minor}.{version.Build}";
+
+			if (App.Current.EnableExperimentalFeatures)
+			{
+				Title += " [EXPERIMENTAL]";
+			}
 		}
 
 		private void Window_Closing(object sender, CancelEventArgs e)
@@ -42,6 +47,15 @@ namespace UnsyncUI
 					}
 				}
 			}
+		}
+	}
+
+	public class AutoScrollTextBox : TextBox
+	{
+		protected override void OnTextChanged(TextChangedEventArgs e)
+		{
+			base.OnTextChanged(e);
+			ScrollToEnd();
 		}
 	}
 
@@ -80,6 +94,8 @@ namespace UnsyncUI
 			}
 		}
 
+		public bool DryRun { get; set; }
+
 		private string dstPath = App.Current.UserConfig.CustomDstPath;
 		public string DstPath
 		{
@@ -115,6 +131,7 @@ namespace UnsyncUI
 			OnSyncClicked = new Command(() =>
 			{
 				var config = new SyncStartConfig();
+				config.DryRun = DryRun;
 				config.DstPath = DstPath;
 				config.Exclusions = default(string[]);
 				onBuildsSelected(new[]
@@ -129,6 +146,7 @@ namespace UnsyncUI
 
 	public class SyncStartConfig
 	{
+		public bool DryRun;
 		public string DstPath;
 		public string ScavengePath;
 		public string[] Exclusions;
@@ -150,22 +168,21 @@ namespace UnsyncUI
 			}
 		}
 
-		private bool dryRun = false;
-		public bool DryRun
+		private bool logExpanded = true;
+		public bool LogExpanded
 		{
-			get => dryRun;
-			set => SetProperty(ref dryRun, value);
+			get => logExpanded;
+			set => SetProperty(ref logExpanded, value);
 		}
 
-		private string dfs = App.Current.UserConfig.DFS ?? App.Current.Config?.DFS;
-		public string DFS
+		public string ApplicationLog
 		{
-			get => dfs;
-			set
-			{
-				SetProperty(ref dfs, value);
-				App.Current.UserConfig.DFS = value;
-			}
+			get => App.Current.ApplicationLog;
+		}
+
+		public void OnLogUpdated()
+		{
+			OnPropertyChanged("ApplicationLog");
 		}
 
 		private bool showHelp = true;
@@ -185,6 +202,50 @@ namespace UnsyncUI
 				App.Current.UserConfig.AdditionalArgs = value;
 			}
 		}
+
+		public bool ShouldShowLoginInfo { get => App.Current.EnableUserAuthentication; }
+
+		public string LoggedInUser
+		{
+			get => Config.loggedInUser;
+			set 
+			{
+				App.Current.UserConfig.LogInOnStartup = (value != null);
+				SetProperty(ref Config.loggedInUser, value);
+			}
+		}
+
+		public Command OnLogInClicked { get; }
+		public Command OnLogOutClicked { get; }
+
+		private void LogIn()
+		{
+			if (Config.RootProxy.Path == null
+				|| Config.UnsyncPath == null)
+			{
+				LoggedInUser = null;
+				return;
+			}
+
+			UnsyncQueryUtil queryUtil = new UnsyncQueryUtil(Config.UnsyncPath, Config.RootProxy.Path);
+
+			try
+			{
+				LoginQueryResult LoginInfo = queryUtil.Login();
+				LoggedInUser = LoginInfo.sub;
+			}
+			catch (Exception ex)
+			{
+				// TODO: add global status/log window
+				App.Current.LogError($"Login failed with exception: {ex}");
+			}
+		}
+
+		private void LogOut()
+		{
+			LoggedInUser = null;
+		}
+
 
 		private TaskbarItemProgressState progressState = TaskbarItemProgressState.None;
 		public TaskbarItemProgressState ProgressState
@@ -206,6 +267,8 @@ namespace UnsyncUI
 
 		public Command OnClearQueueClicked { get; }
 		public Command OnClearCompletedClicked { get; }
+
+		public Command OnClearApplicationLogClicked { get; }
 
 		public ObservableCollection<TabModel> Tabs { get; } = new ObservableCollection<TabModel>();
 		public ObservableCollection<JobModel> QueuedJobs { get; } = new ObservableCollection<JobModel>();
@@ -234,6 +297,10 @@ namespace UnsyncUI
 		{
 			OnClearQueueClicked = new Command(ClearQueue) { Enabled = true };
 			OnClearCompletedClicked = new Command(ClearCompleted) { Enabled = true };
+			OnClearApplicationLogClicked = new Command(ClearApplicationLog) { Enabled = true };
+
+			OnLogInClicked = new Command(LogIn) { Enabled = true };
+			OnLogOutClicked = new Command(LogOut) { Enabled = true };
 
 			if (Config != null)
 			{
@@ -241,6 +308,12 @@ namespace UnsyncUI
 				{
 					Tabs.Add(new ProjectModel(p, OnBuildsSelected));
 				}
+			}
+
+			if (Config.EnableUserAuthentication
+				&& App.Current.UserConfig.LogInOnStartup)
+			{
+				LogIn();
 			}
 
 			Tabs.Add(new CustomModel(OnBuildsSelected));
@@ -260,6 +333,11 @@ namespace UnsyncUI
 			UpdateProgressState();
 		}
 
+		private void ClearApplicationLog()
+		{
+			App.Current.ClearApplicationLog();
+		}
+
 		public void OnBuildsSelected(IEnumerable<(SyncStartConfig Config, BuildPlatformModel Model)> selectedBuilds)
 		{
 			foreach (var build in selectedBuilds)
@@ -268,9 +346,8 @@ namespace UnsyncUI
 					build.Model, 
 					build.Config.DstPath,
 					build.Config.ScavengePath,
-					DryRun, 
+					build.Config.DryRun, 
 					SelectedProxy?.Path,
-					DFS, 
 					AdditionalArgs, 
 					build.Config.Exclusions, 
 					OnJobCompleted, 

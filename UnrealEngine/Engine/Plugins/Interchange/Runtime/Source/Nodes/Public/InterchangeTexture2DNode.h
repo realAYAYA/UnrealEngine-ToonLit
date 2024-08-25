@@ -22,7 +22,7 @@ namespace UE::Interchange
 	};
 }//ns UE::Interchange
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeTexture2DNode : public UInterchangeTextureNode
 {
 	GENERATED_BODY()
@@ -46,7 +46,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -55,7 +55,7 @@ public:
 	}
 
 	/**
-	 * Override serialize to restore SourceBlocks on load.
+	 * Override Serialize() to restore SourceBlocks on load.
 	 */
 	virtual void Serialize(FArchive& Ar) override
 	{
@@ -72,8 +72,8 @@ public:
 	// UDIM base texture use a different model for the source data
 
 	/**
-	 * Get the source blocks for the texture
-	 * If the map is empty then the texture will be simply be imported as normal texture using the payload key
+	 * Get the source blocks for the texture.
+	 * If the map is empty, the texture is imported as a normal texture using the payload key.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | UDIMs")
 	TMap<int32, FString> GetSourceBlocks() const
@@ -82,11 +82,11 @@ public:
 	}
 
 	/**
-	 * Set the source blocks
-	 * Using this will suggest the pipeline to consider this texture as UDIM and it can chose to pass or not these block to the texture factory node.
+	 * Set the source blocks for the texture.
+	 * Using this suggests to the pipeline to consider this texture as a UDIM. The pipeline can choose whether to pass these blocks to the texture factory node.
 	 * @param InSourceBlocks The blocks and their source image that compose the whole texture.
-	 * The textures must be of the same format and use the same pixel format
-	 * The first block in the map is used to determine the accepted texture format and pixel format
+	 * The textures must be of the same format and use the same pixel format.
+	 * The first block in the map is used to determine the accepted texture format and pixel format.
 	 */
 	void SetSourceBlocks(TMap<int32, FString>&& InSourceBlocks)
 	{
@@ -95,11 +95,11 @@ public:
 
 	
 	/**
-	 * Set the source blocks
-	 * Using this will suggest the pipeline to consider this texture as UDIM and it can chose to pass or not these block to the texture factory node.
+	 * Set the source blocks for the texture.
+	 * Using this suggests to the pipeline to consider this texture as a UDIM. The pipeline can choose whether to pass these blocks to the texture factory node.
 	 * @param InSourceBlocks The blocks and their source image that compose the whole texture.
-	 * The textures must be of the same format and use the same pixel format
-	 * The first block in the map is used to determine the accepted texture format and pixel format
+	 * The textures must be of the same format and use the same pixel format.
+	 * The first block in the map is used to determine the accepted texture format and pixel format.
 	 */
 	void SetSourceBlocks(const TMap<int32, FString>& InSourceBlocks)
 	{

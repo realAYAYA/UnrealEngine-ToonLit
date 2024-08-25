@@ -497,6 +497,9 @@ TEST_CASE_NAMED(FPathViewsSplitTest, "System::Core::Misc::PathViews::Split", "[A
 	RunSplitTest(TEXT(".tar.gz"), TEXT(""), TEXT(".tar"), TEXT("gz"));
 	RunSplitTest(TEXT(".tar.gz/"), TEXT(".tar.gz"), TEXT(""), TEXT(""));
 	RunSplitTest(TEXT(".tar.gz\\"), TEXT(".tar.gz"), TEXT(""), TEXT(""));
+	// TEXT(".") is ambiguous; we currently treat it as an extension separator but we don't guarantee that in our contract
+	//RunSplitTest(TEXT("."), TEXT(""), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT(".."), TEXT(""), TEXT(".."), TEXT(""));
 	RunSplitTest(TEXT("File"), TEXT(""), TEXT("File"), TEXT(""));
 	RunSplitTest(TEXT("File.txt"), TEXT(""), TEXT("File"), TEXT("txt"));
 	RunSplitTest(TEXT("File.tar.gz"), TEXT(""), TEXT("File.tar"), TEXT("gz"));
@@ -630,6 +633,28 @@ TEST_CASE_NAMED(FPathViewsIsRelativePathTest, "System::Core::Misc::PathViews::Is
 	FPathViewsTest Instance = FPathViewsTest();
 	Instance.IsRelativePathTest();
 }
+
+TEST_CASE_NAMED(FPathViewsHasRedundantTerminatingSeparatorTest, "System::Core::Misc::PathViews::HasRedundantTerminatingSeparator", "[ApplicationContextMask][SmokeFilter]")
+{
+	CHECK_EQUALS(TEXT(""), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("")), false);
+	CHECK_EQUALS(TEXT("/"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("/")), false);
+	CHECK_EQUALS(TEXT("//"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("//")), false);
+	CHECK_EQUALS(TEXT("///"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("///")), true);
+	CHECK_EQUALS(TEXT("\\"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("\\")), false);
+	CHECK_EQUALS(TEXT("\\\\"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("\\\\")), false);
+	CHECK_EQUALS(TEXT("\\\\\\"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("\\\\\\")), true);
+	CHECK_EQUALS(TEXT("text"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("text")), false);
+	CHECK_EQUALS(TEXT("text/"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("text/")), true);
+	CHECK_EQUALS(TEXT("text//"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("text//")), true);
+	CHECK_EQUALS(TEXT("text\\"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("text\\")), true);
+	CHECK_EQUALS(TEXT("text\\\\"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("text\\\\")), true);
+	CHECK_EQUALS(TEXT("D:"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("D:")), false);
+	CHECK_EQUALS(TEXT("D:/"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("D:/")), false);
+	CHECK_EQUALS(TEXT("D://"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("D://")), true);
+	CHECK_EQUALS(TEXT("D:\\"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("D:\\")), false);
+	CHECK_EQUALS(TEXT("D:\\\\"), FPathViews::HasRedundantTerminatingSeparator(TEXTVIEW("D:\\\\")), true);
+}
+
 
 TEST_CASE_NAMED(FPathViewsSplitFirstComponentTest, "System::Core::Misc::PathViews::SplitFirstComponent", "[ApplicationContextMask][SmokeFilter]")
 {
@@ -855,5 +880,61 @@ TEST_CASE_NAMED(FPathViewsToAbsoluteTest, "System::Core::Misc::PathViews::ToAbso
 	}
 
 }
+
+TEST_CASE_NAMED(FPathViewsVolumeSpecifierTest, "System::Core::Misc::PathViews::VolumeSpecifier", "[ApplicationContextMask][SmokeFilter]")
+{
+	using namespace PathTest;
+
+
+	struct FTestCase
+	{
+		FStringView Input;
+		bool bDriveSpecifier;
+		FStringView Volume;
+		FStringView Remainder;
+	};
+	FTestCase TestCases[] = {
+		{ TEXTVIEW(""),					false,	TEXTVIEW(""),			TEXTVIEW("") },
+		{ TEXTVIEW("D:"),				true,	TEXTVIEW("D:"),			TEXTVIEW("") },
+		{ TEXTVIEW("D:/"),				false,	TEXTVIEW("D:"),			TEXTVIEW("/") },
+		{ TEXTVIEW("D:\\"),				false,	TEXTVIEW("D:"),			TEXTVIEW("\\") },
+		{ TEXTVIEW("D:root/path"),		true,	TEXTVIEW("D:"),			TEXTVIEW("root/path") },
+		{ TEXTVIEW("D:/root/path"),		false,	TEXTVIEW("D:"),			TEXTVIEW("/root/path") },
+		{ TEXTVIEW("D:\\root\\path"),	false,	TEXTVIEW("D:"),			TEXTVIEW("\\root\\path") },
+		{ TEXTVIEW("//volume"),			false,	TEXTVIEW("//volume"),	TEXTVIEW("") },
+		{ TEXTVIEW("\\\\volume"),		false,	TEXTVIEW("\\\\volume"),	TEXTVIEW("") },
+		{ TEXTVIEW("/\\volume"),		false,	TEXTVIEW("/\\volume"),	TEXTVIEW("") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW("\\/volume"),		false,	TEXTVIEW("\\/volume"),	TEXTVIEW("") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW("//volume/"),		false,	TEXTVIEW("//volume"),	TEXTVIEW("/") },
+		{ TEXTVIEW("//volume/root"),	false,	TEXTVIEW("//volume"),	TEXTVIEW("/root") },
+		{ TEXTVIEW("/root/path"),		false,	TEXTVIEW(""),			TEXTVIEW("/root/path") },
+		{ TEXTVIEW("\\root\\path"),		false,	TEXTVIEW(""),			TEXTVIEW("\\root\\path") },
+		{ TEXTVIEW("root/path"),		false,	TEXTVIEW(""),			TEXTVIEW("root/path") },
+		{ TEXTVIEW("/"),				false,	TEXTVIEW(""),			TEXTVIEW("/") },
+		{ TEXTVIEW("\\"),				false,	TEXTVIEW(""),			TEXTVIEW("\\") },
+		{ TEXTVIEW("//"),				false,	TEXTVIEW("//"),			TEXTVIEW("") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW("\\\\"),				false,	TEXTVIEW("\\\\"),		TEXTVIEW("") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW("/\\"),				false,	TEXTVIEW("/\\"),		TEXTVIEW("") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW("\\/"),				false,	TEXTVIEW("\\/"),		TEXTVIEW("") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW("/:"),				false,	TEXTVIEW(""),			TEXTVIEW("/:") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW(":"),				true,	TEXTVIEW(":"),			TEXTVIEW("") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW(":/"),				false,	TEXTVIEW(":"),			TEXTVIEW("/") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW(":root"),			true,	TEXTVIEW(":"),			TEXTVIEW("root") }, // Poorly defined case, somewhat arbitrary
+		{ TEXTVIEW("////volume/path"),	false,	TEXTVIEW("////volume"),	TEXTVIEW("/path") }, // Poorly defined case, somewhat arbitrary, @see RemoveDuplicateSlashes
+	};
+
+	for (const FTestCase& TestCase : TestCases)
+	{
+		bool bDriveSpecifier;
+		FStringView Volume;
+		FStringView Remainder;
+		bDriveSpecifier = FPathViews::IsDriveSpecifierWithoutRoot(TestCase.Input);
+		FPathViews::SplitVolumeSpecifier(TestCase.Input, Volume, Remainder);
+		CHECK_EQUALS(FString(TestCase.Input), bDriveSpecifier, TestCase.bDriveSpecifier);
+		CHECK_EQUALS(FString(TestCase.Input), Volume, TestCase.Volume);
+		CHECK_EQUALS(FString(TestCase.Input), Remainder, TestCase.Remainder);
+	};
+}
+
 
 #endif //WITH_TESTS

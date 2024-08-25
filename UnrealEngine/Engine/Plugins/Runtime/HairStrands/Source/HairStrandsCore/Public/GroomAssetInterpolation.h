@@ -59,10 +59,11 @@ enum class EGroomGuideType : uint8
 };
 
 UENUM(BlueprintType)
-enum class EGroomLODType : uint8
+enum class EGroomLODMode : uint8
 {
+	Default		UMETA(DisplayName = "Default", ToolTip = "Hair strands curves & points adapt based on project settings LOD mode. (See 'Use Auto LOD' in project settings). "),
 	Manual 		UMETA(DisplayName = "Manual", ToolTip = "Hair strands curves & points adapt based on LOD settings"),
-	Auto		UMETA(DisplayName = "Auto (Experimental)", ToolTip = "Hair strands curves & points automatically adapt based on screen coverage. LOD settings are ignored.")
+	Auto		UMETA(DisplayName = "Auto", ToolTip = "Hair strands curves & points automatically adapt based on screen coverage. LOD settings are ignored.")
 };
 
 USTRUCT(BlueprintType)
@@ -219,9 +220,6 @@ USTRUCT(BlueprintType)
 struct HAIRSTRANDSCORE_API FHairGroupsLOD
 {
 	GENERATED_USTRUCT_BODY()
-
-	UPROPERTY(EditAnywhere, Category = "InterpolationSettings", meta = (ToolTip = "Define how LOD adapts curves & points for a given group."))
-	EGroomLODType LODType = EGroomLODType::Manual;
 
 	/** LODs  */
 	UPROPERTY(EditAnywhere, Category = "DecimationSettings", meta = (ToolTip = "Reduce the number of hair strands in a uniform manner", ClampMin = "0", UIMin = "0", UIMax = "1.0"))

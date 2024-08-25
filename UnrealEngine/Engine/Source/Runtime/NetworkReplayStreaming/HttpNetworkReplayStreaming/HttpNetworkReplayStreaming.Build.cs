@@ -12,6 +12,7 @@ namespace UnrealBuildTool.Rules
                 new string[]
 				{
 					"Core",
+					"CoreOnline",
 					"CoreUObject",
                     "Engine",
                     "HTTP",

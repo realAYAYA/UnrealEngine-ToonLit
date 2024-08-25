@@ -20,7 +20,7 @@ int32 UOptimusNode_SetResource::GetDataFunctionIndexFromPin(const UOptimusNodePi
 		return INDEX_NONE;
 	}
 
-	return UOptimusRawBufferDataInterface::GetWriteValueOutputIndex(WriteType);
+	return UOptimusRawBufferDataInterface::GetWriteValueOutputIndex(EOptimusBufferWriteType::Write);
 }
 
 

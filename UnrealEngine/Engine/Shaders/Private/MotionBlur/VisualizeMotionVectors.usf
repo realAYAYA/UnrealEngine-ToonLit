@@ -24,6 +24,7 @@ FScreenTransform SvPositionToVelocity;
 FScreenTransform SvPositionToColor;
 FScreenTransform SvPositionToScreenPos;
 FScreenTransform PrevScreenPosToPrevColor;
+uint VisualizeType;
 
 
 //------------------------------------------------------- FUNCTIONS
@@ -63,26 +64,42 @@ void MainPS(
 		ScreenVelocity = DecodeVelocityFromTexture(EncodedVelocity).xy;
 	}
 
-	float2 PrevScreenPos = ScreenPos - ScreenVelocity;
-	float2 PrevColorTextureUV = ApplyScreenTransform(PrevScreenPos, PrevScreenPosToPrevColor);
-	PrevColorTextureUV = clamp(PrevColorTextureUV, Color_UVViewportBilinearMin, Color_UVViewportBilinearMax);
-
-	float4 PrevColor = PrevColorTexture.SampleLevel(PrevColorSampler, PrevColorTextureUV, 0.0);
-
-	float Luma = Luminance(Color.rgb);
-	float PrevLuma = Luminance(PrevColor.rgb);
-
-	uint2 SubTileCoord = (uint2(SvPosition.xy) >> 4) & 0x1;
-	float Checker = SubTileCoord.x == SubTileCoord.y ? 1.0 : 0.0;
-
-	if (bIsRenderedVelocity)
+	BRANCH
+	if (VisualizeType == 0) // EVisualizeMotionVectors::ReprojectionAlignment
 	{
-		OutColor.rgb = (Luma + PrevLuma).xxx * 0.5 + abs(Color.xyz - PrevColor.xyz);
-		//OutColor.rgb = (Color + PrevColor) * 0.5;
-		OutColor.a = min(Color.a, PrevColor.a);
+		float2 PrevScreenPos = ScreenPos - ScreenVelocity;
+		float2 PrevColorTextureUV = ApplyScreenTransform(PrevScreenPos, PrevScreenPosToPrevColor);
+		PrevColorTextureUV = clamp(PrevColorTextureUV, Color_UVViewportBilinearMin, Color_UVViewportBilinearMax);
+
+		float4 PrevColor = PrevColorTexture.SampleLevel(PrevColorSampler, PrevColorTextureUV, 0.0);
+
+		float Luma = Luminance(Color.rgb);
+		float PrevLuma = Luminance(PrevColor.rgb);
+
+		uint2 SubTileCoord = (uint2(SvPosition.xy) >> 4) & 0x1;
+		float Checker = SubTileCoord.x == SubTileCoord.y ? 1.0 : 0.0;
+
+		if (bIsRenderedVelocity)
+		{
+			OutColor.rgb = (Luma + PrevLuma).xxx * 0.5 + abs(Color.xyz - PrevColor.xyz);
+			//OutColor.rgb = (Color + PrevColor) * 0.5;
+			OutColor.a = min(Color.a, PrevColor.a);
+		}
+		else
+		{
+			OutColor = float4(Luma.xxx * (0.25 + 0.25 * Checker), Color.a);
+		}
 	}
+	#if VELOCITY_ENCODE_HAS_PIXEL_ANIMATION
+	else if (VisualizeType == 1) // EVisualizeMotionVectors::HasPixelAnimationFlag
+	{
+		bool bHasPixelAnimation = DecodeHasPixelAnimationFromVelocityTexture(EncodedVelocity);
+		
+		OutColor = bHasPixelAnimation ? 1.0 : 0.0;
+	}
+	#endif
 	else
 	{
-		OutColor = float4(Luma.xxx * (0.25 + 0.25 * Checker), Color.a);
+		OutColor = 0.0;
 	}
 }

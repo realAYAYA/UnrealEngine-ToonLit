@@ -33,6 +33,8 @@
 
 /* Delegate used by SBasicFilterBar to populate the add filter menu */
 DECLARE_DELEGATE_OneParam(FOnPopulateAddFilterMenu, UToolMenu*)
+/** Delegate to extend a menu after it has been generated dynamically. */
+DECLARE_DELEGATE_OneParam( FOnExtendAddFilterMenu, UToolMenu* );
 
 /** ToolMenuContext that is used to create the Add Filter Menu */
 UCLASS()
@@ -42,6 +44,7 @@ class TOOLWIDGETS_API UFilterBarContext : public UObject
 
 public:
 	FOnPopulateAddFilterMenu PopulateFilterMenu;
+	FOnExtendAddFilterMenu OnExtendAddFilterMenu;
 };
 
 /** Describes if the filters are laid out horizontally (ScrollBox) or vertically (WrapBox) */
@@ -76,15 +79,13 @@ struct FFrontendFilterExternalActivationHelper;
 * Use the GetAllActiveFilters() function to get the FilterCollection of Active Filters in this FilterBar, that can be used to filter your items
 * Use MakeAddFilterButton() to make the button that summons the dropdown showing all the filters
 */
+
 template<typename FilterType>
 class SBasicFilterBar : public SCompoundWidget
 {
 public:
 	/** Delegate for when filters have changed */
 	DECLARE_DELEGATE( FOnFilterChanged );
-	
-	/** Delegate for when filters have changed */
-	DECLARE_DELEGATE_OneParam( FOnExtendAddFilterMenu, UToolMenu* );
 	
 	/** Delegate to create a TTextFilter used to compare FilterType with text queries */
     DECLARE_DELEGATE_RetVal( TSharedPtr<ICustomTextFilter<FilterType>>, FCreateTextFilter);
@@ -94,6 +95,7 @@ public:
 		, _CanChangeOrientation(false)
 		, _FilterPillStyle(EFilterPillStyle::Default)
 		, _UseSectionsForCategories(false)
+		, _bPinAllFrontendFilters(false)
 	{}
 
  		/** Delegate for when filters have changed */
@@ -128,6 +130,9 @@ public:
 
 		/** Whether to use submenus or sections for categories in the filter menu */
 		SLATE_ARGUMENT(bool, UseSectionsForCategories)
+
+		/** Whether we want to automatically pin all frontend filters to make them visible by default. */
+		SLATE_ARGUMENT(bool, bPinAllFrontendFilters)
 	
  	SLATE_END_ARGS()
 
@@ -140,6 +145,7 @@ public:
  		bCanChangeOrientation = InArgs._CanChangeOrientation;
  		FilterPillStyle = InArgs._FilterPillStyle;
 		bUseSectionsForCategories = InArgs._UseSectionsForCategories;
+ 		bPinAllFrontendFilters = InArgs._bPinAllFrontendFilters;
 
  		// We use a widgetswitcher to allow dynamically swapping between the layouts
  		ChildSlot
@@ -202,6 +208,11 @@ public:
 
  		// Auto add if it is an inverse filters
  		SetFrontendFilterActive(InFilter, false);
+
+ 		if(bPinAllFrontendFilters)
+ 		{
+ 			AddFilterToBar(InFilter);
+ 		}
  	}
 
 	EFilterBarLayout GetFilterLayout()
@@ -1229,8 +1240,8 @@ protected:
 		RemoveAllFilters();
 	}
 
- 	/** Called to set a filter active externally */
- 	void OnSetFilterActive(bool bInActive, TWeakPtr<FFilterBase<FilterType>> InWeakFilter)
+ 	/** Called externally to check/pin a filter, and activates/deactivates it */
+ 	void OnSetFilterActive(bool bActive, TWeakPtr<FFilterBase<FilterType>> InWeakFilter)
  	{
  		TSharedPtr<FFilterBase<FilterType>> Filter = InWeakFilter.Pin();
  		if (Filter.IsValid())
@@ -1238,10 +1249,40 @@ protected:
  			if (!IsFrontendFilterInUse(Filter.ToSharedRef()))
  			{
  				TSharedRef<SFilter> NewFilter = AddFilterToBar(Filter.ToSharedRef());
- 				NewFilter->SetEnabled(bInActive);
+ 				NewFilter->SetEnabled(bActive);
+ 			}
+ 			else
+ 			{
+ 				for (const TSharedRef<SFilter>& PinnedFilter : Filters)
+ 				{
+ 					if (PinnedFilter->GetFrontendFilter() == Filter)
+ 					{
+ 						PinnedFilter->SetEnabled(bActive);
+ 						break;
+ 					}
+ 				}
  			}
  		}
  	}
+
+	/** Called externally to determine if a filter has been checked/pinned and activated */
+	bool OnIsFilterActive(TWeakPtr<FFilterBase<FilterType>> InWeakFilter)
+	{
+		TSharedPtr<FFilterBase<FilterType>> Filter = InWeakFilter.Pin();
+		if(Filter.IsValid())
+		{
+			if(!IsFrontendFilterInUse(Filter.ToSharedRef()))
+			{
+				return false;
+			}
+			else
+			{
+				return IsFilterActive(Filter);
+			}
+		}
+
+		return false;
+	}
  	
  	/** Handler for when a checkbox next to a custom text filter is clicked */
 	void CustomTextFilterClicked(ECheckBoxState CheckBoxState, TSharedRef<ICustomTextFilter<FilterType>> Filter)
@@ -1521,8 +1562,6 @@ protected:
 					FNewToolMenuDelegate::CreateSP(this, &SBasicFilterBar<FilterType>::CreateTextFiltersMenu)
 					);
 		}
-		
-		OnExtendAddFilterMenu.ExecuteIfBound(Menu);
 	}
 
 	/** Helper function to add all custom filters to the Add Filter Menu */
@@ -1576,14 +1615,16 @@ private:
 				if (UFilterBarContext* Context = InMenu->FindContext<UFilterBarContext>())
 				{
 					Context->PopulateFilterMenu.ExecuteIfBound(InMenu);
+					Context->OnExtendAddFilterMenu.ExecuteIfBound(InMenu);
 				}
 			}));
 		}
 
 		UFilterBarContext* FilterBarContext = NewObject<UFilterBarContext>();
 		FilterBarContext->PopulateFilterMenu = FOnPopulateAddFilterMenu::CreateSP(this, &SBasicFilterBar<FilterType>::PopulateAddFilterMenu);
+		FilterBarContext->OnExtendAddFilterMenu = OnExtendAddFilterMenu;
 		FToolMenuContext ToolMenuContext(FilterBarContext);
-
+		
 		return UToolMenus::Get()->GenerateWidget(FilterMenuName, ToolMenuContext);
 	}
 	
@@ -1642,6 +1683,9 @@ protected:
 	/** Whether to use submenus or sections for categories in the filter menu */
 	bool bUseSectionsForCategories;
 
+	/** Whether to pin all front end filters by default. Will add them from the Add Filter menu to the UI, but does not necessarily activate them. */
+	bool bPinAllFrontendFilters;
+
 	/** Determines how each individual pill looks like */
 	EFilterPillStyle FilterPillStyle;
 	
@@ -1656,6 +1700,7 @@ struct FFrontendFilterExternalActivationHelper
 	{
 		TWeakPtr<FFilterBase<FilterType>> WeakFilter = InFrontendFilter;
 		InFrontendFilter->SetActiveEvent.AddSP(&InFilterList.Get(), &SBasicFilterBar<FilterType>::OnSetFilterActive, WeakFilter);
+		InFrontendFilter->IsActiveEvent.BindSP(&InFilterList.Get(), &SBasicFilterBar<FilterType>::OnIsFilterActive, WeakFilter);
 	}
 };
 

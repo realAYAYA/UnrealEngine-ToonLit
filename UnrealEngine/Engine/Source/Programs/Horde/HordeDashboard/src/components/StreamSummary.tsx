@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { DefaultButton, DetailsList, DetailsListLayoutMode, DetailsRow, FocusZone, FocusZoneDirection, IColumn, IDetailsGroupRenderProps, IDetailsListProps, mergeStyleSets, Pivot, PivotItem, ScrollablePane, ScrollbarVisibility, SelectionMode, Spinner, SpinnerSize, Stack, Text } from '@fluentui/react';
+import { DefaultButton, DetailsList, DetailsListLayoutMode, DetailsRow, IColumn, IDetailsGroupRenderProps, IDetailsListProps, mergeStyleSets, Pivot, PivotItem, ScrollablePane, ScrollbarVisibility, SelectionMode, Spinner, SpinnerSize, Stack, Text } from '@fluentui/react';
 import { action, makeObservable, observable } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import moment from 'moment-timezone';
@@ -11,12 +11,12 @@ import { FindIssueResponse, GetExternalIssueResponse, JobsTabData, TabType } fro
 import dashboard from '../backend/Dashboard';
 import { ProjectStore } from '../backend/ProjectStore';
 import { getElapsedString, getShortNiceTime } from '../base/utilities/timeUtils';
-import { detailClasses, hordeClasses } from '../styles/Styles';
 import { IssueModalV2 } from './IssueViewV2';
 import { useQuery } from './JobDetailCommon';
 import { SchedulePane } from './SchedulePane';
 import { IssueStatusIconV2 } from './StatusIcon';
 import { BuildHealthTestReportPanel } from './TestReportPanel';
+import { getHordeStyling } from '../styles/Styles';
 
 
 class SummaryHandler {
@@ -51,7 +51,7 @@ class SummaryHandler {
 
       this.collapsedIssueGroups = new Map();
 
-      this.intialLoad = true;
+      this.initialLoad = true;
    }
 
    private async poll() {
@@ -116,7 +116,7 @@ class SummaryHandler {
          this.issues = values[0].filter(p => p.promoted || jiraIssues.has(p.id));
          this.unpromoted = values[0].filter(p => !p.promoted && !jiraIssues.has(p.id));
 
-         this.intialLoad = false;
+         this.initialLoad = false;
          this.updated();
 
       } catch (reason) {
@@ -268,7 +268,7 @@ class SummaryHandler {
       this.update++;
    }
 
-   intialLoad = true;
+   initialLoad = true;
 
    issues: FindIssueResponse[] = [];
    unpromoted: FindIssueResponse[] = [];
@@ -412,7 +412,8 @@ const HealthPanelIssues: React.FC<{ desktopAlerts?: boolean }> = observer(({ des
    const location = useLocation();
    const { projectStore } = useBackend();
    const [issueHistory, setIssueHistory] = useState(false);
-   const [currentPivot, setCurrentPivot] = useState("$promoted");
+   const [currentPivot, setCurrentPivot] = useState("");
+   const { hordeClasses, detailClasses } = getHordeStyling();
 
    // subscribe
    if (handler.update) { }
@@ -615,20 +616,17 @@ const HealthPanelIssues: React.FC<{ desktopAlerts?: boolean }> = observer(({ des
          const group = props.group! as IssueGroup;
 
          return (
-            <div className="view-log-link">
-               <div className={detailClasses.headerAndFooter} style={{ marginRight: 8, padding: 2 }} onClick={() => {
+            <div className={detailClasses.headerAndFooter} style={{ marginRight: 8, padding: 2 }} onClick={() => {
 
-                  handler.collapsedIssueGroups.set(group.key, !handler.collapsedIssueGroups.get(group.key));
-                  props.onToggleCollapse!(props.group!);
-               }}>
-                  <div style={{
-                     fontSize: "13px",
-                     padding: '4px 8px',
-                     userSelect: 'none',
-                     color: "#404040",
-                     fontFamily: "Horde Open Sans SemiBold"
-                  }}>{`${group.headerText}`}</div>
-               </div>
+               handler.collapsedIssueGroups.set(group.key, !handler.collapsedIssueGroups.get(group.key));
+               props.onToggleCollapse!(props.group!);
+            }}>
+               <div style={{
+                  fontSize: "13px",
+                  padding: '4px 8px',
+                  userSelect: 'none',
+                  fontFamily: "Horde Open Sans SemiBold"
+               }}>{`${group.headerText}`}</div>
             </div>
          );
       }
@@ -640,6 +638,7 @@ const HealthPanelIssues: React.FC<{ desktopAlerts?: boolean }> = observer(({ des
    groups.forEach(g => g.headerText += ` (${g.count})`);
 
    const pivotItems: JSX.Element[] = [];
+   const pivotKeys: string[] = [];
 
    let issueText = "Promoted";
    let triageText = "Current";
@@ -650,47 +649,58 @@ const HealthPanelIssues: React.FC<{ desktopAlerts?: boolean }> = observer(({ des
       triageText += ` (${handler.unpromoted.length})`
    }
 
-   pivotItems.push(<PivotItem headerText={issueText} itemKey={`issue_pivot_item_key_$promoted`} key={`issue_pivot_key_$promoted`} headerButtonProps={{ onClick: () => { setCurrentPivot("$promoted") } }} />);
-   pivotItems.push(<PivotItem headerText={triageText} itemKey={`issue_pivot_item_key_$current`} key={`issue_pivot_key_$current`} headerButtonProps={{ onClick: () => { setCurrentPivot("$current") } }} />);
-
    stream?.workflows?.forEach(config => {
 
       const workflowIssues = allIssues.filter(issue => issue.openWorkflows.indexOf(config.id) !== -1);
       if (!workflowIssues.length) {
          return;
       }
+      
       pivotItems.push(<PivotItem headerText={`${config.summaryTab ?? config.id} (${workflowIssues.length})`} itemKey={`issue_pivot_item_key_${config.id}`} key={`issue_pivot_key_${config.id}`} headerButtonProps={{ onClick: () => { setCurrentPivot(config.id) } }} />);
+      pivotKeys.push(config.id)
    });
+
+   if (!handler.initialLoad) {
+      pivotItems.push(<PivotItem headerText={issueText} itemKey={`issue_pivot_item_key_$promoted`} key={`issue_pivot_key_$promoted`} headerButtonProps={{ onClick: () => { setCurrentPivot("$promoted") } }} />);
+      pivotKeys.push(`$promoted`)
+      pivotItems.push(<PivotItem headerText={triageText} itemKey={`issue_pivot_item_key_$current`} key={`issue_pivot_key_$current`} headerButtonProps={{ onClick: () => { setCurrentPivot("$current") } }} />);   
+      pivotKeys.push(`$current`)
+   }
+
+   if (!currentPivot && !handler.initialLoad) {
+
+      setCurrentPivot(pivotKeys[0])   
+      return null;      
+   }
 
    return <Stack style={{ width: 1324, marginLeft: 4 }}>
       <IssueModalV2 issueId={query.get("issue")} streamId={handler.streamId!} popHistoryOnClose={issueHistory} />
       <Stack styles={{ root: { paddingLeft: 4, paddingRight: 0, paddingTop: 4, paddingBottom: 4 } }}>
-         <Stack>
-            <Stack horizontal>
-               <Stack horizontalAlign={"start"}>
-                  <Pivot className={hordeClasses.pivot}
-                     selectedKey={`issue_pivot_item_key_${currentPivot}`}
-                     linkSize="normal"
-                     linkFormat="links"
-                     onLinkClick={(item => {
-                        if (!item || !item.props.itemKey) {
-                           return;
-                        }
-                        setCurrentPivot(item.props.itemKey.replace("issue_pivot_item_key_", ""));
-                     })}>
-                     {pivotItems}
-                  </Pivot>
-               </Stack>
-               <Stack grow />
-               <Stack style={{ paddingRight: 8 }}>
-                  {(currentPivot === "$promoted" || currentPivot === "$current") && !handler.intialLoad && <DefaultButton text={`Export ${currentPivot === "$promoted" ? "Promoted" : "Current"}`} style={{ fontSize: 10, padding: 8, height: "24px", minWidth: "48px" }} onClick={() => handler.exportIssues(projectStore, items, groups, currentPivot === "$promoted")} />}
-               </Stack>
+         <Stack horizontal verticalAlign='center'>
+            <Stack horizontalAlign={"start"} >
+               <Pivot className={hordeClasses.pivot}
+                  style={{width: 1180}}
+                  overflowBehavior='menu'
+                  selectedKey={`issue_pivot_item_key_${currentPivot}`}
+                  linkSize="normal"
+                  linkFormat="links"
+                  onLinkClick={(item => {
+                     if (!item || !item.props.itemKey) {
+                        return;
+                     }
+                     setCurrentPivot(item.props.itemKey.replace("issue_pivot_item_key_", ""));
+                  })}>
+                  {pivotItems}
+               </Pivot>
+            </Stack>
+            <Stack grow />
+            <Stack style={{ paddingRight: 8 }}>
+               {(currentPivot === "$promoted" || currentPivot === "$current") && !handler.initialLoad && <DefaultButton text={`Export ${currentPivot === "$promoted" ? "Promoted" : "Current"}`} style={{ fontSize: 10, padding: 8, height: "24px", minWidth: "48px" }} onClick={() => handler.exportIssues(projectStore, items, groups, currentPivot === "$promoted")} />}
             </Stack>
          </Stack>
 
-
-         {!issues.length && !handler.intialLoad && <Stack style={{ paddingBottom: 12, paddingTop: 12 }} horizontal tokens={{ childrenGap: 12 }}><Text variant="medium">No issues found</Text></Stack>}
-         {!issues.length && handler.intialLoad && <Stack style={{ paddingBottom: 12, paddingTop: 12 }} horizontal tokens={{ childrenGap: 12 }}><Text variant="medium">Loading issues</Text><Spinner size={SpinnerSize.medium} /></Stack>}
+         {!issues.length && !handler.initialLoad && <Stack style={{ paddingBottom: 12, paddingTop: 12 }} horizontal tokens={{ childrenGap: 12 }}><Text variant="medium">No issues found</Text></Stack>}
+         {!issues.length && handler.initialLoad && <Stack style={{ paddingBottom: 12, paddingTop: 12 }} horizontal tokens={{ childrenGap: 12 }}><Text variant="medium">Loading issues</Text><Spinner size={SpinnerSize.medium} /></Stack>}
          {!!issues.length && <div style={{ overflowY: 'auto', overflowX: 'hidden', maxHeight: "640px" }} data-is-scrollable={true}>
             <Stack style={{ paddingTop: 6 }}>
                <DetailsList
@@ -720,6 +730,8 @@ const HealthPanelIssues: React.FC<{ desktopAlerts?: boolean }> = observer(({ des
 
 const HealthPanel: React.FC<{ desktopAlerts?: boolean }> = observer(({ desktopAlerts }) => {
 
+   const { hordeClasses } = getHordeStyling();
+
    if (handler.update) { }
 
    return <Stack style={{ width: 1384, marginLeft: 4 }}>
@@ -740,6 +752,7 @@ const HealthPanel: React.FC<{ desktopAlerts?: boolean }> = observer(({ desktopAl
 const SchedulePanel: React.FC = observer(() => {
 
    const { projectStore } = useBackend();
+   const { hordeClasses } = getHordeStyling();
 
    // subscribe
    if (handler.update) { }

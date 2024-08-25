@@ -109,6 +109,9 @@ public:
 	UPROPERTY()
 	bool bShowConstraintsAsPoints;
 
+	UPROPERTY()
+	bool bDrawViolatedLimits;
+
 	// Draw colors
 	UPROPERTY()
 	FColor BoneUnselectedColor;

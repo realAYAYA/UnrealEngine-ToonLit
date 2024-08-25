@@ -36,6 +36,7 @@
 #include "Editor/WidgetCompilerLog.h"
 #include "GameFramework/InputSettings.h"
 #include "Engine/InputDelegateBinding.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(UserWidget)
 
@@ -153,7 +154,9 @@ bool UUserWidget::Initialize()
 			InitializeNamedSlots();
 		}
 
-		if (!IsDesignTime() && PlayerContext.IsValid())
+		// For backward compatibility, run the initialize event on widget that doesn't have a player context only when the class authorized it.
+		bool bClassWantsToRunInitialized = BGClass && BGClass->bCanCallInitializedWithoutPlayerContext;
+		if (!IsDesignTime() && (PlayerContext.IsValid() || bClassWantsToRunInitialized))
 		{
 			NativeOnInitialized();
 		}
@@ -217,8 +220,28 @@ void UUserWidget::DuplicateAndInitializeFromWidgetTree(UWidgetTree* InWidgetTree
 			}
 		});
 
+		TArray<UWidget*> AllNamedSlotContentWidgets;
+		NamedSlotContentToMerge.GenerateValueArray(AllNamedSlotContentWidgets);
+
+		auto SetContentWidgetForNamedSlot = [this](FName NamedSlotName, UWidget* TemplateSlotContent)
+		{
+			FObjectInstancingGraph NamedSlotInstancingGraph;
+			// We need to add a mapping from the template's widget tree to the new widget tree, that way
+			// as we instance the widget hierarchy it's grafted onto the new widget tree.
+			NamedSlotInstancingGraph.AddNewObject(WidgetTree, TemplateSlotContent->GetTypedOuter<UWidgetTree>());
+
+			// Instance the new widget from the foreign tree, but do it in a way that grafts it onto the tree we're instancing.
+			UWidget* Content = NewObject<UWidget>(WidgetTree, TemplateSlotContent->GetClass(), TemplateSlotContent->GetFName(), RF_Transactional, TemplateSlotContent, false, &NamedSlotInstancingGraph);
+			Content->SetFlags(RF_Transient | RF_DuplicateTransient);
+
+			// Insert the newly constructed widget into the named slot that corresponds.  The above creates
+			// it as if it was always part of the widget tree, but this actually puts it into a widget's
+			// slot for the named slot.
+			SetContentForSlot(NamedSlotName, Content);
+		};
+
 		// This block controls merging named slot content specified in a child class for the widget we're templated after.
-		for (const auto& KVP_SlotContent : NamedSlotContentToMerge)
+		for (const TPair<FName, UWidget*>& KVP_SlotContent : NamedSlotContentToMerge)
 		{
 			// Don't insert the named slot content if the named slot is filled already.  This is a problematic
 			// scenario though, if someone inserted content, but we have class default instances, we sorta leave
@@ -228,19 +251,35 @@ void UUserWidget::DuplicateAndInitializeFromWidgetTree(UWidgetTree* InWidgetTree
 			{
 				if (UWidget* TemplateSlotContent = KVP_SlotContent.Value)
 				{
-					FObjectInstancingGraph NamedSlotInstancingGraph;
-					// We need to add a mapping from the template's widget tree to the new widget tree, that way
-					// as we instance the widget hierarchy it's grafted onto the new widget tree.
-					NamedSlotInstancingGraph.AddNewObject(WidgetTree, TemplateSlotContent->GetTypedOuter<UWidgetTree>());
+					TArray<TPair<FName, UWidget*>> NamedSlotContentCreationStack;
+					FName OwningNamedSlot = KVP_SlotContent.Key;
+					NamedSlotContentCreationStack.Add(TTuple<FName, UWidget*>(OwningNamedSlot, TemplateSlotContent));
 
-					// Instance the new widget from the foreign tree, but do it in a way that grafts it onto the tree we're instancing.
-					UWidget* Content = NewObject<UWidget>(WidgetTree, TemplateSlotContent->GetClass(), TemplateSlotContent->GetFName(), RF_Transactional, TemplateSlotContent, false, &NamedSlotInstancingGraph);
-					Content->SetFlags(RF_Transient | RF_DuplicateTransient);
+					// Search for the owning Namedslot to see if it is the content of another Namedslot itself.
+					// If so, we need to ensure it is added to the widget tree prior to its content.
+					// Repeat until the owning Namedslot is no longer found as the content of another.
+					while (UWidget** FoundContentWidget = AllNamedSlotContentWidgets.FindByPredicate([OwningNamedSlot](const UWidget* Content) {return Content ? Content->GetFName() == OwningNamedSlot : false;}))
+					{
+						UWidget* NestedNamedSlotContent = *FoundContentWidget;
+						OwningNamedSlot = *NamedSlotContentToMerge.FindKey(NestedNamedSlotContent);
 
-					// Insert the newly constructed widget into the named slot that corresponds.  The above creates
-					// it as if it was always part of the widget tree, but this actually puts it into a widget's
-					// slot for the named slot.
-					SetContentForSlot(KVP_SlotContent.Key, Content);
+						// Make sure we have not already iterated on this Namedslot.
+						if (!GetContentForSlot(OwningNamedSlot) && !NamedSlotContentCreationStack.ContainsByPredicate([OwningNamedSlot](const TTuple<FName, UWidget*>& Content) {return Content.Key == OwningNamedSlot;}))
+						{
+							NamedSlotContentCreationStack.Add(TPair<FName, UWidget*>(OwningNamedSlot, NestedNamedSlotContent));
+						}
+						else 
+						{
+							break;
+						}
+					}
+
+					// Go through the namedslot/content pair in hierarchy order and add them to the widget tree.
+					for (int32 Index = NamedSlotContentCreationStack.Num() - 1; Index >= 0; Index--)
+					{
+						TPair<FName, UWidget*>& KVP = NamedSlotContentCreationStack[Index];
+						SetContentWidgetForNamedSlot(KVP.Key, KVP.Value);
+					}
 				}
 			}
 		}
@@ -474,6 +513,58 @@ UUMGSequencePlayer* UUserWidget::GetOrAddSequencePlayer(UWidgetAnimation* InAnim
 	return nullptr;
 }
 
+void UUserWidget::ExecuteQueuedAnimationTransitions()
+{
+	// In case any users queue animations in respose to animation transitions, operate on a copy array
+	TArray<FQueuedWidgetAnimationTransition, TInlineAllocator<8>> CurrentWidgetAnimationTransitions(QueuedWidgetAnimationTransitions);
+
+	for (FQueuedWidgetAnimationTransition& QueuedWidgetAnimationTransition : CurrentWidgetAnimationTransitions)
+	{
+		switch (QueuedWidgetAnimationTransition.TransitionMode)
+		{
+		case EQueuedWidgetAnimationMode::Play:
+			PlayAnimation(QueuedWidgetAnimationTransition.WidgetAnimation
+				, QueuedWidgetAnimationTransition.StartAtTime.GetValue()
+				, QueuedWidgetAnimationTransition.NumLoopsToPlay.GetValue()
+				, QueuedWidgetAnimationTransition.PlayMode.GetValue()
+				, QueuedWidgetAnimationTransition.PlaybackSpeed.GetValue()
+				, QueuedWidgetAnimationTransition.bRestoreState.GetValue());
+			break;
+		case EQueuedWidgetAnimationMode::PlayTo:
+			PlayAnimationTimeRange(QueuedWidgetAnimationTransition.WidgetAnimation
+				, QueuedWidgetAnimationTransition.StartAtTime.GetValue()
+				, QueuedWidgetAnimationTransition.EndAtTime.GetValue()
+				, QueuedWidgetAnimationTransition.NumLoopsToPlay.GetValue()
+				, QueuedWidgetAnimationTransition.PlayMode.GetValue()
+				, QueuedWidgetAnimationTransition.PlaybackSpeed.GetValue()
+				, QueuedWidgetAnimationTransition.bRestoreState.GetValue());
+			break;
+		case EQueuedWidgetAnimationMode::Forward:
+			PlayAnimationForward(QueuedWidgetAnimationTransition.WidgetAnimation
+				, QueuedWidgetAnimationTransition.PlaybackSpeed.GetValue()
+				, QueuedWidgetAnimationTransition.bRestoreState.GetValue());
+			break;
+		case EQueuedWidgetAnimationMode::Reverse:
+			PlayAnimationReverse(QueuedWidgetAnimationTransition.WidgetAnimation
+				, QueuedWidgetAnimationTransition.PlaybackSpeed.GetValue()
+				, QueuedWidgetAnimationTransition.bRestoreState.GetValue());
+			break;
+		case EQueuedWidgetAnimationMode::Stop:
+			StopAnimation(QueuedWidgetAnimationTransition.WidgetAnimation);
+			break;
+		case EQueuedWidgetAnimationMode::Pause:
+			PauseAnimation(QueuedWidgetAnimationTransition.WidgetAnimation);
+			break;
+		}
+	}
+
+	if (QueuedWidgetAnimationTransitions.Num() > 0)
+	{
+		QueuedWidgetAnimationTransitions.Empty();
+		UpdateCanTick();
+	}
+}
+
 void UUserWidget::ConditionalTearDownAnimations()
 {
 	for (auto It = ActiveSequencePlayers.CreateIterator(); It; ++It)
@@ -536,6 +627,142 @@ void UUserWidget::Invalidate(EInvalidateWidgetReason InvalidateReason)
 	}
 }
 
+void UUserWidget::QueuePlayAnimation(UWidgetAnimation* InAnimation, float StartAtTime, int32 NumLoopsToPlay, EUMGSequencePlayMode::Type PlayMode, float PlaybackSpeed, bool bRestoreState)
+{
+	if (!InAnimation)
+	{
+		return;
+	}
+
+	FQueuedWidgetAnimationTransition* QueuedTransitionPtr = QueuedWidgetAnimationTransitions.FindByPredicate([&](const FQueuedWidgetAnimationTransition& QueuedTransition) { return QueuedTransition.WidgetAnimation == InAnimation; });
+	FQueuedWidgetAnimationTransition& QueuedTransition = QueuedTransitionPtr ? *QueuedTransitionPtr : QueuedWidgetAnimationTransitions.AddDefaulted_GetRef();
+
+	QueuedTransition = FQueuedWidgetAnimationTransition();
+	QueuedTransition.WidgetAnimation = InAnimation;
+	QueuedTransition.TransitionMode = EQueuedWidgetAnimationMode::Play;
+	QueuedTransition.StartAtTime = StartAtTime;
+	QueuedTransition.NumLoopsToPlay = NumLoopsToPlay;
+	QueuedTransition.PlayMode = PlayMode;
+	QueuedTransition.PlaybackSpeed = PlaybackSpeed;
+	QueuedTransition.bRestoreState = bRestoreState;
+
+	UpdateCanTick();
+}
+
+void UUserWidget::QueuePlayAnimationTimeRange(UWidgetAnimation* InAnimation, float StartAtTime, float EndAtTime, int32 NumLoopsToPlay, EUMGSequencePlayMode::Type PlayMode, float PlaybackSpeed, bool bRestoreState)
+{
+	if (!InAnimation)
+	{
+		return;
+	}
+
+	FQueuedWidgetAnimationTransition* QueuedTransitionPtr = QueuedWidgetAnimationTransitions.FindByPredicate([&](const FQueuedWidgetAnimationTransition& QueuedTransition) { return QueuedTransition.WidgetAnimation == InAnimation; });
+	FQueuedWidgetAnimationTransition& QueuedTransition = QueuedTransitionPtr ? *QueuedTransitionPtr : QueuedWidgetAnimationTransitions.AddDefaulted_GetRef();
+
+	QueuedTransition.WidgetAnimation = InAnimation;
+	QueuedTransition.TransitionMode = EQueuedWidgetAnimationMode::PlayTo;
+	QueuedTransition.StartAtTime = StartAtTime;
+	QueuedTransition.EndAtTime = EndAtTime;
+	QueuedTransition.NumLoopsToPlay = NumLoopsToPlay;
+	QueuedTransition.PlayMode = PlayMode;
+	QueuedTransition.PlaybackSpeed = PlaybackSpeed;
+	QueuedTransition.bRestoreState = bRestoreState;
+
+	UpdateCanTick();
+}
+
+void UUserWidget::QueuePlayAnimationForward(UWidgetAnimation* InAnimation, float PlaybackSpeed, bool bRestoreState)
+{
+	if (!InAnimation)
+	{
+		return;
+	}
+
+	FQueuedWidgetAnimationTransition* QueuedTransitionPtr = QueuedWidgetAnimationTransitions.FindByPredicate([&](const FQueuedWidgetAnimationTransition& QueuedTransition) { return QueuedTransition.WidgetAnimation == InAnimation; });
+	FQueuedWidgetAnimationTransition& QueuedTransition = QueuedTransitionPtr ? *QueuedTransitionPtr : QueuedWidgetAnimationTransitions.AddDefaulted_GetRef();
+
+	QueuedTransition.WidgetAnimation = InAnimation;
+	QueuedTransition.TransitionMode = EQueuedWidgetAnimationMode::Forward;
+	QueuedTransition.PlaybackSpeed = PlaybackSpeed;
+	QueuedTransition.bRestoreState = bRestoreState;
+
+	UpdateCanTick();
+}
+
+void UUserWidget::QueuePlayAnimationReverse(UWidgetAnimation* InAnimation, float PlaybackSpeed, bool bRestoreState)
+{
+	if (!InAnimation)
+	{
+		return;
+	}
+
+	FQueuedWidgetAnimationTransition* QueuedTransitionPtr = QueuedWidgetAnimationTransitions.FindByPredicate([&](const FQueuedWidgetAnimationTransition& QueuedTransition) { return QueuedTransition.WidgetAnimation == InAnimation; });
+	FQueuedWidgetAnimationTransition& QueuedTransition = QueuedTransitionPtr ? *QueuedTransitionPtr : QueuedWidgetAnimationTransitions.AddDefaulted_GetRef();
+
+	QueuedTransition.WidgetAnimation = InAnimation;
+	QueuedTransition.TransitionMode = EQueuedWidgetAnimationMode::Reverse;
+	QueuedTransition.PlaybackSpeed = PlaybackSpeed;
+	QueuedTransition.bRestoreState = bRestoreState;
+
+	UpdateCanTick();
+}
+
+void UUserWidget::QueueStopAnimation(const UWidgetAnimation* InAnimation)
+{
+	if (!InAnimation)
+	{
+		return;
+	}
+
+	FQueuedWidgetAnimationTransition* QueuedTransitionPtr = QueuedWidgetAnimationTransitions.FindByPredicate([&](const FQueuedWidgetAnimationTransition& QueuedTransition) { return QueuedTransition.WidgetAnimation == InAnimation; });
+	FQueuedWidgetAnimationTransition& QueuedTransition = QueuedTransitionPtr ? *QueuedTransitionPtr : QueuedWidgetAnimationTransitions.AddDefaulted_GetRef();
+
+	QueuedTransition.WidgetAnimation = const_cast<UWidgetAnimation*>(InAnimation);
+	QueuedTransition.TransitionMode = EQueuedWidgetAnimationMode::Stop;
+
+	UpdateCanTick();
+}
+
+void UUserWidget::QueueStopAllAnimations()
+{
+	for (FQueuedWidgetAnimationTransition& QueuedWidgetAnimationTransition : QueuedWidgetAnimationTransitions)
+	{
+		QueuedWidgetAnimationTransition.TransitionMode = EQueuedWidgetAnimationMode::Stop;
+	}
+
+	TArray<UUMGSequencePlayer*, TInlineAllocator<8>> CurrentActivePlayers(ActiveSequencePlayers);
+	for (UUMGSequencePlayer* FoundPlayer : ActiveSequencePlayers)
+	{
+		if (FoundPlayer->GetPlaybackStatus() == EMovieScenePlayerStatus::Playing)
+		{
+			QueueStopAnimation(FoundPlayer->GetAnimation());
+		}
+	}
+
+	UpdateCanTick();
+}
+
+float UUserWidget::QueuePauseAnimation(const UWidgetAnimation* InAnimation)
+{
+	if (InAnimation)
+	{
+		FQueuedWidgetAnimationTransition* QueuedTransitionPtr = QueuedWidgetAnimationTransitions.FindByPredicate([&](const FQueuedWidgetAnimationTransition& QueuedTransition) { return QueuedTransition.WidgetAnimation == InAnimation; });
+		FQueuedWidgetAnimationTransition& QueuedTransition = QueuedTransitionPtr ? *QueuedTransitionPtr : QueuedWidgetAnimationTransitions.AddDefaulted_GetRef();
+
+		QueuedTransition.WidgetAnimation = const_cast<UWidgetAnimation*>(InAnimation);
+		QueuedTransition.TransitionMode = EQueuedWidgetAnimationMode::Pause;
+
+		UpdateCanTick();
+
+		if (UUMGSequencePlayer* FoundPlayer = GetSequencePlayer(InAnimation))
+		{
+			return (float)FoundPlayer->GetCurrentTime().AsSeconds();
+		}
+	}
+
+	return 0;
+}
+
 UUMGSequencePlayer* UUserWidget::PlayAnimation(UWidgetAnimation* InAnimation, float StartAtTime, int32 NumberOfLoops, EUMGSequencePlayMode::Type PlayMode, float PlaybackSpeed, bool bRestoreState)
 {
 	SCOPED_NAMED_EVENT_TEXT("Widget::PlayAnimation", FColor::Emerald);
@@ -548,7 +775,7 @@ UUMGSequencePlayer* UUserWidget::PlayAnimation(UWidgetAnimation* InAnimation, fl
 		OnAnimationStartedPlaying(*Player);
 
 		UpdateCanTick();
-}
+	}
 
 	return Player;
 }
@@ -574,7 +801,11 @@ UUMGSequencePlayer* UUserWidget::PlayAnimationForward(UWidgetAnimation* InAnimat
 {
 	// Don't create the player, only search for it.
 	UUMGSequencePlayer* Player = GetSequencePlayer(InAnimation);
-	if (Player)
+
+	// Just return the player if it's already playing. GetSequencePlayers should only be returning players that are NOT stopped. 
+	// However, there is the possibility that Stop() has been called on a player, but its status has not been changed to Stopped. 
+	// In that case, this check will be bypassed and PlayAnimation will be called so that the animation will play.
+	if (Player && Player->GetPlaybackStatus() == EMovieScenePlayerStatus::Playing)
 	{
 		if (!Player->IsPlayingForward())
 		{
@@ -592,7 +823,11 @@ UUMGSequencePlayer* UUserWidget::PlayAnimationReverse(UWidgetAnimation* InAnimat
 {
 	// Don't create the player, only search for it.
 	UUMGSequencePlayer* Player = GetSequencePlayer(InAnimation);
-	if (Player)
+
+	// Just return the player if it's already playing. GetSequencePlayers should only be returning players that are NOT stopped. 
+	// However, there is the possibility that Stop() has been called on a player, but its status has not been changed to Stopped. 
+	// In that case, this check will be bypassed and PlayAnimation will be called so that the animation will play.
+	if (Player && Player->GetPlaybackStatus() == EMovieScenePlayerStatus::Playing)
 	{
 		if (Player->IsPlayingForward())
 		{
@@ -1063,6 +1298,7 @@ void UUserWidget::SetVisibility(ESlateVisibility InVisibility)
 void UUserWidget::SetPlayerContext(const FLocalPlayerContext& InPlayerContext)
 {
 	PlayerContext = InPlayerContext;
+	CachedWorld.Reset();
 
 	if (WidgetTree)
 	{
@@ -1097,6 +1333,7 @@ void UUserWidget::SetOwningLocalPlayer(ULocalPlayer* LocalPlayer)
 	if ( LocalPlayer )
 	{
 		PlayerContext = FLocalPlayerContext(LocalPlayer, GetWorld());
+		CachedWorld.Reset();
 	}
 }
 
@@ -1110,6 +1347,7 @@ void UUserWidget::SetOwningPlayer(APlayerController* LocalPlayerController)
 	if (LocalPlayerController && LocalPlayerController->IsLocalController())
 	{
 		PlayerContext = FLocalPlayerContext(LocalPlayerController);
+		CachedWorld.Reset();
 	}
 }
 
@@ -1518,6 +1756,8 @@ void UUserWidget::NativeConstruct()
 void UUserWidget::NativeDestruct()
 {
 	StopListeningForAllInputActions();
+	OnNativeDestruct.Broadcast(this);
+
 	Destruct();
 
 	// Extension can remove other extensions.
@@ -1563,6 +1803,8 @@ void UUserWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 #endif
 		if (bTickAnimations)
 		{
+			ExecuteQueuedAnimationTransitions();
+
 			if (AnimationTickManager)
 			{
 				AnimationTickManager->OnWidgetTicked(this);
@@ -1801,6 +2043,7 @@ void UUserWidget::UpdateCanTick()
 			bCanTick |= bHasScriptImplementedTick;
 			bCanTick |= World->GetLatentActionManager().GetNumActionsForObject(this) != 0;
 			bCanTick |= ActiveSequencePlayers.Num() > 0;
+			bCanTick |= QueuedWidgetAnimationTransitions.Num() > 0;
 
 			if (!bCanTick && bAreExtensionsConstructed)
 			{
@@ -2178,8 +2421,6 @@ UUserWidget* UUserWidget::CreateInstanceInternal(UObject* Outer, TSubclassOf<UUs
 {
 	LLM_SCOPE_BYTAG(UI_UMG);
 
-	//CSV_SCOPED_TIMING_STAT(Slate, CreateWidget);
-
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 	// Only do this on a non-shipping or test build.
 	if (!CreateWidgetHelpers::ValidateUserWidgetClass(UserWidgetClass))
@@ -2208,6 +2449,9 @@ UUserWidget* UUserWidget::CreateInstanceInternal(UObject* Outer, TSubclassOf<UUs
 		FMessageLog("PIE").Error(FText::Format(LOCTEXT("OuterNull", "Unable to create the widget {0}, no outer provided."), FText::FromName(UserWidgetClass->GetFName())));
 		return nullptr;
 	}
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Outer->GetPackage(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(UserWidgetClass, ELLMTagSet::AssetClasses);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(InstanceName, UserWidgetClass->GetFName(), Outer->GetPackage()->GetFName());
 
 	UUserWidget* NewWidget = NewObject<UUserWidget>(Outer, UserWidgetClass, InstanceName, RF_Transactional);
 	

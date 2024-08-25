@@ -1538,7 +1538,10 @@ void FCascadeEmitterCanvasClient::DrawDraggedModule(UParticleModule* Module, FVi
 void FCascadeEmitterCanvasClient::DrawCurveButton(UParticleEmitter* Emitter, UParticleModule* Module, bool bHitTesting, FCanvas* Canvas)
 {
 	if (bHitTesting)
+	{
 		Canvas->SetHitProxy(new HCascadeEdGraphButton(Emitter, Module));
+	}
+
 	int32 YPosition = 2;
 	if (CascadePtr.Pin()->GetEditorOptions()->bCenterCascadeModuleText == true)
 	{

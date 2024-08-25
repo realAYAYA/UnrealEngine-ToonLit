@@ -68,6 +68,8 @@ protected:
 	bool bIsVisible;
 
 	uint32 LastRequestLayersContentUpdateFrameNumber;
+
+	bool bCaptureBoundaryNormals = false;	// HACK [chris.tchou] remove once we have a better boundary normal solution
 #endif
 
 public:
@@ -144,5 +146,7 @@ public:
 	LANDSCAPE_API virtual void PushDeferredLayersContentUpdate();
 
 	virtual bool CanChangeIsSpatiallyLoadedFlag() const override { return false; }
+
+	bool GetCaptureBoundaryNormals() { return bCaptureBoundaryNormals; }	// HACK [chris.tchou] remove once we have a better boundary normal solution
 #endif
 };

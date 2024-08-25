@@ -22,7 +22,7 @@ struct FLiveLinkSourcePreset
 	UPROPERTY(VisibleAnywhere, Category="LiveLinkSourcePresets")
 	FGuid Guid;
 
-	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSourcePresets")
+	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSourcePresets", Instanced)
 	TObjectPtr<ULiveLinkSourceSettings> Settings = nullptr;
 
 	/** The SourceType when the source was saved to a Preset. */
@@ -42,10 +42,10 @@ struct FLiveLinkSubjectPreset
 	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSubjectPresets")
 	TSubclassOf<ULiveLinkRole> Role;
 
-	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSubjectPresets")
+	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSubjectPresets", Instanced)
 	TObjectPtr<ULiveLinkSubjectSettings> Settings = nullptr;
 
-	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSubjectPresets")
+	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSubjectPresets", Instanced)
 	TObjectPtr<ULiveLinkVirtualSubject> VirtualSubject = nullptr;
 
 	UPROPERTY(VisibleAnywhere, Category = "LiveLinkSubjectPresets")

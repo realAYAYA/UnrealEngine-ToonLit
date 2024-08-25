@@ -25,9 +25,6 @@ namespace LandscapeDataAccess
 {
 	inline constexpr int32 MaxValue = 65535;
 	inline constexpr float MidValue = 32768.f;
-	// Reserved 2 bits for other purpose
-	// Most significant bit - Visibility, 0 is visible(default), 1 is invisible
-	// 2nd significant bit - Triangle flip, not implemented yet
 	FORCEINLINE float GetLocalHeight(uint16 Height)
 	{
 		return (static_cast<float>(Height) - MidValue) * LANDSCAPE_ZSCALE;
@@ -338,6 +335,16 @@ struct FLandscapeComponentDataInterface : public FLandscapeComponentDataInterfac
 		int32 X, Y;
 		VertexIndexToXY( VertexIndex, X, Y );
 		return GetHeight( X, Y );
+	}
+
+	float GetLocalHeight(int32 LocalX, int32 LocalY) const
+	{
+		return LandscapeDataAccess::GetLocalHeight(GetHeight(LocalX, LocalY));
+	}
+
+	float GetLocalHeight(int32 VertexIndex) const
+	{
+		return LandscapeDataAccess::GetLocalHeight(GetHeight(VertexIndex));
 	}
 
 	void GetXYOffset( int32 X, int32 Y, float& XOffset, float& YOffset ) const

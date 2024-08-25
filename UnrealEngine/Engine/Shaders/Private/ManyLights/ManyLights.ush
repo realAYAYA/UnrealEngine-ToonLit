@@ -1,0 +1,197 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Change this to force recompilation of all Many Lights shaders
+#pragma message("UESHADERMETADATA_VERSION DE81D00C-08D2-4DA6-956F-B7566B5AF5A8")
+
+#define MANY_LIGHTS 1
+#include "../LightGridCommon.ush"
+
+#define SUPPORT_CONTACT_SHADOWS 0
+#define NON_DIRECTIONAL_DIRECT_LIGHTING 0
+#include "../DeferredLightingCommon.ush"
+#include "../SceneData.ush"
+#include "../Hash.ush"
+
+#if DEBUG_MODE
+	#include "../ShaderPrint.ush"
+#endif
+
+#include "../Lumen/LumenPosition.ush"
+
+#define DEBUG_MODE_VISUALIZE_SAMPLING 1
+#define DEBUG_MODE_VISUALIZE_TRACING  2
+
+// Keep in sync with ManyLights.cpp
+#define SHADING_ATLAS_SIZE_IN_TILES 512
+#define DOWNSAMPLE_FACTOR			2
+#define TILE_SIZE					8
+// Limited by PackLightSample, PackShadingTile and SharedCandidateLightHiMask
+#define MAX_LOCAL_LIGHT_INDEX		1024
+#define SHARED_LIGHT_MASK_SIZE		(MAX_LOCAL_LIGHT_INDEX / 32)
+
+// Keep in sync with ManyLights::ETileType
+#define TILE_MODE_SIMPLE_SHADING	0
+#define TILE_MODE_COMPLEX_SHADING	1
+#define TILE_MODE_EMPTY				2
+#define TILE_MODE_MAX				3
+
+uint PackTile(uint2 TileCoord)
+{
+	return TileCoord.x | (TileCoord.y << 16);
+}
+
+uint2 UnpackTile(uint PackedTile)
+{
+	return uint2(PackedTile & 0xFFFF, PackedTile >> 16);
+}
+
+uint2 GetShadingTileAtlasCoord(uint ShadingTileIndex, uint2 CoordInTile)
+{
+	uint2 AtlasCoord;
+	AtlasCoord.x = (ShadingTileIndex % SHADING_ATLAS_SIZE_IN_TILES) * TILE_SIZE + CoordInTile.x;
+	AtlasCoord.y = (ShadingTileIndex / SHADING_ATLAS_SIZE_IN_TILES) * TILE_SIZE + CoordInTile.y;
+	return AtlasCoord;
+}
+
+struct FLightSample
+{
+	uint LocalLightIndex;
+	float Weight;
+	bool bVisible;
+	bool bCompleted; // Whether tracing was completed
+};
+
+FLightSample InitLightSample()
+{
+	FLightSample LightSample;
+	LightSample.LocalLightIndex = MAX_LOCAL_LIGHT_INDEX;
+	LightSample.Weight = 0.0f;
+	LightSample.bVisible = false;
+	LightSample.bCompleted = true;
+	return LightSample;
+}
+
+uint PackLightSample(FLightSample LightSample)
+{
+	uint PackedLightSample = LightSample.LocalLightIndex & 0x3FFF;
+	PackedLightSample |= LightSample.bVisible ? 0x8000 : 0;
+	PackedLightSample |= LightSample.bCompleted ? 0x4000 : 0;
+	PackedLightSample |= f32tof16(LightSample.Weight) << 16;
+	return PackedLightSample;
+}
+
+FLightSample UnpackLightSample(uint PackedLightSample)
+{
+	FLightSample LightSample;
+	LightSample.LocalLightIndex = PackedLightSample & 0x3FFF;
+	LightSample.bVisible = PackedLightSample & 0x8000 ? true : false;
+	LightSample.bCompleted = PackedLightSample & 0x4000 ? true : false;
+	LightSample.Weight = f16tof32(PackedLightSample >> 16);
+	return LightSample;
+}
+
+uint ManyLightsStateFrameIndex;
+
+/** 
+ * Returns sample jitter offset in the range [0, DOWNSAMPLE_FACTOR - 1]
+ */
+uint2 GetSampleScreenCoordJitter(uint2 DownsampledScreenCoord)
+{
+	uint2 CellIndex = DownsampledScreenCoord % 2;
+	uint LinearIndex = CellIndex.x + CellIndex.y * 2;
+	LinearIndex = (LinearIndex + ManyLightsStateFrameIndex) % 4;
+
+	// 4 rooks sampling pattern
+	uint2 Jitter;
+	Jitter.x = LinearIndex & 0x02 ? 1 : 0;
+	Jitter.y = LinearIndex & 0x01 ? 0 : 1;
+	return Jitter;
+}
+
+uint2 DownsampledScreenCoordToScreenCoord(uint2 DownsampledScreenCoord)
+{
+	return DownsampledScreenCoord * DOWNSAMPLE_FACTOR + GetSampleScreenCoordJitter(DownsampledScreenCoord);
+}
+
+float2 DownsampledScreenCoordToScreenUV(uint2 DownsampledScreenCoord)
+{
+	uint2 ScreenCoord = DownsampledScreenCoordToScreenCoord(DownsampledScreenCoord);
+	float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+	return ScreenUV;
+}
+
+uint2 PackCompositeTile(uint LocalLightIndex, uint2 DownsampledScreenCoord)
+{
+	DownsampledScreenCoord /= TILE_SIZE;
+
+	uint2 PackedTile;
+	PackedTile.x = LocalLightIndex;
+	PackedTile.y = (DownsampledScreenCoord.x & 0xFFFF) | ((DownsampledScreenCoord.y & 0xFFFF) << 16);
+	return PackedTile;
+}
+
+void UnpackCompositeTile(uint2 PackedTile, out uint LocalLightIndex, out uint2 DownsampledScreenCoord)
+{
+	LocalLightIndex = PackedTile.x;
+	DownsampledScreenCoord.x = PackedTile.y & 0xFFFF;
+	DownsampledScreenCoord.y = PackedTile.y >> 16;
+
+	DownsampledScreenCoord *= TILE_SIZE;
+}
+
+struct FShadingTile
+{
+	uint LocalLightIndex;
+	uint ShadingTileIndex;
+};
+
+uint PackShadingTile(uint LocalLightIndex, uint ShadingTileIndex)
+{
+	uint PackedShadingTile = LocalLightIndex & 0xFFF;
+	PackedShadingTile |= ShadingTileIndex << 12;
+	return PackedShadingTile;
+}
+
+FShadingTile UnpackShadingTile(uint PackedShadingTile)
+{
+	FShadingTile ShadingTile;
+	ShadingTile.LocalLightIndex = PackedShadingTile & 0xFFF;
+	ShadingTile.ShadingTileIndex = PackedShadingTile >> 12;
+	return ShadingTile;
+}
+
+uint2 ShadingTileGridSize;
+uint MaxShadingTilesPerGridCell;
+
+uint GetShadingTileGridOffset(uint2 ShadingTileCoord, uint IndexInCell)
+{
+	return (ShadingTileCoord.x + ShadingTileCoord.y * ShadingTileGridSize.x) * MaxShadingTilesPerGridCell + IndexInCell;
+}
+
+// Remove texture detail before denoising
+void DemodulateLighting(FGBufferData GBuffer, float3 TranslatedWorldPosition, inout float3 DiffuseLighting, inout float3 SpecularLighting)
+{
+	const float3 N = GBuffer.WorldNormal;
+	const float3 V = normalize(View.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+	const float NoV = saturate(dot(N, V));
+	const float3 SpecularEnv = EnvBRDF(GBuffer.SpecularColor, GBuffer.Roughness, NoV);
+
+	// #ml_todo: demodulate earlier during BRDF evaluation
+	DiffuseLighting = DiffuseLighting / max(GBuffer.DiffuseColor, 0.001f);
+	SpecularLighting = SpecularLighting / max(SpecularEnv, 0.001f);	
+}
+
+// Restore texture detail after denoising
+void ModulateLighting(FGBufferData GBuffer, float3 TranslatedWorldPosition, inout float3 DiffuseLighting, inout float3 SpecularLighting)
+{
+	const float3 N = GBuffer.WorldNormal;
+	const float3 V = normalize(View.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+	const float NoV = saturate(dot(N, V));
+	const float3 SpecularEnv = EnvBRDF(GBuffer.SpecularColor, GBuffer.Roughness, NoV);
+
+	// Final pass outputs composites irradiance and outputs it to scene color
+	DiffuseLighting = DiffuseLighting * max(GBuffer.DiffuseColor, 0.001f);
+	SpecularLighting = SpecularLighting * max(SpecularEnv, 0.001f);
+}

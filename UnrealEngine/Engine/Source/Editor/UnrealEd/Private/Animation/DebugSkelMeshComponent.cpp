@@ -16,6 +16,7 @@
 #include "AnimPreviewInstance.h"
 #include "Animation/AnimComposite.h"
 #include "Animation/BlendSpace.h"
+#include "Animation/AnimSequenceHelpers.h"
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "Rendering/SkeletalMeshModel.h"
 
@@ -27,6 +28,22 @@
 
 //////////////////////////////////////////////////////////////////////////
 // UDebugSkelMeshComponent
+
+namespace UE::Anim::Private
+{
+	FTransform CalculateInitialTransformFromAssetAndTime(const UDebugSkelMeshComponent& InDebugSkelMeshComponent, const UAnimationAsset* InAnimAsset, const float InTime)
+	{
+		const FTransform InitialRootBoneTransform = InDebugSkelMeshComponent.GetReferenceSkeleton().GetRefBonePose()[0];
+		FTransform InitialTransform = UE::Anim::ExtractRootTransformFromAnimationAsset(InAnimAsset, InTime);
+		if (InAnimAsset->IsValidAdditive())
+		{
+			// Additive animations have zero scale as "no scaling" value.
+			// This function is used to set the initial transform, we explicitly set the scale to start at 1.
+			InitialTransform.SetScale3D(FVector::OneVector);
+		}
+		return InitialRootBoneTransform.Inverse() * InitialTransform;
+	}
+}
 
 UDebugSkelMeshComponent::UDebugSkelMeshComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -42,6 +59,8 @@ UDebugSkelMeshComponent::UDebugSkelMeshComponent(const FObjectInitializer& Objec
 	TurnTableSpeedScaling = 1.f;
 	TurnTableMode = EPersonaTurnTableMode::Stopped;
 
+	RootMotionReferenceTransform = FTransform::Identity;
+
 	bPauseClothingSimulationWithAnim = false;
 	bPerformSingleClothingTick = false;
 
@@ -51,6 +70,7 @@ UDebugSkelMeshComponent::UDebugSkelMeshComponent(const FObjectInitializer& Objec
 	
 	CachedClothBounds = FBoxSphereBounds(ForceInit);
 
+	RequestedProcessRootMotionMode = EProcessRootMotionMode::LoopAndReset;
 	ProcessRootMotionMode = EProcessRootMotionMode::Ignore;
 	ConsumeRootMotionPreviousPlaybackTime = 0.f;
 }
@@ -178,100 +198,59 @@ double WrapInRange(double StartVal, double MinVal, double MaxVal)
 
 void UDebugSkelMeshComponent::ConsumeRootMotion(const FVector& FloorMin, const FVector& FloorMax)
 {
+	// Note: this method is called from FAnimationEditorPreviewScene() after world tick,
+	// so care must be taken how the transforms are adjusted. Other features,
+	// such as physic simulation or turn table rotation may change the transform. 
 	if (PreviewInstance == nullptr)
 	{
 		return;
 	}
 
-	// Helper to extract root motion manually from the current asset
-	auto ExtractRootMotionFromAnimationAsset = [](const UAnimationAsset* Animation, const UMirrorDataTable* MirrorDataTable, float StartPosition, float EndPosition) -> FTransform
-	{
-		if (const UAnimMontage* Anim = Cast<UAnimMontage>(Animation))
-		{
-			return Anim->ExtractRootMotionFromTrackRange(StartPosition, EndPosition);
-		}
-		
-		if (const UAnimComposite* Anim = Cast<UAnimComposite>(Animation))
-		{
-			FRootMotionMovementParams RootMotion;
-			Anim->ExtractRootMotionFromTrack(Anim->AnimationTrack, StartPosition, EndPosition, RootMotion);
-			return RootMotion.GetRootMotionTransform();
-		}
-		
-		if (const UAnimSequence* Anim = Cast<UAnimSequence>(Animation))
-		{
-			FTransform RootMotion = Anim->ExtractRootMotionFromRange(StartPosition, EndPosition);
-			if (MirrorDataTable)
-			{
-				FVector T = RootMotion.GetTranslation();
-				T = FAnimationRuntime::MirrorVector(T, MirrorDataTable->MirrorAxis);
-
-				FQuat Q = RootMotion.GetRotation();
-				Q = FAnimationRuntime::MirrorQuat(Q, MirrorDataTable->MirrorAxis);
-
-				FVector S = RootMotion.GetScale3D();
-				return FTransform(Q, T, S);
-			}
-			return RootMotion;
-		}
-
-		return FTransform::Identity;
-	};
-
 	// Force ProcessRootMotionMode to Ignore if the current asset/animation blueprint is not using root motion. 
-	if(ProcessRootMotionMode != EProcessRootMotionMode::Ignore && DoesCurrentAssetHaveRootMotion() == false)
+	if (ProcessRootMotionMode != EProcessRootMotionMode::Ignore && DoesCurrentAssetHaveRootMotion() == false)
 	{
-		SetProcessRootMotionMode(EProcessRootMotionMode::Ignore);
+		SetProcessRootMotionModeInternal(EProcessRootMotionMode::Ignore);
+	}
+
+	// If our requested mode became available, use it.
+	if (ProcessRootMotionMode != RequestedProcessRootMotionMode && CanUseProcessRootMotionMode(RequestedProcessRootMotionMode))
+	{
+		SetProcessRootMotionModeInternal(RequestedProcessRootMotionMode);
 	}
 
 	//Extract root motion regardless of where we use it so that we don't hit problems with it building up in the instance
 	FRootMotionMovementParams ExtractedRootMotion = ConsumeRootMotion_Internal(1.0f);
 	if (PreviewInstance->GetMirrorDataTable())
 	{
-		FTransform RootMotion = ExtractedRootMotion.GetRootMotionTransform();
-		FVector T = RootMotion.GetTranslation();
-		T = FAnimationRuntime::MirrorVector(T, PreviewInstance->GetMirrorDataTable()->MirrorAxis);
-
-		FQuat Q = RootMotion.GetRotation();
-		Q = FAnimationRuntime::MirrorQuat(Q, PreviewInstance->GetMirrorDataTable()->MirrorAxis);
-
-		FVector S = RootMotion.GetScale3D();
-		ExtractedRootMotion.Set(FTransform(Q, T, S));
+		const FTransform MirroredTransform = UE::Anim::MirrorTransform(ExtractedRootMotion.GetRootMotionTransform(), *PreviewInstance->GetMirrorDataTable());
+		ExtractedRootMotion.Set(MirroredTransform);
 	}
 
 	const float CurrentTime = PreviewInstance->GetCurrentTime();
 	const float PreviousTime = ConsumeRootMotionPreviousPlaybackTime;
 	ConsumeRootMotionPreviousPlaybackTime = CurrentTime;
 
-	if (ProcessRootMotionMode != EProcessRootMotionMode::Ignore && !ShouldBlendPhysicsBones())
+	// Apply the root motion, including resetting the actors location in case the process root motion mode requires it.
+	// If ShouldBlendPhysicsBones() is true, do not alter the transform, because the readback from the physics bodies into
+	// the bone transforms will already have been done during the tick based on the component transform.
+	// If we change the component transform here, then the bone transforms will not match the physics simulation.
+	if (!ShouldBlendPhysicsBones())
 	{
-		if(PreviewInstance->IsPlaying())
+		if (ProcessRootMotionMode != EProcessRootMotionMode::Ignore)
 		{
-			// Loop Mode: Preview mesh will consume root motion continually
-			if (ProcessRootMotionMode == EProcessRootMotionMode::Loop)
+			if (PreviewInstance->IsPlaying())
 			{
-				AddLocalTransform(ExtractedRootMotion.GetRootMotionTransform());
+				// Figure out if the animation has looped, and the start end position of the root motion extraction.
+				float SectionStartPosition = 0.0f;
+				bool bLooped = false;
 
-				//Handle moving component so that it stays within the editor floor
-				FTransform CurrentTransform = GetRelativeTransform();
-				FVector Trans = CurrentTransform.GetTranslation();
-				Trans.X = WrapInRange(Trans.X, FloorMin.X, FloorMax.X);
-				Trans.Y = WrapInRange(Trans.Y, FloorMin.Y, FloorMax.Y);
-				CurrentTransform.SetTranslation(Trans);
-				SetRelativeTransform(CurrentTransform);
-			}
-			// Loop and Reset Mode: Preview mesh will consume root motion resetting the position back to the origin every time the animation loops
-			else if (ProcessRootMotionMode == EProcessRootMotionMode::LoopAndReset)
-			{
-				// In this mode we have to deal with montage explicitly because we can have multiple sections and we want to reset the position when the section loops
+				// We have to deal with montage explicitly because we can have multiple sections and we want to reset the position when the section loops
 				// and depending on the composition, CurrentTime < PreviousTime (or CurrentTime > PreviousTime when playing in reverse) is not enough
 				if (const UAnimMontage* Montage = Cast<UAnimMontage>(PreviewInstance->CurrentAsset))
 				{
 					const int32 PreviewStartSectionIdx = Montage->CompositeSections.IsValidIndex(PreviewInstance->MontagePreviewStartSectionIdx) ? PreviewInstance->MontagePreviewStartSectionIdx : Montage->GetSectionIndexFromPosition(CurrentTime);
 					const int32 FirstSectionIdx = PreviewInstance->MontagePreview_FindFirstSectionAsInMontage(PreviewStartSectionIdx);
 					const int32 LastSectionIdx = PreviewInstance->MontagePreview_FindLastSection(FirstSectionIdx);
-
-					bool bLooped = false;
 
 					// If FirstSection == LastSection we are previewing a single section
 					// In this case to know if we have looped we just need to check if CurrentTime < PreviousTime (or the oposite if we are playing the montage in reverse)
@@ -290,57 +269,80 @@ void UDebugSkelMeshComponent::ConsumeRootMotion(const FVector& FloorMin, const F
 					// If we have looped...
 					if (bLooped)
 					{
-						//... and we are playing in reverse, reset the position of the mesh back to the origin and apply root motion from the end of the LastSection to CurrentTime
-						if (PreviewInstance->IsReverse())
-						{
-							float StartTime, EndTime;
-							Montage->GetSectionStartAndEndTime(LastSectionIdx, StartTime, EndTime);
-							const FTransform RootMotionDelta = ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), EndTime, CurrentTime);
-							SetRelativeTransform(RootMotionDelta);
-						}
-						// Otherwise, reset the position of the mesh back to the origin and apply root motion from the beginning of the FirstSection to CurrentTime
-						else
-						{
-							float StartTime, EndTime;
-							Montage->GetSectionStartAndEndTime(FirstSectionIdx, StartTime, EndTime);
-							const FTransform RootMotionDelta = ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), StartTime, CurrentTime);
-							SetRelativeTransform(RootMotionDelta);
-						}
-
-					}
-					// we haven't looped, just keep applying the extracted root motion
-					else
-					{
-						AddLocalTransform(ExtractedRootMotion.GetRootMotionTransform());
+						float StartTime = 0.0f, EndTime = 0.0f;
+						Montage->GetSectionStartAndEndTime(LastSectionIdx, StartTime, EndTime);
+						SectionStartPosition = StartTime;
 					}
 				}
 				else // CurrentAsset is not a Montage
 				{
-					bool bLooped = PreviewInstance->IsReverse() ? (CurrentTime > PreviousTime) : (CurrentTime < PreviousTime);
-					if (bLooped)
+					bLooped = PreviewInstance->IsReverse() ? (CurrentTime > PreviousTime) : (CurrentTime < PreviousTime);
+				}
+				
+				// Loop Mode: Preview mesh will consume root motion continually
+				if (ProcessRootMotionMode == EProcessRootMotionMode::Loop)
+				{
+					FTransform RootMotionTransform = GetRelativeTransform();
+					const FTransform RootMotionDelta = ExtractedRootMotion.GetRootMotionTransform();
+					RootMotionTransform = RootMotionDelta * RootMotionTransform;
+
+					//Handle moving component so that it stays within the editor floor
+					FVector Trans = RootMotionTransform.GetLocation();
+					Trans.X = WrapInRange(Trans.X, FloorMin.X, FloorMax.X);
+					Trans.Y = WrapInRange(Trans.Y, FloorMin.Y, FloorMax.Y);
+					const FVector WrapDelta = Trans - RootMotionTransform.GetTranslation();
+					RootMotionTransform.SetTranslation(Trans);
+
+					if (!WrapDelta.IsNearlyZero())
 					{
-						if (PreviewInstance->IsReverse())
-						{
-							const FTransform RootMotionDelta = ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(),  PreviewInstance->CurrentAsset->GetPlayLength(), CurrentTime);
-							SetRelativeTransform(RootMotionDelta);
-						}
-						else
-						{
-							const FTransform RootMotionDelta = ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), 0.f, CurrentTime);
-							SetRelativeTransform(RootMotionDelta);
-						}
+						SetRelativeTransform(RootMotionTransform);
 					}
 					else
 					{
-						AddLocalTransform(ExtractedRootMotion.GetRootMotionTransform());
+						AddLocalTransform(RootMotionDelta);
+					}
+					
+					// Looping resets the root motion reference transform.
+					if (bLooped)
+					{
+						RootMotionReferenceTransform = RootMotionTransform;
+					}
+				}
+				// Loop and Reset Mode: Preview mesh will consume root motion resetting the position back to the origin every time the animation loops
+				else if (ProcessRootMotionMode == EProcessRootMotionMode::LoopAndReset)
+				{
+					if (bLooped)
+					{
+						const FTransform InitialTransform = UE::Anim::Private::CalculateInitialTransformFromAssetAndTime(*this, PreviewInstance->CurrentAsset, SectionStartPosition);
+						const FTransform RootMotionDelta = UE::Anim::ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), SectionStartPosition, CurrentTime);
+						const FTransform RootMotionTransform = RootMotionDelta * InitialTransform;
+
+						// Reference transform is always relative to the beginning of the animation sequence. 
+						RootMotionReferenceTransform = UE::Anim::ExtractRootTransformFromAnimationAsset(PreviewInstance->CurrentAsset, 0.0f);
+						
+						SetRelativeTransform(RootMotionTransform);
+					}
+					else
+					{
+						const FTransform RootMotionDelta = ExtractedRootMotion.GetRootMotionTransform();
+						AddLocalTransform(RootMotionDelta);
 					}
 				}
 			}
+			else // Not Playing. When not playing user can still scrub the time line but animation is not ticking so we have to extract and apply root motion manually
+			{
+				const FTransform RootMotionDelta = UE::Anim::ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), PreviousTime, CurrentTime);
+				AddLocalTransform(RootMotionDelta);
+			}
 		}
-		else // Not Playing. When not playing user can still scrub the time line but animation is not ticking so we have to extract and apply root motion manually
+		else
 		{
-			const FTransform RootMotion = ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), PreviousTime, CurrentTime);
-			AddLocalTransform(RootMotion);
+			// No root motion, reset to identity for consistency.
+			const FTransform RootMotionTransform = GetRelativeTransform();
+			if (!RootMotionTransform.Equals(FTransform::Identity))
+			{
+				SetRelativeTransform(FTransform::Identity);
+			}
 		}
 	}
 }
@@ -353,6 +355,11 @@ bool UDebugSkelMeshComponent::IsProcessingRootMotion() const
 EProcessRootMotionMode UDebugSkelMeshComponent::GetProcessRootMotionMode() const
 {
 	return ProcessRootMotionMode;
+}
+
+EProcessRootMotionMode UDebugSkelMeshComponent::GetRequestedProcessRootMotionMode() const
+{
+	return RequestedProcessRootMotionMode;
 }
 
 bool UDebugSkelMeshComponent::DoesCurrentAssetHaveRootMotion() const
@@ -407,9 +414,9 @@ bool UDebugSkelMeshComponent::CanUseProcessRootMotionMode(EProcessRootMotionMode
 	}
 	
 	// Disable Loop modes if the current asset or animation blueprint doesn't have root motion
-	if(Mode != EProcessRootMotionMode::Ignore)
+	if (Mode != EProcessRootMotionMode::Ignore)
 	{
-		if(!DoesCurrentAssetHaveRootMotion())
+		if (!DoesCurrentAssetHaveRootMotion())
 		{
 			return false;
 		}
@@ -429,22 +436,54 @@ bool UDebugSkelMeshComponent::CanUseProcessRootMotionMode(EProcessRootMotionMode
 
 void UDebugSkelMeshComponent::SetProcessRootMotionMode(EProcessRootMotionMode Mode)
 {
-	if(CanUseProcessRootMotionMode(Mode))
+	RequestedProcessRootMotionMode = Mode;
+	
+	if (CanUseProcessRootMotionMode(Mode))
 	{
-		ProcessRootMotionMode = Mode;
-
-		if (ProcessRootMotionMode == EProcessRootMotionMode::Ignore)
-		{
-			if (TurnTableMode == EPersonaTurnTableMode::Stopped)
-			{
-				SetWorldTransform(FTransform());
-			}
-			else
-			{
-				SetRelativeLocation(FVector::ZeroVector);
-			}
-		}
+		SetProcessRootMotionModeInternal(Mode);
 	}
+}
+
+void UDebugSkelMeshComponent::SetProcessRootMotionModeInternal(EProcessRootMotionMode Mode)
+{
+	ProcessRootMotionMode = Mode;
+
+	if (!DoesCurrentAssetHaveRootMotion())
+	{
+		return;
+	}
+
+	FTransform RootMotionTransform = FTransform::Identity;
+	
+	if (ProcessRootMotionMode == EProcessRootMotionMode::LoopAndReset || ProcessRootMotionMode == EProcessRootMotionMode::Loop)
+	{
+		// Reset transform
+		const float CurrentTime = PreviewInstance->GetCurrentTime();
+		float SectionStartPosition = 0.0f;
+		if (const UAnimMontage* Montage = Cast<UAnimMontage>(PreviewInstance->CurrentAsset))
+		{
+			const int32 PreviewStartSectionIdx = Montage->CompositeSections.IsValidIndex(PreviewInstance->MontagePreviewStartSectionIdx) ? PreviewInstance->MontagePreviewStartSectionIdx : Montage->GetSectionIndexFromPosition(CurrentTime);
+			const int32 FirstSectionIdx = PreviewInstance->MontagePreview_FindFirstSectionAsInMontage(PreviewStartSectionIdx);
+			const int32 LastSectionIdx = PreviewInstance->MontagePreview_FindLastSection(FirstSectionIdx);
+			float StartTime = 0.0f, EndTime = 0.0f;
+			Montage->GetSectionStartAndEndTime(LastSectionIdx, StartTime, EndTime);
+			SectionStartPosition = StartTime;
+		}
+	
+		const FTransform InitialTransform = UE::Anim::Private::CalculateInitialTransformFromAssetAndTime(*this, PreviewInstance->CurrentAsset, SectionStartPosition);
+		const FTransform RootMotionDelta = UE::Anim::ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), SectionStartPosition, CurrentTime);
+		RootMotionTransform = RootMotionDelta * InitialTransform;
+		
+		// Reference transform is always relative to the beginning of the animation sequence. 
+		RootMotionReferenceTransform = UE::Anim::ExtractRootTransformFromAnimationAsset(PreviewInstance->CurrentAsset, 0.0f);
+	}
+	else if (ProcessRootMotionMode == EProcessRootMotionMode::Ignore)
+	{
+		RootMotionTransform = FTransform::Identity;
+		RootMotionReferenceTransform = FTransform::Identity;
+	}
+
+	SetRelativeTransform(RootMotionTransform);
 }
 
 bool UDebugSkelMeshComponent::IsTrackingAttachedLOD() const
@@ -532,35 +571,38 @@ void UDebugSkelMeshComponent::InitAnim(bool bForceReinit)
 
 	Super::InitAnim(bForceReinit);
 
-	// if PreviewInstance is nullptr, create here once
-	if (PreviewInstance == nullptr)
+	if(GetSkeletalMeshAsset() != nullptr)
 	{
-		PreviewInstance = CreatePreviewInstance();
-		check(PreviewInstance);
+		// if PreviewInstance is nullptr, create here once
+		if (PreviewInstance == nullptr)
+		{
+			PreviewInstance = CreatePreviewInstance();
+			check(PreviewInstance);
 
-		//Set transactional flag in order to restore slider position when undo operation is performed
-		PreviewInstance->SetFlags(RF_Transactional);
-	}
+			//Set transactional flag in order to restore slider position when undo operation is performed
+			PreviewInstance->SetFlags(RF_Transactional);
+		}
 
-	// if anim script instance is null because it's not playing a blueprint, set to PreviewInstnace by default
-	// that way if user would like to modify bones or do extra stuff, it will work
-	if (AnimScriptInstance == nullptr)
-	{
-		AnimScriptInstance = PreviewInstance;
-		AnimScriptInstance->InitializeAnimation();
-	}
-	else
-	{
-		// Make sure we initialize the preview instance here, as we want the required bones to be up to date
-		// even if we arent using the instance right now.
-		PreviewInstance->InitializeAnimation();
-	}
+		// if anim script instance is null because it's not playing a blueprint, set to PreviewInstnace by default
+		// that way if user would like to modify bones or do extra stuff, it will work
+		if (AnimScriptInstance == nullptr)
+		{
+			AnimScriptInstance = PreviewInstance;
+			AnimScriptInstance->InitializeAnimation();
+		}
+		else
+		{
+			// Make sure we initialize the preview instance here, as we want the required bones to be up to date
+			// even if we arent using the instance right now.
+			PreviewInstance->InitializeAnimation();
+		}
 
-	if(PostProcessAnimInstance)
-	{
-		// Add the same settings as the preview instance in this case.
-		PostProcessAnimInstance->RootMotionMode = ERootMotionMode::RootMotionFromEverything;
-		PostProcessAnimInstance->bUseMultiThreadedAnimationUpdate = false;
+		if(PostProcessAnimInstance)
+		{
+			// Add the same settings as the preview instance in this case.
+			PostProcessAnimInstance->RootMotionMode = ERootMotionMode::RootMotionFromEverything;
+			PostProcessAnimInstance->bUseMultiThreadedAnimationUpdate = false;
+		}
 	}
 }
 
@@ -602,6 +644,21 @@ void UDebugSkelMeshComponent::SetSkeletalMesh(USkeletalMesh* InSkelMesh, bool bR
 	}
 }
 
+void UDebugSkelMeshComponent::PostInitProperties()
+{
+	EAnimationMode::Type OriginalMode = AnimationMode;
+
+	// potentially reverts the mode to "AnimationSingleNode" which is not compatible with animation editors
+	Super::PostInitProperties();
+
+	if (OriginalMode == EAnimationMode::AnimationBlueprint)
+	{
+		// in cases where AnimationBlueprint mode is not supported, revert to custom mode to prevent
+		// the base USkeletalMeshComponent from overriding the anim instance used by this component
+		AnimationMode = EAnimationMode::AnimationCustomMode;
+	}
+}
+
 void UDebugSkelMeshComponent::EnablePreview(bool bEnable, UAnimationAsset* PreviewAsset)
 {
 	if (PreviewInstance)
@@ -623,12 +680,9 @@ void UDebugSkelMeshComponent::EnablePreview(bool bEnable, UAnimationAsset* Previ
 			// Reset to previous animation asset's root motion playback time to prevent this from influencing the new animation asset previewing during root motion consumption.
 			ConsumeRootMotionPreviousPlaybackTime = 0.0f;
 			
-			// Reset mesh relative transform. It could be offset from the origin if we are processing root motion
-			if (!GetRelativeTransform().Equals(FTransform::Identity))
-			{
-				SetRelativeTransform(FTransform::Identity);
-			}
-
+			// Update requested process root motion mode, the new asset might support requested processing mode.
+			// Note: This might further reset the transform.
+			SetProcessRootMotionModeInternal(CanUseProcessRootMotionMode(RequestedProcessRootMotionMode) ? RequestedProcessRootMotionMode : EProcessRootMotionMode::Ignore);
 		}
 		else if (IsPreviewOn())
 		{
@@ -665,6 +719,39 @@ void UDebugSkelMeshComponent::PostInitMeshObject(FSkeletalMeshObject* InMeshObje
 		{
 			InMeshObject->EnableOverlayRendering(true, nullptr, &ToRawPtrTArrayUnsafe(MorphTargetOfInterests));
 		}
+	}
+}
+
+void UDebugSkelMeshComponent::OnMirrorDataTableChanged()
+{
+	if (!DoesCurrentAssetHaveRootMotion())
+	{
+		return;
+	}
+
+	if (ProcessRootMotionMode == EProcessRootMotionMode::LoopAndReset)
+	{
+		// Reset transform
+		const float CurrentTime = PreviewInstance->GetCurrentTime();
+		float SectionStartPosition = 0.0f;
+		if (const UAnimMontage* Montage = Cast<UAnimMontage>(PreviewInstance->CurrentAsset))
+		{
+			const int32 PreviewStartSectionIdx = Montage->CompositeSections.IsValidIndex(PreviewInstance->MontagePreviewStartSectionIdx) ? PreviewInstance->MontagePreviewStartSectionIdx : Montage->GetSectionIndexFromPosition(CurrentTime);
+			const int32 FirstSectionIdx = PreviewInstance->MontagePreview_FindFirstSectionAsInMontage(PreviewStartSectionIdx);
+			const int32 LastSectionIdx = PreviewInstance->MontagePreview_FindLastSection(FirstSectionIdx);
+			float StartTime = 0.0f, EndTime = 0.0f;
+			Montage->GetSectionStartAndEndTime(LastSectionIdx, StartTime, EndTime);
+			SectionStartPosition = StartTime;
+		}
+
+		const FTransform InitialTransform = UE::Anim::Private::CalculateInitialTransformFromAssetAndTime(*this, PreviewInstance->CurrentAsset, SectionStartPosition);
+		const FTransform RootMotionDelta = UE::Anim::ExtractRootMotionFromAnimationAsset(PreviewInstance->CurrentAsset, PreviewInstance->GetMirrorDataTable(), SectionStartPosition, CurrentTime);
+		const FTransform RootMotionTransform = RootMotionDelta * InitialTransform;
+
+		// Reference transform is always relative to the beginning of the animation sequence. 
+		RootMotionReferenceTransform = UE::Anim::ExtractRootTransformFromAnimationAsset(PreviewInstance->CurrentAsset, 0.0f);
+
+		SetRelativeTransform(RootMotionTransform);
 	}
 }
 
@@ -1134,7 +1221,7 @@ void UDebugSkelMeshComponent::TickComponent(float DeltaTime, enum ELevelTick Tic
 		Rotation.Yaw += 36.f * TurnTableSpeedScaling * DeltaTime / FMath::Max(CurrentTimeDilation, KINDA_SMALL_NUMBER);
 		SetRelativeRotation(Rotation);
 	}
-
+	
     // Brute force approach to ensure that when materials are changed the names are cached parameter names are updated 
 	bCachedMaterialParameterIndicesAreDirty = true;
 	
@@ -1271,6 +1358,8 @@ SIZE_T FDebugSkelMeshSceneProxy::GetTypeHash() const
 
 void FDebugSkelMeshSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const
 {
+	FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
+
 	if(!DynamicData || DynamicData->bDrawMesh)
 	{
 		GetMeshElementsConditionallySelectable(Views, ViewFamily, bSelectable, VisibilityMap, Collector);

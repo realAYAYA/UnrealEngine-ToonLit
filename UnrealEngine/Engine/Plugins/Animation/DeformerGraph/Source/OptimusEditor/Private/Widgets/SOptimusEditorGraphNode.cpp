@@ -186,6 +186,7 @@ public:
 		AddEntry(LOCTEXT("PinType", "Data Type"), {this, &SOptimusEditorGraphPinToolTipWidget::GetPinDataType});
 		AddEntry(LOCTEXT("PinDomain", "Data Domain"), {this, &SOptimusEditorGraphPinToolTipWidget::GetPinDataDomain});
 		AddEntry(LOCTEXT("PinComponentSource", "Component Source"), {this, &SOptimusEditorGraphPinToolTipWidget::GetPinComponentSource});
+		AddEntry(LOCTEXT("PinMutability", "Mutability"), {this, &SOptimusEditorGraphPinToolTipWidget::GetPinMutability});
 
 		ChildSlot
 		[
@@ -271,7 +272,7 @@ private:
 			// behind.
 			if (ModelPin->GetPackage() != GetTransientPackage())
 			{
-				ComponentSourceBindings = ModelPin->GetComponentSourceBindings();
+				ComponentSourceBindings = ModelPin->GetComponentSourceBindings({});
 			}
 
 			if (ComponentSourceBindings.IsEmpty())
@@ -294,6 +295,28 @@ private:
 		}
 		return FText::GetEmpty();
 	}
+
+	FText GetPinMutability() const
+	{
+		if (TObjectPtr<UOptimusNodePin> ModelPin = ModelPinPtr.Get())
+		{
+			TSet<UOptimusComponentSourceBinding*> ComponentSourceBindings;
+
+			// Make sure it doesn't belong to a node that's just been deleted, since Slate updates are usually a frame
+			// behind.
+			if (ModelPin->GetPackage() != GetTransientPackage())
+			{
+				if (ModelPin->IsMutable({}))
+				{
+					return FText::FromName(TEXT("Mutable"));
+				}
+
+				return FText::FromName(TEXT("Immutable"));
+			}
+		}
+		return FText::GetEmpty();
+	}
+	
 	
 	TWeakObjectPtr<UOptimusNodePin> ModelPinPtr;
 };
@@ -692,7 +715,11 @@ void SOptimusEditorGraphNode::EndUserInteraction() const
 		for (UOptimusEditorGraphNode* SelectedNode : SelectedNodes)
 		{
 			FVector2D Position(SelectedNode->NodePosX, SelectedNode->NodePosY);
-			SelectedNode->ModelNode->SetGraphPosition(Position);
+			// It is possible that the model node is deleted during drag
+			if (SelectedNode->ModelNode)
+			{
+				SelectedNode->ModelNode->SetGraphPosition(Position);
+			}
 		}
 	}
 }
@@ -1042,7 +1069,8 @@ FText SOptimusEditorGraphNode::GetPinLabel(TWeakPtr<SGraphPin> InWeakGraphPin) c
 	UOptimusEditorGraphNode* EditorGraphNode = GetEditorGraphNode();
 	TSharedPtr<SGraphPin> GraphPin = InWeakGraphPin.Pin();
 
-	if (GraphPin.IsValid() && EditorGraphNode)
+	// Absence of ModelNode indicates the node has been deleted
+	if (GraphPin.IsValid() && EditorGraphNode && EditorGraphNode->ModelNode)
 	{
 		return EditorGraphNode->GetPinDisplayName(GraphPin->GetPinObj());
 	}

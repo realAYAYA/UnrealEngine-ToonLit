@@ -67,6 +67,7 @@ bool UWidgetBlueprintFactory::ConfigureProperties()
 		Options.Mode = EClassViewerMode::ClassPicker;
 		Options.bShowNoneOption = false;
 		Options.bExpandAllNodes = true;
+		Options.bIsBlueprintBaseOnly = true;
 		Options.bShowDefaultClasses = GetDefault<UUMGEditorProjectSettings>()->bUseUserWidgetParentDefaultClassViewerSelector;
 		Options.bShowClassesViewer = GetDefault<UUMGEditorProjectSettings>()->bUseUserWidgetParentClassViewerSelector;
 
@@ -194,6 +195,8 @@ UObject* UWidgetBlueprintFactory::FactoryCreateNew(UClass* Class, UObject* InPar
 				NewBP->WidgetTree->RootWidget = Root;
 			}
 		}
+
+		NewBP->bCanCallInitializedWithoutPlayerContext = GetDefault<UUMGEditorProjectSettings>()->bCanCallInitializedWithoutPlayerContext;
 
 		{
 			IUMGEditorModule::FWidgetBlueprintCreatedArgs Args;

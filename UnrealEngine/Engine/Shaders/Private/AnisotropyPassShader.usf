@@ -11,7 +11,7 @@
 
 struct FAnisotropyPassVSToPS
 {
-	float4 Position : SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 	FVertexFactoryInterpolantsVSToPS Interps;
 
 	#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS

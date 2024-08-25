@@ -30,8 +30,8 @@ uint InstanceSceneDataSOAStride;
 
 float3 FarFieldReferencePos;
 
-float3 ViewTilePosition;
-float3 RelativePreViewTranslation;
+float3 PreViewTranslationHigh;
+float3 PreViewTranslationLow;
 
 RWStructuredBuffer<FRayTracingInstanceDescriptor> InstancesDescriptors;
 
@@ -44,12 +44,62 @@ StructuredBuffer<float4> InstanceTransforms;
 // Extra per instance debug data
 RWStructuredBuffer<uint> RWDebugInstanceGPUSceneIndices;
 
+#if GPU_CULLING
+
+float CullingRadius;
+float FarFieldCullingRadius;
+float AngleThresholdRatioSq;
+float3 ViewOrigin;
+uint CullingMode;
+
+bool CullInstance(FInstanceSceneData InstanceSceneData, float4x4 LocalToTranslatedWorld4x4, bool bFarFieldInstance)
+{
+	bool bIsVisible = true;
+
+	const float3 LocalBoxCenter = InstanceSceneData.LocalBoundsCenter.xyz;
+	const float3 LocalBoxExtent = InstanceSceneData.LocalBoundsExtent.xyz;
+	const float4x4 LocalToTranslatedWorld = LocalToTranslatedWorld4x4;
+	const float3 NonUniformScale = InstanceSceneData.NonUniformScale.xyz;
+	
+	const float3 CenterTranslatedWorld = mul(float4(LocalBoxCenter, 1.0f), LocalToTranslatedWorld).xyz;
+	const float Radius = length(LocalBoxExtent * NonUniformScale);
+
+	const float InstanceDrawDistSq = length2(CenterTranslatedWorld - ViewOrigin);
+	
+	if (bFarFieldInstance)
+	{
+		bIsVisible = InstanceDrawDistSq <= Square(FarFieldCullingRadius + Radius);
+	}
+	else
+	{
+		const bool bIsVisibleDistance = InstanceDrawDistSq <= Square(CullingRadius + Radius);
+		const bool bIsVisibleAngle = (Square(Radius) / InstanceDrawDistSq) >= AngleThresholdRatioSq;
+		
+		// Only culling modes 2 & 3 are supported for now
+		if (CullingMode == 3)
+		{
+			bIsVisible = bIsVisibleDistance && bIsVisibleAngle;
+		}
+		else
+		{
+			bIsVisible = bIsVisibleDistance || bIsVisibleAngle;	
+		}
+		
+	}	
+
+	return !bIsVisible;
+}
+
+#endif // GPU_CULLING
+
 [numthreads(THREADGROUP_SIZE, 1, 1)]
 void RayTracingBuildInstanceBufferCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	const uint Index = DispatchThreadId.x;
+
+	bool bCulled = false;
 
 	if (Index < NumInstances)
 	{
@@ -57,10 +107,21 @@ void RayTracingBuildInstanceBufferCS(uint3 DispatchThreadId : SV_DispatchThreadI
 
 #if USE_GPUSCENE
 		FInstanceSceneData InstanceSceneData = GetInstanceSceneData(InputDesc.GPUSceneInstanceOrTransformIndex, InstanceSceneDataSOAStride);
+		FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceSceneData.PrimitiveId);
 
-		float4x4 LocalToTranslatedWorld4x4 = LWCMultiplyTranslation(InstanceSceneData.LocalToWorld, PreViewTranslation);
+		float4x4 LocalToTranslatedWorld4x4 = DFFastToTranslatedWorld(InstanceSceneData.LocalToWorld, PreViewTranslation);
 
-		if (InstanceSceneData.Flags & INSTANCE_SCENE_DATA_FLAG_IS_RAYTRACING_FAR_FIELD)
+		const bool bFarFieldInstance = PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_RAYTRACING_FAR_FIELD;
+
+#if GPU_CULLING
+		const bool bHasGroupId = PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_RAYTRACING_HAS_GROUPID;
+		if (!bHasGroupId)
+		{
+			bCulled = CullInstance(InstanceSceneData, LocalToTranslatedWorld4x4, bFarFieldInstance);
+		}
+#endif // GPU_CULLING
+
+		if (bFarFieldInstance)
 		{
 			LocalToTranslatedWorld4x4[3].xyz += FarFieldReferencePos;
 		}
@@ -84,6 +145,7 @@ void RayTracingBuildInstanceBufferCS(uint3 DispatchThreadId : SV_DispatchThreadI
 		LocalToTranslatedWorld[2] = LocalToTranslatedWorld4x4[2];
 
 #if OUTPUT_INSTANCE_GPUSCENE_INDEX
+		if (InputDesc.AccelerationStructureIndex != 0xFFFFFFFF && !bCulled)
 		{
 			RWDebugInstanceGPUSceneIndices[InputDesc.OutputDescriptorIndex] = InputDesc.GPUSceneInstanceOrTransformIndex;
 		}
@@ -98,7 +160,7 @@ void RayTracingBuildInstanceBufferCS(uint3 DispatchThreadId : SV_DispatchThreadI
 
 		uint2 BlasAddress = 0;
 
-		if (InputDesc.AccelerationStructureIndex != 0xFFFFFFFF)
+		if (InputDesc.AccelerationStructureIndex != 0xFFFFFFFF && !bCulled)
 		{
 			BlasAddress = AccelerationStructureAddresses.Load2(InputDesc.AccelerationStructureIndex * 8);
 		}

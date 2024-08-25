@@ -58,11 +58,6 @@ namespace UE::MLDeformer
 			{
 				Menu.AddMenuEntry(Actions.DeleteInputBones);
 			}
-
-			if (!GetRootItems().IsEmpty())
-			{
-				Menu.AddMenuEntry(Actions.ClearInputBones);
-			}
 		}
 		Menu.EndSection();
 

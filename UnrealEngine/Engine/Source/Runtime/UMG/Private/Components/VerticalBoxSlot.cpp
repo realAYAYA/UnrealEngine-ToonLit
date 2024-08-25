@@ -131,7 +131,7 @@ bool UVerticalBoxSlot::NudgeByDesigner(const FVector2D& NudgeDirection, const TO
 	}
 
 	ParentVerticalBox->Modify();
-	ParentVerticalBox->ShiftChild(CurrentIndex + ClampedDirection.Y, Content);
+	ParentVerticalBox->ShiftChild(CurrentIndex + FMath::TruncToInt32(ClampedDirection.Y), Content);
 
 	return true;
 }

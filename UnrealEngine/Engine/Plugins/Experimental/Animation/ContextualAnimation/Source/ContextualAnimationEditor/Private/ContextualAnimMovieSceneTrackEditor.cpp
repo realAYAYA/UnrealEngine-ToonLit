@@ -99,7 +99,7 @@ FReply FContextualAnimSection::OnSectionDoubleClicked(const FGeometry& SectionGe
 
 float FContextualAnimSection::GetSectionHeight() const
 {
-	return 20.f;
+	return 28.f;
 }
 
 #undef LOCTEXT_NAMESPACE

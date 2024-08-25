@@ -5,13 +5,13 @@
 #include "Animation/AnimationSettings.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/MirrorDataTable.h"
-
 #include "Stats/Stats.h"
 
+#include "Animation/AnimRootMotionProvider.h"
 #include "Animation/IAttributeBlendOperator.h" 
 #include "Animation/AttributeBlendData.h"
-
 #include "Animation/AttributeTypes.h"
+#include "AnimationRuntime.h"
 
 namespace UE { namespace Anim {
 
@@ -444,6 +444,8 @@ void Attributes::MirrorAttributes(FStackAttributeContainer& CustomAttributes, co
 	Attributes::MirrorAttributes(CustomAttributes, MirrorTable, CompactPoseMirrorBones);
 }
 
+
+
 void Attributes::MirrorAttributes(FStackAttributeContainer& CustomAttributes, const UMirrorDataTable& MirrorTable, const TArray<FCompactPoseBoneIndex>& CompactPoseMirrorBones)
 {
 	struct FMirrorSet
@@ -569,6 +571,30 @@ void Attributes::MirrorAttributes(FStackAttributeContainer& CustomAttributes, co
 				}
 			}
 		} 
+	}
+
+	const IAnimRootMotionProvider* RootMotionProvider = IAnimRootMotionProvider::Get();
+	
+	if (RootMotionProvider != nullptr && MirrorTable.bMirrorRootMotion)
+	{
+		FTransform RootMotionTransformDelta = FTransform::Identity; 
+		if (RootMotionProvider->ExtractRootMotion(CustomAttributes, RootMotionTransformDelta)) 
+		{
+			auto MirrorTransform = [](const FTransform& SourceTransform, EAxis::Type MirrorAxis) 
+			{
+				FVector T = SourceTransform.GetTranslation(); 
+				T = FAnimationRuntime::MirrorVector(T, MirrorAxis); 
+				FQuat Q = SourceTransform.GetRotation();
+				Q = FAnimationRuntime::MirrorQuat(Q, MirrorAxis); 
+
+				FVector S = SourceTransform.GetScale3D(); 
+
+				return FTransform(Q, T, S); 
+			};
+
+			RootMotionTransformDelta = MirrorTransform(RootMotionTransformDelta, MirrorTable.MirrorAxis); 
+			RootMotionProvider->OverrideRootMotion(RootMotionTransformDelta, CustomAttributes);
+		}
 	}
 }
 

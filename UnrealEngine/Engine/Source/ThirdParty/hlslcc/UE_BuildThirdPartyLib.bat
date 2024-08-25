@@ -22,3 +22,6 @@ pushd hlslcc\projects
 :SkipLinux
 
 popd
+
+echo .
+echo Remember to recompile for other platforms too!

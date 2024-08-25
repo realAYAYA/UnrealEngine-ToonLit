@@ -31,13 +31,6 @@ namespace UnrealBuildTool.Rules
 					"TimeManagement"
 				});
 
-			PrivateIncludePaths.AddRange(
-				new string[] {
-				// required for scene view extensions related headers
-				Path.Combine(GetModuleDirectory("Renderer"), "Private")
-			});
-
-
 			PrivateDependencyModuleNames.AddRange(
                 new string[]
                 {

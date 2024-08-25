@@ -59,8 +59,13 @@ namespace Cook
 		*/
 		bool bIsSandboxInitialized = false;
 
-		/* Whether BeginCookSandbox specified a full, non-iterative build for this platform. */
+		/** Whether BeginCookSandbox specified a full, non-iterative build for this platform. */
 		bool bFullBuild = false;
+		/**
+		 * Whether BeginCookSandBox specied non-full, and is in an iterative mode that allows using previous results.
+		 * -diffonly is the expected case where bFullBuild=false but bAllowIterativeResults=false.
+		 */
+		bool bAllowIterativeResults = true;
 
 		/** If true we are cooking iteratively, from results in a shared build (e.g. from buildfarm) rather than from our previous cook. */
 		bool bIterateSharedBuild = false;

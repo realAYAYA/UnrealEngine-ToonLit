@@ -18,6 +18,7 @@ public:
 	UEditorValidator_MaterialFunctions();
 
 protected:
-	virtual bool CanValidateAsset_Implementation(UObject* InAsset) const override;
-	virtual EDataValidationResult ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors) override;
+	using Super::CanValidateAsset_Implementation; // -Woverloaded-virtual
+	virtual bool CanValidateAsset_Implementation(const FAssetData& InAssetData, UObject* InObject, FDataValidationContext& InContext) const override;
+	virtual EDataValidationResult ValidateLoadedAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& Context) override;
 };

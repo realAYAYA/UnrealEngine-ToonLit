@@ -15,6 +15,7 @@
 class UInterchangeGenericAssetsPipeline;
 class UInterchangeMeshNode;
 class UInterchangePipelineMeshesUtilities;
+class UInterchangeSceneNode;
 class UInterchangeSkeletalMeshFactoryNode;
 class UInterchangeSkeletalMeshLodDataNode;
 class UInterchangeSkeletonFactoryNode;
@@ -40,7 +41,7 @@ public:
 	
 	//////	STATIC_MESHES_CATEGORY Properties //////
 
-	/** If enabled, import the static mesh asset found in the sources. */
+	/** If enabled, imports all static mesh assets found in the sources. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes")
 	bool bImportStaticMeshes = true;
 
@@ -48,12 +49,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes")
 	bool bCombineStaticMeshes = false;
 
-	/** The LODGroup to associate with this mesh when it is imported */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes")
+	/** The LOD group that will be assigned to this mesh. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta=(DisplayName="LOD Group"))
 	FName LodGroup = NAME_None;
 
-	/** If checked, custom collision will be imported and if there is no custom collision, a generic collision will be automatically generated.
-	 * If unchecked there will be no collision created or imported.
+	/** If enabled, custom collision will be imported. If enabled and there is no custom collision, a generic collision will be automatically generated.
+	 * If disabled, no collision will be created or imported.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Collision"))
 	bool bImportCollision = true;
@@ -76,107 +77,118 @@ public:
 
 	//////	Static Meshes Build settings Properties //////
 
-	/** If enabled this option will allow you to use Nanite rendering at runtime. Can only be used with simple opaque materials. */
+	/** If enabled, imported meshes will be rendered by Nanite at runtime. Make sure your meshes and materials meet the requirements for Nanite. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build"))
 	bool bBuildNanite = false;
 
-	/** If enabled this option will make sure the staticmesh build a reverse index buffer. */
+	/** If enabled, builds a reversed index buffer for each static mesh. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build"))
 	bool bBuildReversedIndexBuffer = true;
 	
-	/** If enabled this option will generate lightmap for this staticmesh. */
+	/** If enabled, generates lightmap UVs for each static mesh. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build"))
 	bool bGenerateLightmapUVs = true;
 	
 	/** 
-	 * Whether to generate the distance field treating every triangle hit as a front face.  
-	 * When enabled prevents the distance field from being discarded due to the mesh being open, but also lowers Distance Field AO quality.
+	 * Determines whether to generate the distance field treating every triangle hit as a front face.  
+	 * When enabled, prevents the distance field from being discarded due to the mesh being open, but also lowers distance field ambient occlusion quality.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta=(SubCategory = "Build", DisplayName="Two-Sided Distance Field Generation"))
 	bool bGenerateDistanceFieldAsIfTwoSided = false;
 	
+	/* If enabled, imported static meshes are set up for use with physical material masks. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build", DisplayName="Enable Physical Material Mask"))
 	bool bSupportFaceRemap = false;
 	
+	/* When generating lightmaps, determines the amount of padding used to pack UVs. Set this value to the lowest-resolution lightmap you expect to use with the imported meshes. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build"))
 	int32 MinLightmapResolution = 64;
 	
+	/* Specifies the index of the UV channel that will be used as the source when generating lightmaps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build", DisplayName="Source Lightmap Index"))
 	int32 SrcLightmapIndex = 0;
 	
+	/* Specifies the index of the UV channel that will store generated lightmap UVs. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build", DisplayName="Destination Lightmap Index"))
 	int32 DstLightmapIndex = 1;
 	
-	/** The local scale applied when building the mesh */
+	/** The local scale applied when building the mesh. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build", DisplayName="Build Scale"))
 	FVector BuildScale3D = FVector(1.0);
 	
 	/** 
 	 * Scale to apply to the mesh when allocating the distance field volume texture.
-	 * The default scale is 1, which is assuming that the mesh will be placed unscaled in the world.
+	 * The default scale is 1, which assumes that the mesh will be placed unscaled in the world.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build"))
 	float DistanceFieldResolutionScale = 1.0f;
 	
+	/**
+	 * If set, replaces the distance field for all imported meshes with the distance field of the specified Static Mesh.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build"))
 	TWeakObjectPtr<class UStaticMesh> DistanceFieldReplacementMesh = nullptr;
 	
 	/** 
-	 * Max Lumen mesh cards to generate for this mesh.
-	 * More cards means that surface will have better coverage, but will result in increased runtime overhead.
-	 * Set to 0 in order to disable mesh card generation for this mesh.
-	 * Default is 12.
+	 * The maximum number of Lumen mesh cards to generate for this mesh.
+	 * More cards means that the surface will have better coverage, but will result in increased runtime overhead.
+	 * Set this to 0 to disable mesh card generation for this mesh.
+	 * The default is 12.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Static Meshes", meta = (SubCategory = "Build"))
 	int32 MaxLumenMeshCards = 12;
 
 	//////	SKELETAL_MESHES_CATEGORY Properties //////
 
-	/** If enable, import the animation asset find in the sources. */
+	/** If enabled, imports all skeletal mesh assets found in the sources. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes")
 	bool bImportSkeletalMeshes = true;
 
-	/** Re-import partially or totally a skeletal mesh. You can choose betwwen geometry, skinning or everything.*/
+	/** Determines what types of information are imported for skeletal meshes. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes", meta = (DisplayName = "Import Content Type"))
 	EInterchangeSkeletalMeshContentType SkeletalMeshImportContentType;
 	
-	/** The value of the content type during the last import. This cannot be edited and is set only on successful import or re-import*/
+	/** The value of the content type during the last import. This cannot be edited and is set only on successful import or reimport. */
 	UPROPERTY()
 	EInterchangeSkeletalMeshContentType LastSkeletalMeshImportContentType;
 
-	/** If enable all translated skinned mesh node will be imported has a one skeletal mesh, note that it can still create several skeletal mesh for each different skeleton root joint. */
+	/** If enabled, all skinned mesh nodes that belong to the same skeleton root joint are combined into a single skeletal mesh. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes")
 	bool bCombineSkeletalMeshes = true;
 
-	/** If enable any morph target shape will be imported. */
+	/** If enabled, imports all morph target shapes found in the source. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes")
 	bool bImportMorphTargets = true;
 
-	/** Enable this option to update Skeleton (of the mesh)'s reference pose. Mesh's reference pose is always updated.  */
+	/** If enabled, imports per-vertex attributes from the FBX file. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes", meta = (ToolTip = "If enabled, creates named vertex attributes for secondary vertex color data."))
+	bool bImportVertexAttributes = false;
+
+	/** Enable this option to update the reference pose of the Skeleton (of the mesh). The reference pose of the mesh is always updated.  */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes")
 	bool bUpdateSkeletonReferencePose = false;
 
-	/** If checked, create new PhysicsAsset if it doesn't have it */
+	/** If enabled, create new PhysicsAsset if one doesn't exist. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes")
 	bool bCreatePhysicsAsset = true;
 
-	/** If this is set, use this specified PhysicsAsset. If its not set and bCreatePhysicsAsset is false, the importer will not generate or set any physic asset. */
+	/** If set, use the specified PhysicsAsset. If not set and the Create Physics Asset setting is not enabled, the importer will not generate or set any physics asset. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes", meta = (editcondition = "!bCreatePhysicsAsset"))
 	TWeakObjectPtr<UPhysicsAsset> PhysicsAsset;
 
-	/** If Checked, use 16 bits for skin weights instead of 8 bits. */
+	/** If enabled, imported skin weights use 16 bits instead of 8 bits. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes", meta = (SubCategory = "Build"))
 	bool bUseHighPrecisionSkinWeights = false;
 
-	/** Threshold use to decide if two vertex position are equal. */
+	/** Threshold value that is used to decide whether two vertex positions are equal. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes", meta = (SubCategory = "Build"))
 	float ThresholdPosition = 0.00002f;
 	
-	/** Threshold use to decide if two normal, tangents or bi-normals are equal. */
+	/** Threshold value that is used to decide whether two normals, tangents, or bi-normals are equal. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes", meta = (SubCategory = "Build"))
 	float ThresholdTangentNormal = 0.00002f;
 	
-	/** Threshold use to decide if two UVs are equal. */
+	/** Threshold value that is used to decide whether two UVs are equal. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Skeletal Meshes", meta = (SubCategory = "Build"))
 	float ThresholdUV = 0.0009765625f;
 	
@@ -197,11 +209,16 @@ public:
 	virtual void PreDialogCleanup(const FName PipelineStackName) override;
 
 #if WITH_EDITOR
+	virtual bool IsPropertyChangeNeedRefresh(const FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual bool GetPropertyPossibleValues(const FName PropertyPath, TArray<FString>& PossibleValues) override;
 #endif
 
+	static UInterchangePipelineMeshesUtilities* CreateMeshPipelineUtilities(UInterchangeBaseNodeContainer* InBaseNodeContainer
+		, const UInterchangeGenericMeshPipeline* Pipeline
+		, const bool bAutoDetectType);
+
 protected:
-	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas) override;
+	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas, const FString& ContentBasePath) override;
 
 	virtual void ExecutePostImportPipeline(const UInterchangeBaseNodeContainer* InBaseNodeContainer, const FString& NodeKey, UObject* CreatedAsset, bool bIsAReimport) override;
 
@@ -228,6 +245,11 @@ private:
 
 	/* Meshes utilities, to parse the translated graph and extract the meshes informations. */
 	TObjectPtr<UInterchangePipelineMeshesUtilities> PipelineMeshesUtilities = nullptr;
+
+	static bool IsImpactingAnyMeshesRecursive(const UInterchangeSceneNode* SceneNode
+		, const UInterchangeBaseNodeContainer* InBaseNodeContainer
+		, const TArray<FString>& StaticMeshNodeUids
+		, TMap<const UInterchangeSceneNode*, bool>& CacheProcessSceneNodes);
 
 	/************************************************************************/
 	/* Skeletal mesh API BEGIN                                              */

@@ -1,10 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Components/DisplayClusterPreviewShareComponent.h"
+#include "Render/Viewport/DisplayClusterViewportManager.h"
+#include "Render/Viewport/IDisplayClusterViewportManagerPreview.h"
+#include "Render/Viewport/Containers/DisplayClusterViewport_PreviewSettings.h"
 
 #include "CineCameraComponent.h"
 #include "Components/DisplayClusterICVFXCameraComponent.h"
-#include "Components/DisplayClusterPreviewComponent.h"
 #include "DisplayClusterRootActor.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "IDisplayCluster.h"
@@ -13,14 +15,13 @@
 #include "Misc/DisplayClusterLog.h"
 #include "SharedMemoryMediaOutput.h"
 #include "SharedMemoryMediaSource.h"
+#include "UObject/Package.h"
 
 #if WITH_EDITOR
-	#include "LevelEditor.h"
-#endif // WITH_EDITOR
+#include "LevelEditor.h"
+#endif
 
-#if WITH_EDITOR
-
-namespace UE::DisplayClusterPreviewShare
+namespace UE::DisplayCluster::PreviewShareComponent
 {
 	/** Convenience struct when iterating over config viewports */
 	struct FViewportData
@@ -42,7 +43,7 @@ namespace UE::DisplayClusterPreviewShare
 	};
 
 	/** Convenience function to get the data needed when iterating over config viewports of a given nDisplay actor */
-	TArray<FViewportData> GetConfigViewportsFromRootActor(const ADisplayClusterRootActor* RootActor)
+	static inline TArray<FViewportData> GetConfigViewportsFromRootActor(const ADisplayClusterRootActor* RootActor)
 	{
 		TArray<FViewportData> ViewportDatas;
 
@@ -85,7 +86,7 @@ namespace UE::DisplayClusterPreviewShare
 	}
 
 	/** Retrieves the viewport configuration from the DCRA's current config using the given NodeId and ViewportId */
-	static UDisplayClusterConfigurationViewport* GetViewportFromDCRA(ADisplayClusterRootActor* RootActor, const FString& NodeId, const FString& ViewportId)
+	static inline UDisplayClusterConfigurationViewport* GetViewportFromDCRA(ADisplayClusterRootActor* RootActor, const FString& NodeId, const FString& ViewportId)
 	{
 		if (!RootActor)
 		{
@@ -123,7 +124,7 @@ namespace UE::DisplayClusterPreviewShare
 		return *ViewportPtr;
 	}
 
-	void RemoveExternalMapReferences(ADisplayClusterRootActor* RootActor)
+	static inline void RemoveExternalMapReferences(ADisplayClusterRootActor* RootActor)
 	{
 		// In all cases, we should make sure we never restore in illegal external reference,
 		// because if we do, it will be very hard for the user to fix this and save the map, since these
@@ -160,49 +161,15 @@ namespace UE::DisplayClusterPreviewShare
 			}
 		}
 	}
-
-	/** Retrieves appropriate preview render target from preview component */
-	UTextureRenderTarget2D* GetPreviewRenderTarget(const UDisplayClusterPreviewComponent* PreviewComponent)
-	{
-		if (!PreviewComponent)
-		{
-			return nullptr;
-		}
-
-		// We're primarily interested in the post process render target.
-		UTextureRenderTarget2D* RenderTarget = PreviewComponent->GetRenderTargetTexturePostProcess();
-
-		// Fallback if unavailable.
-		if (!RenderTarget)
-		{
-			RenderTarget = PreviewComponent->GetRenderTargetTexture();
-		}
-
-		return RenderTarget;
-	}
-
-}
-
-#endif // WITH_EDITOR
+};
 
 UDisplayClusterPreviewShareComponent::UDisplayClusterPreviewShareComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-#if WITH_EDITOR
-
-	if (!AllowedToShare())
-	{
-		return;
-	}
-
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
 	SetTickEnable(false);
-
-#endif // WITH_EDITOR
 }
-
-#if WITH_EDITOR // Bulk wrap with WITH_EDITOR until preview is supported in other modes.
 
 bool UDisplayClusterPreviewShareComponent::AllowedToShare() const
 {
@@ -240,74 +207,35 @@ bool UDisplayClusterPreviewShareComponent::AllowedToShare() const
 	return true;
 }
 
-#if WITH_EDITOR
-void UDisplayClusterPreviewShareComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
-{
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UDisplayClusterPreviewShareComponent, Mode))
-	{
-		ModeChanged();
-	}
-	else if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UDisplayClusterPreviewShareComponent, UniqueName))
-	{
-		// Remove spaces to reduce chances of the user not realizing that there is a mismatch with its counterpart.
-		UniqueName = UniqueName.TrimStartAndEnd();
-
-		// All the names are now invalid, so we need to close all media.
-		CloseAllMedia();
-	}
-	else if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UDisplayClusterPreviewShareComponent, SourceNDisplayActor))
-	{
-		ModeChanged();
-	}
-}
-#endif // WITH_EDITOR
-
 void UDisplayClusterPreviewShareComponent::ModeChanged()
 {
+	// We ignore the desired Mode if it is not allowed.
+	if (!AllowedToShare())
+	{
+		Mode = EDisplayClusterPreviewShareMode::None;
+	}
+
 	// Close all media before restarting the sharing
 	CloseAllMedia();
+
+	// Restore default preview settings
+	RestoreDefaultPreviewSettings();
 
 	// Restore original root actor settings (e.g. texture replace settings that we overwrote)
 	RestoreRootActorOriginalSettings();
 
-	// Unsubscribe from previews
-	UnsubscribeFromAllPreviews();
-
-	// Default to no tick
-	SetTickEnable(false);
-
 	switch (Mode)
 	{
 	case EDisplayClusterPreviewShareMode::PullActor:
-	{
-		// The source root actor should enable the preview since we're pulling from it.
-		SubscribeToPreview(SourceNDisplayActor.Get());
-
-		SetTickEnable(true);
-
-		break;
-	}
 	case EDisplayClusterPreviewShareMode::Send:
-	{
-		// If we're sending, we need to tell the root actor to generate the preview textures for us to send.
-		SubscribeToPreview(Cast<ADisplayClusterRootActor>(GetOwner()));
-
-		SetTickEnable(true);
-
-		break;
-	}
 	case EDisplayClusterPreviewShareMode::Receive:
-	{
 		SetTickEnable(true);
+		break;
 
-		break;
-	}
 	default:
-	{
+		// Default to no tick
+		SetTickEnable(false);
 		break;
-	}
 	}
 }
 
@@ -319,7 +247,7 @@ void UDisplayClusterPreviewShareComponent::SetTickEnable(const bool bEnable)
 
 void UDisplayClusterPreviewShareComponent::RestoreRootActorOriginalSettings()
 {
-	using namespace UE::DisplayClusterPreviewShare;
+	using namespace UE::DisplayCluster::PreviewShareComponent;
 
 	ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner());
 
@@ -334,7 +262,6 @@ void UDisplayClusterPreviewShareComponent::RestoreRootActorOriginalSettings()
 	}
 
 	// Iterate over viewports and restore their settings
-
 	for (const FViewportData& ViewportData : GetConfigViewportsFromRootActor(RootActor))
 	{
 		check(ViewportData.Viewport); // The iterator implementation guarantees that it is not nullptr
@@ -366,39 +293,9 @@ void UDisplayClusterPreviewShareComponent::RestoreRootActorOriginalSettings()
 	OriginalTextureReplaces.Empty();
 }
 
-void UDisplayClusterPreviewShareComponent::UnsubscribeFromAllPreviews()
-{
-	if (UWorld* World = GetWorld())
-	{
-		for (TActorIterator<ADisplayClusterRootActor> It(World); It; ++It)
-		{
-			UnsubscribeFromPreview(*It);
-		}
-	}
-}
-
-void UDisplayClusterPreviewShareComponent::SubscribeToPreview(ADisplayClusterRootActor* RootActor)
-{
-	if (IsValid(RootActor))
-	{
-		RootActor->SubscribeToPostProcessRenderTarget(reinterpret_cast<uint8*>(this));
-		RootActor->AddPreviewEnableOverride(reinterpret_cast<uint8*>(this));
-	}
-}
-
-void UDisplayClusterPreviewShareComponent::UnsubscribeFromPreview(ADisplayClusterRootActor* RootActor)
-{
-	if (IsValid(RootActor))
-	{
-		RootActor->UnsubscribeFromPostProcessRenderTarget(reinterpret_cast<uint8*>(this));
-		RootActor->RemovePreviewEnableOverride(reinterpret_cast<uint8*>(this));
-	}
-}
-
 void UDisplayClusterPreviewShareComponent::CloseAllMedia()
 {
 	// Stop all media
-
 	for (const TPair<FString, TObjectPtr<UMediaCapture>>& Pair : MediaCaptures)
 	{
 		UMediaCapture* MediaCapture = Pair.Value;
@@ -433,6 +330,61 @@ void UDisplayClusterPreviewShareComponent::CloseAllMedia()
 	MediaTextures.Empty();
 }
 
+void UDisplayClusterPreviewShareComponent::RestoreDefaultPreviewSettings()
+{
+	// Release custom viewport manager (used by 'Send')
+	CustomViewportManager.Reset();
+
+	// Restore default preview settings on owner RootActor (Used by 'PullActor')
+	if (ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner()))
+	{
+		if (IDisplayClusterViewportManager* ViewportManager = RootActor->GetViewportManager())
+		{
+			// Use preview settings from RootActor
+			RootActor->PreviewSetttingsSource = EDisplayClusterConfigurationRootActorPreviewSettingsSource::RootActor;
+
+			// reconfigure to rendering from owner root actor
+			ViewportManager->GetConfiguration().SetRootActor(EDisplayClusterRootActorType::Scene | EDisplayClusterRootActorType::Configuration, RootActor);
+		}
+	}
+}
+
+bool UDisplayClusterPreviewShareComponent::UpdateCustomViewportManager(const ADisplayClusterRootActor* InSrcRootActor)
+{
+	check(IsInGameThread());
+
+	if (!InSrcRootActor)
+	{
+		// The source RootActor is required
+		return false;
+	}
+
+	if (!CustomViewportManager.IsValid())
+	{
+		CustomViewportManager = IDisplayClusterViewportManager::CreateViewportManager();
+	}
+
+	IDisplayClusterViewportConfiguration& CustomConfiguration = CustomViewportManager->GetConfiguration();
+
+	// Assign DCRA to render, excluding PreviewRootActor since we are not using the preview mesh, only the viewport textures.
+	CustomConfiguration.SetRootActor(EDisplayClusterRootActorType::Scene | EDisplayClusterRootActorType::Configuration, InSrcRootActor);
+
+	// Get preview settings from InSrcRootActor properties
+	FDisplayClusterViewport_PreviewSettings NewPreviewSettings = InSrcRootActor->GetPreviewSettings(true);
+
+	// Override preview settings:
+	NewPreviewSettings.bPreviewEnable = true;
+	NewPreviewSettings.bEnablePreviewMesh = false;
+	NewPreviewSettings.bEnablePreviewEditableMesh = false;
+	NewPreviewSettings.bPreviewICVFXFrustums = false; // disable frustum rendering
+	CustomConfiguration.SetPreviewSettings(NewPreviewSettings);
+
+	// Request rendering of the entire cluster for our custom viewport manager
+	CustomViewportManager->GetViewportManagerPreview().UpdateEntireClusterPreviewRender(true);
+
+	return true;
+}
+
 FString UDisplayClusterPreviewShareComponent::GenerateViewportKey(const FString& NodeName, const FString& ViewportName) const
 {
 	return FString::Printf(TEXT("%s_%s"),
@@ -449,39 +401,34 @@ FString UDisplayClusterPreviewShareComponent::GenerateMediaUniqueName(const FStr
 	);
 }
 
-
 void UDisplayClusterPreviewShareComponent::TickSend()
 {
-	using namespace UE::DisplayClusterPreviewShare;
+	using namespace UE::DisplayCluster::PreviewShareComponent;
 
+	// Rendering RootActor on CustomViewportManager with custom settings and sending results
 	ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner());
-
-	if (!RootActor)
+	if(!UpdateCustomViewportManager(RootActor))
 	{
 		CloseAllMedia();
+		RestoreDefaultPreviewSettings();
+
 		return;
 	}
 
 	// Make sure we're up to date with the viewports
-
-	const TArray<UActorComponent*> ActorComponents = RootActor->K2_GetComponentsByClass(UDisplayClusterPreviewComponent::StaticClass());
-
 	// We will use this array to close and remove unused media captures.
 	TSet<FString> LeftoverViewportKeys;
 	MediaOutputs.GetKeys(LeftoverViewportKeys);
 
-	for (UActorComponent* ActorComponent : ActorComponents)
+	for (const TSharedPtr<IDisplayClusterViewportPreview, ESPMode::ThreadSafe>& ViewportPreviewIt : CustomViewportManager->GetViewportManagerPreview().GetEntireClusterPreviewViewports())
 	{
-		UDisplayClusterPreviewComponent* PreviewComponent = Cast<UDisplayClusterPreviewComponent>(ActorComponent);
-
-		if (!PreviewComponent)
+		if (!ViewportPreviewIt.IsValid())
 		{
 			continue;
 		}
 
 		// Get the texture to share
-		UTextureRenderTarget2D* PreviewTexture = GetPreviewRenderTarget(PreviewComponent);
-
+		UTextureRenderTarget2D* PreviewTexture = ViewportPreviewIt->GetPreviewTextureRenderTarget2D();
 		if (!PreviewTexture)
 		{
 			continue;
@@ -490,8 +437,8 @@ void UDisplayClusterPreviewShareComponent::TickSend()
 		// Each viewport gets a unique name
 
 		const FString ViewportKey = GenerateViewportKey(
-			PreviewComponent->GetClusterNodeId(),
-			PreviewComponent->GetViewportId()
+			ViewportPreviewIt->GetClusterNodeId(),
+			ViewportPreviewIt->GetId()
 		);
 
 		LeftoverViewportKeys.Remove(ViewportKey);
@@ -590,25 +537,43 @@ void UDisplayClusterPreviewShareComponent::TickSend()
 
 }
 
-void UDisplayClusterPreviewShareComponent::TickPullActor()
+void UDisplayClusterPreviewShareComponent::TickPullActor(const bool bUseSourceActorSettings)
 {
+	using namespace UE::DisplayCluster::PreviewShareComponent;
+
 	ADisplayClusterRootActor* SourceRootActor = SourceNDisplayActor.Get();
-
-	if (!IsValid(SourceRootActor))
-	{
-		return;
-	}
-
 	ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner());
-
-	if (!RootActor)
+	IDisplayClusterViewportManager* ViewportManager = RootActor ? RootActor->GetViewportManager() : nullptr;
+	if (!IsValid(SourceRootActor) || !IsValid(RootActor) || RootActor == SourceRootActor || !ViewportManager)
 	{
+		// Disallow self referencing
+		RestoreDefaultPreviewSettings();
+
 		return;
 	}
 
 	// Pull preview textures
-	PullPreviewFromSourceActor(SourceRootActor);
+	{
+		// Reconfigure to rendering from external DCRA
+		ViewportManager->GetConfiguration().SetRootActor(EDisplayClusterRootActorType::Scene | EDisplayClusterRootActorType::Configuration, SourceRootActor);
 
+		// Gets preview settings from various RootActors
+		ADisplayClusterRootActor* PreviewSettingsRootActor = bUseSourceActorSettings ? SourceRootActor : RootActor;
+
+		// Override preview settings:
+		FDisplayClusterViewport_PreviewSettings NewPreviewSettings = PreviewSettingsRootActor->GetPreviewSettings(true);
+
+		// When using the preview settings from the local RootActor, we also use the DisplayDevice from the same.
+		NewPreviewSettings.DisplayDeviceRootActorType = bUseSourceActorSettings ? EDisplayClusterRootActorType::Configuration : EDisplayClusterRootActorType::Preview;
+
+		ViewportManager->GetConfiguration().SetPreviewSettings(NewPreviewSettings);
+
+		// Sets configuration mode to use overridden values instead of values from RootActor.
+		RootActor->PreviewSetttingsSource = EDisplayClusterConfigurationRootActorPreviewSettingsSource::Configuration;
+	}
+
+	// Note: Did we really need to synchronize the ICVFX camera function for PullActor mode?
+	// 
 	// Sync Icvfx cameras
 	switch (IcvfxCamerasSyncType)
 	{
@@ -625,121 +590,9 @@ void UDisplayClusterPreviewShareComponent::TickPullActor()
 	}
 }
 
-void UDisplayClusterPreviewShareComponent::PullPreviewFromSourceActor(const ADisplayClusterRootActor* SourceRootActor)
-{
-	using namespace UE::DisplayClusterPreviewShare;
-
-	if (!SourceRootActor)
-	{
-		return;
-	}
-
-	// Grab destination root actor.
-
-	ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner());
-
-	if (!RootActor)
-	{
-		return;
-	}
-
-	// Disallow self referencing
-
-	if (RootActor == SourceRootActor)
-	{
-		return;
-	}
-
-	// Gather source preview components
-
-	TMap<FString, UDisplayClusterPreviewComponent*> SrcPreviewComponentWithUniqueName;
-
-	for (UActorComponent* SrcComponent : SourceRootActor->K2_GetComponentsByClass(UDisplayClusterPreviewComponent::StaticClass()))
-	{
-		UDisplayClusterPreviewComponent* SrcPreviewComponent = Cast<UDisplayClusterPreviewComponent>(SrcComponent);
-
-		if (!SrcPreviewComponent)
-		{
-			continue;
-		}
-
-		const FString SrcViewportKey = GenerateViewportKey(
-			SrcPreviewComponent->GetClusterNodeId(),
-			SrcPreviewComponent->GetViewportId()
-		);
-
-		SrcPreviewComponentWithUniqueName.Add(SrcViewportKey, SrcPreviewComponent);
-	}
-
-	// Iterate over destination preview components, find the matching source preview component, and assign the preview texture accordingly.
-
-	for (UActorComponent* DstComponent : RootActor->K2_GetComponentsByClass(UDisplayClusterPreviewComponent::StaticClass()))
-	{
-		UDisplayClusterPreviewComponent* DstPreviewComponent = Cast<UDisplayClusterPreviewComponent>(DstComponent);
-
-		if (!DstPreviewComponent)
-		{
-			continue;
-		}
-
-		// We will ultimately update the viewport so let's make sure it exists.
-
-		UDisplayClusterConfigurationViewport* DstViewport = GetViewportFromDCRA(RootActor, DstPreviewComponent->GetClusterNodeId(), DstPreviewComponent->GetViewportId());
-
-		if (!DstViewport)
-		{
-			continue;
-		}
-
-		// Each viewport gets associated with a uniquely name
-
-		const FString DstViewportKey = GenerateViewportKey(
-			DstPreviewComponent->GetClusterNodeId(),
-			DstPreviewComponent->GetViewportId()
-		);
-
-		// Find corresponding source preview component
-
-		UDisplayClusterPreviewComponent** SrcPreviewComponentPtr = SrcPreviewComponentWithUniqueName.Find(DstViewportKey);
-
-		if (!SrcPreviewComponentPtr || !*SrcPreviewComponentPtr)
-		{
-			continue;
-		}
-
-		// Assign destination preview texture from source preview texture.
-
-		const UDisplayClusterPreviewComponent* SrcPreviewComponent = *SrcPreviewComponentPtr;
-		check(SrcPreviewComponent);
-
-		UTextureRenderTarget2D* SrcPreviewTexture = GetPreviewRenderTarget(SrcPreviewComponent);
-
-		if (!SrcPreviewTexture)
-		{
-			continue;
-		}
-
-		// Remember the original replacement textures, if they haven't been saved yet.
-
-		if (!OriginalTextureReplaces.Find(DstViewportKey))
-		{
-			OriginalTextureReplaces.Add(DstViewportKey, DstViewport->RenderSettings.Replace.bAllowReplace);
-		}
-
-		if (!OriginalSourceTextures.Find(DstViewportKey))
-		{
-			OriginalSourceTextures.Add(DstViewportKey, DstViewport->RenderSettings.Replace.SourceTexture);
-		}
-
-		// Override the replace texture values
-		DstViewport->RenderSettings.Replace.bAllowReplace = true;
-		DstViewport->RenderSettings.Replace.SourceTexture = SrcPreviewTexture;
-	}
-}
-
 void UDisplayClusterPreviewShareComponent::SyncIcvxCamerasFromSourceActor(const ADisplayClusterRootActor* SourceRootActor, const ADisplayClusterRootActor* DstRootActor)
 {
-	using namespace UE::DisplayClusterPreviewShare;
+	using namespace UE::DisplayCluster::PreviewShareComponent;
 
 	if (!SourceRootActor || !DstRootActor)
 	{
@@ -791,7 +644,7 @@ void UDisplayClusterPreviewShareComponent::SyncIcvxCamerasFromSourceActor(const 
 		check(SrcIcvfxCameraComponent);
 
 		// This one sould be the actual source camera, e.g. the camera component of the referenced cine camera.
-		const UCameraComponent* SrcCameraComponent = SrcIcvfxCameraComponent->GetCameraComponent();
+		const UCineCameraComponent* SrcCameraComponent = SrcIcvfxCameraComponent->GetActualCineCameraComponent();
 		check(SrcCameraComponent);
 		
 		// Get the source camera transform with respect to the Source root actor
@@ -799,7 +652,7 @@ void UDisplayClusterPreviewShareComponent::SyncIcvxCamerasFromSourceActor(const 
 
 		// Apply this transform to the destination camera
 
-		UCameraComponent* DstCameraComponent = DstIcvfxCameraComponent->GetCameraComponent();
+		UCineCameraComponent* DstCameraComponent = DstIcvfxCameraComponent->GetActualCineCameraComponent();
 
 		AActor* DstCameraOwnerActor = DstCameraComponent->GetOwner();
 		
@@ -846,36 +699,31 @@ void UDisplayClusterPreviewShareComponent::SyncIcvxCamerasFromSourceActor(const 
 
 void UDisplayClusterPreviewShareComponent::TickReceive()
 {
-	using namespace UE::DisplayClusterPreviewShare;
+	using namespace UE::DisplayCluster::PreviewShareComponent;
 
 	ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner());
-
-	if (!RootActor)
+	IDisplayClusterViewportManager* ViewportManager = RootActor ? RootActor->GetViewportManager() : nullptr;
+	if (!ViewportManager)
 	{
 		CloseAllMedia();
 		return;
 	}
 
 	// Make sure we're up to date with the viewports
-
-	const TArray<UActorComponent*> ActorComponents = RootActor->K2_GetComponentsByClass(UDisplayClusterPreviewComponent::StaticClass());
-
 	// We will use this array to close and remove unused media sources.
 	TSet<FString> LeftoverViewportKeys;
 	MediaSources.GetKeys(LeftoverViewportKeys);
 
-	for (UActorComponent* ActorComponent : ActorComponents)
+	for (TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : ViewportManager->GetEntireClusterViewports())
 	{
-		UDisplayClusterPreviewComponent* PreviewComponent = Cast<UDisplayClusterPreviewComponent>(ActorComponent);
-
-		if (!PreviewComponent)
+		if (!ViewportIt.IsValid())
 		{
 			continue;
 		}
 
 		// We will ultimately update the viewport so let's make sure it exists.
 
-		UDisplayClusterConfigurationViewport* Viewport = GetViewportFromDCRA(RootActor, PreviewComponent->GetClusterNodeId(), PreviewComponent->GetViewportId());
+		UDisplayClusterConfigurationViewport* Viewport = GetViewportFromDCRA(RootActor, ViewportIt->GetClusterNodeId(), ViewportIt->GetId());
 
 		if (!Viewport)
 		{
@@ -885,8 +733,8 @@ void UDisplayClusterPreviewShareComponent::TickReceive()
 		// Each viewport gets associated with a uniquely named shared texture.
 
 		const FString ViewportKey = GenerateViewportKey(
-			PreviewComponent->GetClusterNodeId(),
-			PreviewComponent->GetViewportId()
+			ViewportIt->GetClusterNodeId(),
+			ViewportIt->GetId()
 		);
 
 		LeftoverViewportKeys.Remove(ViewportKey);
@@ -1011,7 +859,6 @@ void UDisplayClusterPreviewShareComponent::TickReceive()
 			MediaTextures.Remove(ViewportKey);
 		}
 	}
-
 }
 
 void UDisplayClusterPreviewShareComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -1024,7 +871,7 @@ void UDisplayClusterPreviewShareComponent::TickComponent(float DeltaTime, ELevel
 	}
 	case EDisplayClusterPreviewShareMode::PullActor:
 	{
-		TickPullActor();
+		TickPullActor(false);
 		break;
 	}
 	case EDisplayClusterPreviewShareMode::Send:
@@ -1040,7 +887,6 @@ void UDisplayClusterPreviewShareComponent::TickComponent(float DeltaTime, ELevel
 	}
 }
 
-
 void UDisplayClusterPreviewShareComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
 {
 	// Close all media to avoid keeping resources alive even though the component was destroyed (and possibly kept in undo buffer).
@@ -1048,7 +894,6 @@ void UDisplayClusterPreviewShareComponent::OnComponentDestroyed(bool bDestroying
 	SetMode(EDisplayClusterPreviewShareMode::None);
 
 #if WITH_EDITOR
-
 	if (GIsEditor)
 	{
 		// Unregister Map Change Events
@@ -1057,12 +902,10 @@ void UDisplayClusterPreviewShareComponent::OnComponentDestroyed(bool bDestroying
 			LevelEditor->OnMapChanged().RemoveAll(this);
 		}
 	}
-
 #endif // WITH_EDITOR
 
 	Super::OnComponentDestroyed(bDestroyingHierarchy);
 }
-
 
 void UDisplayClusterPreviewShareComponent::OnRegister()
 {
@@ -1072,24 +915,9 @@ void UDisplayClusterPreviewShareComponent::OnRegister()
 	ModeChanged();
 }
 
-void UDisplayClusterPreviewShareComponent::HandleMapChanged(UWorld* InWorld, EMapChangeType InMapChangeType)
-{
-	// We remove the reference to the source actor preview texture to avoid this being interpreted as a 
-	// memory leak when unloadin the source actor map while the current map is kept open.
-	if (Mode == EDisplayClusterPreviewShareMode::PullActor)
-	{
-		RestoreRootActorOriginalSettings();
-	}
-}
-
-#endif // WITH_EDITOR in bulk
-
-
 void UDisplayClusterPreviewShareComponent::Serialize(FArchive& Ar)
 {
-#if WITH_EDITOR
-
-	using namespace UE::DisplayClusterPreviewShare;
+	using namespace UE::DisplayCluster::PreviewShareComponent;
 
 	if (Ar.IsSaving())
 	{
@@ -1102,7 +930,6 @@ void UDisplayClusterPreviewShareComponent::Serialize(FArchive& Ar)
 			RemoveExternalMapReferences(Cast<ADisplayClusterRootActor>(GetOwner()));
 		}
 	}
-#endif // WITH_EDITOR
 
 	Super::Serialize(Ar);
 }
@@ -1111,27 +938,24 @@ void UDisplayClusterPreviewShareComponent::PostLoad()
 {
 	Super::PostLoad();
 
-#if WITH_EDITOR
 	// Make sure we are in the right state after loading
 	ModeChanged();
 
+#if WITH_EDITOR
 	if (GIsEditor)
 	{
 		// Register for Map Change Events. We do this to remove texture external texture reference that
 		// prevents proper world GC. In particular, our owing actor reference to the source nDisplay actor preview texture.
 		if (FLevelEditorModule* LevelEditor = FModuleManager::GetModulePtr<FLevelEditorModule>("LevelEditor"))
 		{
-			LevelEditor->OnMapChanged().AddUObject(this, &UDisplayClusterPreviewShareComponent::HandleMapChanged);
+			LevelEditor->OnMapChanged().AddUObject(this, &UDisplayClusterPreviewShareComponent::HandleMapChanged_Editor);
 		}
 	}
-
 #endif // WITH_EDITOR
 }
 
 void UDisplayClusterPreviewShareComponent::SetMode(EDisplayClusterPreviewShareMode NewMode)
 {
-#if WITH_EDITORONLY_DATA
-
 	// Nothing to do if the mode is unchanged.
 	if (Mode == NewMode)
 	{
@@ -1140,32 +964,49 @@ void UDisplayClusterPreviewShareComponent::SetMode(EDisplayClusterPreviewShareMo
 
 	Mode = NewMode;
 
-#if WITH_EDITOR
-
-	// We ignore the desired Mode if it is not allowed.
-	if (!AllowedToShare())
-	{
-		Mode = EDisplayClusterPreviewShareMode::None;
-	}
-
 	ModeChanged();
-
-#endif // WITH_EDITOR
-
-#endif // WITH_EDITORONLY_DATA
-
 }
 
 void UDisplayClusterPreviewShareComponent::SetUniqueName(const FString& NewUniqueName)
 {
-#if WITH_EDITORONLY_DATA
 	UniqueName = NewUniqueName.TrimStartAndEnd();
-#endif // WITH_EDITORONLY_DATA
-
-#if WITH_EDITOR
 
 	// All the names are now invalid, so we need to close all media.
 	CloseAllMedia();
+}
+
+#if WITH_EDITOR
+
+void UDisplayClusterPreviewShareComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UDisplayClusterPreviewShareComponent, Mode))
+	{
+		ModeChanged();
+	}
+	else if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UDisplayClusterPreviewShareComponent, UniqueName))
+	{
+		// Remove spaces to reduce chances of the user not realizing that there is a mismatch with its counterpart.
+		UniqueName = UniqueName.TrimStartAndEnd();
+
+		// All the names are now invalid, so we need to close all media.
+		CloseAllMedia();
+	}
+	else if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UDisplayClusterPreviewShareComponent, SourceNDisplayActor))
+	{
+		ModeChanged();
+	}
+}
+
+void UDisplayClusterPreviewShareComponent::HandleMapChanged_Editor(UWorld* InWorld, EMapChangeType InMapChangeType)
+{
+	// We remove the reference to the source actor preview texture to avoid this being interpreted as a 
+	// memory leak when unloadin the source actor map while the current map is kept open.
+	if (Mode == EDisplayClusterPreviewShareMode::PullActor)
+	{
+		RestoreRootActorOriginalSettings();
+	}
+}
 
 #endif // WITH_EDITOR
-}

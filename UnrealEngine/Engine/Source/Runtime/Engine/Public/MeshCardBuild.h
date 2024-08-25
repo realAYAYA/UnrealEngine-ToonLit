@@ -2,17 +2,17 @@
 
 #pragma once
 
-#include "AssetCompilingManager.h"
 #include "Async/AsyncWork.h"
-#include "AsyncCompilationHelpers.h"
 #include "DerivedMeshDataTaskUtils.h"
 #include "MeshCardRepresentation.h"
 #include "RenderDeferredCleanup.h"
+#include "IAssetCompilingManager.h"
 
 #include <atomic>
 
+class FAsyncCompilationNotification;
 class UStaticMesh;
-class FSignedDistanceFieldBuildMaterialData;
+struct FSignedDistanceFieldBuildSectionData;
 
 class FLumenCardBuildData
 {
@@ -190,7 +190,7 @@ public:
 	bool bSuccess = false;
 
 #if WITH_EDITOR
-	TArray<FSignedDistanceFieldBuildMaterialData> MaterialBlendModes;
+	TArray<FSignedDistanceFieldBuildSectionData> SectionData;
 #endif
 
 	FSourceMeshDataForDerivedDataTask SourceMeshData;
@@ -297,7 +297,7 @@ private:
 
 	mutable FCriticalSection CriticalSection;
 
-	FAsyncCompilationNotification Notification;
+	TUniquePtr<FAsyncCompilationNotification> Notification;
 };
 
 /** Global build queue. */
@@ -307,3 +307,7 @@ extern ENGINE_API FString BuildCardRepresentationDerivedDataKey(const FString& I
 
 extern ENGINE_API void BeginCacheMeshCardRepresentation(const ITargetPlatform* TargetPlatform, UStaticMesh* StaticMeshAsset, class FStaticMeshRenderData& RenderData, const FString& DistanceFieldKey, FSourceMeshDataForDerivedDataTask* OptionalSourceMeshData);
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "AssetCompilingManager.h"
+#include "AsyncCompilationHelpers.h"
+#endif

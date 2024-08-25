@@ -9,7 +9,7 @@
 struct FGameplayEffectRemovalInfo;
 
 /** Specifies tag requirements that the Target (owner of the Gameplay Effect) must have if this GE should apply or continue to execute */
-UCLASS()
+UCLASS(DisplayName="Require Tags to Apply/Continue This Effect")
 class GAMEPLAYABILITIES_API UTargetTagRequirementsGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()
@@ -39,7 +39,7 @@ private:
 	void OnTagChanged(const FGameplayTag GameplayTag, int32 NewCount, FActiveGameplayEffectHandle ActiveGEHandle) const;
 
 public:
-	/** Tag requirements for this GameplayEffect to be applied to a target. This is pass/fail at the time of application. If fail, this GE fails to apply. */
+	/** Tag requirements the target must have for this GameplayEffect to be applied. This is pass/fail at the time of application. If fail, this GE fails to apply. */
 	UPROPERTY(EditDefaultsOnly, Category = Tags)
 	FGameplayTagRequirements ApplicationTagRequirements;
 

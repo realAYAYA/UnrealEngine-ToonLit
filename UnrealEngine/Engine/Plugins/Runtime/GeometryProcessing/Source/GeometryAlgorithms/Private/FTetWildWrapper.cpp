@@ -3,7 +3,9 @@
 
 #include "FTetWildWrapper.h"
 
+THIRD_PARTY_INCLUDES_START
 #include "ThirdParty/fTetWild/FloatTetwild.h"
+THIRD_PARTY_INCLUDES_END
 
 namespace UE::Geometry::FTetWild
 {

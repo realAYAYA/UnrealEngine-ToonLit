@@ -35,10 +35,9 @@ namespace UE::Json
 		struct CMap 
 		{
 			template <typename T>
-			auto Requires() -> decltype(
-				TOr<
-					TIsTMap<T>,
-					TIsDerivedFrom<T, TMap<typename T::KeyType, typename T::ValueType>>>::Value);
+			auto Requires(const TMap<typename T::KeyType, typename T::ValueType>* MapPtr, T* Ptr) -> decltype(
+				MapPtr = Ptr
+			);
 		};
 	}
 	

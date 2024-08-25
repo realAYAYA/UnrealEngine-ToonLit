@@ -174,7 +174,9 @@ void FSkeletalMeshModelingToolsEditorModeToolkit::RegisterPalettes()
 		Commands.BeginSkinWeightsBindingTool,
 		Commands.BeginSkinWeightsPaintTool,
 		Commands.BeginAttributeEditorTool,
-		Commands.BeginMeshAttributePaintTool
+		Commands.BeginMeshAttributePaintTool,
+		Commands.BeginPolyGroupsTool,
+		Commands.BeginMeshGroupPaintTool
 	});
 	ToolkitBuilder->AddPalette(
 		MakeShareable( new FToolPalette( Commands.LoadSkinTools.ToSharedRef(), SkinCommands ) ) );
@@ -210,7 +212,7 @@ void FSkeletalMeshModelingToolsEditorModeToolkit::RegisterPalettes()
 	ToolkitBuilder->AddPalette(
 		MakeShareable( new FToolPalette( Commands.LoadMeshOpsTools.ToSharedRef(), ProcessMeshCommands ) ) );
 
-	ToolkitBuilder->SetActivePaletteOnLoad(Commands.BeginSkeletonEditingTool.Get());
+	ToolkitBuilder->SetActivePaletteOnLoad(Commands.LoadSkinTools.Get());
 	ToolkitBuilder->UpdateWidget();
 	
 	// if selected palette changes, make sure we are showing the palette command buttons, which may be hidden by active Tool

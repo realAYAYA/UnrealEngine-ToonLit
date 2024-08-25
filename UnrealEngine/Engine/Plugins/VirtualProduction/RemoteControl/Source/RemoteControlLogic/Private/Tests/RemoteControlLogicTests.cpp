@@ -23,7 +23,7 @@
 #define PROP_NAME(Class, Name) GET_MEMBER_NAME_CHECKED(Class, Name)
 #define GET_TEST_PROP(PropName) URemoteControlLogicTestData::StaticClass()->FindPropertyByName(PROP_NAME(URemoteControlLogicTestData, PropName))
  
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRemoteControlLogicTest, "Plugin.RemoteControl.Logic.Runtime", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRemoteControlLogicTest, "Plugins.RemoteControl.Logic.Runtime", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FRemoteControlLogicTest::RunTest(const FString& Parameters)
 {
 	// 1. Create Preset
@@ -71,7 +71,7 @@ bool FRemoteControlLogicTest::RunTest(const FString& Parameters)
 	// 4. Add Behaviour To Properties
 	// 4.1 Add Conditional Behaviour
 	URCBehaviour* FloatControllerBehaviour = FloatController->AddBehaviour(URCBehaviourConditionalNode::StaticClass());
-	const URCBehaviourConditional* ConditionalBehaviour = Cast<URCBehaviourConditional>(FloatControllerBehaviour);
+	URCBehaviourConditional* ConditionalBehaviour = Cast<URCBehaviourConditional>(FloatControllerBehaviour);
 	float IsEqualBehaviourFloatValue = 0.f;
  
 	// @todo: Add Conditional Behaviour Unit Tests here.
@@ -98,8 +98,21 @@ bool FRemoteControlLogicTest::RunTest(const FString& Parameters)
 	URCPropertyAction* StrControllerBehaviourAction = Cast<URCPropertyAction> (StrControllerBehaviour->ActionContainer->AddAction(RCProp1));
 	FColor StringControllerColorValue(7,8,9,10);
 	TestTrue(TEXT("Should Set Color"), StrControllerBehaviourAction->PropertySelfContainer->SetValueColor(StringControllerColorValue));
-	
- 
+
+	// 5.41 Add Condition to behaviour
+	FRCBehaviourCondition ConditionProp;
+	ConditionProp.ConditionType = ERCBehaviourConditionType::IsEqual;
+	ConditionProp.Comparand = NewObject<URCVirtualPropertySelfContainer>();
+	ConditionProp.Comparand->AddProperty(FName(TEXT("Prop_Condition")), EPropertyBagPropertyType::Float);
+	ConditionProp.Comparand->SetValueFloat(0.65f);
+	ConditionalBehaviour->Conditions.Add(FloatControllerBehaviourAction, ConditionProp);
+	FRCBehaviourCondition ConditionFunc;
+	ConditionFunc.ConditionType = ERCBehaviourConditionType::IsEqual;
+	ConditionFunc.Comparand = NewObject<URCVirtualPropertySelfContainer>();
+	ConditionFunc.Comparand->AddProperty(FName(TEXT("Func_Condition")), EPropertyBagPropertyType::Float);
+	ConditionFunc.Comparand->SetValueFloat(0.65f);
+	ConditionalBehaviour->Conditions.Add(FloatControllerBehaviourAction1, ConditionFunc);
+
 	// 5.5 It should not add same action for second time
 	URCAction* StrControllerBehaviourAction1 = StrControllerBehaviour->ActionContainer->AddAction(RCProp1);
 	

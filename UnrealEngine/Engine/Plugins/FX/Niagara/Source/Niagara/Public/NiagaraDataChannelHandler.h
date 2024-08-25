@@ -55,6 +55,9 @@ public:
 
 	NIAGARA_API FNiagaraDataChannelDataPtr CreateData();
 
+	/** Returns the tick group we're currently being processed or most recently processed. */
+	ETickingGroup GetCurrentTickGroup() { return CurrentTG; }
+
 protected:
 
 	UPROPERTY()
@@ -67,4 +70,6 @@ protected:
 	/** Helper object allowing BP to read data in this channel. */
 	UPROPERTY()
 	TObjectPtr<UNiagaraDataChannelReader> Reader;
+
+	ETickingGroup CurrentTG = ETickingGroup::TG_PrePhysics;
 };

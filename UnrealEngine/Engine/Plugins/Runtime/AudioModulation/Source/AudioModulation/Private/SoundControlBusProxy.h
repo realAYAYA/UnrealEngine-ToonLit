@@ -27,7 +27,7 @@ namespace AudioModulation
 		Audio::FModulationParameter OutputParameter;
 
 		FControlBusSettings(const USoundControlBus& InBus)
-			: TModulatorBase<FBusId>(InBus.GetName(), InBus.GetUniqueID())
+			: TModulatorBase<FBusId>(InBus.GetFName(), InBus.GetUniqueID())
 			, bBypass(InBus.bBypass)
 			, DefaultValue(InBus.GetDefaultNormalizedValue())
 			, MixFunction(InBus.GetMixFunction())

@@ -65,6 +65,12 @@ namespace EpicGames.Perforce
 		public StreamOptions Options { get; set; }
 
 		/// <summary>
+		/// Parent view
+		/// </summary>
+		[PerforceTag("ParentView")]
+		public string? ParentView { get; set; }
+
+		/// <summary>
 		/// List of paths in the stream spec
 		/// </summary>
 		[PerforceTag("Paths")]
@@ -90,6 +96,27 @@ namespace EpicGames.Perforce
 			Stream = null!;
 			Name = null!;
 			Owner = null!;
+		}
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="stream">Stream</param>
+		/// <param name="owner">Owner</param>
+		/// <param name="name">Name of the stream</param>
+		/// <param name="parent">Parent stream</param>
+		/// <param name="type">Stream type</param>
+		/// <param name="parentView">Parent view</param>
+		/// <param name="paths">List of paths in the stream spec</param>
+		public StreamRecord(string stream, string owner, string name, string parent, string type, string parentView, List<string> paths)
+		{
+			Stream = stream;
+			Owner = owner;
+			Name = name;
+			Parent = parent;
+			Type = type;
+			ParentView = parentView;
+			Paths = paths;
 		}
 	}
 }

@@ -19,8 +19,10 @@ void FStateTreeTraceAnalyzer::OnAnalysisBegin(const FOnAnalysisContext& Context)
 {
 	auto& Builder = Context.InterfaceBuilder;
 
+	Builder.RouteEvent(RouteId_AssetDebugId, "StateTreeDebugger", "AssetDebugIdEvent");
 	Builder.RouteEvent(RouteId_WorldTimestamp, "StateTreeDebugger", "WorldTimestampEvent");
 	Builder.RouteEvent(RouteId_Instance, "StateTreeDebugger", "InstanceEvent");
+	Builder.RouteEvent(RouteId_InstanceFrame, "StateTreeDebugger", "InstanceFrameEvent");
 	Builder.RouteEvent(RouteId_Phase, "StateTreeDebugger", "PhaseEvent");
 	Builder.RouteEvent(RouteId_LogMessage, "StateTreeDebugger", "LogEvent");
 	Builder.RouteEvent(RouteId_State, "StateTreeDebugger", "StateEvent");
@@ -45,20 +47,19 @@ bool FStateTreeTraceAnalyzer::OnEvent(const uint16 RouteId, EStyle Style, const 
 			WorldTime = EventData.GetValue<double>("WorldTime");
 			break;
 		}
-	case RouteId_Instance:
+	case RouteId_AssetDebugId:
 		{
 			FString ObjectName, ObjectPathName;
 			EventData.GetString("TreeName", ObjectName);
 			EventData.GetString("TreePath", ObjectPathName);
 
-			const FTopLevelAssetPath Path((FName)ObjectPathName, (FName)ObjectName);
 			TWeakObjectPtr<const UStateTree> WeakStateTree;
 			{
 				// This might not work when using a debugger on a client but should be fine in Editor as long as
 				// we are not trying to find the object during GC. We might not currently be in the game thread.  
 				// @todo STDBG: eventually errors should be reported in the UI
 				FGCScopeGuard Guard;
-				WeakStateTree = FindObject<UStateTree>(Path);
+				WeakStateTree = FindObject<UStateTree>(nullptr, *ObjectPathName);
 			}
 
 			if (const UStateTree* StateTree = WeakStateTree.Get())
@@ -66,15 +67,7 @@ bool FStateTreeTraceAnalyzer::OnEvent(const uint16 RouteId, EStyle Style, const 
 				const uint32 CompiledDataHash = EventData.GetValue<uint32>("CompiledDataHash");
 				if (StateTree->LastCompiledEditorDataHash == CompiledDataHash)
 				{
-					FString InstanceName;
-					EventData.GetString("InstanceName", InstanceName);
-
-					Provider.AppendInstanceEvent(StateTree,
-						FStateTreeInstanceDebugId(EventData.GetValue<uint32>("InstanceId"), EventData.GetValue<uint32>("InstanceSerial")),
-						*InstanceName,
-						Context.EventTime.AsSeconds(EventData.GetValue<uint64>("Cycle")),
-						WorldTime,
-						EventData.GetValue<EStateTreeTraceEventType>("EventType"));
+					Provider.AppendAssetDebugId(StateTree, FStateTreeIndex16(EventData.GetValue<uint16>("AssetDebugId")));
 				}
 				else
 				{
@@ -85,6 +78,37 @@ bool FStateTreeTraceAnalyzer::OnEvent(const uint16 RouteId, EStyle Style, const 
 			{
 				UE_LOG(LogStateTree, Warning, TEXT("Unable to find StateTree asset: %s : %s"), *ObjectPathName, *ObjectName);
 			}
+			break;
+		}
+	case RouteId_Instance:
+		{
+			FString InstanceName;
+			EventData.GetString("InstanceName", InstanceName);
+
+			Provider.AppendInstanceEvent(FStateTreeIndex16(EventData.GetValue<uint16>("AssetDebugId")),
+				FStateTreeInstanceDebugId(EventData.GetValue<uint32>("InstanceId"), EventData.GetValue<uint32>("InstanceSerial")),
+				*InstanceName,
+				Context.EventTime.AsSeconds(EventData.GetValue<uint64>("Cycle")),
+				WorldTime,
+				EventData.GetValue<EStateTreeTraceEventType>("EventType"));
+			break;
+		}
+	case RouteId_InstanceFrame:
+		{
+			TWeakObjectPtr<const UStateTree> WeakStateTree;
+			if (Provider.GetAssetFromDebugId(FStateTreeIndex16(EventData.GetValue<uint16>("AssetDebugId")), WeakStateTree))
+			{
+				const FStateTreeTraceInstanceFrameEvent Event(WorldTime, EStateTreeTraceEventType::Push, WeakStateTree.Get());
+			
+				Provider.AppendEvent(FStateTreeInstanceDebugId(EventData.GetValue<uint32>("InstanceId"), EventData.GetValue<uint32>("InstanceSerial")),
+					Context.EventTime.AsSeconds(EventData.GetValue<uint64>("Cycle")),
+					FStateTreeTraceEventVariantType(TInPlaceType<FStateTreeTraceInstanceFrameEvent>(), Event));
+			}
+			else
+			{
+				UE_LOG(LogStateTree, Error, TEXT("Instance frame event refers to an asset Id that wasn't added previously."));
+			}
+
 			break;
 		}
 	case RouteId_Phase:
@@ -114,8 +138,7 @@ bool FStateTreeTraceAnalyzer::OnEvent(const uint16 RouteId, EStyle Style, const 
 		{
 			const FStateTreeTraceStateEvent Event(WorldTime,
 				FStateTreeIndex16(EventData.GetValue<uint16>("StateIndex")),
-				EventData.GetValue<EStateTreeTraceEventType>("EventType"),
-				EventData.GetValue<EStateTreeStateSelectionBehavior>("SelectionBehavior"));
+				EventData.GetValue<EStateTreeTraceEventType>("EventType"));
 
 			Provider.AppendEvent(FStateTreeInstanceDebugId(EventData.GetValue<uint32>("InstanceId"), EventData.GetValue<uint32>("InstanceSerial")),
 				Context.EventTime.AsSeconds(EventData.GetValue<uint64>("Cycle")),
@@ -193,15 +216,47 @@ bool FStateTreeTraceAnalyzer::OnEvent(const uint16 RouteId, EStyle Style, const 
 	case RouteId_ActiveStates:
 		{
 			FStateTreeTraceActiveStatesEvent Event(WorldTime);
-			Event.ActiveStates = EventData.GetArrayView<uint16>("ActiveStates");
 
-			Provider.AppendEvent(FStateTreeInstanceDebugId(EventData.GetValue<uint32>("InstanceId"), EventData.GetValue<uint32>("InstanceSerial")),
-				Context.EventTime.AsSeconds(EventData.GetValue<uint64>("Cycle")),
-				FStateTreeTraceEventVariantType(TInPlaceType<FStateTreeTraceActiveStatesEvent>(), Event));
+			TArray<FStateTreeStateHandle> ActiveStates(EventData.GetArrayView<uint16>("ActiveStates"));
+			TArray<uint16> AssetDebugIds(EventData.GetArrayView<uint16>("AssetDebugIds"));
+
+			if (ensureMsgf(ActiveStates.Num() == AssetDebugIds.Num(), TEXT("Each state is expected to have a matching asset id")))
+			{
+				FStateTreeIndex16 LastAssetDebugId;
+
+				FStateTreeTraceActiveStates::FAssetActiveStates* AssetActiveStates = nullptr;
+				for (int Index = 0; Index < ActiveStates.Num(); ++Index)
+				{
+					FStateTreeIndex16 AssetDebugId(AssetDebugIds[Index]);
+					if (AssetDebugId != LastAssetDebugId)
+					{
+						TWeakObjectPtr<const UStateTree> WeakStateTree;
+						if (Provider.GetAssetFromDebugId(AssetDebugId, WeakStateTree))
+						{
+							FStateTreeTraceActiveStates::FAssetActiveStates& NewPair = Event.ActiveStates.PerAssetStates.Emplace_GetRef();
+							NewPair.WeakStateTree = WeakStateTree;
+							AssetActiveStates = &NewPair;
+							LastAssetDebugId = AssetDebugId;	
+						}
+						else
+						{
+							UE_LOG(LogStateTree, Error, TEXT("Instance frame event refers to an asset Id that wasn't added previously."));
+							continue;
+						}
+					}
+
+					check(AssetActiveStates != nullptr);
+					AssetActiveStates->ActiveStates.Push(ActiveStates[Index]);
+				}
+
+				Provider.AppendEvent(FStateTreeInstanceDebugId(EventData.GetValue<uint32>("InstanceId"), EventData.GetValue<uint32>("InstanceSerial")),
+					Context.EventTime.AsSeconds(EventData.GetValue<uint64>("Cycle")),
+					FStateTreeTraceEventVariantType(TInPlaceType<FStateTreeTraceActiveStatesEvent>(), Event));
+			}
 			break;
 		}
 	default:
-		ensureMsgf(false, TEXT("Unhandle route id: %s"), RouteId);
+		ensureMsgf(false, TEXT("Unhandle route id: %u"), RouteId);
 	}
 
 	return true;

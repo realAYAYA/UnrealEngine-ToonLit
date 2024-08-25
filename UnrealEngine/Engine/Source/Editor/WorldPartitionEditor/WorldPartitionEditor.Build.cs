@@ -13,6 +13,7 @@ public class WorldPartitionEditor : ModuleRules
 				"CoreUObject",
 				"EditorFramework",
 				"EditorSubsystem",
+				"EditorWidgets",
 				"Engine",
 				"InputCore",
 				"Slate",
@@ -26,7 +27,8 @@ public class WorldPartitionEditor : ModuleRules
 				"RenderCore",
 				"Renderer",
 				"RHI",
-				"SceneOutliner"
+				"SceneOutliner",
+				"DataLayerEditor"
 			}
 		);
 

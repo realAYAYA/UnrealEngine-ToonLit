@@ -89,7 +89,7 @@ void FObjectMixerEditorList::CacheObjectFilterInstances()
 
 	if (ObjectFilterClasses.Num() > 0)
 	{
-		for (const TSubclassOf<UObjectMixerObjectFilter> Class : ObjectFilterClasses)
+		for (const TSubclassOf<UObjectMixerObjectFilter>& Class : ObjectFilterClasses)
 		{
 			UObjectMixerObjectFilter* NewInstance = NewObject<UObjectMixerObjectFilter>(GetTransientPackage(), Class);
 			ObjectFilterInstances.Add(TObjectPtr<UObjectMixerObjectFilter>(NewInstance));
@@ -162,7 +162,15 @@ bool FObjectMixerEditorList::RequestAddObjectsToCollection(const FName& Collecti
 		for (const TSubclassOf<UObjectMixerObjectFilter>& Class : GetObjectFilterClasses())
 		{
 			const FName FilterName = Class->GetFName();
-			return SerializedData->AddObjectsToCollection(FilterName, CollectionName, ObjectsToAdd);
+			if (SerializedData->AddObjectsToCollection(FilterName, CollectionName, ObjectsToAdd))
+			{
+				if (IsCollectionSelected(CollectionName))
+				{
+					RequestRebuildList();
+				}
+				return true;
+			}
+			return false;
 		}
 	}
 
@@ -178,7 +186,15 @@ bool FObjectMixerEditorList::RequestRemoveObjectsFromCollection(const FName& Col
 			const FName FilterName = Class->GetFName();
 			if (SerializedData->DoesCollectionExist(FilterName, CollectionName))
 			{
-				return SerializedData->RemoveObjectsFromCollection(FilterName, CollectionName, ObjectsToRemove);
+				if (SerializedData->RemoveObjectsFromCollection(FilterName, CollectionName, ObjectsToRemove))
+				{
+					if (IsCollectionSelected(CollectionName))
+					{
+						RequestRebuildList();
+					}
+					return true;
+				}
+				return false;
 			}
 		}
 	}
@@ -544,7 +560,7 @@ const TSet<FName>& FObjectMixerEditorList::GetSelectedCollections() const
 	return SelectedCollections;
 }
 
-bool FObjectMixerEditorList::IsCollectionSelected(const FName& CollectionName)
+bool FObjectMixerEditorList::IsCollectionSelected(const FName& CollectionName) const
 {
 	return GetSelectedCollections().Contains(CollectionName);
 }

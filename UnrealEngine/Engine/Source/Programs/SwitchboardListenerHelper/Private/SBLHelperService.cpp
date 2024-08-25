@@ -108,7 +108,7 @@ bool FSBLHelperService::ParseIncomingMessage(const FString& Message, const FIPv4
 	}
 	else
 	{
-		UE_LOG(LogSwitchboardListenerHelper, Error, TEXT("Unsupported command '%s'"), &Command);
+		UE_LOG(LogSwitchboardListenerHelper, Error, TEXT("Unsupported command '%s'"), *Command);
 	}
 
 	return false;

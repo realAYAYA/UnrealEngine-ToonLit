@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -100,30 +101,30 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Singleton instance of the default output logger
 		/// </summary>
-		private static readonly DefaultLogger DefaultLogger = new DefaultLogger();
+		private static readonly DefaultLogger s_defaultLogger = new DefaultLogger();
 
 		/// <summary>
 		/// Logger instance which parses events and forwards them to the main logger.
 		/// </summary>
-		private static readonly LegacyEventLogger LegacyLogger = new LegacyEventLogger(DefaultLogger);
+		private static readonly LegacyEventLogger s_legacyLogger = new LegacyEventLogger(s_defaultLogger);
 
 		/// <summary>
 		/// Accessor for the global event parser from legacy events
 		/// </summary>
-		public static LogEventParser EventParser => LegacyLogger.Parser;
+		public static LogEventParser EventParser => s_legacyLogger.Parser;
 
 		/// <summary>
 		/// Logger instance
 		/// </summary>
-		public static ILogger Logger => LegacyLogger;
+		public static ILogger Logger => s_legacyLogger;
 
 		/// <summary>
 		/// When true, verbose logging is enabled.
 		/// </summary>
 		public static LogEventType OutputLevel
 		{
-			get => (LogEventType)DefaultLogger.OutputLevel;
-			set => DefaultLogger.OutputLevel = (LogLevel)value;
+			get => (LogEventType)s_defaultLogger.OutputLevel;
+			set => s_defaultLogger.OutputLevel = (LogLevel)value;
 		}
 
 		/// <summary>
@@ -131,8 +132,8 @@ namespace EpicGames.Core
 		/// </summary>
 		public static bool IncludeTimestamps
 		{
-			get => DefaultLogger.IncludeTimestamps;
-			set => DefaultLogger.IncludeTimestamps = value;
+			get => s_defaultLogger.IncludeTimestamps;
+			set => s_defaultLogger.IncludeTimestamps = value;
 		}
 
 		/// <summary>
@@ -150,8 +151,8 @@ namespace EpicGames.Core
 		/// </summary>
 		public static bool ColorConsoleOutput
 		{
-			get => DefaultLogger.ColorConsoleOutput;
-			set => DefaultLogger.ColorConsoleOutput = value;
+			get => s_defaultLogger.ColorConsoleOutput;
+			set => s_defaultLogger.ColorConsoleOutput = value;
 		}
 
 		/// <summary>
@@ -159,8 +160,8 @@ namespace EpicGames.Core
 		/// </summary>
 		public static bool IncludeStartingTimestamp
 		{
-			get => DefaultLogger.IncludeStartingTimestamp;
-			set => DefaultLogger.IncludeStartingTimestamp = value;
+			get => s_defaultLogger.IncludeStartingTimestamp;
+			set => s_defaultLogger.IncludeStartingTimestamp = value;
 		}
 
 		/// <summary>
@@ -179,12 +180,12 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Path to the log file being written to. May be null.
 		/// </summary>
-		public static FileReference? OutputFile => DefaultLogger?.OutputFile;
+		public static FileReference? OutputFile => s_defaultLogger?.OutputFile;
 
 		/// <summary>
 		/// A collection of strings that have been already written once
 		/// </summary>
-		private static readonly HashSet<string> s_writeOnceSet = new HashSet<string>();
+		private static readonly ConcurrentDictionary<string, bool> s_writeOnceSet = new();
 
 		/// <summary>
 		/// Overrides the logger used for formatting output, after event parsing
@@ -192,7 +193,7 @@ namespace EpicGames.Core
 		/// <param name="logger"></param>
 		public static void SetInnerLogger(ILogger logger)
 		{
-			LegacyLogger.SetInnerLogger(logger);
+			s_legacyLogger.SetInnerLogger(logger);
 		}
 
 		/// <summary>
@@ -201,7 +202,7 @@ namespace EpicGames.Core
 		/// <returns></returns>
 		public static async Task FlushAsync()
 		{
-			await DefaultLogger.FlushAsync();
+			await s_defaultLogger.FlushAsync();
 		}
 
 		/// <summary>
@@ -282,7 +283,7 @@ namespace EpicGames.Core
 		/// <returns>The created trace listener</returns>
 		public static void AddFileWriterWithoutBackup(string name, FileReference outputFile)
 		{
-			TextWriterTraceListener firstTextWriter = DefaultLogger.AddFileWriter(name, outputFile);
+			TextWriterTraceListener firstTextWriter = s_defaultLogger.AddFileWriter(name, outputFile);
 			
 			// find the StartupTraceListener in the listeners that was added early on
 			IEnumerable<StartupTraceListener> startupListeners = Trace.Listeners.OfType<StartupTraceListener>();
@@ -300,7 +301,7 @@ namespace EpicGames.Core
 		/// <param name="traceListener">The <see cref="TraceListener"/> to add.</param>
 		public static void AddTraceListener(TraceListener traceListener)
 		{
-			DefaultLogger.AddTraceListener(traceListener);
+			s_defaultLogger.AddTraceListener(traceListener);
 		}
 
 		/// <summary>
@@ -309,7 +310,7 @@ namespace EpicGames.Core
 		/// <param name="traceListener">The <see cref="TraceListener"/> to remove.</param>
 		public static void RemoveTraceListener(TraceListener traceListener)
 		{
-			DefaultLogger.RemoveTraceListener(traceListener);
+			s_defaultLogger.RemoveTraceListener(traceListener);
 		}
 
 		/// <summary>
@@ -410,7 +411,7 @@ namespace EpicGames.Core
 				}
 
 				// if we want this message only written one time, check if it was already written out
-				if (bWriteOnce && !s_writeOnceSet.Add(message.ToString()))
+				if (bWriteOnce && !s_writeOnceSet.TryAdd(message.ToString(), true))
 				{
 					return;
 				}
@@ -759,7 +760,7 @@ namespace EpicGames.Core
 		[Conditional("TRACE")]
 		public static void PushStatus(string message)
 		{
-			DefaultLogger.PushStatus(message);
+			s_defaultLogger.PushStatus(message);
 		}
 
 		/// <summary>
@@ -769,7 +770,7 @@ namespace EpicGames.Core
 		[Conditional("TRACE")]
 		public static void UpdateStatus(string message)
 		{
-			DefaultLogger.UpdateStatus(message);
+			s_defaultLogger.UpdateStatus(message);
 		}
 
 		/// <summary>
@@ -778,8 +779,17 @@ namespace EpicGames.Core
 		[Conditional("TRACE")]
 		public static void PopStatus()
 		{
-			DefaultLogger.PopStatus();
+			s_defaultLogger.PopStatus();
 		}
+	}
+
+	/// <summary>
+	/// NullScope which does nothing
+	/// </summary>
+	internal sealed class NullScope : IDisposable
+	{
+		/// <inheritdoc/>
+		public void Dispose() { }
 	}
 
 	/// <summary>
@@ -787,11 +797,6 @@ namespace EpicGames.Core
 	/// </summary>
 	public class CaptureLogger : ILogger
 	{
-		class NullScope : IDisposable
-		{
-			public void Dispose() { }
-		}
-
 		/// <summary>
 		/// List of captured events
 		/// </summary>
@@ -1169,16 +1174,16 @@ namespace EpicGames.Core
 			return false;
 		}
 
-		public IDisposable BeginScope<TState>(TState state)
-		{
-			throw new NotImplementedException();
-		}
+		/// <inheritdoc/>
+		public IDisposable BeginScope<TState>(TState state) => new NullScope();
 
+		/// <inheritdoc/>
 		public bool IsEnabled(LogLevel logLevel)
 		{
 			return logLevel >= OutputLevel;
 		}
 
+		/// <inheritdoc/>
 		public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
 		{
 			if (!IsEnabled(logLevel))
@@ -1215,7 +1220,19 @@ namespace EpicGames.Core
 					}
 				}
 
-				JsonLogEvent jsonLogEvent = JsonLogEvent.FromLoggerState(logLevel, eventId, state, exception, formatter);
+				Activity? activity = Activity.Current;
+
+				JsonLogEvent jsonLogEvent;
+				if (activity == null)
+				{
+					jsonLogEvent = JsonLogEvent.FromLoggerState(logLevel, eventId, state, exception, formatter);
+				}
+				else
+				{
+					LogEvent logEvent = LogEvent.FromState(logLevel, eventId, state, exception, formatter);
+					logEvent.Properties = Enumerable.Append(logEvent.Properties ?? Array.Empty<KeyValuePair<string, object>>(), new KeyValuePair<string, object>("Activity", activity));
+					jsonLogEvent = new JsonLogEvent(logEvent);
+				}
 				_eventChannel.Writer.TryWrite(jsonLogEvent);
 
 				// Handle the console output separately; we format things differently
@@ -1254,8 +1271,6 @@ namespace EpicGames.Core
 					catch (IOException)
 					{
 						// Potential file access/sharing issue on std out
-						// This can occur on some versions of mono (e.g. macOS 6.12.0) if writing to a full pipe
-						// during IPC when the reader isn't consuming it quick enough
 					}
 					finally
 					{

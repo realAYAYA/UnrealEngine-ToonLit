@@ -7,6 +7,7 @@
 #include "EntitySystem/TrackInstance/MovieSceneTrackInstance.h"
 #include "Evaluation/MovieSceneEvaluationKey.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateTypes.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 #include "Misc/TVariant.h"
 #include "MovieSceneSequenceID.h"
 #include "UObject/WeakObjectPtrTemplates.h"
@@ -26,6 +27,7 @@ namespace MovieScene
 
 struct FPreAnimatedStateExtension;
 struct FPreAnimatedStateMetaData;
+struct FSharedPlaybackState;
 
 }
 }
@@ -36,15 +38,28 @@ struct FPreAnimatedStateMetaData;
  */
 struct FScopedPreAnimatedCaptureSource
 {
+	using FRootInstanceHandle = UE::MovieScene::FRootInstanceHandle;
+	using FSharedPlaybackState = UE::MovieScene::FSharedPlaybackState;
+
+	/**
+	 * Construct this capture source from a template (FMovieSceneEvalTemplate) evaluation key, and whether this should restore state when the template is finished
+	 */
+	MOVIESCENE_API explicit FScopedPreAnimatedCaptureSource(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneEvaluationKey& InEvalKey, bool bInWantsRestoreState);
+
 	/**
 	 * Construct this capture source from a template (FMovieSceneEvalTemplate) evaluation key, and whether this should restore state when the template is finished
 	 */
 	MOVIESCENE_API explicit FScopedPreAnimatedCaptureSource(FMovieScenePreAnimatedState* InPreAnimatedState, const FMovieSceneEvaluationKey& InEvalKey, bool bInWantsRestoreState);
 
 	/**
-	 * Construct this capture source from an evaluation hook (UMovieSceneEvaluationHookSection), its SequenceID, and whether this should restore state when the template is finished
+	 * Construct this capture source from an evaluation hook (UMovieSceneEvaluationHookSection), its instance handle, and whether this should restore state when the template is finished
 	 */
-	MOVIESCENE_API explicit FScopedPreAnimatedCaptureSource(FMovieScenePreAnimatedState* InPreAnimatedState, const UObject* InEvalHook, FMovieSceneSequenceID SequenceID, bool bInWantsRestoreState);
+	MOVIESCENE_API explicit FScopedPreAnimatedCaptureSource(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const UObject* InEvalHook, FMovieSceneSequenceID InSequenceID, bool bInWantsRestoreState);
+
+	/**
+	 * Construct this capture source from an evaluation hook (UMovieSceneEvaluationHookSection), its instance handle, and whether this should restore state when the template is finished
+	 */
+	MOVIESCENE_API explicit FScopedPreAnimatedCaptureSource(FMovieScenePreAnimatedState* InPreAnimatedState, const UObject* InEvalHook, FMovieSceneSequenceID InSequenceID, bool bInWantsRestoreState);
 
 	/**
 	 * Construct this capture source from a track instance (UMovieSceneTrackInstance) and whether this should restore state when the template is finished
@@ -77,18 +92,15 @@ private:
 	static FScopedPreAnimatedCaptureSource*& GetCaptureSourcePtr();
 
 	void BeginTracking(const UE::MovieScene::FPreAnimatedStateMetaData& MetaData, UMovieSceneEntitySystemLinker* Linker);
-	UE::MovieScene::FRootInstanceHandle GetRootInstanceHandle(UMovieSceneEntitySystemLinker* Linker) const;
+	FRootInstanceHandle GetRootInstanceHandle(UMovieSceneEntitySystemLinker* Linker) const;
 
-	struct FEvalHookType
-	{
-		const UObject* EvalHook;
-		FMovieSceneSequenceID SequenceID;
-	};
-	using CaptureSourceType = TVariant<FMovieSceneEvaluationKey, FEvalHookType, UMovieSceneTrackInstance*, FMovieSceneTrackInstanceInput>;
+	using FPreAnimatedEvaluationKeyType = UE::MovieScene::FPreAnimatedEvaluationKeyType;
+	using FPreAnimatedEvalHookKeyType = UE::MovieScene::FPreAnimatedEvalHookKeyType;
+	using CaptureSourceType = TVariant<FPreAnimatedEvaluationKeyType, FPreAnimatedEvalHookKeyType, UMovieSceneTrackInstance*, FMovieSceneTrackInstanceInput>;
 
 	CaptureSourceType Variant;
+	FRootInstanceHandle RootInstanceHandle;
 	TWeakObjectPtr<UMovieSceneEntitySystemLinker> WeakLinker;
-	FMovieScenePreAnimatedState* OptionalSequencePreAnimatedState;
 	FScopedPreAnimatedCaptureSource* PrevCaptureSource;
 	bool bWantsRestoreState;
 };

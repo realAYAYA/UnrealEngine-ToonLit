@@ -4,12 +4,11 @@
 #include "../Common.ush"
 #include "../SceneTexturesCommon.ush"
 
+float2 InputSRIDimensions;
 float2 ScaledSRIDimensions;
 float2 TextureDimensions;
 float2 InvTextureDimensions;
 
-float2 SRIViewRectMin;
-float2 SRIViewRectMax;
 float2 ScaledUVOffset;
 float  InvDynamicResolutionScale;
 
@@ -71,8 +70,7 @@ void RescaleVariableRateShading(
 	const float epsilon = 0.0001;
 
 	const float2 HalfPixelOffset = float2(0.5, 0.5);
-	float2 UVOffset = ScaledUVOffset;
-	float2 CenterUV = UVOffset + (float2(DispatchThreadId.xy) + HalfPixelOffset) * pixelUVSize;
+	float2 CenterUV = (float2(DispatchThreadId.xy) + HalfPixelOffset) * pixelUVSize;
 	CenterUV = ReprojectBufferUV(DispatchThreadId, GroupThreadId, CenterUV, bValidThread); 
 
 	// FXC doesn't allow a thread to terminate before GroupMemoryBarrierWithGroupSync so 
@@ -89,14 +87,14 @@ void RescaleVariableRateShading(
 	// Convert from UV space to Texel space of the source (pre-scaled) image
 	int2 inputCoordStart = uvStart * InvDynamicResolutionScale * TextureDimensions.xy;
 	int2 inputCoordEnd = uvEnd * InvDynamicResolutionScale * TextureDimensions.xy;
+	
+	// Clamp start to top left corner of the input SRI.
+	inputCoordStart.x = max(inputCoordStart.x, 0.0f);
+	inputCoordStart.y = max(inputCoordStart.y, 0.0f);
 
-	// Clamp start to top left corner of the view rect.
-	inputCoordStart.x = max(inputCoordStart.x, SRIViewRectMin.x);
-	inputCoordStart.y = max(inputCoordStart.y, SRIViewRectMin.y);
-
-	// Clamp end to bottom right corner of the view rect.
-	inputCoordEnd.x = min(inputCoordEnd.x, SRIViewRectMax.x);
-	inputCoordEnd.y = min(inputCoordEnd.y, SRIViewRectMax.y);
+	// Clamp end to bottom right corner of the input SRI.
+	inputCoordEnd.x = min(inputCoordEnd.x, InputSRIDimensions.x);
+	inputCoordEnd.y = min(inputCoordEnd.y, InputSRIDimensions.y);
 
 	// start.x or y will be greater than end.x or y iff both corners were out of view on the same side.
 	// start is never clamped against the bottom-right and end is never clamped against the top-left
@@ -120,6 +118,6 @@ void RescaleVariableRateShading(
 		shadingRate = D3D12_SHADING_RATE_1X1 | (D3D12_SHADING_RATE_1X1 << CONSERVATIVE_SHADING_RATE_SHIFT);
 	}
 
-	ScaledSRITexture[DispatchThreadId.xy + UVOffset * TextureDimensions] = shadingRate & D3D12_SHADING_RATE_2X2;
-	ScaledConservativeSRITexture[DispatchThreadId.xy + UVOffset * TextureDimensions] = (shadingRate >> CONSERVATIVE_SHADING_RATE_SHIFT) & D3D12_SHADING_RATE_2X2;
+	ScaledSRITexture[DispatchThreadId.xy + ScaledUVOffset * TextureDimensions] = shadingRate & D3D12_SHADING_RATE_2X2;
+	ScaledConservativeSRITexture[DispatchThreadId.xy + ScaledUVOffset * TextureDimensions] = (shadingRate >> CONSERVATIVE_SHADING_RATE_SHIFT) & D3D12_SHADING_RATE_2X2;
 }

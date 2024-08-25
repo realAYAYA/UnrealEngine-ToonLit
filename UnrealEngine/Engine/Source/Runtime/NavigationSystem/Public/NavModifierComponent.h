@@ -2,7 +2,9 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
 #include "NavAreas/NavArea.h"
@@ -11,6 +13,7 @@
 
 struct FNavigationRelevantData;
 class UBodySetup;
+enum class ENavigationDataResolution : uint8;
 
 UCLASS(ClassGroup = (Navigation), meta = (BlueprintSpawnableComponent), hidecategories = (Activation), config = Engine, defaultconfig, MinimalAPI)
 class UNavModifierComponent : public UNavRelevantComponent
@@ -33,6 +36,10 @@ class UNavModifierComponent : public UNavRelevantComponent
 	UPROPERTY(config, EditAnywhere, Category = Navigation)
 	uint8 bIncludeAgentHeight : 1;
 
+
+	// Does the actual calculating and caching of the bounds when called by CalcAndCacheBounds
+	NAVIGATIONSYSTEM_API virtual void CalculateBounds() const;
+	// @Note We might make this function non-virtual in the future in favor of child classes overriding CalculateBounds, see #jira UE-202451
 	NAVIGATIONSYSTEM_API virtual void CalcAndCacheBounds() const override;
 	NAVIGATIONSYSTEM_API virtual void GetNavigationData(FNavigationRelevantData& Data) const override;
 

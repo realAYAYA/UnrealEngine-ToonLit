@@ -130,8 +130,6 @@ bool FNullHttpRequest::ProcessRequest()
 	CompletionStatus = EHttpRequestStatus::Processing;
 
 	UE_LOG(LogHttp, Log, TEXT("Start request. %p %s url=%s"), this, *GetVerb(), *GetURL());
-
-	FHttpModule::Get().GetHttpManager().AddRequest(SharedThis(this));
 	return true;
 }
 
@@ -155,6 +153,16 @@ EHttpRequestStatus::Type FNullHttpRequest::GetStatus() const
 	return CompletionStatus;
 }
 
+EHttpFailureReason FNullHttpRequest::GetFailureReason() const
+{
+	return FailureReason;
+}
+
+const FString& FNullHttpRequest::GetEffectiveURL() const
+{
+	return EffectiveUrl;
+}
+
 const FHttpResponsePtr FNullHttpRequest::GetResponse() const
 {
 	return FHttpResponsePtr(nullptr);
@@ -165,7 +173,7 @@ void FNullHttpRequest::Tick(float DeltaSeconds)
 	if (CompletionStatus == EHttpRequestStatus::Processing)
 	{
 		ElapsedTime += DeltaSeconds;
-		const float HttpTimeout = GetTimeoutOrDefault();
+		const float HttpTimeout = GetTimeout().Get(FHttpModule::Get().GetHttpTotalTimeout());
 		if (HttpTimeout > 0 && ElapsedTime >= HttpTimeout)
 		{
 			UE_LOG(LogHttp, Warning, TEXT("Timeout processing Http request. %p"),
@@ -184,6 +192,7 @@ float FNullHttpRequest::GetElapsedTime() const
 void FNullHttpRequest::FinishedRequest()
 {
 	CompletionStatus = EHttpRequestStatus::Failed;
+	FailureReason = EHttpFailureReason::Other;
 
 	UE_LOG(LogHttp, Log, TEXT("Finished request %p. no response %s url=%s elapsed=%.3f"),
 		this, *GetVerb(), *GetURL(), ElapsedTime);
@@ -198,6 +207,29 @@ void FNullHttpRequest::SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy 
 EHttpRequestDelegateThreadPolicy FNullHttpRequest::GetDelegateThreadPolicy() const
 {
 	return EHttpRequestDelegateThreadPolicy::CompleteOnGameThread;
+}
+
+void FNullHttpRequest::SetTimeout(float InTimeoutSecs) 
+{
+	TimeoutSecs = InTimeoutSecs;
+}
+
+void FNullHttpRequest::ClearTimeout() 
+{
+	TimeoutSecs.Reset();
+}
+
+TOptional<float> FNullHttpRequest::GetTimeout() const 
+{ 
+	return TimeoutSecs; 
+}
+
+void FNullHttpRequest::SetActivityTimeout(float InTimeoutSecs)
+{
+}
+
+void FNullHttpRequest::ProcessRequestUntilComplete()
+{
 }
 
 // FNullHttpResponse
@@ -246,5 +278,3 @@ FString FNullHttpResponse::GetContentAsString() const
 {
 	return FString();
 }
-
-

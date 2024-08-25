@@ -15,6 +15,7 @@
 #include "RenderCore.h"
 #include "SceneInterface.h"
 #include "Stats/StatsTrace.h"
+#include "Rendering/RenderCommandPipes.h"
 
 #if RHI_RAYTRACING
 #include "Engine/SkinnedAssetCommon.h"
@@ -154,8 +155,8 @@ void FSkeletalMeshObjectCPUSkin::Update(
 		// queue a call to update this data
 		{
 			FSkeletalMeshObjectCPUSkin* MeshObject = this;
-			ENQUEUE_RENDER_COMMAND(SkelMeshObjectUpdateDataCommand)(
-				[MeshObject, FrameNumberToPrepare, RevisionNumber, NewDynamicData](FRHICommandListImmediate& RHICmdList)
+			ENQUEUE_RENDER_COMMAND(SkelMeshObjectUpdateDataCommand)(UE::RenderCommandPipe::SkeletalMesh,
+				[MeshObject, FrameNumberToPrepare, RevisionNumber, NewDynamicData](FRHICommandList& RHICmdList)
 				{
 					FScopeCycleCounter Context(MeshObject->GetStatId());
 					MeshObject->UpdateDynamicData_RenderThread(RHICmdList, NewDynamicData, FrameNumberToPrepare, RevisionNumber);
@@ -186,7 +187,7 @@ void FSkeletalMeshObjectCPUSkin::UpdateSkinWeightBuffer(USkinnedMeshComponent* I
 	}
 }
 
-void FSkeletalMeshObjectCPUSkin::UpdateDynamicData_RenderThread(FRHICommandListImmediate& RHICmdList, FDynamicSkelMeshObjectDataCPUSkin* InDynamicData, uint64 FrameNumberToPrepare, uint32 RevisionNumber)
+void FSkeletalMeshObjectCPUSkin::UpdateDynamicData_RenderThread(FRHICommandList& RHICmdList, FDynamicSkelMeshObjectDataCPUSkin* InDynamicData, uint64 FrameNumberToPrepare, uint32 RevisionNumber)
 {
 	// we should be done with the old data at this point
 	delete DynamicData;
@@ -195,7 +196,7 @@ void FSkeletalMeshObjectCPUSkin::UpdateDynamicData_RenderThread(FRHICommandListI
 	check(DynamicData);
 
 	// update vertices using the new data
-	CacheVertices(DynamicData->LODIndex,true);
+	CacheVertices(DynamicData->LODIndex, true, RHICmdList);
 }
 
 #define SKIN_LOD_VERTICES(VertexType, NumUVs) \
@@ -221,9 +222,10 @@ void FSkeletalMeshObjectCPUSkin::UpdateDynamicData_RenderThread(FRHICommandListI
 }\
 	
 
-void FSkeletalMeshObjectCPUSkin::CacheVertices(int32 LODIndex, bool bForce) const
+void FSkeletalMeshObjectCPUSkin::CacheVertices(int32 LODIndex, bool bForce, FRHICommandList& RHICmdList) const
 {
 	SCOPE_CYCLE_COUNTER( STAT_CPUSkinUpdateRTTime);
+	check(IsInParallelRenderingThread());
 
 	// Source skel mesh and static lod model
 	FSkeletalMeshLODRenderData& LOD = SkeletalMeshRenderData->LODRenderData[LODIndex];
@@ -296,25 +298,18 @@ void FSkeletalMeshObjectCPUSkin::CacheVertices(int32 LODIndex, bool bForce) cons
 			}
 		}
 
-		BeginUpdateResourceRHI(&MeshLOD.PositionVertexBuffer);
-		BeginUpdateResourceRHI(&MeshLOD.StaticMeshVertexBuffer);
+		MeshLOD.PositionVertexBuffer.UpdateRHI(RHICmdList);
+		MeshLOD.StaticMeshVertexBuffer.UpdateRHI(RHICmdList);
 
-		const FSkeletalMeshObjectCPUSkin::FSkeletalMeshObjectLOD* MeshLODptr = &MeshLOD;
-		FLocalVertexFactory* VertexFactoryPtr = &MeshLOD.VertexFactory;
-		ENQUEUE_RENDER_COMMAND(UpdateSkeletalMeshCPUSkinVertexFactory)(
-			[VertexFactoryPtr, MeshLODptr](FRHICommandListImmediate& RHICmdList)
-		{
-			FLocalVertexFactory::FDataType Data;
+		FLocalVertexFactory::FDataType Data;
+		MeshLOD.PositionVertexBuffer.BindPositionVertexBuffer(&MeshLOD.VertexFactory, Data);
+		MeshLOD.StaticMeshVertexBuffer.BindTangentVertexBuffer(&MeshLOD.VertexFactory, Data);
+		MeshLOD.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(&MeshLOD.VertexFactory, Data, MAX_TEXCOORDS);
+		MeshLOD.StaticMeshVertexBuffer.BindLightMapVertexBuffer(&MeshLOD.VertexFactory, Data, 0);
+		MeshLOD.MeshObjectColorBuffer->BindColorVertexBuffer(&MeshLOD.VertexFactory, Data);
 
-			MeshLODptr->PositionVertexBuffer.BindPositionVertexBuffer(VertexFactoryPtr, Data);
-			MeshLODptr->StaticMeshVertexBuffer.BindTangentVertexBuffer(VertexFactoryPtr, Data);
-			MeshLODptr->StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(VertexFactoryPtr, Data, MAX_TEXCOORDS);
-			MeshLODptr->StaticMeshVertexBuffer.BindLightMapVertexBuffer(VertexFactoryPtr, Data, 0);
-			MeshLODptr->MeshObjectColorBuffer->BindColorVertexBuffer(VertexFactoryPtr, Data);
-
-			VertexFactoryPtr->SetData(Data);
-			VertexFactoryPtr->InitResource(RHICmdList);
-		});
+		MeshLOD.VertexFactory.SetData(RHICmdList, Data);
+		MeshLOD.VertexFactory.InitResource(RHICmdList);
 	}
 }
 
@@ -347,14 +342,14 @@ void FSkeletalMeshObjectCPUSkin::FSkeletalMeshObjectLOD::InitResources(FSkelMesh
 		StaticMeshVertexBuffer.SetVertexUV(i, 0, SrcVertexBuf.GetVertexUV(i, 0));
 	}
 
-	BeginInitResource(&PositionVertexBuffer);
-	BeginInitResource(&StaticMeshVertexBuffer);
+	BeginInitResource(&PositionVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
+	BeginInitResource(&StaticMeshVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 
 	FSkeletalMeshObjectCPUSkin::FSkeletalMeshObjectLOD* Self = this;
 	FLocalVertexFactory* VertexFactoryPtr = &VertexFactory;
 	// update vertex factory components and sync it
-	ENQUEUE_RENDER_COMMAND(InitSkeletalMeshCPUSkinVertexFactory)(
-		[VertexFactoryPtr, Self](FRHICommandListImmediate& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(InitSkeletalMeshCPUSkinVertexFactory)(UE::RenderCommandPipe::SkeletalMesh,
+		[VertexFactoryPtr, Self](FRHICommandListBase& RHICmdList)
 		{
 			FLocalVertexFactory::FDataType Data;
 
@@ -364,7 +359,7 @@ void FSkeletalMeshObjectCPUSkin::FSkeletalMeshObjectLOD::InitResources(FSkelMesh
 			Self->StaticMeshVertexBuffer.BindLightMapVertexBuffer(VertexFactoryPtr, Data, 0);
 			Self->MeshObjectColorBuffer->BindColorVertexBuffer(VertexFactoryPtr, Data);
 
-			VertexFactoryPtr->SetData(Data);
+			VertexFactoryPtr->SetData(RHICmdList, Data);
 			VertexFactoryPtr->InitResource(RHICmdList);
 		});
 
@@ -386,8 +381,8 @@ void FSkeletalMeshObjectCPUSkin::FSkeletalMeshObjectLOD::InitResources(FSkelMesh
 		}
 
 		TArray<FSkelMeshRenderSection>* RenderSections = &LODModel.RenderSections;
-		ENQUEUE_RENDER_COMMAND(InitSkeletalRenderCPUSkinRayTracingGeometry)(
-			[this, VertexBufferRHI, IndexBufferRHI, VertexBufferStride, TrianglesCount, RenderSections, &SourceGeometry = LODModel.SourceRayTracingGeometry](FRHICommandListImmediate& RHICmdList)
+		ENQUEUE_RENDER_COMMAND(InitSkeletalRenderCPUSkinRayTracingGeometry)(UE::RenderCommandPipe::SkeletalMesh,
+			[this, VertexBufferRHI, IndexBufferRHI, VertexBufferStride, TrianglesCount, RenderSections, &SourceGeometry = LODModel.SourceRayTracingGeometry](FRHICommandListBase& RHICmdList)
 			{
 				FRayTracingGeometryInitializer Initializer;
 				static const FName DebugName("FSkeletalMeshObjectCPUSkin");
@@ -449,12 +444,12 @@ void FSkeletalMeshObjectCPUSkin::FSkeletalMeshObjectLOD::UpdateSkinWeights(FSkel
  */
 void FSkeletalMeshObjectCPUSkin::FSkeletalMeshObjectLOD::ReleaseResources()
 {	
-	BeginReleaseResource(&VertexFactory);
-	BeginReleaseResource(&PositionVertexBuffer);
-	BeginReleaseResource(&StaticMeshVertexBuffer);
+	BeginReleaseResource(&VertexFactory, &UE::RenderCommandPipe::SkeletalMesh);
+	BeginReleaseResource(&PositionVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
+	BeginReleaseResource(&StaticMeshVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 
 #if RHI_RAYTRACING
-	BeginReleaseResource(&RayTracingGeometry);
+	BeginReleaseResource(&RayTracingGeometry, &UE::RenderCommandPipe::SkeletalMesh);
 #endif // RHI_RAYTRACING
 
 	bResourcesInitialized = false;
@@ -534,16 +529,7 @@ FDynamicSkelMeshObjectDataCPUSkin::FDynamicSkelMeshObjectDataCPUSkin(
 
 	// Update the clothing simulation mesh positions and normals
 	FMatrix LocalToWorld;
-	if (InMeshComponent)
-	{
-		InMeshComponent->GetUpdateClothSimulationData_AnyThread(ClothSimulUpdateData, LocalToWorld, ClothBlendWeight);
-	}
-	else
-	{
-		ClothSimulUpdateData.Reset();
-		LocalToWorld = FMatrix::Identity;
-		ClothBlendWeight = 0.f;
-	}
+	InMeshComponent->GetUpdateClothSimulationData_AnyThread(ClothSimulUpdateData, LocalToWorld, ClothBlendWeight);
 
 	WorldToLocal = LocalToWorld.InverseFast();
 	if (!IsSkeletalMeshClothBlendEnabled())
@@ -552,10 +538,7 @@ FDynamicSkelMeshObjectDataCPUSkin::FDynamicSkelMeshObjectDataCPUSkin(
 	}
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	if (InMeshComponent)
-	{
-		MeshComponentSpaceTransforms = InMeshComponent->GetComponentSpaceTransforms();
-	}
+	MeshComponentSpaceTransforms = InMeshComponent->GetComponentSpaceTransforms();
 #endif
 }
 
@@ -587,6 +570,8 @@ static uint32 InitEvalInfos(const FMorphTargetWeightMap& InActiveMorphTargets, c
 {
 	uint32 NumValidMorphTargets=0;
 
+	const float MorphTargetMaxBlendWeight = UE::SkeletalRender::Settings::GetMorphTargetMaxBlendWeight();
+
 	for(const TTuple<const UMorphTarget*, int32>& MorphItem: InActiveMorphTargets)
 	{
 		FMorphTargetInfo NewInfo;
@@ -597,7 +582,7 @@ static uint32 InitEvalInfos(const FMorphTargetWeightMap& InActiveMorphTargets, c
 
 		if( MorphTarget != nullptr &&
 			ActiveMorphAbsVertexWeight >= MinMorphTargetBlendWeight &&
-			ActiveMorphAbsVertexWeight <= MaxMorphTargetBlendWeight &&
+			ActiveMorphAbsVertexWeight <= MorphTargetMaxBlendWeight &&
 			MorphItem.Key->HasDataForLOD(LODIndex) )
 		{
 			// start at the first vertex since they affect base mesh verts in ascending order

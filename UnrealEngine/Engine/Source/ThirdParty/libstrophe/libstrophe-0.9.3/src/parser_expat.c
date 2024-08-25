@@ -278,6 +278,8 @@ void parser_free(parser_t *parser)
     if (parser->inner_text) {
         xmpp_free (parser->ctx, parser->inner_text);
         parser->inner_text = NULL;
+        parser->inner_text_used = 0;
+        parser->inner_text_size = 0;
     }
 
     xmpp_free(parser->ctx, parser);
@@ -328,6 +330,8 @@ int parser_reset(parser_t *parser, int depth)
     if (parser->inner_text) {
         xmpp_free (parser->ctx, parser->inner_text);
         parser->inner_text = NULL;
+        parser->inner_text_used = 0;
+        parser->inner_text_size = 0;
     }
 
     XML_SetUserData(parser->expat, parser);

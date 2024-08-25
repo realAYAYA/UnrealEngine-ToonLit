@@ -17,6 +17,7 @@ AControlRigShapeActor::AControlRigShapeActor(const FObjectInitializer& ObjectIni
 	, ControlName(NAME_None)
 	, ShapeName(NAME_None)
 	, OverrideColor(0, 0, 0, 0)
+	, OffsetTransform(FTransform::Identity)
 	, bSelected(false)
 	, bHovered(false)
 	, bSelectable(true)

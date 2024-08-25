@@ -1,9 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
+using System.Diagnostics;
 using StackExchange.Redis;
 
 namespace EpicGames.Redis
@@ -14,9 +12,9 @@ namespace EpicGames.Redis
 	/// Wraps multiple ConnectionMultiplexers as lazy values and initializes them as needed.
 	/// If full, the least loaded connection will be picked.
 	/// </summary>
-	public class RedisConnectionPool
+	public sealed class RedisConnectionPool : IDisposable
 	{
-		private readonly ConcurrentBag<Lazy<ConnectionMultiplexer>> _connections;
+		private readonly Lazy<IConnectionMultiplexer>[] _connections;
 		private readonly int _defaultDatabaseIndex;
 
 		/// <summary>
@@ -28,10 +26,30 @@ namespace EpicGames.Redis
 		public RedisConnectionPool(int poolSize, string redisConfString, int defaultDatabaseIndex = -1)
 		{
 			_defaultDatabaseIndex = defaultDatabaseIndex;
-			_connections = new ConcurrentBag<Lazy<ConnectionMultiplexer>>();
+			_connections = new Lazy<IConnectionMultiplexer>[poolSize];
 			for (int i = 0; i < poolSize; i++)
 			{
-				_connections.Add(new Lazy<ConnectionMultiplexer>(() => ConnectionMultiplexer.Connect(redisConfString)));
+				static void ConfigureOptions(ConfigurationOptions options)
+				{
+					if (Debugger.IsAttached)
+					{
+						options.SyncTimeout = 1_000_000;
+					}
+				}
+
+				_connections[i] = new Lazy<IConnectionMultiplexer>(() => ConnectionMultiplexer.Connect(redisConfString, ConfigureOptions));
+			}
+		}
+
+		/// <inheritdoc/>
+		public void Dispose()
+		{
+			for (int idx = 0; idx < _connections.Length; idx++)
+			{
+				if (_connections[idx].IsValueCreated)
+				{
+					_connections[idx].Value.Dispose();
+				}
 			}
 		}
 
@@ -43,21 +61,40 @@ namespace EpicGames.Redis
 		/// <returns>A Redis database connection</returns>
 		public IConnectionMultiplexer GetConnection()
 		{
-			Lazy<ConnectionMultiplexer> lazyConnection;
-			IEnumerable<Lazy<ConnectionMultiplexer>>? lazyConnections = _connections.Where(x => x.IsValueCreated);
+			long existingConnectionLoad = 0;
+			IConnectionMultiplexer? existingConnection = null;
+			Lazy<IConnectionMultiplexer>? newConnection = null;
 
-			if (lazyConnections.Count() == _connections.Count)
+			// Find the least loaded connection
+			foreach (Lazy<IConnectionMultiplexer> connection in _connections)
 			{
-				// No more new connections can be created, pick the least loaded one
-				lazyConnection = _connections.OrderBy(x => x.Value.GetCounters().TotalOutstanding).First();
-			}
-			else
-			{
-				// Create a new connection by picking a not yet initialized lazy value 
-				lazyConnection = _connections.First(x => !x.IsValueCreated);
+				if (connection.IsValueCreated)
+				{
+					ServerCounters counters = connection.Value.GetCounters();
+					if (existingConnection == null || counters.TotalOutstanding < existingConnectionLoad)
+					{
+						existingConnection = connection.Value;
+						existingConnectionLoad = counters.TotalOutstanding;
+					}
+				}
+				else
+				{
+					newConnection ??= connection;
+				}
 			}
 
-			return lazyConnection.Value;
+			// Check if we should try to create a new connection
+			if (existingConnection == null || existingConnectionLoad >= 10)
+			{
+				if (newConnection != null)
+				{
+					return newConnection.Value;
+				}
+			}
+
+			// Otherwise return the best connection we already have
+			Debug.Assert(existingConnection != null);
+			return existingConnection;
 		}
 
 		/// <summary>

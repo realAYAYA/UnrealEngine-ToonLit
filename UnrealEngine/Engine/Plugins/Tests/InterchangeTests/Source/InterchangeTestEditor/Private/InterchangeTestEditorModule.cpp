@@ -3,7 +3,7 @@
 #include "InterchangeTestEditorModule.h"
 #include "InterchangeTestFunctionLayout.h"
 #include "InterchangeTestFunction.h"
-#include "AssetTypeActions_InterchangeImportTestPlan.h"
+#include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
 
 
@@ -24,12 +24,6 @@ bool FInterchangeTestEditorModule::IsAvailable()
 
 void FInterchangeTestEditorModule::StartupModule()
 {
-	// Register the InterchangeImportTestPlan asset
-	FAssetToolsModule& AssetToolsModule = FAssetToolsModule::GetModule();
-	IAssetTools& AssetTools = AssetToolsModule.Get();
-	AssetTypeActions = MakeShared<FAssetTypeActions_InterchangeImportTestPlan>();
-	AssetTools.RegisterAssetTypeActions(AssetTypeActions.ToSharedRef());
-
 	// Register the FInterchangeTestFunction struct customization
 	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	PropertyModule.RegisterCustomPropertyTypeLayout(FInterchangeTestFunction::StaticStruct()->GetFName(),
@@ -42,10 +36,6 @@ void FInterchangeTestEditorModule::ShutdownModule()
 {
 	if (UObjectInitialized())
 	{
-		FAssetToolsModule& AssetToolsModule = FAssetToolsModule::GetModule();
-		IAssetTools& AssetTools = AssetToolsModule.Get();
-		AssetTools.UnregisterAssetTypeActions(AssetTypeActions.ToSharedRef());
-
 		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyModule.UnregisterCustomPropertyTypeLayout(FInterchangeTestFunction::StaticStruct()->GetFName());
 	}

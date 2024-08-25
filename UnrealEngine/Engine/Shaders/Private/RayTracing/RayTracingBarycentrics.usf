@@ -3,10 +3,6 @@
 #include "../Common.ush"
 #include "RayTracingCommon.ush"
 
-#if ENABLE_TRACE_RAY_INLINE_PROCEDURAL_PRIMITIVE
-#include "../Nanite/NaniteRayTrace.ush"
-#endif
-
 #if COMPUTESHADER
 #include "RayTracingDeferredMaterials.ush"
 #include "TraceRayInline.ush"
@@ -31,19 +27,8 @@ struct FNaniteTraceRayInlineCallback : FDefaultTraceRayInlineCallback
 		uint InstanceId = PrimitiveData.InstanceSceneDataOffset + PrimitiveInstanceIndex;
 		FInstanceSceneData InstanceData = GetInstanceSceneData(InstanceId, Scene.GPUScene.InstanceDataSOAStride);
 
-		if (InstanceData.ValidInstance && InstanceData.NaniteRuntimeResourceID != 0xFFFFFFFFu)
-		{
-			const float3 RayOrg = ObjectRayOrigin;
-			const float3 RayDir = ObjectRayDirection;
-			const float TMin = RayTMin;
+		// TODO: implement support for intersection with procedural primitives
 
-			FNaniteIntersectionResult NaniteIntersectionResult;
-			if (NaniteIntersection(RayOrg, RayDir, InstanceData, PrimitiveData, NaniteCutError, TMin, RayTCurrent, NaniteIntersectionResult))
-			{
-				Barycentrics = NaniteIntersectionResult.Barycentrics;
-				return true;
-			}
-		}
 #endif // ENABLE_TRACE_RAY_INLINE_PROCEDURAL_PRIMITIVE
 		return false;
 	}
@@ -96,7 +81,7 @@ void RayTracingBarycentricsCommon(uint2 DispatchThreadIndex)
 	float4 Result = float4(0, 0, 0, 1);
 	if (Payload.IsHit())
 	{
-		Result = float4(Payload.Barycentrics, 1.0f - Payload.Barycentrics.x - Payload.Barycentrics.y, 1.0f);
+		Result = float4(Payload.Barycentrics, 1.0f - Payload.Barycentrics.x - Payload.Barycentrics.y, 0.0f);
 	}
 	Output[PixelCoord] = Result;
 }

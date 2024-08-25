@@ -12,14 +12,14 @@ void FEpicStageAppModule::StartupModule()
 	{
 		if (WebRemoteControl.IsWebSocketServerRunning())
 		{
-			StartupBeaconReceiver();
+			StageAppBeaconReceiver.Startup();
 		}
 		else
 		{
 			// Wait for the WebSocket server to start
 			WebSocketServerStartedDelegate = WebRemoteControl.OnWebSocketServerStarted().AddLambda([this](uint32)
 			{
-				StartupBeaconReceiver();
+				StageAppBeaconReceiver.Startup();
 			});
 		}
 	}
@@ -37,23 +37,5 @@ void FEpicStageAppModule::ShutdownModule()
 		}
 	}
 
-	ShutdownBeaconReceiver();
-}
-
-void FEpicStageAppModule::StartupBeaconReceiver()
-{
-	// Make sure it's not already running
-	ShutdownBeaconReceiver();
-
-	StageAppBeaconReceiver.Startup();
-	bIsBeaconReceiverRunning = true;
-}
-
-void FEpicStageAppModule::ShutdownBeaconReceiver()
-{
-	if (bIsBeaconReceiverRunning)
-	{
-		StageAppBeaconReceiver.Shutdown();
-		bIsBeaconReceiverRunning = false;
-	}
+	StageAppBeaconReceiver.Shutdown();
 }

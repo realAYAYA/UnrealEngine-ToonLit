@@ -20,17 +20,7 @@ public:
 
 	// Set the type of the last parameter type that we created
 	void SetLastParameterType(const FAnimNextParamType& InLastParameterType);
-
-	// Get the library of the last parameter type that we created
-	FAssetData GetLastLibrary() const;
-
-	// Set the library of the last parameter type that we created
-	void SetLastLibrary(const FAssetData& InLastLibrary);
-
 private:
-	UPROPERTY(config)
-	FSoftObjectPath LastLibrary;
-
 	UPROPERTY(Transient)
 	FAnimNextParamType LastParameterType = FAnimNextParamType::GetType<bool>();
 };

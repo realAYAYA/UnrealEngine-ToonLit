@@ -349,6 +349,9 @@ private:
 	/** Handle to the registered OnPreviewFeatureLevelChanged delegate. */
 	FDelegateHandle PreviewFeatureLevelChangedHandle;
 
+	/** Handle to the registered OnPreviewPlatformChanged delegate. */
+	FDelegateHandle PreviewPlatformChangedHandle;
+
 	/** Handle to the registered OnLevelActorDeleted delegate */
 	FDelegateHandle LevelActorDeletedHandle;
 

@@ -25,7 +25,7 @@ typedef uint64 LLMNumAllocsType;
 typedef uint32 LLMNumAllocsType;
 #endif
 
-// POD types only
+// Trivially movable types without destructors only; memcpy is used and destructors are not called
 template<typename T, typename SizeType=int32>
 class FLLMArray
 {
@@ -323,21 +323,16 @@ public:
 
 	Values GetValue(const TKey& Key)
 	{
-		TValue1* Value1;
-		TValue2* Value2;
-		Key = Find(Key, Value1, Value2);
-		LLMEnsure(Key);
 		Values RetValues;
-		RetValues.Key = Key;
-		RetValues.Value1 = *Value1;
-		RetValues.Value2 = *Value2;
+		RetValues.Key = Find(Key, RetValues.Value1, RetValues.Value2);
+		LLMEnsure(RetValues.Key);
 		return RetValues;
 	}
 
-	TKey Find(const TKey& Key, TValue1*& OutValue1, TValue2*& OutValue2)
+	TKey Find(const TKey& Key, TValue1& OutValue1, TValue2& OutValue2) const
 	{
 		SizeType KeyHash = Key.GetHashCode();
-		StripeData& Stripe = MapStripes[GetStripeIndex(KeyHash)];
+		const StripeData& Stripe = MapStripes[GetStripeIndex(KeyHash)];
 
 		FScopeLock AllocationScopeLock(&Stripe.CriticalSection);
 
@@ -346,13 +341,11 @@ public:
 		SizeType KeyIndex = Stripe.Map[MapIndex];
 		if (KeyIndex == InvalidIndex)
 		{
-			OutValue1 = nullptr;
-			OutValue2 = nullptr;
 			return TKey();
 		}
 
-		OutValue1 = &Stripe.Values1[KeyIndex];
-		OutValue2 = &Stripe.Values2[KeyIndex];
+		OutValue1 = Stripe.Values1[KeyIndex];
+		OutValue2 = Stripe.Values2[KeyIndex];
 
 		return Stripe.Keys[KeyIndex];
 	}
@@ -1258,8 +1251,8 @@ namespace LLMAlgoImpl
 					if (!bPushed)
 					{
 						LeafToRootOrder.Add(VisitData.Vertex);
-						EdgesOnStack.SetNum(VisitData.EdgeStart, false /* bAllowShrinking */);
-						Stack.Pop(false /* bAllowShrinking */);
+						EdgesOnStack.SetNum(VisitData.EdgeStart, EAllowShrinking::No);
+						Stack.Pop(EAllowShrinking::No);
 					}
 				}
 			}

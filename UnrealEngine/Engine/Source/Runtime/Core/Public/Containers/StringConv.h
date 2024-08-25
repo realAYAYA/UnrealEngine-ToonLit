@@ -10,10 +10,7 @@
 #include "Containers/ContainerAllocationPolicies.h"
 #include "Containers/Array.h"
 #include "Misc/CString.h"
-#include "Templates/AndOrNot.h"
-#include "Templates/EnableIf.h"
 #include "Templates/IsArray.h"
-#include "Templates/RemoveReference.h"
 #include "Templates/UnrealTemplate.h"
 #include "Templates/UnrealTypeTraits.h"
 #include "Traits/ElementType.h"
@@ -31,8 +28,8 @@ public:
 	typedef To   ToType;
 
 	template <
-		typename CharType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<CharType, FromType>>* = nullptr
+		typename CharType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<CharType, FromType>)
 	>
 	FORCEINLINE static void Convert(To* Dest, int32 DestLen, const CharType* Source, int32 SourceLen)
 	{
@@ -41,8 +38,8 @@ public:
 	}
 
 	template <
-		typename CharType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<CharType, FromType>>* = nullptr
+		typename CharType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<CharType, FromType>)
 	>
 	static int32 ConvertedLength(const CharType* Source, int32 SourceLen)
 	{
@@ -123,7 +120,7 @@ namespace StringConv
 					const uint32 LowCodepoint = Codepoint;
 
 					// Combine our high and low surrogates together to a single Unicode codepoint
-					Codepoint = StringConv::EncodeSurrogate(HighCodepoint, LowCodepoint);
+					Codepoint = StringConv::EncodeSurrogate(static_cast<uint16>(HighCodepoint), static_cast<uint16>(LowCodepoint));
 
 					StrBuffer[Index] = Codepoint;
 					{
@@ -158,7 +155,7 @@ namespace StringConv
 	{
 #if PLATFORM_TCHAR_IS_4_BYTES
 		const int32 NewStrLen = InlineCombineSurrogates_Buffer(StrBuffer.GetData(), StrBuffer.Num() - 1);
-		StrBuffer.SetNum(NewStrLen + 1, /*bAllowShrinking*/false);
+		StrBuffer.SetNum(NewStrLen + 1, EAllowShrinking::No);
 #endif	// PLATFORM_TCHAR_IS_4_BYTES
 	}
 
@@ -291,8 +288,8 @@ namespace UE::Core::Private
 		 * @return          The number of bytes written to Dest, up to DestLen, or -1 if the entire Source string could did not fit in DestLen bytes.
 		 */
 		template <
-			typename SrcBufferType,
-			std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+			typename SrcBufferType
+			UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 		>
 		static FORCEINLINE int32 Convert(IntendedToType* Dest, int32 DestLen, const SrcBufferType* Source, int32 SourceLen)
 		{
@@ -305,8 +302,8 @@ namespace UE::Core::Private
 			return (int32)(Result - Dest);
 		}
 		template <
-			typename SrcBufferType,
-			std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+			typename SrcBufferType
+			UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 		>
 		static FORCEINLINE int32 Convert(ToType* Dest, int32 DestLen, const SrcBufferType* Source, int32 SourceLen)
 		{
@@ -320,8 +317,8 @@ namespace UE::Core::Private
 		 * @return The length of the string in UTF-8 code units.
 		 */
 		template <
-			typename SrcBufferType,
-			std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+			typename SrcBufferType
+			UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 		>
 		static FORCEINLINE int32 ConvertedLength(const SrcBufferType* Source, int32 SourceLen)
 		{
@@ -333,6 +330,13 @@ namespace UE::Core::Private
 	{
 		No  = 0,
 		Yes = 1
+	};
+
+	// This tag type is only intended to be used by StrCast to construct existing classes in direct ways.
+	// It is defined is in this Private namespace to indicate that the constructors that use it are not to be used by end-users.
+	struct FFromStrCast
+	{
+		explicit FFromStrCast() = default;
 	};
 }
 
@@ -354,8 +358,8 @@ public:
 	 * @param SourceLen The length of the source string.
 	 */
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	static FORCEINLINE void Convert(ToType* Dest, const int32 DestLen, const SrcBufferType* Source, const int32 SourceLen)
 	{
@@ -374,8 +378,8 @@ public:
 	 * @return The length of the string in UTF-16 or UTF-32 characters.
 	 */
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	static int32 ConvertedLength(const SrcBufferType* Source, const int32 SourceLen)
 	{
@@ -462,8 +466,8 @@ public:
 	 * @param SourceLen The length of the source string.
 	 */
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	static FORCEINLINE void Convert(ToType* Dest, int32 DestLen, const SrcBufferType* Source, int32 SourceLen)
 	{
@@ -476,8 +480,8 @@ public:
 	 * @return The length of the string in UTF-16 code units.
 	 */
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	static FORCEINLINE int32 ConvertedLength(const SrcBufferType* Source, int32 SourceLen)
 	{
@@ -538,8 +542,8 @@ public:
 	 * @param SourceLen The length of the source string.
 	 */
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	static FORCEINLINE void Convert(ToType* Dest, const int32 DestLen, const SrcBufferType* Source, const int32 SourceLen)
 	{
@@ -554,8 +558,8 @@ public:
 	 * @return The length of the string in UTF-32 characters.
 	 */
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	static int32 ConvertedLength(const SrcBufferType* Source, const int32 SourceLen)
 	{
@@ -678,8 +682,8 @@ public:
 	TStringConversion& operator=(const TStringConversion&) = delete;
 
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	explicit TStringConversion(const SrcBufferType* Source)
 	{
@@ -699,8 +703,8 @@ public:
 	}
 
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	TStringConversion(const SrcBufferType* Source, int32 SourceLen)
 	{
@@ -727,19 +731,22 @@ public:
 	{
 	}
 
+	explicit TStringConversion(UE::Core::Private::FFromStrCast, const FromType* Source, int32 SourceLen)
+	{
+		Init(Source, SourceLen, UE::Core::Private::ENullTerminatedString::No);
+	}
+
 	/**
 	 * Construct from a compatible character range such as TStringView or TStringBuilder.
 	 */
 	template <
 		typename FromRangeType,
-		typename FromRangeCharType = std::remove_cv_t<std::remove_pointer_t<decltype(GetData(DeclVal<FromRangeType>()))>>,
-		std::enable_if_t<
-			TAnd<
-				TIsContiguousContainer<FromRangeType>,
-				TNot<TIsArray<typename TRemoveReference<FromRangeType>::Type>>,
-				TIsCharEncodingCompatibleWith<FromRangeCharType, FromType>
-			>::Value
-		>* = nullptr
+		typename FromRangeCharType = std::remove_cv_t<std::remove_pointer_t<decltype(GetData(std::declval<FromRangeType>()))>>
+		UE_REQUIRES(
+			TIsContiguousContainer<FromRangeType>::Value &&
+			!TIsArray<std::remove_reference_t<FromRangeType>>::Value &&
+			TIsCharEncodingCompatibleWith<FromRangeCharType, FromType>::Value
+		)
 	>
 	TStringConversion(FromRangeType&& Source)
 		: TStringConversion((const FromType*)GetData(Source), GetNum(Source))
@@ -812,8 +819,8 @@ public:
 
 public:
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
 	explicit TStringPointer(const SrcBufferType* Source)
 	{
@@ -830,10 +837,10 @@ public:
 	}
 
 	template <
-		typename SrcBufferType,
-		std::enable_if_t<TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>>* = nullptr
+		typename SrcBufferType
+		UE_REQUIRES(TIsCharEncodingCompatibleWith_V<SrcBufferType, FromType>)
 	>
-	TStringPointer(const SrcBufferType* Source, int32 SourceLen)
+	explicit TStringPointer(const SrcBufferType* Source, int32 SourceLen)
 	{
 		if (Source)
 		{
@@ -853,19 +860,24 @@ public:
 		}
 	}
 
+	// This constructor is only intended to be used by StrCast, not end users
+	explicit TStringPointer(UE::Core::Private::FFromStrCast, const FromType* Source, int32 SourceLen)
+		: Ptr((const ToType*)Source)
+		, StringLength(SourceLen)
+	{
+	}
+
 	/**
 	 * Construct from a compatible character range such as TStringView or TStringBuilder.
 	 */
 	template <
 		typename FromRangeType,
-		typename FromRangeCharType = std::remove_cv_t<std::remove_pointer_t<decltype(GetData(DeclVal<FromRangeType>()))>>,
-		std::enable_if_t<
-			TAnd<
-				TIsContiguousContainer<FromRangeType>,
-				TNot<TIsArray<typename TRemoveReference<FromRangeType>::Type>>,
-				TIsCharEncodingCompatibleWith<FromRangeCharType, FromType>
-			>::Value
-		>* = nullptr
+		typename FromRangeCharType = std::remove_cv_t<std::remove_pointer_t<decltype(GetData(std::declval<FromRangeType>()))>>
+		UE_REQUIRES(
+			TIsContiguousContainer<FromRangeType>::Value &&
+			!TIsArray<std::remove_reference_t<FromRangeType>>::Value &&
+			TIsCharEncodingCompatibleWith<FromRangeCharType, FromType>::Value
+		)
 	>
 	TStringPointer(FromRangeType&& Source)
 		: TStringPointer((const FromType*)GetData(Source), GetNum(Source))
@@ -1148,6 +1160,43 @@ FORCEINLINE auto StringCast(const From* Str, int32 Len)
 	}
 }
 
+/**
+ * Creates an object which acts as a source of a given string type.  See example above.
+ *
+ * This is intended as the long-term replacement for StringCast, which doesn't cope well
+ * with zeros mid-string, which it can interpret as a null-terminators and give surprising behavior.
+ *
+ * StrCast expects correctly-typed strings.  If a cast is attempted with a char* or ANSICHAR*,
+ * and the string contains characters that are non-ASCII, including UTF-8 code units outside of
+ * the 7-bit ASCII range, then those values will fail to convert and a bogus char will be written
+ * in their place.
+ *
+ * If a conversion from UTF-8 is desired, the pointer should be cast to UTF8CHAR* before being
+ * passed to StrCast.
+ *
+ * Similarly, doing a StrCast<char> or StrCast<ANSICHAR> on a Unicode string will only
+ * successfully convert Unicode characters which already lie in the ASCII range.  For converting
+ * to UTF-8, StrCast<UTF8CHAR> should be used.
+ *
+ * The source string must not be modified or destroyed until after the result of this function
+ * has been destroyed.
+ *
+ * @param Str A pointer to the start of the string to convert.  Must be non-null if Len is non-zero.
+ * @param Len The number of From elements in Str.  Must be non-negative.
+ */
+template <typename To, int32 DefaultConversionSize = DEFAULT_STRING_CONVERSION_SIZE, typename From>
+FORCEINLINE auto StrCast(const From* Str, int32 Len)
+{
+	if constexpr (TIsCharEncodingCompatibleWith_V<From, To>)
+	{
+		return TStringPointer<To>(UE::Core::Private::FFromStrCast{}, (const To*)Str, Len);
+	}
+	else
+	{
+		return TStringConversion<TStringConvert<From, To>, DefaultConversionSize>(UE::Core::Private::FFromStrCast{}, Str, Len);
+	}
+}
+
 
 /**
  * Casts one fixed-width char type into another.
@@ -1295,3 +1344,9 @@ FORCEINLINE TArray<ToType> StringToArray(const FromType* Str)
 {
 	return StringToArray<ToType>(Str, TCString<FromType>::Strlen(Str) + 1);
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/AndOrNot.h"
+#include "Templates/EnableIf.h"
+#include "Templates/RemoveReference.h"
+#endif

@@ -45,6 +45,13 @@ void UDataflow::PostEditCallback()
 	// mark as dirty for the UObject
 }
 
+void UDataflow::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+	UDataflow* const This = CastChecked<UDataflow>(InThis);
+	This->Dataflow->AddReferencedObjects(Collector);
+}
+
 #if WITH_EDITOR
 
 void UDataflow::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
@@ -109,7 +116,7 @@ void UDataflow::RemoveRenderTarget(UDataflowEdNode* InNode)
 void UDataflow::Serialize(FArchive& Ar)
 {
 	Super::Serialize(Ar);
-	Ar << *Dataflow.Get();
+	Dataflow->Serialize(Ar, this);
 }
 
 #undef LOCTEXT_NAMESPACE

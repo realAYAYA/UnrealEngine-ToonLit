@@ -21,6 +21,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "nDisplayModularFeatures",
+			"Enabled": true
+		},
+		{
 			"Name": "RivermaxCore",
 			"Enabled": true
 		}

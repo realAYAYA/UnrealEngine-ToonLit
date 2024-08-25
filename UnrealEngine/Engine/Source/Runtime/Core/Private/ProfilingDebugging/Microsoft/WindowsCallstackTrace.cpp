@@ -36,6 +36,22 @@
 
 #define BACKTRACE_LOCK_FREE (1 && (BACKTRACE_DBGLVL == 0))
 
+static bool GFullBacktraces = UE_CALLSTACK_TRACE_FULL_CALLSTACKS;
+static bool GModulesAreInitialized = false;
+
+// This implementation is using unwind tables which is results in very fast
+// stack walking. In some cases this is not suitable, and we then fall back
+// to the standard stack walking implementation.
+#if !defined(UE_CALLSTACK_TRACE_USE_UNWIND_TABLES)
+	#if defined(__clang__)
+		#define UE_CALLSTACK_TRACE_USE_UNWIND_TABLES 0
+	#else
+		#define UE_CALLSTACK_TRACE_USE_UNWIND_TABLES 1
+	#endif
+#endif
+
+#if UE_CALLSTACK_TRACE_USE_UNWIND_TABLES
+
 /*
  * Windows' x64 binaries contain a ".pdata" section that describes the location
  * and size of its functions and details on how to unwind them. The unwind
@@ -119,8 +135,7 @@ public:
 	static FBacktracer*		Get();
 	void					AddModule(UPTRINT Base, const TCHAR* Name);
 	void					RemoveModule(UPTRINT Base);
-	uint32					GetBacktraceId(void* AddressOfReturnAddress) const;
-	int32					GetFrameSize(void* FunctionAddress) const;
+	uint32					GetBacktraceId(void* AddressOfReturnAddress);
 
 private:
 	struct FFunction
@@ -190,7 +205,7 @@ private:
 	int32					ModulesNum;
 	int32					ModulesCapacity;
 	FMalloc*				Malloc;
-	FCallstackTracer*		CallstackTracer;
+	FCallstackTracer		CallstackTracer;
 #if BACKTRACE_LOCK_FREE
 	mutable FFunctionLookupSet	FunctionLookups;
 	mutable bool				bReentranceCheck = false;
@@ -203,12 +218,11 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////
 FBacktracer* FBacktracer::Instance = nullptr;
-static bool GFullBacktraces = UE_CALLSTACK_TRACE_FULL_CALLSTACKS;
-static bool GModulesAreInitialized = false;
 
 ////////////////////////////////////////////////////////////////////////////////
 FBacktracer::FBacktracer(FMalloc* InMalloc)
 	: Malloc(InMalloc)
+	, CallstackTracer(InMalloc)
 #if BACKTRACE_LOCK_FREE
 	, FunctionLookups(InMalloc)
 #endif
@@ -221,8 +235,6 @@ FBacktracer::FBacktracer(FMalloc* InMalloc)
 	Modules = (FModule*)Malloc->Malloc(sizeof(FModule) * ModulesCapacity);
 
 	Instance = this;
-	CallstackTracer = (FCallstackTracer*) Malloc->Malloc(sizeof(FCallstackTracer), alignof(FCallstackTracer));
-	CallstackTracer = new(CallstackTracer) FCallstackTracer(InMalloc);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -483,7 +495,7 @@ void FBacktracer::RemoveModule(UPTRINT ModuleBase)
 	// anything due to how DLLs and processes' address spaces work. So we will...
 #if defined PLATFORM_WINDOWS
 	return;
-#endif
+#else
 
 	FScopeLock _(&Lock);
 
@@ -516,6 +528,7 @@ void FBacktracer::RemoveModule(UPTRINT ModuleBase)
 	}
 
 	--ModulesNum;
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -552,6 +565,10 @@ const FBacktracer::FFunction* FBacktracer::LookupFunction(UPTRINT Address, FLook
 	uint32 FuncId = uint32(Address - IdToAddress(Module->Id)); 
 	TArrayView<FFunction> FuncsView(Module->Functions, Module->NumFunctions);
 	uint32 Index = Algo::UpperBound(FuncsView, FuncId, IdPredicate);
+	if (Index == 0)
+	{
+		return nullptr;
+	}
 
 	const FFunction* Function = Module->Functions + (Index - 1);
 #if BACKTRACE_DBGLVL >= 2
@@ -565,7 +582,7 @@ const FBacktracer::FFunction* FBacktracer::LookupFunction(UPTRINT Address, FLook
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-uint32 FBacktracer::GetBacktraceId(void* AddressOfReturnAddress) const
+uint32 FBacktracer::GetBacktraceId(void* AddressOfReturnAddress) 
 {
 	FLookupState LookupState = {};
 	uint64 Frames[256];
@@ -712,28 +729,98 @@ uint32 FBacktracer::GetBacktraceId(void* AddressOfReturnAddress) const
 #endif
 	// Add to queue to be processed. This might block until there is room in the
 	// queue (i.e. the processing thread has caught up processing).
-	return CallstackTracer->AddCallstack(BacktraceEntry);
+	return CallstackTracer.AddCallstack(BacktraceEntry);
+}
+
+#else // UE_CALLSTACK_TRACE_USE_UNWIND_TABLES
+
+////////////////////////////////////////////////////////////////////////////////
+class FBacktracer
+{
+public:
+	FBacktracer(FMalloc* InMalloc);
+	~FBacktracer();
+	static FBacktracer*	Get();
+	uint32 GetBacktraceId(void* AddressOfReturnAddress);
+	void AddModule(UPTRINT Base, const TCHAR* Name) {}
+	void RemoveModule(UPTRINT Base) {}
+
+private:
+	static FBacktracer* Instance;
+	FMalloc* Malloc;
+	FCallstackTracer CallstackTracer;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+FBacktracer* FBacktracer::Instance = nullptr;
+
+////////////////////////////////////////////////////////////////////////////////
+FBacktracer::FBacktracer(FMalloc* InMalloc)
+	: Malloc(InMalloc)
+	, CallstackTracer(InMalloc)
+{
+	Instance = this;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-int32 FBacktracer::GetFrameSize(void* FunctionAddress) const
+FBacktracer::~FBacktracer()
 {
-	FScopeLock _(&Lock);
-
-	FLookupState LookupState = {};
-	const FFunction* Function = LookupFunction(UPTRINT(FunctionAddress), LookupState);
-	if (FunctionAddress == nullptr)
-	{
-		return -1;
-	}
-
-	if (Function->RspBias < 0)
-	{
-		return -1;
-	}
-
-	return Function->RspBias;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+FBacktracer* FBacktracer::Get()
+{
+	return Instance;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+uint32 FBacktracer::GetBacktraceId(void* AddressOfReturnAddress) 
+{
+#if !UE_BUILD_SHIPPING
+	const uint64 ReturnAddress = *(uint64*)AddressOfReturnAddress;
+	uint64 StackFrames[256];
+	int32 NumStackFrames = FPlatformStackWalk::CaptureStackBackTrace(StackFrames, UE_ARRAY_COUNT(StackFrames));
+	if (NumStackFrames > 0)
+	{
+		FCallstackTracer::FBacktraceEntry BacktraceEntry;
+		uint64 BacktraceId = 0;
+		uint32 FrameIdx = 0;
+		bool bUseAddress = false;
+		for (int32 Index = 0; Index < NumStackFrames; Index++)
+		{
+			if (!bUseAddress)
+			{
+				// start using backtrace only after ReturnAddress
+				if (StackFrames[Index] == (uint64)ReturnAddress)
+				{
+					bUseAddress = true;
+				}
+			}
+			if (bUseAddress || NumStackFrames == 1)
+			{
+				uint64 RetAddr = StackFrames[Index];
+				StackFrames[FrameIdx++] = RetAddr;
+
+				// This is a simple order-dependent LCG. Should be sufficient enough
+				BacktraceId += RetAddr;
+				BacktraceId *= 0x30be8efa499c249dull;
+			}
+		}
+
+		// Save the collected id
+		BacktraceEntry.Hash = BacktraceId;
+		BacktraceEntry.FrameCount = FrameIdx;
+		BacktraceEntry.Frames = StackFrames;
+
+		// Add to queue to be processed. This might block until there is room in the
+		// queue (i.e. the processing thread has caught up processing).
+		return CallstackTracer.AddCallstack(BacktraceEntry);
+	}
+#endif
+
+	return 0;
+}
+#endif // UE_CALLSTACK_TRACE_USE_UNWIND_TABLES
 
 ////////////////////////////////////////////////////////////////////////////////
 void Modules_Create(FMalloc*);
@@ -763,7 +850,7 @@ void CallstackTrace_CreateInternal(FMalloc* Malloc)
 		[] (bool bLoad, void* Module, const TCHAR* Name)
 		{
 			bLoad
-				? FBacktracer::Get()->AddModule(UPTRINT(Module), Name)
+				? FBacktracer::Get()->AddModule(UPTRINT(Module), Name) //-V522
 				: FBacktracer::Get()->RemoveModule(UPTRINT(Module));
 		}
 	);

@@ -34,7 +34,6 @@ public:
 		SLATE_EVENT(FOnIsDebuggerReady, OnIsDebuggerReady)
 		SLATE_EVENT(FOnIsDebuggerPaused, OnIsDebuggerPaused)
 		SLATE_EVENT(FOnGetDebugTimeStamp, OnGetDebugTimeStamp)
-		SLATE_EVENT(FOnBlackboardKeyChanged, OnBlackboardKeyChanged)
 		SLATE_EVENT(FOnIsBlackboardModeActive, OnIsBlackboardModeActive)
 
 	SLATE_END_ARGS()

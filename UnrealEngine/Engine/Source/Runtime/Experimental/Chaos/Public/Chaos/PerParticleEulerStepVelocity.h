@@ -16,7 +16,7 @@ class FPerParticleEulerStepVelocity : public FPerParticleRule
 	template<class T_PARTICLES>
 	inline void ApplyHelper(T_PARTICLES& InParticles, const FReal Dt, const int32 Index) const
 	{
-		InParticles.V(Index) += InParticles.Acceleration(Index) * Dt;
+		InParticles.SetV(Index, InParticles.GetV(Index) + InParticles.Acceleration(Index) * Dt);
 	}
 
 	inline void Apply(FDynamicParticles& InParticles, const FReal Dt, const int32 Index) const override //-V762
@@ -39,13 +39,13 @@ class FPerParticleEulerStepVelocity : public FPerParticleRule
 		//       Just using W += InvI * (Torque - W x (I * W)) * dt is not correct, since Torque
 		//		 and W are in an inertial frame.
 		//
-		InParticles.W(Index) += InParticles.AngularAcceleration(Index) * Dt;
+		InParticles.SetW(Index, InParticles.GetW(Index) + InParticles.AngularAcceleration(Index) * Dt);
 	}
 	
 	inline void Apply(TTransientPBDRigidParticleHandle<FReal, 3>& Particle, const FReal Dt) const override //-V762
 	{
-		Particle.V() += Particle.Acceleration() * Dt;
-		Particle.W() += Particle.AngularAcceleration() * Dt;
+		Particle.SetV(Particle.GetV() + Particle.Acceleration() * Dt);
+		Particle.SetW(Particle.GetW() + Particle.AngularAcceleration() * Dt);
 	}
 };
 

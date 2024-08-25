@@ -106,6 +106,7 @@ namespace JSON500
 		Config->bFollowLocalPlayerCamera = CfgJson.Misc.bFollowLocalPlayerCamera;
 		Config->bExitOnEsc = CfgJson.Misc.bExitOnEsc;
 		Config->bOverrideViewportsFromExternalConfig = CfgJson.Misc.bOverrideViewportsFromExternalConfig;
+		Config->bOverrideTransformsFromExternalConfig = CfgJson.Misc.bOverrideTransformsFromExternalConfig;
 
 		// Scene
 		{
@@ -310,6 +311,7 @@ namespace JSON500
 		Json.Misc.bFollowLocalPlayerCamera = Config->bFollowLocalPlayerCamera;
 		Json.Misc.bExitOnEsc = Config->bExitOnEsc;
 		Json.Misc.bOverrideViewportsFromExternalConfig = Config->bOverrideViewportsFromExternalConfig;
+		Json.Misc.bOverrideTransformsFromExternalConfig = Config->bOverrideTransformsFromExternalConfig;
 
 		// Scene
 		{

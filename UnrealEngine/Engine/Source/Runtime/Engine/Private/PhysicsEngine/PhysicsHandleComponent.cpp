@@ -123,7 +123,7 @@ void UPhysicsHandleComponent::GrabComponentImp(UPrimitiveComponent* InComponent,
 		Params.InitialTM = FTransform(Rotation, Location);
 		FPhysicsInterface::CreateActor(Params, KinematicHandle);
 
-		KinematicHandle->GetGameThreadAPI().SetGeometry(TUniquePtr<FImplicitObject>(new TSphere<FReal, 3>(TVector<FReal, 3>(0.f), 1000.f)));
+		KinematicHandle->GetGameThreadAPI().SetGeometry(MakeImplicitObjectPtr<TSphere<FReal, 3>>(TVector<FReal, 3>(0.f), 1000.f));
 		KinematicHandle->GetGameThreadAPI().SetObjectState(EObjectStateType::Kinematic);
 
 		if (FPhysScene* Scene = BodyInstance->GetPhysicsScene())

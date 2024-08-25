@@ -7,9 +7,14 @@
 #include "Common.ush"
 
 #if SHADING_PATH_MOBILE
-// Reroute MobileSceneTextures uniform buffer references to the base pass uniform buffer 
-#define MobileSceneTextures MobileBasePass.SceneTextures
-#define EyeAdaptationStruct MobileBasePass
+#if DECAL_RENDERTARGETMODE == DECAL_RENDERTARGETMODE_DBUFFER
+	#define MobileSceneTextures DecalPass.MobileSceneTextures
+	#define EyeAdaptationStruct DecalPass
+#else
+	// Reroute MobileSceneTextures uniform buffer references to the base pass uniform buffer
+	#define MobileSceneTextures MobileBasePass.SceneTextures
+	#define EyeAdaptationStruct MobileBasePass
+#endif
 #else
 #define SceneTexturesStruct DecalPass.SceneTextures
 #define EyeAdaptationStruct DecalPass
@@ -17,16 +22,16 @@
 
 #if PIXELSHADER
 
-// Decals require both inline & deferred shading path for reading & writing Strata data
-#define STRATA_INLINE_SHADING 1
-#define STRATA_DEFERRED_SHADING 1
-#include "Strata/Strata.ush"
+// Decals require both inline & deferred shading path for reading & writing Substrate data
+#define SUBSTRATE_INLINE_SHADING 1
+#define SUBSTRATE_DEFERRED_SHADING 1
+#include "Substrate/Substrate.ush"
 #include "DecalCommon.ush"
 
 #endif // PIXELSHADER
 
 // large world coordinate tile position
-float4 DecalTilePosition;
+float4 DecalPositionHigh;
 // from SvPosition to decal space (for position), used like this: mul(float4(SvPosition.xyz, 1), SvPositionToDecal);
 float4x4 SvPositionToDecal;
 // to transform position from decal space to world space, for normals use transpose of inverse
@@ -133,8 +138,9 @@ void FPixelShaderInOut_MainPS(inout FPixelShaderIn In, inout FPixelShaderOut Out
 	MaterialParameters.ScreenPosition = SvPositionToScreenPosition(In.SvPosition);
 	MaterialParameters.LightVector = SwizzlePos;
 
-	MaterialParameters.AbsoluteWorldPosition = MaterialParameters.WorldPosition_NoOffsets = LWCSubtract(TranslatedWorldPosition, PrimaryView.PreViewTranslation);
+	MaterialParameters.AbsoluteWorldPosition = MaterialParameters.WorldPosition_NoOffsets = DFFastSubtract(TranslatedWorldPosition, PrimaryView.PreViewTranslation);
 	MaterialParameters.WorldPosition_CamRelative = MaterialParameters.WorldPosition_NoOffsets_CamRelative = TranslatedWorldPosition;
+	MaterialParameters.LWCData = MakeMaterialLWCData(MaterialParameters);
 
 #if MATERIAL_VIRTUALTEXTURE_FEEDBACK
 	InitializeVirtualTextureFeedback(MaterialParameters.VirtualTextureFeedback, (uint2)In.SvPosition.xy, View.FrameNumber);
@@ -145,32 +151,31 @@ void FPixelShaderInOut_MainPS(inout FPixelShaderIn In, inout FPixelShaderOut Out
 	
 	const float DecalFading = saturate(4 - 4 * abs(SwizzlePos.z * 2 - 1)) * DecalParams.x;
 
-#if STRATA_ENABLED    
-	FStrataPixelHeader StrataHeader = MaterialParameters.GetFrontStrataHeader();
-	StrataHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+#if SUBSTRATE_ENABLED    
+	FSubstratePixelHeader SubstrateHeader = MaterialParameters.GetFrontSubstrateHeader();
+	SubstrateHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
 
 	float Coverage = 0.0;
-	if (StrataHeader.StrataTree.BSDFCount > 0)
+	if (SubstrateHeader.SubstrateTree.BSDFCount > 0)
 	{
-		FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
 		const float3 V = MaterialParameters.CameraVector;
 
 		// Update tree (coverage/transmittance/luminace weights)
-		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, false /*bRoughDiffuseEnabled*/, 0, false/*bRoughnessTracking*/);
-		StrataHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+		const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, false /*bRoughDiffuseEnabled*/, 0, false/*bRoughnessTracking*/);
+		SubstrateHeader.SubstrateUpdateTree(V, Settings);
 
 		// Either propagate the BSDF opacity, or use the one for AlphaComposite (premultiplied alpha)
-		float CoverageOverBackground = StrataHeader.StrataTree.BSDFs[0].Coverage * DecalFading;
-#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+		float CoverageOverBackground = SubstrateHeader.SubstrateTree.BSDFs[0].Coverage * DecalFading;
+#if SUBSTRATE_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
 		CoverageOverBackground = GetMaterialOpacity(PixelMaterialInputs);
 #endif 
 
-		// Since the Convert-To-Decal node forces parameter blending for the entire Strata tree, the BSDF we are interested in will be in 0.
-		Coverage = DecalCommonOutput(Out, StrataHeader, StrataHeader.StrataTree.BSDFs[0], DecalFading, CoverageOverBackground);
+		// Since the Convert-To-Decal node forces parameter blending for the entire Substrate tree, the BSDF we are interested in will be in 0.
+		Coverage = DecalCommonOutput(Out, SubstrateHeader, SubstrateHeader.SubstrateTree.BSDFs[0], DecalFading, CoverageOverBackground);
 
 	}
 	const float Opacity = Coverage;
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 	float3 Color = GetMaterialEmissive(PixelMaterialInputs);
 	
 	float Opacity = GetMaterialOpacity(PixelMaterialInputs) * DecalFading;
@@ -192,7 +197,7 @@ void FPixelShaderInOut_MainPS(inout FPixelShaderIn In, inout FPixelShaderOut Out
 	GBufferData.Velocity = 0;
 
 	DecalCommonOutput(In, Out, Color, Opacity, GBufferData);
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 #if MATERIAL_VIRTUALTEXTURE_FEEDBACK
 	FinalizeVirtualTextureFeedback(

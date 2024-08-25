@@ -168,6 +168,7 @@ void UK2Node_FormatText::PinConnectionListChanged(UEdGraphPin* Pin)
 		PinNames.Empty();
 		GetSchema()->TrySetDefaultText(*FormatPin, FText::GetEmpty());
 
+		bool bRemoved = false;
 		for(auto It = Pins.CreateConstIterator(); It; ++It)
 		{
 			UEdGraphPin* CheckPin = *It;
@@ -176,8 +177,14 @@ void UK2Node_FormatText::PinConnectionListChanged(UEdGraphPin* Pin)
 				CheckPin->Modify();
 				CheckPin->MarkAsGarbage();
 				Pins.Remove(CheckPin);
+				bRemoved = true;
 				--It;
 			}
+		}
+
+		if (bRemoved)
+		{
+			GetGraph()->NotifyNodeChanged(this);
 		}
 
 		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(GetBlueprint());

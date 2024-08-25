@@ -24,6 +24,41 @@ const FName RandomAccessToEmptyArrayWarning = FName("RandomAccessToEmptyArrayWar
 
 const FName UKismetArrayLibrary::ReachedMaximumContainerSizeWarning = FName("ReachedMaximumContainerSizeWarning");
 
+namespace UE::KismetArray::Private
+{
+	template<class T, typename InLessThanFunc = TLess<T>, typename InGreaterThanFunc = TGreater<T>>
+	void SortHelper(
+		TArray<T>& InArray,
+		bool bStableSort,
+		EArraySortOrder SortOrder,
+		InLessThanFunc&& LessThanFunc = {},
+		InGreaterThanFunc&& GreaterThanFunc = {})
+	{
+		if (!bStableSort)
+		{
+			if (SortOrder == EArraySortOrder::Ascending)
+			{
+				InArray.Sort(Forward<InLessThanFunc>(LessThanFunc));
+			}
+			else
+			{
+				InArray.Sort(Forward<InGreaterThanFunc>(GreaterThanFunc));
+			}
+		}
+		else
+		{
+			if (SortOrder == EArraySortOrder::Ascending)
+			{
+				InArray.StableSort(Forward<InLessThanFunc>(LessThanFunc));
+			}
+			else
+			{
+				InArray.StableSort(Forward<InGreaterThanFunc>(GreaterThanFunc));
+			}
+		}
+	}
+}
+
 UKismetArrayLibrary::UKismetArrayLibrary(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -88,6 +123,46 @@ void UKismetArrayLibrary::FilterArray(const TArray<AActor*>& TargetArray, TSubcl
 			FilteredArray.Add(TargetElement);
 		}
 	}
+}
+
+void UKismetArrayLibrary::SortStringArray(TArray<FString>& TargetArray, bool bStableSort, EArraySortOrder SortOrder)
+{
+	UE::KismetArray::Private::SortHelper(TargetArray, bStableSort, SortOrder);
+}
+
+void UKismetArrayLibrary::SortNameArray(TArray<FName>& TargetArray, bool bStableSort, bool bLexicalSort, EArraySortOrder SortOrder)
+{
+	const auto LessThan = [bLexicalSort](const FName& A, const FName& B)
+	{
+		return bLexicalSort ? FNameLexicalLess{}(A, B) : FNameFastLess{}(A, B);
+	};
+
+	const auto GreaterThan = [bLexicalSort](const FName& A, const FName& B)
+	{
+		return bLexicalSort ? FNameLexicalLess{}(B, A) : FNameFastLess{}(B, A);
+	};
+
+	UE::KismetArray::Private::SortHelper(TargetArray, bStableSort, SortOrder, LessThan, GreaterThan);
+}
+
+void UKismetArrayLibrary::SortByteArray(TArray<uint8>& TargetArray, bool bStableSort, EArraySortOrder SortOrder)
+{
+	UE::KismetArray::Private::SortHelper(TargetArray, bStableSort, SortOrder);
+}
+
+void UKismetArrayLibrary::SortIntArray(TArray<int32>& TargetArray, bool bStableSort, EArraySortOrder SortOrder)
+{
+	UE::KismetArray::Private::SortHelper(TargetArray, bStableSort, SortOrder);
+}
+
+void UKismetArrayLibrary::SortInt64Array(TArray<int64>& TargetArray, bool bStableSort, EArraySortOrder SortOrder)
+{
+	UE::KismetArray::Private::SortHelper(TargetArray, bStableSort, SortOrder);
+}
+
+void UKismetArrayLibrary::SortFloatArray(TArray<double>& TargetArray, bool bStableSort, EArraySortOrder SortOrder)
+{
+	UE::KismetArray::Private::SortHelper(TargetArray, bStableSort, SortOrder);
 }
 
 int32 UKismetArrayLibrary::GenericArray_Add(void* TargetArray, const FArrayProperty* ArrayProp, const void* NewItem)

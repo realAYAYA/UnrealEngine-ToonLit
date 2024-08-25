@@ -20,4 +20,5 @@ RUN dos2unix setup.sh && bash setup.sh
 FROM docker.io/library/ubuntu:22.04
 COPY --from=builder /usr/local/bin/p4 /usr/local/bin/p4d /usr/local/bin/
 COPY --from=builder /app/data /app/data
+COPY --from=builder /trigger-log.sh /trigger-log.sh
 ENTRYPOINT ["p4d", "-r", "/app/data", "-p", "1666"]

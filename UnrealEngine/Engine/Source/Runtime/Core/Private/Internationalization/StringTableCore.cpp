@@ -17,7 +17,6 @@
 #include "Misc/ScopeLock.h"
 #include "Serialization/Archive.h"
 #include "Serialization/Csv/CsvParser.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Tuple.h"
 #include "Trace/Detail/Channel.h"
 
@@ -70,7 +69,11 @@ const FString& FStringTableEntry::GetSourceString() const
 
 FTextConstDisplayStringPtr FStringTableEntry::GetDisplayString() const
 {
-	return FTextLocalizationManager::Get().GetDisplayString(DisplayStringId.GetNamespace(), DisplayStringId.GetKey(), &SourceString);
+	if (FTextLocalizationManager::IsDisplayStringSupportEnabled())
+	{
+		return FTextLocalizationManager::Get().GetDisplayString(DisplayStringId.GetNamespace(), DisplayStringId.GetKey(), &SourceString);
+	}
+	return nullptr;
 }
 
 FTextId FStringTableEntry::GetDisplayStringId() const
@@ -568,10 +571,10 @@ void FStringTableRedirects::InitStringTableRedirects()
 {
 	check(GConfig);
 
-	FConfigSection* CoreStringTableSection = GConfig->GetSectionPrivate(TEXT("Core.StringTable"), false, true, GEngineIni);
+	const FConfigSection* CoreStringTableSection = GConfig->GetSection(TEXT("Core.StringTable"), false, GEngineIni);
 	if (CoreStringTableSection)
 	{
-		for (FConfigSection::TIterator It(*CoreStringTableSection); It; ++It)
+		for (FConfigSection::TConstIterator It(*CoreStringTableSection); It; ++It)
 		{
 			static const FName StringTableRedirectsName = TEXT("StringTableRedirects");
 			if (It.Key() == StringTableRedirectsName)

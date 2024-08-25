@@ -297,6 +297,8 @@ inline int32 GetResourceTransitionPlaneForMetadataAccess(ERDGTextureMetaDataAcce
 /** HANDLE UTILITIES */
 
 /** Handle helper class for internal tracking of RDG types. */
+// Disable false positive buffer overrun warning during pgo linking step
+PRAGMA_DISABLE_BUFFER_OVERRUN_WARNING
 template <typename LocalObjectType, typename LocalIndexType>
 class TRDGHandle
 {
@@ -391,6 +393,7 @@ private:
 		return Handle.GetIndex();
 	}
 };
+PRAGMA_ENABLE_BUFFER_OVERRUN_WARNING
 
 enum class ERDGHandleRegistryDestructPolicy
 {
@@ -711,6 +714,7 @@ using FRDGUniformBufferBitArray = TRDGHandleBitArray<FRDGUniformBufferHandle>;
 using FRDGViewHandle = TRDGHandle<FRDGView, uint16>;
 using FRDGViewRegistry = TRDGHandleRegistry<FRDGViewHandle, ERDGHandleRegistryDestructPolicy::Never>;
 using FRDGViewUniqueFilter = TRDGHandleUniqueFilter<FRDGViewHandle>;
+using FRDGViewBitArray = TRDGHandleBitArray<FRDGViewHandle>;
 
 using FRDGTextureHandle = TRDGHandle<FRDGTexture, uint16>;
 using FRDGTextureRegistry = TRDGHandleRegistry<FRDGTextureHandle, ERDGHandleRegistryDestructPolicy::Never>;
@@ -736,4 +740,5 @@ template <typename ArrayType,
 	typename ArrayTypeNoRef = std::remove_reference_t<ArrayType>,
 	typename = typename TEnableIf<TIsTArray_V<ArrayTypeNoRef>>::Type> using TRDGBufferArrayCallback = TFunction<const ArrayType&()>;
 using FRDGBufferInitialDataFreeCallback = TFunction<void(const void* InData)>;
+using FRDGBufferInitialDataFillCallback = TFunction<void(void* InData, uint32 InDataSize)>;
 using FRDGDispatchGroupCountCallback = TFunction<FIntVector()>;

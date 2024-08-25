@@ -20,12 +20,14 @@ FName FRigVMDispatch_SwitchInt32::GetArgumentNameForOperandIndex(int32 InOperand
 	return ArgumentNames[InOperandIndex];
 }
 
-const TArray<FRigVMTemplateArgument>& FRigVMDispatch_SwitchInt32::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigVMDispatch_SwitchInt32::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		FRigVMTemplateArgument(IndexName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Int32),
-		FRigVMTemplateArgument(FRigVMStruct::ControlFlowBlockToRunName, ERigVMPinDirection::Hidden, RigVMTypeUtils::TypeIndex::FName)
-	};
+	static TArray<FRigVMTemplateArgumentInfo> Arguments;
+	if(Arguments.IsEmpty())
+	{
+		Arguments.Emplace(IndexName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Int32);
+		Arguments.Emplace(FRigVMStruct::ControlFlowBlockToRunName, ERigVMPinDirection::Hidden, RigVMTypeUtils::TypeIndex::FName);
+	}
 	return Arguments;
 }
 

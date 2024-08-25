@@ -22,7 +22,7 @@ namespace UE::Interchange
 	};
 }//ns UE::Interchange
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGEFACTORYNODES_API UInterchangeTexture2DFactoryNode : public UInterchangeTextureFactoryNode
 {
 	GENERATED_BODY()
@@ -71,11 +71,11 @@ public:
 
 	//////////////////////////////////////////////////////////////////////////
 	// UDIMs begin here
-	// UDIM base texture use a different model for the source data
+	// UDIM base textures use a different model for the source data.
 
 	/**
-	 * Get the source blocks for the texture
-	 * If the map is empty then the texture will be simply be imported as normal texture using the payload key
+	 * Get the source blocks for the texture.
+	 * If the map is empty, the texture is imported as a normal texture using the payload key.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | UDIMs")
 	TMap<int32, FString> GetSourceBlocks() const
@@ -84,11 +84,11 @@ public:
 	}
 
 	/**
-	 * Set the source blocks
-	 * Using this will suggest the pipeline to consider this texture as UDIM and it can chose to pass or not these block to the texture factory node.
+	 * Set the source blocks for the texture.
+	 * Using this suggests to the pipeline to consider this texture as a UDIM. The pipeline can choose whether to pass these blocks to the texture factory node.
 	 * @param InSourceBlocks The blocks and their source image that compose the whole texture.
-	 * The textures must be of the same format and use the same pixel format
-	 * The first block in the map is used to determine the accepted texture format and pixel format
+	 * The textures must be of the same format and use the same pixel format.
+	 * The first block in the map is used to determine the accepted texture format and pixel format.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | UDIMs")
 	void SetSourceBlocks(const TMap<int32, FString>& InSourceBlocks)
@@ -98,11 +98,11 @@ public:
 
 	
 	/**
-	 * Set the source blocks
-	 * Using this will suggest the pipeline to consider this texture as UDIM and it can chose to pass or not these block to the texture factory node.
+	 * Set the source blocks for the texture.
+	 * Using this suggests to the pipeline to consider this texture as a UDIM. The pipeline can choose whether to pass these blocks to the texture factory node.
 	 * @param InSourceBlocks The blocks and their source image that compose the whole texture.
-	 * The textures must be of the same format and use the same pixel format
-	 * The first block in the map is used to determine the accepted texture format and pixel format
+	 * The textures must be of the same format and use the same pixel format.
+	 * The first block in the map is used to determine the accepted texture format and pixel format.
 	 */
 	void SetSourceBlocks(TMap<int32, FString>&& InSourceBlocks)
 	{
@@ -111,12 +111,12 @@ public:
 
 
 	/**
-	 * Get a source block from the texture
+	 * Get a source block from the texture.
 	 *
-	 * @param X The X coordinate of the block
-	 * @param Y The Y coordinate of the block
-	 * @param OutSourceFile The source file for that block if found
-	 * @return True if the source file for the block was found
+	 * @param X The X coordinate of the block.
+	 * @param Y The Y coordinate of the block.
+	 * @param OutSourceFile The source file for that block if found.
+	 * @return True if the source file for the block was found.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | UDIMs")
 	bool GetSourceBlockByCoordinates(int32 X, int32 Y, FString& OutSourceFile) const
@@ -125,11 +125,11 @@ public:
 	}
 
 	/**
-	 * Get a source block from the texture
+	 * Get a source block from the texture.
 	 *
-	 * @param BlockIndex The UDIM Index of the block
-	 * @param OutSourceFile The source file for that block if found
-	 * @return True if the source file for the block was found
+	 * @param BlockIndex The UDIM Index of the block.
+	 * @param OutSourceFile The source file for that block if found.
+	 * @return True if the source file for the block was found.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | UDIMs")
 	bool GetSourceBlock(int32 BlockIndex, FString& OutSourceFile) const
@@ -139,14 +139,14 @@ public:
 
 
 	/**
-	 * Set a source block for the texture
+	 * Set a source block for the texture.
 	 *
-	 * @param X The X coordinate of the block
-	 * @param Y The Y coordinate of the block
-	 * @param InSourceFile The source file for that block
+	 * @param X The X coordinate of the block.
+	 * @param Y The Y coordinate of the block.
+	 * @param InSourceFile The source file for that block.
 	 * 
-	 * The textures must be of the same format and use the same pixel format
-	 * The first block in the map is used to determine the accepted texture format and pixel format
+	 * The textures must be of the same format and use the same pixel format.
+	 * The first block in the map is used to determine the accepted texture format and pixel format.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | UDIMs")
 	void SetSourceBlockByCoordinates(int32 X, int32 Y,  const FString& InSourceFile)
@@ -155,13 +155,13 @@ public:
 	}
 
 	/**
-	 * Set a source block for the texture
+	 * Set a source block for the texture.
 	 *
-	 * @param BlockIndex The UDIM Index of the block
-	 * @param InSourceFile The source file for that block
+	 * @param BlockIndex The UDIM index of the block.
+	 * @param InSourceFile The source file for that block.
 	 * 
-	 * The textures must be of the same format and use the same pixel format
-	 * The first block in the map is used to determine the accepted texture format and pixel format
+	 * The textures must be of the same format and use the same pixel format.
+	 * The first block in the map is used to determine the accepted texture format and pixel format.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | UDIMs")
 	void SetSourceBlock(int32 BlockIndex, const FString& InSourceFile)

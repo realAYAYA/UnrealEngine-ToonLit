@@ -36,6 +36,19 @@ EProcessorExecutionFlags GetProcessorExecutionFlagsForWorld(const UWorld& World)
 	}
 }
 
+EProcessorExecutionFlags DetermineProcessorExecutionFlags(const UWorld* World, EProcessorExecutionFlags ExecutionFlagsOverride)
+{
+	if (ExecutionFlagsOverride != EProcessorExecutionFlags::None)
+	{
+		return ExecutionFlagsOverride;
+	}
+	if (World)
+	{
+		return UE::Mass::Utils::GetProcessorExecutionFlagsForWorld(*World);
+	}
+	return EProcessorExecutionFlags::All;
+}
+
 void CreateEntityCollections(const FMassEntityManager& EntityManager, const TConstArrayView<FMassEntityHandle> Entities
 	, const FMassArchetypeEntityCollection::EDuplicatesHandling DuplicatesHandling, TArray<FMassArchetypeEntityCollection>& OutEntityCollections)
 {

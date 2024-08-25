@@ -14,7 +14,7 @@ namespace CSVTools
 {
     class Version
     {
-        private static string VersionString = "1.3";
+        private static string VersionString = "1.32";
 
         public static string Get() { return VersionString; }
     };

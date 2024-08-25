@@ -86,6 +86,7 @@ void UUIFrameworkTextBase::SetOverflowPolicy(ETextOverflowPolicy InOverflowPolic
 
 void UUIFrameworkTextBase::LocalOnUMGWidgetCreated()
 {
+	SetText(Message);
 	SetTextToWidget(Text);
 	SetTextColorToWidget(TextColor);
 	SetJustificationToWidget(Justification);

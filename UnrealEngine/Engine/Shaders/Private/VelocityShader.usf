@@ -23,11 +23,14 @@ struct FVelocityInterpsVSToPS
 	// float4(PrevScreenPos.xyzw)
 	float4 PackedVelocityC : TEXCOORD7;
 	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS
+	float3 PixelPositionExcludingWPO : TEXCOORD8;
+#endif
 };
 
 struct FVelocityVSToPS
 {
-	float4 Position : SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 	FVelocityInterpsVSToPS Interps;
 };
 
@@ -57,6 +60,9 @@ void MainVertexShader(
 	
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
 	float4 TranslatedWorldPosition = VertexFactoryGetWorldPosition( Input, VFIntermediates );
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS
+	Output.Interps.PixelPositionExcludingWPO = TranslatedWorldPosition.xyz;
+#endif
 	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal( Input, VFIntermediates );
 
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, TranslatedWorldPosition.xyz, TangentToLocal);
@@ -128,7 +134,14 @@ void MainPixelShader(
 	// Manual clipping here (alpha-test, etc)
 	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Input.FactoryInterpolants, SvPosition);
 	FPixelMaterialInputs PixelMaterialInputs;
+
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS
+	float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+	float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+	CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, Input.PixelPositionExcludingWPO);
+#else
 	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, bIsFrontFace);
+#endif
 
 #if OUTPUT_PIXEL_DEPTH_OFFSET
 	ApplyPixelDepthOffsetToMaterialParameters(MaterialParameters, PixelMaterialInputs, OutDepth);
@@ -138,25 +151,24 @@ void MainPixelShader(
 	OutCoverage = DiscardMaterialWithPixelCoverage(MaterialParameters, PixelMaterialInputs);
 #else
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	const bool bThinTranslucentMaterial = false;
-	FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
 
-	FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
-	FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
+	FSubstrateData SubstrateData = PixelMaterialInputs.GetFrontSubstrateData();
+	FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
 
 	float MaterialOpacity = 1.0f;
-	if (StrataPixelHeader.BSDFCount > 0)
+	if (SubstratePixelHeader.ClosureCount > 0)
 	{
 		// Update tree (coverage/transmittance/luminace weights)
-		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings();
+		const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings();
 		const float3 V = MaterialParameters.CameraVector;
-		StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+		SubstratePixelHeader.SubstrateUpdateTree(V, Settings);
 
-		MaterialOpacity = StrataPixelHeader.StrataTree.Operators[StrataData.OperatorIndex].Coverage;
+		MaterialOpacity = SubstratePixelHeader.SubstrateTree.Operators[SubstrateData.OperatorIndex].Coverage;
 	}
 
-#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+#if SUBSTRATE_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
 	MaterialOpacity = GetMaterialOpacity(PixelMaterialInputs);
 #endif
 
@@ -171,5 +183,5 @@ void MainPixelShader(
 	// 3d velocity, includes camera an object motion
 	float3 Velocity = Calculate3DVelocity(Input.PackedVelocityA, Input.PackedVelocityC);
 
-	OutColor = EncodeVelocityToTexture(Velocity);
+	OutColor = EncodeVelocityToTexture(Velocity, (GetPrimitiveData(MaterialParameters).Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_PIXEL_ANIMATION) != 0);
 }

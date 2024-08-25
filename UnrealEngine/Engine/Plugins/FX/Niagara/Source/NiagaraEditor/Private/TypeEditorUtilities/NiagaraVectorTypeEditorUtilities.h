@@ -3,6 +3,7 @@
 #pragma once
 
 #include "INiagaraEditorTypeUtilities.h"
+#include "NiagaraVariableMetaData.h"
 
 class SNiagaraParameterEditor;
 

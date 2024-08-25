@@ -42,6 +42,7 @@ namespace UE
 				return InterchangeWorkerFatalError;
 			}
 
+			bool IsInterchangeWorkerRunning();
 			static bool IsInterchangeWorkerAvailable();
 		private:
 			void SpawnHandler();

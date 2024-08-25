@@ -1,0 +1,27 @@
+{
+	"FileVersion": 3,
+
+	"FriendlyName": "EOS Overlay Input Provider",
+	"Version": 1,
+	"VersionName": "1.0",
+	"Description": "Responsible for providing input forwarding to the EOSSDK Overlay.",
+	"Category": "Online Platform",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"EnabledByDefault": false,
+	"Modules": [
+		{
+			"Name": "EOSOverlayInputProvider",
+			"Type": "ClientOnlyNoCommandlet",
+			"LoadingPhase": "PostConfigInit",
+			"HasExplicitPlatforms": true,
+			"PlatformAllowList": []
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "EOSShared",
+			"Enabled": true
+		}
+	]
+}

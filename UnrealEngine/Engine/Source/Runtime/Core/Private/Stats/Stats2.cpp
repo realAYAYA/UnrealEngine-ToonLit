@@ -853,7 +853,7 @@ FString FStatNameAndInfo::GetDescriptionFrom(FName InLongName)
 	const int32 IndexStart = Input.Find(TEXT("///"), ESearchCase::CaseSensitive);
 	if (IndexStart != INDEX_NONE)
 	{
-		Input.RightChopInline(IndexStart + 3, false);
+		Input.RightChopInline(IndexStart + 3, EAllowShrinking::No);
 		const int32 IndexEnd = Input.Find(TEXT("///"), ESearchCase::CaseSensitive);
 		if (IndexEnd != INDEX_NONE)
 		{
@@ -870,7 +870,7 @@ FName FStatNameAndInfo::GetGroupCategoryFrom(FName InLongName)
 	const int32 IndexStart = Input.Find(TEXT("####"), ESearchCase::CaseSensitive);
 	if (IndexStart != INDEX_NONE)
 	{
-		Input.RightChopInline(IndexStart + 4, false);
+		Input.RightChopInline(IndexStart + 4, EAllowShrinking::No);
 		const int32 IndexEnd = Input.Find(TEXT("####"), ESearchCase::CaseSensitive);
 		if (IndexEnd != INDEX_NONE)
 		{
@@ -888,7 +888,7 @@ bool FStatNameAndInfo::GetSortByNameFrom(FName InLongName)
 	const int32 IndexStart = Input.Find(TEXT("/#/#"), ESearchCase::CaseSensitive);
 	if (IndexStart != INDEX_NONE)
 	{
-		Input.RightChopInline(IndexStart + 4, false);
+		Input.RightChopInline(IndexStart + 4, EAllowShrinking::No);
 		const int32 IndexEnd = Input.Find(TEXT("/#/#"), ESearchCase::CaseSensitive);
 		if (IndexEnd != INDEX_NONE)
 		{
@@ -1066,7 +1066,7 @@ void FThreadStatsPool::ReturnToPool( FThreadStats* Instance )
 	FThreadStats
 -----------------------------------------------------------------------------*/
 
-uint32 FThreadStats::TlsSlot = 0;
+uint32 FThreadStats::TlsSlot = FPlatformTLS::InvalidTlsSlot;
 FThreadSafeCounter FThreadStats::PrimaryEnableCounter;
 FThreadSafeCounter FThreadStats::PrimaryEnableUpdateNumber;
 FThreadSafeCounter FThreadStats::PrimaryDisableChangeTagLock;
@@ -1084,7 +1084,7 @@ FThreadStats::FThreadStats():
 {
 	Packet.SetThreadProperties();
 
-	check(TlsSlot && FPlatformTLS::IsValidTlsSlot(TlsSlot));
+	check(FPlatformTLS::IsValidTlsSlot(TlsSlot));
 	FPlatformTLS::SetTlsValue(TlsSlot, this);
 }
 
@@ -1276,7 +1276,7 @@ void FThreadStats::CheckForCollectingStartupStats()
 		{
 			break;
 		}
-		CmdLine.MidInline(Index + StatCmds.Len(), MAX_int32, false);
+		CmdLine.MidInline(Index + StatCmds.Len(), MAX_int32, EAllowShrinking::No);
 	}
 
 	if (FParse::Param( FCommandLine::Get(), TEXT( "LoadTimeStats" ) ))
@@ -1343,10 +1343,10 @@ void FThreadStats::StartThread()
 	// (Must do this before we expose ourselves to other threads via tls).
 	FThreadStatsPool::Get();
 	FStatsThreadState::GetLocalState(); // start up the state
-	if (!TlsSlot)
+	if (!FPlatformTLS::IsValidTlsSlot(TlsSlot))
 	{
 		TlsSlot = FPlatformTLS::AllocTlsSlot();
-		check(TlsSlot);
+		check(FPlatformTLS::IsValidTlsSlot(TlsSlot));
 	}
 
 	check(IsThreadingReady());

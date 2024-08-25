@@ -266,7 +266,7 @@ namespace UE::CoreUObject::Private
 			//ObjectPaths could have been modified when the read lock was released and the write
 			//lock was acquired, so we must check and see if the ObjectPath was added in that window.
 			LocalLockScope.ReleaseReadOnlyLockAndAcquireWriteLock_USE_WITH_CAUTION();
-			PathIndex = PathIndex = PackageData->ObjectDescriptors.IndexOfByPredicate([&ObjectPath](const FObjectDescriptor& Desc)
+			PathIndex = PackageData->ObjectDescriptors.IndexOfByPredicate([&ObjectPath](const FObjectDescriptor& Desc)
 				{
 					return Desc.ObjectPath == ObjectPath;
 

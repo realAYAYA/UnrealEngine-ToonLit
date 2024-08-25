@@ -178,6 +178,7 @@ typedef struct SYMS_DwAttribValueResolveParams SYMS_DwAttribValueResolveParams;
 struct SYMS_DwAttribValueResolveParams
 {
   SYMS_DwVersion version;
+  SYMS_DwLanguage language;
   SYMS_U64 addr_size;                // NOTE(rjf): size in bytes of containing compilation unit's addresses
   SYMS_U64 containing_unit_info_off; // NOTE(rjf): containing compilation unit's offset into the .debug_info section
   SYMS_U64 debug_addrs_base;         // NOTE(rjf): containing compilation unit's offset into the .debug_addrs section       (DWARF V5 ONLY)
@@ -263,7 +264,7 @@ struct SYMS_DwCompRoot
   SYMS_String8 compile_dir;
   SYMS_String8 external_dwo_name;
   SYMS_U64 dwo_id;
-  SYMS_U64 language;
+  SYMS_DwLanguage language;
   SYMS_U64 name_case;
   SYMS_B32 use_utf8;
   SYMS_U64 line_off;
@@ -319,6 +320,7 @@ enum
   SYMS_DwTagStubFlag_HasObjectPointerArg  = (1<<0),
   SYMS_DwTagStubFlag_HasLocation          = (1<<1),
   SYMS_DwTagStubFlag_HasExternal          = (1<<2),
+  SYMS_DwTagStubFlag_HasSpecification     = (1<<3),
 };
 
 typedef struct SYMS_DwTagStub SYMS_DwTagStub;
@@ -330,6 +332,7 @@ struct SYMS_DwTagStub
   SYMS_U64 children_info_off;
   SYMS_U64 attribs_info_off;
   SYMS_U64 attribs_abbrev_off;
+  
   // NOTE(rjf): SYMS_DwAttribKind_SPECIFICATION is tacked onto definitions that
   // are filling out more info about a "prototype". That attribute is a reference
   // that points back at the declaration tag. The declaration tag has the
@@ -338,6 +341,16 @@ struct SYMS_DwTagStub
   // a reference on both, that point back to each other, so it's always easy to
   // get from decl => spec, or from spec => decl.
   SYMS_SymbolID ref;
+  
+  // NOTE(rjf): SYMS_DwAttribKind_ABSTRACT_ORIGIN is tacked onto some definitions
+  // that are used to specify information more specific to inlining, while wanting
+  // to refer to an "abstract" function DIE, that is not specific to any inline
+  // sites. The DWARF generator will not duplicate information across these, so
+  // we will occasionally need to look at an abstract origin to get abstract
+  // information, like name/linkage-name/etc.
+  SYMS_SymbolID abstract_origin;
+  
+  SYMS_U64 _unused_;
 };
 
 typedef struct SYMS_DwTagStubNode SYMS_DwTagStubNode;
@@ -499,6 +512,7 @@ struct SYMS_DwUnitAccel
   SYMS_U64 address_size;
   SYMS_U64 base_addr;
   SYMS_U64 addrs_base;
+  SYMS_DwLanguage language;
   SYMS_DwAbbrevTable abbrev_table;
   
   //- rjf: tag stub hash table
@@ -562,7 +576,7 @@ SYMS_API SYMS_U64           syms_dw_hash_from_string(SYMS_String8 string);
 SYMS_API SYMS_U64           syms_dw_hash_from_sid(SYMS_SymbolID sid);
 
 SYMS_API SYMS_SymbolID      syms_dw_sid_from_info_offset(SYMS_U64 info_offset);
-SYMS_API SYMS_DwAttribClass syms_dw_pick_attrib_value_class(SYMS_DwAttribKind attrib, SYMS_DwFormKind form_kind);
+SYMS_API SYMS_DwAttribClass syms_dw_pick_attrib_value_class(SYMS_DwLanguage lang, SYMS_DwVersion ver, SYMS_DwAttribKind attrib, SYMS_DwFormKind form_kind);
 SYMS_API SYMS_SymbolKind    syms_dw_symbol_kind_from_tag_stub(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwAttribValueResolveParams resolve_params, SYMS_DwTagStub *stub);
 
 SYMS_API SYMS_SecInfoArray syms_dw_copy_sec_info_array(SYMS_Arena *arena, SYMS_SecInfoArray array);
@@ -657,10 +671,12 @@ SYMS_API SYMS_U64RangeList syms_dw_range_list_from_high_low_pc_and_ranges_attrib
 ////////////////////////////////
 //~ rjf: Tag Parsing
 
-SYMS_API SYMS_DwAttribListParseResult syms_dw_parse_attrib_list_from_info_abbrev_offsets(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_U64 address_size, SYMS_U64 info_off, SYMS_U64 abbrev_off);
+SYMS_API SYMS_DwAttribListParseResult syms_dw_parse_attrib_list_from_info_abbrev_offsets(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwLanguage lang, SYMS_DwVersion ver, SYMS_U64 address_size, SYMS_U64 info_off, SYMS_U64 abbrev_off);
 SYMS_API SYMS_DwTag *syms_dw_tag_from_info_offset(SYMS_Arena *arena,
                                                   SYMS_String8 data, SYMS_DwDbgAccel *dbg,
                                                   SYMS_DwAbbrevTable abbrev_table,
+                                                  SYMS_DwLanguage lang,
+                                                  SYMS_DwVersion ver,
                                                   SYMS_U64 address_size,
                                                   SYMS_U64 info_offset);
 SYMS_API SYMS_DwTagStub syms_dw_stub_from_tag(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwAttribValueResolveParams resolve_params,
@@ -718,7 +734,7 @@ SYMS_API SYMS_DwTagStubCacheNode *  syms_dw_tag_stub_cache_node_from_sid(SYMS_Dw
 SYMS_API SYMS_DwTagStub             syms_dw_tag_stub_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
 SYMS_API SYMS_DwTagStub             syms_dw_cached_tag_stub_from_sid__parse_fallback(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
 SYMS_API SYMS_DwTagStubList         syms_dw_children_from_tag_stub(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_DwTagStub stub);
-SYMS_API SYMS_DwAttribList          syms_dw_attrib_list_from_stub(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_U64 addr_size, SYMS_DwTagStub *stub);
+SYMS_API SYMS_DwAttribList          syms_dw_attrib_list_from_stub(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwLanguage lang, SYMS_DwVersion ver, SYMS_U64 addr_size, SYMS_DwTagStub *stub);
 SYMS_API SYMS_SymbolIDArray         syms_dw_copy_sid_array_if_needed(SYMS_Arena *arena, SYMS_SymbolIDArray arr);
 SYMS_API SYMS_SymbolIDArray         syms_dw_proc_sid_array_from_unit(SYMS_Arena *arena, SYMS_DwUnitAccel *unit);
 SYMS_API SYMS_SymbolIDArray         syms_dw_var_sid_array_from_unit(SYMS_Arena *arena, SYMS_DwUnitAccel *unit);
@@ -743,15 +759,20 @@ SYMS_API SYMS_SigInfo      syms_dw_sig_info_from_mem_number(SYMS_Arena *arena, S
 SYMS_API SYMS_USID         syms_dw_symbol_from_mem_number(SYMS_String8 data, SYMS_DwDbgAccel *dbg,
                                                           SYMS_DwUnitAccel *unit, SYMS_DwMemsAccel *mems,
                                                           SYMS_U64 n);
-SYMS_API SYMS_EnumInfoArray syms_dw_enum_info_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg,
-                                                             SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
+SYMS_API SYMS_EnumMemberArray syms_dw_enum_member_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg,
+                                                                 SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
 SYMS_API SYMS_USID          syms_dw_containing_type_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
+SYMS_API SYMS_String8       syms_dw_linkage_name_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
 
 ////////////////////////////////
 //~ rjf: Full Symbol Info Parsing
 
-SYMS_API SYMS_String8      syms_dw_file_string_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg,
-                                                        SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
+SYMS_API SYMS_String8      syms_dw_attrib_string_from_sid__unstable(SYMS_String8 data, SYMS_DwDbgAccel *dbg,
+                                                                    SYMS_DwUnitAccel *unit,
+                                                                    SYMS_DwAttribKind kind, SYMS_SymbolID sid);
+SYMS_API SYMS_String8      syms_dw_attrib_string_from_sid__unstable_chain(SYMS_String8 data, SYMS_DwDbgAccel *dbg,
+                                                                          SYMS_DwUnitAccel *unit,
+                                                                          SYMS_DwAttribKind kind, SYMS_SymbolID sid);
 SYMS_API SYMS_SymbolKind   syms_dw_symbol_kind_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg,
                                                         SYMS_DwUnitAccel *unit, SYMS_SymbolID sid);
 SYMS_API SYMS_String8      syms_dw_symbol_name_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg,

@@ -1,8 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-/*==============================================================================
-NiagaraEmitterInstance.h: Niagara emitter simulation class
-==============================================================================*/
 #pragma once
 
 #include "CoreMinimal.h"
@@ -12,252 +9,229 @@ NiagaraEmitterInstance.h: Niagara emitter simulation class
 #include "NiagaraEmitter.h"
 #include "NiagaraScriptExecutionContext.h"
 
+struct INiagaraComputeDataBufferInterface;
+struct FNiagaraComputeExecutionContext;
+struct FNiagaraScriptExecutionContext;
+class UNiagaraDataInterface;
 class FNiagaraSystemInstance;
-struct FNiagaraEmitterHandle;
-class UNiagaraParameterCollection;
-class UNiagaraParameterCollectionInstance;
-class FNiagaraGpuComputeDispatchInterface;
-struct FNiagaraEmitterCompiledData;
+
+class FNiagaraEmitterInstanceImpl;
+class FNiagaraStatelessEmitterInstance;
 
 /**
-* A Niagara particle simulation.
+* Base class for different emitter instances
 */
 class FNiagaraEmitterInstance
 {
 	friend class UNiagaraSimCache;
 
-private:
-	struct FEventInstanceData
-	{
-		TArray<FNiagaraScriptExecutionContext> EventExecContexts;
-		TArray<FNiagaraParameterDirectBinding<int32>> EventExecCountBindings;
-
-		TArray<FNiagaraDataSet*> UpdateScriptEventDataSets;
-		TArray<FNiagaraDataSet*> SpawnScriptEventDataSets;
-
-		TArray<bool> UpdateEventGeneratorIsSharedByIndex;
-		TArray<bool> SpawnEventGeneratorIsSharedByIndex;
-
-		/** Data required for handling events. */
-		TArray<FNiagaraEventHandlingInfo> EventHandlingInfo;
-		int32 EventSpawnTotal = 0;
-	};
-
 public:
 	explicit FNiagaraEmitterInstance(FNiagaraSystemInstance* InParentSystemInstance);
-	virtual ~FNiagaraEmitterInstance();
+	virtual ~FNiagaraEmitterInstance() {}
 
-	void Init(int32 InEmitterIdx, FNiagaraSystemInstanceID SystemInstanceID);
-	void InitDITickLists();
+	//~Begin: Define Emitter Interface
+	virtual void Init(int32 InEmitterIdx);
+	virtual void ResetSimulation(bool bKillExisting = true) = 0;
+	virtual void SetEmitterEnable(bool bNewEnableState) = 0;
+	virtual void OnPooledReuse() = 0;
+	virtual bool HandleCompletion(bool bForce = false) = 0;
 
-	void ResetSimulation(bool bKillExisting = true);
+	virtual void BindParameters(bool bExternalOnly) = 0;
+	virtual void UnbindParameters(bool bExternalOnly) = 0;
 
-	void OnPooledReuse();
+	virtual void PreTick() {};
+	virtual void Tick(float DeltaSeconds) = 0;
+	//~End: Define Emitter Interface
 
-	void DirtyDataInterfaces();
-
-	/** Replaces the binding for a single parameter collection instance. If for example the component begins to override the global instance. */
-	//void RebindParameterCollection(UNiagaraParameterCollectionInstance* OldInstance, UNiagaraParameterCollectionInstance* NewInstance);
-	void BindParameters(bool bExternalOnly);
-	void UnbindParameters(bool bExternalOnly);
-
-	bool IsAllowedToExecute() const;
-
-#if WITH_EDITOR
-	void TickRapidIterationParameters();
+	FNiagaraSystemInstance* GetParentSystemInstance() const { return ParentSystemInstance; }
+	bool IsLocalSpace() const { return bLocalSpace; }
+	bool IsDeterministic() const { return bDeterministic; }
+	bool NeedsPartialDepthTexture() const { return bNeedsPartialDepthTexture; }
+	bool NeedsEarlyViewUniformBuffer() const { return bNeedsEarlyViewUniformBuffer; }
+	ENiagaraSimTarget GetSimTarget() const { return SimTarget; }
+#if STATS
+	TStatId GetEmitterStatID(bool bGameThread, bool bConcurrent) const;
+	TStatId GetSystemStatID(bool bGameThread, bool bConcurrent) const;
 #endif
+	FNiagaraDataSet& GetParticleData() { check(ParticleDataSet); return *ParticleDataSet; }
+	const FNiagaraDataSet& GetParticleData() const { check(ParticleDataSet); return *ParticleDataSet; }
 
-	void PreTick();
-	void Tick(float DeltaSeconds);
-	void PostTick();
-	bool HandleCompletion(bool bForce = false);
+	FNiagaraComputeExecutionContext* GetGPUContext() const { return GPUExecContext; }
+	INiagaraComputeDataBufferInterface* GetComputeDataBufferInterface() const { return GPUDataBufferInterfaces; }
 
-	bool RequiresPersistentIDs() const;
+	ENiagaraExecutionState GetExecutionState() const { return ExecutionState; }
+	bool IsActive() const { return ExecutionState == ENiagaraExecutionState::Active; }
+	bool IsDisabled() const { return ExecutionState == ENiagaraExecutionState::Disabled; }
+	bool IsInactive() const { return ExecutionState == ENiagaraExecutionState::Inactive; }
+	bool IsComplete() const { return ExecutionState == ENiagaraExecutionState::Complete || ExecutionState == ENiagaraExecutionState::Disabled; }
 
-	FORCEINLINE bool ShouldTick()const { return ExecutionState == ENiagaraExecutionState::Active || GetNumParticles() > 0; }
+	FORCEINLINE bool ShouldTick() const { return ExecutionState == ENiagaraExecutionState::Active || GetNumParticles() > 0; }
 
-	uint32 CalculateEventSpawnCount(const FNiagaraEventScriptProperties &EventHandlerProps, TArray<int32, TInlineAllocator<16>>& EventSpawnCounts, FNiagaraDataSet *EventSet);
-
-#if WITH_EDITOR
-	/** Potentially reads back data from the GPU which will introduce a stall and should only be used for debug purposes. */
-	NIAGARA_API void CalculateFixedBounds(const FTransform& ToWorldSpace);
-#endif
-	
-	NIAGARA_API bool GetBoundRendererValue_GT(const FNiagaraVariableBase& InBaseVar, const FNiagaraVariableBase& InSubVar, void* OutValueData) const;
-
-	FNiagaraDataSet& GetData()const { return *ParticleDataSet; }
-
-	FORCEINLINE bool IsActive()const { return ExecutionState == ENiagaraExecutionState::Active; }
-	FORCEINLINE bool IsDisabled()const { return ExecutionState == ENiagaraExecutionState::Disabled; }
-	FORCEINLINE bool IsInactive()const { return ExecutionState == ENiagaraExecutionState::Inactive; }
-	FORCEINLINE bool IsComplete()const { return ExecutionState == ENiagaraExecutionState::Complete || ExecutionState == ENiagaraExecutionState::Disabled; }
-
-private:
-	NIAGARA_API int32 GetNumParticlesGPUInternal() const;
-public:
-	FORCEINLINE int32 GetNumParticles() const
-	{
-		// Note: For GPU simulations the data is latent we can not read directly from GetCurrentData() until we have passed a fence
-		// which guarantees that at least one tick has occurred inside the batcher.  The count will still technically be incorrect
-		// but hopefully adequate for a system script update.
-		if (GPUExecContext)
-		{
-			return GetNumParticlesGPUInternal();
-		}
-
-		if ( ParticleDataSet->GetCurrentData() )
-		{
-			return ParticleDataSet->GetCurrentData()->GetNumInstances();
-		}
-		return 0;
-	}
-
-	FORCEINLINE int32 GetTotalSpawnedParticles()const { return TotalSpawnedParticles; }
-	FORCEINLINE const FNiagaraEmitterScalabilitySettings& GetScalabilitySettings()const { return GetCachedEmitterData()->GetScalabilitySettings(); }
-
-	NIAGARA_API const FNiagaraEmitterHandle& GetEmitterHandle() const;
-
-	FNiagaraSystemInstance* GetParentSystemInstance()const { return ParentSystemInstance; }
-
-	float NIAGARA_API GetTotalCPUTimeMS();
-	int64 NIAGARA_API GetTotalBytesUsed();
-
-	ENiagaraExecutionState GetExecutionState() { return ExecutionState; }
-	void NIAGARA_API SetExecutionState(ENiagaraExecutionState InState);
+	//-TODO:Stateless: Does this need to be virtual?  Can we cache the value after ticking / allocating the data / have a cache value somewhere instead?
+	NIAGARA_API virtual int32 GetNumParticles() const;
+	int32 GetTotalSpawnedParticles() const { return TotalSpawnedParticles; }
 
 	bool AreBoundsDynamic() const { return bCachedBoundsDynamic; }
-	FBox GetBounds() const { return CachedBounds; }
-
-	FNiagaraScriptExecutionContext& GetSpawnExecutionContext() { return SpawnExecContext; }
-	FNiagaraScriptExecutionContext& GetUpdateExecutionContext() { return UpdateExecContext; }
-	TArrayView<FNiagaraScriptExecutionContext> GetEventExecutionContexts();
-
-	FORCEINLINE FName GetCachedIDName()const { return CachedIDName; }
-	FORCEINLINE FVersionedNiagaraEmitter GetCachedEmitter()const { return CachedEmitter; }
-	FORCEINLINE FVersionedNiagaraEmitterData* GetCachedEmitterData()const { return CachedEmitter.GetEmitterData(); }
-
-	TArray<FNiagaraSpawnInfo>& GetSpawnInfo() { return SpawnInfos; }
-
-	NIAGARA_API bool IsReadyToRun() const;
-
-	void Dump()const;
-
-	bool WaitForDebugInfo();
-
-	FNiagaraComputeExecutionContext* GetGPUContext()const
-	{
-		return GPUExecContext;
-	}
+	[[nodiscard]] FBox GetBounds() const { return CachedBounds; }
 
 	void SetSystemFixedBoundsOverride(FBox SystemFixedBounds);
-	FORCEINLINE void SetFixedBounds(const FBox& InLocalBounds)
-	{
-		FRWScopeLock ScopeLock(FixedBoundsGuard, SLT_Write);
-		FixedBounds = InLocalBounds;
-	}
-	FBox GetFixedBounds() const;
 
-	NIAGARA_API UObject* FindBinding(const FNiagaraVariable& InVariable) const;
-	NIAGARA_API UNiagaraDataInterface* FindDataInterface(const FNiagaraVariable& InVariable) const;
+	void SetFixedBounds(const FBox& InLocalBounds);
+	[[nodiscard]] FBox GetFixedBounds() const;
+	
+#if WITH_EDITORONLY_DATA
+	uint32 GetTickTimeCycles() const { return TickTimeCycles; }
+	NIAGARA_API bool IsDisabledFromIsolation() const;
+#endif
 
-	bool HasTicked() const { return TickCount > 0;  }
+	[[nodiscard]] NIAGARA_API int64 GetTotalBytesUsed() const;
 
-	const FNiagaraParameterStore& GetRendererBoundVariables() const { return RendererBindings; }
+	[[nodiscard]] NIAGARA_API const FNiagaraEmitterHandle& GetEmitterHandle() const;
+
 	FNiagaraParameterStore& GetRendererBoundVariables() { return RendererBindings; }
+	const FNiagaraParameterStore& GetRendererBoundVariables() const { return RendererBindings; }
 
-	int32 GetRandomSeed() const { return RandomSeed; }
-	int32 GetInstanceSeed() const { return InstanceSeed; }
+	NIAGARA_API bool GetBoundRendererValue_GT(const FNiagaraVariableBase& InBaseVar, const FNiagaraVariableBase& InSubVar, void* OutValueData) const;
 
+	[[nodiscard]] NIAGARA_API UObject* FindBinding(const FNiagaraVariable& InVariable) const;
+	[[nodiscard]] NIAGARA_API UNiagaraDataInterface* FindDataInterface(const FNiagaraVariable& InVariable) const;
+
+	[[nodiscard]] NIAGARA_API FNiagaraEmitterID GetEmitterID() const{ return FNiagaraEmitterID(EmitterIndex); }
+
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	//-TODO:Stateless: Consider removing these virtual functions
+	// Can we remove these virtual functions
+	virtual FNiagaraEmitterInstanceImpl* AsStateful() { return nullptr; }
+	virtual FNiagaraStatelessEmitterInstance* AsStateless() { return nullptr; }
+
+	const FNiagaraEmitterInstanceImpl* AsStateful() const { return const_cast<FNiagaraEmitterInstance*>(this)->AsStateful(); }
+	const FNiagaraStatelessEmitterInstance* AsStateless() const { return const_cast<FNiagaraEmitterInstance*>(this)->AsStateless(); }
+
+	UNiagaraEmitter* GetEmitter() const { return VersionedEmitter.Emitter; }
+	const FVersionedNiagaraEmitter& GetVersionedEmitter() const { return VersionedEmitter; }
+	//FVersionedNiagaraEmitterData* GetVersionedEmitterData() const { return VersionedEmitter.GetEmitterData(); }
+
+	template<typename TAction>
+	void ForEachEnabledRenderer(TAction Func) const
+	{
+		for (const UNiagaraRendererProperties* Renderer : GetRenderers())
+		{
+			if (Renderer && Renderer->GetIsEnabled() && Renderer->IsSimTargetSupported(SimTarget))
+			{
+				Func(Renderer);
+			}
+		}
+	}
+
+	template<typename TAction>
+	void ForEachEnabledRenderer(TAction Func)
+	{
+		for (UNiagaraRendererProperties* Renderer : GetRenderers())
+		{
+			if (Renderer && Renderer->GetIsEnabled() && Renderer->IsSimTargetSupported(SimTarget))
+			{
+				Func(Renderer);
+			}
+		}
+	}
+
+	[[nodiscard]] const UNiagaraRendererProperties* GetRenderer(int32 i) const { return GetRenderers()[i]; }
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	//-TODO:Stateless: Should we cache this data? clean up const casting
+protected:
+	virtual TConstArrayView<UNiagaraRendererProperties*> GetRenderers() const = 0;
+	TArrayView<UNiagaraRendererProperties*> GetRenderers()
+	{
+		TConstArrayView<UNiagaraRendererProperties*> Renderers = static_cast<const FNiagaraEmitterInstance*>(this)->GetRenderers();
+		return MakeArrayView(const_cast<UNiagaraRendererProperties**>(Renderers.GetData()), Renderers.Num());
+	}
+
+public:
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Deprecated functionality code needs to be updated
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API FNiagaraScriptExecutionContext& GetSpawnExecutionContext();
+
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API FNiagaraScriptExecutionContext& GetUpdateExecutionContext();
+
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API TArrayView<FNiagaraScriptExecutionContext> GetEventExecutionContexts();
+
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	FORCEINLINE  FVersionedNiagaraEmitter GetCachedEmitter() const { return VersionedEmitter; }
+
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	FORCEINLINE FVersionedNiagaraEmitterData* GetCachedEmitterData()const { return VersionedEmitter.GetEmitterData(); }
+
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API TArray<FNiagaraSpawnInfo>& GetSpawnInfo();
+
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
 	void SetParticleComponentActive(FObjectKey ComponentKey, int32 ParticleID) const;
 
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
 	bool IsParticleComponentActive(FObjectKey ComponentKey, int32 ParticleID) const;
 
-private:
-	void CheckForErrors();
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API bool IsReadyToRun() const;
 
-	void BuildConstantBufferTable(
-		const FNiagaraScriptExecutionContext& ExecContext,
-		FScriptExecutionConstantBufferTable& ConstantBufferTable) const;
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API bool HasTicked() const;
 
-	/** Generate emitter bounds */
-	FBox InternalCalculateDynamicBounds(int32 ParticleCount) const;
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API void SetExecutionState(ENiagaraExecutionState InState);
 
-	/** Array of all spawn info driven by our owning emitter script. */
-	TArray<FNiagaraSpawnInfo> SpawnInfos;
+#if WITH_EDITOR
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API void CalculateFixedBounds(const FTransform& ToWorldSpace);
+#endif
 
-	FNiagaraScriptExecutionContext SpawnExecContext;
-	FNiagaraScriptExecutionContext UpdateExecContext;
-	FNiagaraComputeExecutionContext* GPUExecContext = nullptr;
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API float GetTotalCPUTimeMS() const;
 
-	FNiagaraParameterDirectBinding<float> SpawnIntervalBinding;
-	FNiagaraParameterDirectBinding<float> InterpSpawnStartBinding;
-	FNiagaraParameterDirectBinding<int32> SpawnGroupBinding;
+	UE_DEPRECATED(5.4, "Please update your code to handle execution path for different emitter types")
+	NIAGARA_API FName GetCachedIDName() const;
 
-	FNiagaraParameterDirectBinding<int32> SpawnExecCountBinding;
-	FNiagaraParameterDirectBinding<int32> UpdateExecCountBinding;
+	UE_DEPRECATED(5.4, "Please update your code to use GetParticleData")
+	FNiagaraDataSet& GetData() { check(ParticleDataSet); return *ParticleDataSet; }
+	UE_DEPRECATED(5.4, "Please update your code to use GetParticleData")
+	const FNiagaraDataSet& GetData() const { check(ParticleDataSet); return *ParticleDataSet; }
+	////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	TSharedPtr<const FNiagaraEmitterCompiledData> CachedEmitterCompiledData;
-	FNiagaraParameterStore RendererBindings;
+protected:
+	FNiagaraSystemInstance*				ParentSystemInstance = nullptr;
+	FNiagaraDataSet*					ParticleDataSet = nullptr;
+	FNiagaraComputeExecutionContext*	GPUExecContext = nullptr;
+	INiagaraComputeDataBufferInterface* GPUDataBufferInterfaces = nullptr;
+	FVersionedNiagaraEmitter			VersionedEmitter = {};
 
-	TUniquePtr<FEventInstanceData> EventInstanceData;
+	FNiagaraParameterStore				RendererBindings;
 
-	/* Are the cached emitter bounds dynamic */
-	bool bCachedBoundsDynamic = false;
+	int32								EmitterIndex = INDEX_NONE;
+	int32								TotalSpawnedParticles = 0;
 
-	/* Emitter bounds */
-	FBox CachedBounds;
+	uint8								bLocalSpace : 1 = true;
+	uint8								bDeterministic : 1 = true;
+	uint8								bNeedsPartialDepthTexture : 1 = false;
+	uint8								bNeedsEarlyViewUniformBuffer : 1 = false;
+	ENiagaraSimTarget					SimTarget = ENiagaraSimTarget::CPUSim;
+	ENiagaraExecutionState				ExecutionState = ENiagaraExecutionState::Active;
 
-	/** Optional user or VM specified bounds. */
-	mutable FRWLock FixedBoundsGuard;
-	FBox FixedBounds;
+	bool								bCachedBoundsDynamic = false;
+	FBox								CachedBounds = FBox(ForceInit);
+	FBox								CachedSystemFixedBounds = FBox(ForceInit);
 
-	/** Cached fixed bounds of the parent system which override this Emitter Instances bounds if set. Whenever we initialize the owning SystemInstance we will reconstruct this
-	 ** EmitterInstance and the cached bounds will be unset. */
-	FBox CachedSystemFixedBounds;
+	mutable FRWLock						FixedBoundsGuard;
+	FBox								FixedBounds = FBox(ForceInit);
 
-	FNiagaraSystemInstanceID OwnerSystemInstanceID = 0;
-
-	FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface = nullptr;
-
-	/** particle simulation data. Must be a shared ref as various things on the RT can have direct ref to it. */
-	FNiagaraDataSet* ParticleDataSet = nullptr;
-
-	FNiagaraSystemInstance *ParentSystemInstance = nullptr;
-
-	/** Raw pointer to the emitter that we're instanced from. Raw ptr should be safe here as we check for the validity of the system and it's emitters higher up before any ticking. */
-	FVersionedNiagaraEmitter CachedEmitter;
-	FName CachedIDName;
-
-	/** The index of our emitter in our parent system instance. */
-	int32 EmitterIdx = INDEX_NONE;
-
-	/* The age of the emitter*/
-	float EmitterAge = 0.0f;
-
-	int32 RandomSeed = 0;
-	int32 InstanceSeed = FGenericPlatformMath::Rand();
-	int32 TickCount = 0;
-
-	int32 TotalSpawnedParticles = 0;
-	
-	/* Cycles taken to process the tick. */
-	uint32 CPUTimeCycles = 0;
-
-	uint32 MaxRuntimeAllocation = 0;
-
-	int32 MaxAllocationCount = 0;
-	int32 MinOverallocation = -1;
-	int32 ReallocationCount = 0;
-
-	uint32 MaxInstanceCount = 0;
-
-	/* Emitter tick state */
-	ENiagaraExecutionState ExecutionState = ENiagaraExecutionState::Inactive;
-
-	/** Typical resets must be deferred until the tick as the RT could still be using the current buffer. */
-	uint32 bResetPending : 1;
-
-	// This is used to keep track which particles have spawned a component. This is needed when the bOnlyCreateComponentsOnParticleSpawn flag is set in the renderer.
-	// Without this bookkeeping, the particles would lose their components when the render state is recreated or the visibility tag flips them off and on again.
-	mutable TMap<FObjectKey, TSet<int32>> ParticlesWithComponents;
+#if WITH_EDITORONLY_DATA
+	uint32								TickTimeCycles = 0;
+#endif
 };
+
+using FNiagaraEmitterInstanceRef = TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe>;
+using FNiagaraEmitterInstancePtr = TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe>;

@@ -74,6 +74,7 @@ float4 ACESCoefsHigh_0;
 float ACESCoefsLow_4;
 float ACESCoefsHigh_4;
 float ACESSceneColorMultiplier;
+float ACESGamutCompression;
 
 float3 ColorCorrect( float3 WorkingColor,
 	float4 ColorSaturation,
@@ -348,7 +349,7 @@ float4 CombineLUTsCommon(float2 InUV, uint InLayerIndex)
 	else if( GetOutputDevice() == TONEMAPPER_OUTPUT_ACES1000nitST2084 || GetOutputDevice() == TONEMAPPER_OUTPUT_ACES1000nitScRGB)
 	{		
 		// 1000 nit ODT
-		FACESTonemapParams AcesParams = ComputeACESTonemapParams(ACESMinMaxData, ACESMidData, ACESCoefsLow_0, ACESCoefsHigh_0, ACESCoefsLow_4, ACESCoefsHigh_4, ACESSceneColorMultiplier);
+		FACESTonemapParams AcesParams = ComputeACESTonemapParams(ACESMinMaxData, ACESMidData, ACESCoefsLow_0, ACESCoefsHigh_0, ACESCoefsLow_4, ACESCoefsHigh_4, ACESSceneColorMultiplier, ACESGamutCompression);
 		float3 ODTColor = ACESOutputTransforms1000( GradedColor, (float3x3)WorkingColorSpace.ToAP0, AcesParams);
 
 		// Convert from AP1 to specified output gamut except for ScRGB as it might contain negative values. 
@@ -366,7 +367,7 @@ float4 CombineLUTsCommon(float2 InUV, uint InLayerIndex)
 	else if( GetOutputDevice() == TONEMAPPER_OUTPUT_ACES2000nitST2084 || GetOutputDevice() == TONEMAPPER_OUTPUT_ACES2000nitScRGB)
 	{		
 		// 2000 nit ODT
-		FACESTonemapParams AcesParams = ComputeACESTonemapParams(ACESMinMaxData, ACESMidData, ACESCoefsLow_0, ACESCoefsHigh_0, ACESCoefsLow_4, ACESCoefsHigh_4, ACESSceneColorMultiplier);
+		FACESTonemapParams AcesParams = ComputeACESTonemapParams(ACESMinMaxData, ACESMidData, ACESCoefsLow_0, ACESCoefsHigh_0, ACESCoefsLow_4, ACESCoefsHigh_4, ACESSceneColorMultiplier, ACESGamutCompression);
 		float3 ODTColor = ACESOutputTransforms2000( GradedColor, (float3x3)WorkingColorSpace.ToAP0, AcesParams);
 
 		// Convert from AP1 to specified output gamut except for ScRGB as it might contain negative values. 

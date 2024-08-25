@@ -195,15 +195,34 @@ struct FRenderCaptureCoordinateConverter2D
 	}
 };
 
+/**
+ * Returns the view matrices corresponding to the given render capture cameara parameters
+ * Useful to get the needed information to unproject the DeviceDepth render capture e.g., using the following
+ *
+ *   FViewMatrices ViewMatrices = GetRenderCaptureViewMatrices(...);
+ *   FVector2d DeviceXY = FRenderCaptureCoordinateConverter2D::PixelToDevice(...);
+ *   FVector4d WorldPoint = ViewMatrices.GetInvViewProjectionMatrix().TransformPosition(FVector3d(DeviceXY, DeviceZ));
+ *   WorldPoint /= WorldPoint.W;
+ */
+FViewMatrices GetRenderCaptureViewMatrices(const FFrame3d& ViewFrame, double HorzFOVDegrees, double NearPlaneDist, FImageDimensions ViewRect);
 
 /**
  * FWorldRenderCapture captures a rendering of a set of Actors in a World from a
  * specific viewpoint. Various types of rendering are supported, as defined by ERenderCaptureType.
+ * Currently rendering an entire World, ie without an explicit list of Actors or Components, is not supported.
  */
 class MODELINGCOMPONENTS_API FWorldRenderCapture
 {
 public:
-	FWorldRenderCapture();
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS // Silence deprecation warnings for deprecated LastCaptureViewMatrices member in implicit constructors
+	FWorldRenderCapture() = default;
+	FWorldRenderCapture(const FWorldRenderCapture&) = default;
+	FWorldRenderCapture(FWorldRenderCapture&&) noexcept = default;
+	FWorldRenderCapture& operator=(const FWorldRenderCapture&) = default;
+	FWorldRenderCapture& operator=(FWorldRenderCapture&&) noexcept = default;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 	~FWorldRenderCapture();
 
 	/** Explicitly release any allocated textures or other data structres */
@@ -214,9 +233,18 @@ public:
 
 	/** 
 	 *  Set the set of Actors in the target World that should be included in the Rendering.
-	 *  Currently rendering an entire World, ie without an explicit list of Actors, is not supported.
 	 */
 	void SetVisibleActors(const TArray<AActor*>& Actors);
+
+	/**
+	 *  Set the set of Components in the target World that should be included in the Rendering.
+	 */
+	void SetVisibleComponents(const TArray<UActorComponent*>& Components);
+
+	/**
+	 *  Set the set of Actors and Components in the target World that should be included in the Rendering.
+	 */
+	void SetVisibleActorsAndComponents(const TArray<AActor*>& VisibleActors, const TArray<UActorComponent*>& VisibleComponents);
 
 	/** Get bounding-box of the Visible actors */
 	FBoxSphereBounds GetVisibleActorBounds() const { return VisibleBounds; }
@@ -238,7 +266,13 @@ public:
 	 * @return view matrices used in the last call to CaptureFromPosition
 	 * Useful to get the needed information to unproject the DeviceDepth render capture
 	 */
-	const FViewMatrices& GetLastCaptureViewMatrices() const { return LastCaptureViewMatrices; }
+	UE_DEPRECATED(5.4, "Please use GetRenderCaptureViewMatrices instead")
+	const FViewMatrices& GetLastCaptureViewMatrices() const
+	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		return LastCaptureViewMatrices;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
 
 	/**
 	 * Capture the desired buffer type CaptureType with the given view/camera parameters. The returned image
@@ -264,11 +298,10 @@ public:
 protected:
 	UWorld* World = nullptr;
 
-	TArray<AActor*> CaptureActors;
 	TSet<FPrimitiveComponentId> VisiblePrimitives;
 	FBoxSphereBounds VisibleBounds;
 
-	FImageDimensions Dimensions;
+	FImageDimensions Dimensions = FImageDimensions(128, 128);
 
 	// Temporary textures used as render targets. We explicitly prevent this from being GC'd internally
 	UTextureRenderTarget2D* LinearRenderTexture = nullptr;
@@ -279,12 +312,14 @@ protected:
 	UTextureRenderTarget2D* GetRenderTexture(bool bLinear);
 	UTextureRenderTarget2D* GetDepthRenderTexture();
 
+	UE_DEPRECATED(5.4, "Please use GetRenderCaptureViewMatrices instead")
 	FViewMatrices LastCaptureViewMatrices;
 
 	// temporary buffer used to read from texture
 	TArray<FLinearColor> ReadImageBuffer;
 
 	/** Emissive is a special case and uses different code than capture of color/property channels */
+	UE_DEPRECATED(5.4, "Please use CaptureBufferVisualizationFromPosition with VisualizationMode=PreTonemapHDRColor instead")
 	bool CaptureEmissiveFromPosition(
 		const FFrame3d& Frame,
 		double HorzFOVDegrees,
@@ -302,6 +337,21 @@ protected:
 
 	/** Depth is a special case and uses different code than capture of color/property channels */
 	bool CaptureDeviceDepthFromPosition(
+		const FFrame3d& Frame,
+		double HorzFOVDegrees,
+		double NearPlaneDist,
+		FImageAdapter& ResultImageOut,
+		const FRenderCaptureConfig& Config = {});
+
+	/**
+	 * The following values for VisualizationMode are supported:
+	 *   BaseColor, Metallic, Roughness, Specular, WorldNormal, Opacity, SubsurfaceColor, PreTonemapHDRColor
+	 * 
+	 * Its not clear where the valid VisualizationMode FNames are defined, it may be in the [Engine.BufferVisualizationMaterials] section of
+	 * Config/BaseEngine.ini, which is read by FBufferVisualizationData::Initialize() and called when the engine initializes in UEngine::Init()
+	 */
+	bool CaptureBufferVisualizationFromPosition(
+		const FName& VisualizationMode,
 		const FFrame3d& Frame,
 		double HorzFOVDegrees,
 		double NearPlaneDist,

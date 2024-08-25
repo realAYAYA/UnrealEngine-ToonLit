@@ -1,0 +1,189 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+COMPILER_ALLOW_CS_DERIVATIVES
+
+#define LUMEN_CARD_CAPTURE 1
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+
+#define SceneTexturesStruct LumenCardPass.SceneTextures 
+#define EyeAdaptationStruct LumenCardPass
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+#include "../VariableRateShading/VRSShadingRateCommon.ush"
+#include "../Nanite/NaniteShadeCommon.ush"
+
+#if PLATFORM_SUPPORTS_SHADER_ROOT_CONSTANTS
+
+#include "/Engine/Shared/HLSLReservedSpaces.h"
+
+struct FUERootConstants
+{
+	uint  RecordIndex;
+	uint3 PassData;
+};
+
+// RecordIndex = ShadingBin
+// PassData .x = Quad Binning Flag, .y = Unused, .z = Unused
+ConstantBuffer<FUERootConstants> UERootConstants : UE_HLSL_REGISTER(b, 0, UE_HLSL_SPACE_SHADER_ROOT_CONSTANTS);
+
+#else
+
+// .x = shading bin, .y = Quad Binning Flag, .z = Unused, .w = Unused
+uint4 PassData; 
+
+#endif
+
+RWTexture2D<float4> OutTarget0;
+RWTexture2D<float4> OutTarget1;
+RWTexture2D<float4> OutTarget2;
+
+struct FLumenOutput
+{
+	float4 Target0;
+	float4 Target1;
+	float4 Target2;
+};
+
+void ExportPixel(const uint2 PixelPos, FLumenOutput ShadedPixel)
+{
+	OutTarget0[PixelPos] = ShadedPixel.Target0;
+	OutTarget1[PixelPos] = ShadedPixel.Target1;
+	OutTarget2[PixelPos] = ShadedPixel.Target2;
+}
+
+#define VIS_HELPER_LANES 0
+
+#if !IS_NANITE_PASS
+#error "Only Nanite is supported"
+#endif
+
+void ProcessPixel(uint ShadingBin, const uint2 PixelPos, const float2 SVPositionXY, uint QuadIndex, uint DispatchIndex, uint PixelWriteMask, uint HelperLaneCount)
+{
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters MaterialParameters;
+
+	FLumenOutput ShadedPixel;
+
+	// TODO Temp
+	ShadedPixel.Target0 = float4(sqrt(IntToColor(ShadingBin)), 1.0f);
+	ShadedPixel.Target1 = float4(0.0f, 1.0f, 0.0f, /*bValid*/ 1.0f);
+	ShadedPixel.Target2 = float4(float3(0.3, 0.2, 0.1), 0.0f);
+
+#if 1
+
+	uint ViewIndex = 0; // TODO
+
+	FNaniteFullscreenVSToPS NaniteInterpolants = (FNaniteFullscreenVSToPS)0;
+	NaniteInterpolants.TileIndex = QuadIndex;
+
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+	Interpolants.ViewIndex = ViewIndex;
+
+	FPackedNaniteView PackedView = Nanite.InViews[Interpolants.ViewIndex];
+	FNaniteView NaniteView = UnpackNaniteView(PackedView);
+
+	float4 SvPosition = float4(SVPositionXY, 0.0f, 1.0f);
+
+	PatchViewState(NaniteView, ResolvedView);
+	MaterialParameters = GetMaterialPixelParameters(NaniteView, Interpolants, SvPosition);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	
+	// Nanite does not support OPTIONAL_IsFrontFace, Instead, Nanite determines this in GetMaterialPixelParameters().
+	const bool bIsFrontFace = false;
+
+	{
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+	// TODO
+#endif
+
+	// Disable helper lanes from final export
+	BRANCH
+	if (PixelWriteMask & 1u)
+	{
+		ExportPixel(PixelPos, ShadedPixel);
+	}
+
+	BRANCH
+	if (PixelWriteMask & 2u) // Copy H
+	{
+		ExportPixel(PixelPos + uint2(1, 0), ShadedPixel);
+	}
+
+	BRANCH
+	if (PixelWriteMask & 4u) // Copy V
+	{
+		ExportPixel(PixelPos + uint2(0, 1), ShadedPixel);
+	}
+
+	BRANCH
+	if (PixelWriteMask & 8u) // Copy D
+	{
+		ExportPixel(PixelPos + uint2(1, 1), ShadedPixel);
+	}
+}
+
+[numthreads(64, 1, 1)]
+void Main(uint ThreadIndex : SV_GroupIndex, uint GroupID : SV_GroupID)
+{
+#if PLATFORM_SUPPORTS_SHADER_ROOT_CONSTANTS
+	const uint ShadingBin		= UERootConstants.RecordIndex;
+	const bool bQuadBinning		= UERootConstants.PassData.x != 0u;
+	const uint DataByteOffset	= UERootConstants.PassData.y;
+#else
+	const uint ShadingBin		= PassData.x;
+	const bool bQuadBinning		= PassData.y != 0u;
+	const uint DataByteOffset	= PassData.z;
+#endif
+
+	const uint PixelIndex = (GroupID * 64u) + ThreadIndex;
+
+	const uint3 ShadingBinMeta = Nanite.ShadingBinData.Load3(ShadingBin * NANITE_SHADING_BIN_META_BYTES);
+	const uint ElementCount = ShadingBinMeta.x;
+	const uint ElementIndex = bQuadBinning ? (PixelIndex >> 2) : PixelIndex;
+
+	BRANCH
+	if (ElementIndex >= ElementCount)
+	{
+		return;
+	}
+
+	uint2 PixelPos;
+	uint2 VRSShift;
+	uint PixelWriteMask;
+	uint HelperLaneCount;
+	
+	BRANCH
+	if (bQuadBinning)
+	{
+		const uint2 PackedElement = Nanite.ShadingBinData.Load2(DataByteOffset + (ShadingBinMeta.z * 4 + ElementIndex * 8));
+
+		const uint CornerIndex = (ThreadIndex & 3u);
+
+		const uint2 TopLeft = uint2(BitFieldExtractU32(PackedElement.x, 14, 0), BitFieldExtractU32(PackedElement.x, 14, 14));
+		VRSShift			= uint2(BitFieldExtractU32(PackedElement.x, 1, 28), BitFieldExtractU32(PackedElement.x, 1, 29));
+		PixelWriteMask		= BitFieldExtractU32(PackedElement.y, 4, CornerIndex * 4u);
+
+		PixelPos			= TopLeft + (uint2(CornerIndex & 1u, CornerIndex >> 1u) << VRSShift);
+
+		HelperLaneCount		= (VIS_HELPER_LANES && bQuadBinning) ? (4u - countbits(PixelWriteMask)) : 0u;
+	}
+	else
+	{
+		const uint PackedElement= Nanite.ShadingBinData.Load(DataByteOffset + (ShadingBinMeta.z * 4 + ElementIndex * 4));
+		PixelPos				= uint2(BitFieldExtractU32(PackedElement, 13, 0), BitFieldExtractU32(PackedElement, 13, 13));
+		VRSShift				= uint2(BitFieldExtractU32(PackedElement, 1, 26), BitFieldExtractU32(PackedElement, 1, 27));
+		PixelWriteMask			= PackedElement >> 28;
+	}
+
+	const float2 SVPositionXY = PixelPos + ((1u << VRSShift) * 0.5f);
+	ProcessPixel(ShadingBin, PixelPos, SVPositionXY, ElementIndex, PixelIndex, PixelWriteMask, HelperLaneCount);
+}

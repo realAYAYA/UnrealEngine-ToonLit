@@ -46,6 +46,11 @@ public:
 	virtual FText GetText() const { return FText(); }
 
 	/**
+	 * Return a message to be displayed in the MessageLog window.
+	 */
+	INTERCHANGECORE_API FText GetMessageLogText() const;
+
+	/**
 	 * Serialize this UInterchangeResult object to Json.
 	 */
 	INTERCHANGECORE_API FString ToJson();
@@ -61,6 +66,9 @@ public:
 
 	UPROPERTY()
 	FString DestinationAssetName;
+
+	UPROPERTY()
+	FString AssetFriendlyName;
 
 	UPROPERTY()
 	TObjectPtr<const UClass> AssetType;

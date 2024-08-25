@@ -3,7 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Interfaces/ITurnkeySupportModule.h"
 
+#if UE_WITH_TURNKEY_SUPPORT
 
 class FTurnkeyEditorSupport
 {
@@ -12,7 +14,7 @@ public:
 	static FString GetUATOptions();
 
 	static void PrepareToLaunchRunningMap(const FString& DeviceId, const FString& DeviceName);
-	static void LaunchRunningMap(const FString& DeviceId, const FString& DeviceName, const FString& ProjectPath, bool bUseTurnkey);
+	static void LaunchRunningMap(const FString& DeviceId, const FString& DeviceName, const FString& ProjectPath, bool bUseTurnkey, bool bOnSimulator = false);
 	static void AddEditorOptions(struct FToolMenuSection& MenuBuilder);
 	
 	static void SaveAll();
@@ -25,3 +27,5 @@ public:
 	static void ShowInstallationHelp(FName IniPlatformName, FString DocLink);
 	static bool IsPIERunning();
 };
+
+#endif // UE_WITH_TURNKEY_SUPPORT

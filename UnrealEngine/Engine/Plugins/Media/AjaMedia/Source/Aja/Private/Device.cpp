@@ -330,9 +330,8 @@ namespace AJA
 			}
 
 			//Verify if Channel1 is used. If not, we need to be sure the card's main format is configured
-			if (bResult)
+			if (bResult && !::NTV2DeviceCanDoMultiFormat(Connection.Card->GetDeviceID()))
 			{
-				const NTV2FrameRate DesiredFrameRate = GetNTV2FrameRateFromVideoFormat(VideoFormat);
 				auto Found = std::find_if(std::begin(Connection.ChannelInfos), std::end(Connection.ChannelInfos), [=](const ChannelInfo* Info) { return Info->Channel == NTV2_CHANNEL1; });
 				if (Found == std::end(Connection.ChannelInfos))
 				{
@@ -524,17 +523,9 @@ namespace AJA
 					//LTC reading relies on card/Channel 1 frame rate to be compatible
 					const ChannelInfo* FoundChannel = *Found;
 					const NTV2FrameRate ChannelFrameRate = ::GetNTV2FrameRateFromVideoFormat(FoundChannel->VideoFormat);
-					if (::NTV2DeviceCanDoMultiFormat(Connection.Card->GetDeviceID()))
+					if (!::IsMultiFormatCompatible(InFrameRate, ChannelFrameRate))
 					{
-						if (!::IsMultiFormatCompatible(InFrameRate, ChannelFrameRate))
-						{
-							UE_LOG(LogAjaCore, Error, TEXT("Device: Trying to read LTC with FrameRate '%S' but it's not compatible with card's (channel 1) current FrameRate of '%S' on device '%S'.\n"), NTV2FrameRateToString(InFrameRate).c_str(), NTV2FrameRateToString(ChannelFrameRate).c_str(), Connection.Card->GetDisplayName().c_str());
-							bResult = false;
-						}
-					}
-					else if (InFrameRate != ChannelFrameRate)
-					{
-						UE_LOG(LogAjaCore, Error, TEXT("Device: Trying to read LTC with FrameRate '%S' but card's (channel 1) current FrameRate is '%S' and device '%S' can't do multi-format.\n"), NTV2FrameRateToString(InFrameRate).c_str(), NTV2FrameRateToString(ChannelFrameRate).c_str(), Connection.Card->GetDisplayName().c_str());
+						UE_LOG(LogAjaCore, Error, TEXT("Device: Trying to read LTC with FrameRate '%S' but it's not compatible with card's (channel 1) current FrameRate of '%S' on device '%S'.\n"), NTV2FrameRateToString(InFrameRate).c_str(), NTV2FrameRateToString(ChannelFrameRate).c_str(), Connection.Card->GetDisplayName().c_str());
 						bResult = false;
 					}
 				}
@@ -602,7 +593,7 @@ namespace AJA
 
 				if (Connection.OutputReferenceType == EAJAReferenceType::EAJA_REFERENCETYPE_INPUT && Connection.OutputReferenceChannel != InOutputReferenceChannel)
 				{
-					UE_LOG(LogAjaCore, Error, TEXT("Device: Couldn't set the reference (%S) for output on device %S. The input was already setup with %S.\n"), Helpers::ReferenceTypeToString(InOutputReferenceType), Connection.Card->GetDisplayName().c_str(), Connection.OutputReferenceChannel, Helpers::ReferenceTypeToString(Connection.OutputReferenceType));
+					UE_LOG(LogAjaCore, Error, TEXT("Device: Couldn't set the reference (%S) for output on device %S. The input was already setup with %d.\n"), Helpers::ReferenceTypeToString(InOutputReferenceType), Connection.Card->GetDisplayName().c_str(), Connection.OutputReferenceChannel, Helpers::ReferenceTypeToString(Connection.OutputReferenceType));
 					return false;
 				}
 
@@ -1310,19 +1301,7 @@ namespace AJA
 		uint32_t DeviceConnection::Lock_AcquireBaseFrameIndex(NTV2Channel InChannel, NTV2VideoFormat InVideoFormat) const
 		{
 			const uint32_t MaxValue = ::NTV2DeviceGetNumberFrameBuffers(Card->GetDeviceID());
-
-			const bool bIsQuadFrameFormat = NTV2_IS_4K_VIDEO_FORMAT(InVideoFormat);
-
-			uint32_t BaseFrameIndex = 0;
-
-			if (bIsQuadFrameFormat)
-			{
-				BaseFrameIndex = InChannel * NumberOfFrameToAquire;
-			}
-			else
-			{
-				BaseFrameIndex = InChannel * NumberOfFrameToAquire * 4;
-			}
+			const uint32_t BaseFrameIndex = InChannel * NumberOfFrameToAquire * 4;
 
 			if (BaseFrameIndex < MaxValue)
 			{

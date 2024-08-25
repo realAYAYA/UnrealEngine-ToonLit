@@ -223,7 +223,7 @@ public:
 	/**
 	 * Forward an FChange object to the Context
 	 */
-	INTERACTIVETOOLSFRAMEWORK_API virtual bool RequestSelectionChange(const FSelectedOjectsChangeList& SelectionChange);
+	INTERACTIVETOOLSFRAMEWORK_API virtual bool RequestSelectionChange(const FSelectedObjectsChangeList& SelectionChange);
 
 	//
 	// State control  (@todo: have the Context call these? not safe for anyone to call)
@@ -315,6 +315,10 @@ public:
 
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FToolManagerToolEndedSignature, UInteractiveToolManager*, UInteractiveTool*);
 	FToolManagerToolEndedSignature OnToolEnded;
+
+	// Variant of OnToolEnded that also reports the EToolShutdownType
+	DECLARE_MULTICAST_DELEGATE_ThreeParams(FToolManagerToolCancelledSignature, UInteractiveToolManager*, UInteractiveTool*, EToolShutdownType);
+	FToolManagerToolCancelledSignature OnToolEndedWithStatus;
 
 
 protected:

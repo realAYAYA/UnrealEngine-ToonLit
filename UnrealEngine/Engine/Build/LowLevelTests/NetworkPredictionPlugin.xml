@@ -8,6 +8,8 @@
   <Property Name="NetworkPredictionPluginTarget" Value="NetworkPredictionTests" />
   <Property Name="NetworkPredictionPluginBinariesRelative" Value="Engine\Binaries" />
   <Property Name="NetworkPredictionPluginReportType" Value="console" />
+  <Property Name="NetworkPredictionPluginGauntletArgs" Value="" />
+  <Property Name="NetworkPredictionPluginExtraArgs" />
   <Property Name="NetworkPredictionPluginInitialExtraArgs" />
   <Property Name="NetworkPredictionPluginHasAfterSteps" Value="False" />
   <Property Name="NetworkPredictionPluginUsesCatch2" Value="True" />
@@ -33,5 +35,16 @@
   <Property Name="AndroidNetworkPredictionPluginRunSupported" Value="False" />
   <Property Name="LinuxNetworkPredictionPluginRunSupported" Value="True" />
   <Property Name="LinuxArm64NetworkPredictionPluginRunSupported" Value="True" />
-  <Property Name="TVOSNetworkPredictionPluginRunSupported" Value="True" />
+  <Property Name="TVOSNetworkPredictionPluginRunSupported" Value="False" />
+  <Property Name="VisionOSNetworkPredictionPluginTags" Value="" />
+  <Property Name="VisionOSNetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="VisionOSNetworkPredictionPluginRunSupported" Value="False" />
+  <Property Name="Win64NetworkPredictionPluginRunContainerized" Value="False" />
+  <Property Name="MacNetworkPredictionPluginRunContainerized" Value="False" />
+  <Property Name="IOSNetworkPredictionPluginRunContainerized" Value="False" />
+  <Property Name="AndroidNetworkPredictionPluginRunContainerized" Value="False" />
+  <Property Name="LinuxNetworkPredictionPluginRunContainerized" Value="False" />
+  <Property Name="LinuxArm64NetworkPredictionPluginRunContainerized" Value="False" />
+  <Property Name="TVOSNetworkPredictionPluginRunContainerized" Value="False" />
+  <Property Name="VisionOSNetworkPredictionPluginRunContainerized" Value="False" />
 </BuildGraph>

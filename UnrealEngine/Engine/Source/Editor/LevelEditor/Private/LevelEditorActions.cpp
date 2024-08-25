@@ -46,6 +46,7 @@
 #include "WorldPartition/WorldPartitionRuntimeHash.h"
 #include "WorldPartition/IWorldPartitionEditorModule.h"
 #include "WorldBrowserModule.h"
+#include "ExternalPackageHelper.h"
 
 #include "Elements/Framework/TypedElementCommonActions.h"
 #include "Elements/Framework/TypedElementSelectionSet.h"
@@ -690,29 +691,28 @@ bool FLevelEditorActionCallbacks::CanExecutePreviewPlatform(FPreviewPlatformInfo
 		return false;
 	}
 
-	// TODO: Prevent switching from a platform with VSM to a platform without VSM at the same FeatureLevel until all issues are resolved.
-	// (for instance, GlobalShaderMap does not contain the shaders necessary for FVirtualShadowMapArrayCacheManager::ProcessInvalidations anymore)
-	// Currently this is mostly meant to isolate going to/from VULKAN_SM5 which is wildly different and causes issues with preview mechanics.
-	if (NewPreviewPlatform.PreviewFeatureLevel == GMaxRHIFeatureLevel)
-	{
-		if (FDataDrivenShaderPlatformInfo::IsValid(NewPreviewPlatform.ShaderPlatform) &&
-			FDataDrivenShaderPlatformInfo::GetIsPreviewPlatform(NewPreviewPlatform.ShaderPlatform))
-		{
-			const EShaderPlatform ParentShaderPlatform = FDataDrivenShaderPlatformInfo::GetPreviewShaderPlatformParent(NewPreviewPlatform.ShaderPlatform);
-			if (DoesPlatformSupportVirtualShadowMaps(GMaxRHIShaderPlatform) != DoesPlatformSupportVirtualShadowMaps(ParentShaderPlatform))
-			{
-				return false;
-			}
-		}
-	}
+	const EShaderPlatform PreviewShaderPlatform = NewPreviewPlatform.ShaderPlatform;
 
-	// TODO: Prevent previewing VULKAN_SM5 with a D3D renderer until all issues are resolved.
-	if (FDataDrivenShaderPlatformInfo::IsValid(NewPreviewPlatform.ShaderPlatform) &&
-		FDataDrivenShaderPlatformInfo::GetIsPreviewPlatform(NewPreviewPlatform.ShaderPlatform) &&
-		FDataDrivenShaderPlatformInfo::GetIsLanguageD3D(GMaxRHIShaderPlatform))
+	if (FDataDrivenShaderPlatformInfo::IsValid(PreviewShaderPlatform) && FDataDrivenShaderPlatformInfo::GetIsPreviewPlatform(PreviewShaderPlatform))
 	{
-		const EShaderPlatform ParentShaderPlatform = FDataDrivenShaderPlatformInfo::GetPreviewShaderPlatformParent(NewPreviewPlatform.ShaderPlatform);
-		if (FDataDrivenShaderPlatformInfo::GetIsLanguageVulkan(ParentShaderPlatform) && IsFeatureLevelSupported(ParentShaderPlatform, ERHIFeatureLevel::SM5))
+		const EShaderPlatform RealShaderPlatform = FDataDrivenShaderPlatformInfo::GetPreviewShaderPlatformParent(PreviewShaderPlatform);
+
+		// TODO: Prevent previewing VULKAN_SM5 with a D3D renderer until all issues are resolved.
+		// We have to use the real platform here since these fields are overridden in preview.
+		if (GDynamicRHI
+			&& (GDynamicRHI->GetInterfaceType() == ERHIInterfaceType::D3D12 || GDynamicRHI->GetInterfaceType() == ERHIInterfaceType::D3D11)
+			&& IsVulkanPlatform(RealShaderPlatform)
+			&& IsFeatureLevelSupported(RealShaderPlatform, ERHIFeatureLevel::SM5))
+		{
+			return false;
+		}
+
+		// When the preview platform's DDSPI MaxSamplers is > 16 and the current RHI device has support
+		// for > 16 samplers we rely on the shader compiler being able to choose an appropriate profile for the
+		// preview feature level that supports > 16 samplers. On D3D12 SM5 the D3D shader compiler will use Dxc and
+		// sm6.0. Vulkan SM5 also appears to handle > 16 samplers fine.
+		// TODO: Look into support for Metal (MacOS).
+		if ((int32)FDataDrivenShaderPlatformInfo::GetMaxSamplers(PreviewShaderPlatform) > GRHIGlobals.MaxTextureSamplers)
 		{
 			return false;
 		}
@@ -780,11 +780,8 @@ void FLevelEditorActionCallbacks::BuildLightingOnly_Execute()
 }
 
 bool FLevelEditorActionCallbacks::BuildLighting_CanExecute()
-{
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
-	
-	return bAllowStaticLighting && CanBuildLighting() && CanBuildReflectionCaptures();
+{	
+	return IsStaticLightingAllowed() && CanBuildLighting() && CanBuildReflectionCaptures();
 }
 
 void FLevelEditorActionCallbacks::BuildReflectionCapturesOnly_Execute()
@@ -2140,6 +2137,11 @@ void FLevelEditorActionCallbacks::OnSurfaceAlignment( ETexAlign AlignmentMode )
 	GTexAlignTools.GetAligner( AlignmentMode )->Align( GetWorld(), AlignmentMode );
 }
 
+bool FLevelEditorActionCallbacks::GroupActors_CanExecute()
+{
+	return UActorGroupingUtils::Get()->CanGroupSelectedActors();
+}
+
 void FLevelEditorActionCallbacks::RegroupActor_Clicked()
 {
 	UActorGroupingUtils::Get()->GroupSelected();
@@ -2429,6 +2431,20 @@ void FLevelEditorActionCallbacks::OnShowWorldProperties( TWeakPtr< SLevelEditor 
 {
 	FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>( TEXT("LevelEditor") );
 	LevelEditorModule.GetLevelEditorTabManager()->TryInvokeTab(FName("WorldSettingsTab"));
+}
+
+void FLevelEditorActionCallbacks::OnFocusOutlinerToSelection(TWeakPtr<SLevelEditor> LevelEditor)
+{
+	if (const TSharedPtr<SLevelEditor> Editor = LevelEditor.Pin())
+	{
+		for (TWeakPtr<ISceneOutliner> SceneOutliner : Editor->GetAllSceneOutliners())
+		{
+			if (const TSharedPtr<ISceneOutliner> Outliner = SceneOutliner.Pin())
+			{
+				Outliner->FrameSelectedItems();
+			}
+		}
+	}
 }
 
 void FLevelEditorActionCallbacks::OpenPlaceActors()
@@ -2876,40 +2892,53 @@ void FLevelEditorActionCallbacks::SnapObjectToView_Clicked()
 	const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "SnapObjectToView", "Snap Object to View"));
 
 	// Fires ULevel::LevelDirtiedEvent when falling out of scope.
-	FScopedLevelDirtied		LevelDirtyCallback;
+	FScopedLevelDirtied LevelDirtyCallback;
 
-	for (FSelectionIterator It(GEditor->GetSelectedActorIterator()); It; ++It)
-	{
-		AActor* Actor = Cast<AActor>(*It);
-		Actor->Modify();
-		FVector Location = GCurrentLevelEditingViewportClient->GetViewLocation();
-		FRotator Rotation = GCurrentLevelEditingViewportClient->GetViewRotation();
+	// Get the new location and rotation for the actor from the viewport client's view.
+	const FVector NewLocation = GCurrentLevelEditingViewportClient->GetViewLocation();
+	const FQuat NewRotation = GCurrentLevelEditingViewportClient->GetViewRotation().Quaternion();
 
-		Actor->SetActorLocation(Location);
-		Actor->SetActorRotation(Rotation);
-		Actor->PostEditMove(true);
+	UTypedElementSelectionSet* SelectionSet = GEditor->GetSelectedActors()->GetElementSelectionSet();
+	SelectionSet->ForEachSelectedElement<ITypedElementWorldInterface>([&NewLocation, &NewRotation, &LevelDirtyCallback](const TTypedElement<ITypedElementWorldInterface>& InElement)
+		{
+			// Get the actor's current transform.
+			FTransform CurrentTransform;
+			if (InElement.GetWorldTransform(CurrentTransform))
+			{
+				// Set new location and rotation to the current transform.
+				FTransform NewTransform = CurrentTransform;
+				NewTransform.SetLocation(NewLocation);
+				NewTransform.SetRotation(NewRotation);
 
-		LevelDirtyCallback.Request();
-	}
+				// Find a suitable transform, if the actor can't be at the exact desired transform.
+				FTransform SuitableTransform;
+				if (!InElement.FindSuitableTransformAtPoint(NewTransform, SuitableTransform))
+				{
+					SuitableTransform = NewTransform;
+				}
+
+				InElement.NotifyMovementStarted();
+				InElement.SetWorldTransform(SuitableTransform);
+				InElement.NotifyMovementEnded();
+
+				LevelDirtyCallback.Request();
+			}
+
+			return true;
+		});
+
+	GEditor->SetPivot(NewLocation, false, true); // Update the pivot location of the editor to the new actor location.
+	GEditor->RedrawLevelEditingViewports();
 }
 
 void FLevelEditorActionCallbacks::CopyActorFilePathtoClipboard_Clicked()
 {
-	FString Result;
-
+	TArray<const UObject*> Objects;
 	for (FSelectionIterator It(GEditor->GetSelectedActorIterator()); It; ++It)
 	{
-		const AActor* Actor = Cast<AActor>(*It);
-		const UPackage* Package = Actor->GetPackage();
-		const FString LocalFullPath(Package->GetLoadedPath().GetLocalFullPath());
-		Result += FPaths::ConvertRelativePathToFull(LocalFullPath);
-		Result += TEXT("\n");
+		Objects.Add(*It);
 	}
-
-	if (Result.Len())
-	{
-		FPlatformApplicationMisc::ClipboardCopy(*Result);
-	}
+	FExternalPackageHelper::CopyObjectsExternalPackageFilePathToClipboard(Objects);
 }
 
 void FLevelEditorActionCallbacks::SaveActor_Clicked()
@@ -3302,8 +3331,13 @@ void FLevelEditorActionCallbacks::SnapTo2DLayer_Clicked()
 
 bool FLevelEditorActionCallbacks::CanSnapTo2DLayer()
 {
+	if (!ElementSelected_CanExecuteMove())
+	{
+		return false;
+	}
+
 	const ULevelEditor2DSettings* Settings = GetDefault<ULevelEditor2DSettings>();
-	return Settings->SnapLayers.IsValidIndex(GetDefault<ULevelEditorViewportSettings>()->ActiveSnapLayerIndex) && (GEditor->GetSelectedActorCount() > 0);
+	return Settings->SnapLayers.IsValidIndex(GetDefault<ULevelEditorViewportSettings>()->ActiveSnapLayerIndex);
 }
 
 void FLevelEditorActionCallbacks::MoveSelectionToDifferent2DLayer_Clicked(bool bGoingUp, bool bForceToTopOrBottom)
@@ -3510,6 +3544,28 @@ bool FLevelEditorActionCallbacks::ElementsSelected_CanExecute()
 	// TODO: Ideally this would come from some level editor context
 	const UTypedElementSelectionSet* SelectionSet = GEditor->GetSelectedActors()->GetElementSelectionSet();
 	return SelectionSet && SelectionSet->GetNumSelectedElements() > 1;
+}
+
+bool FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove()
+{
+	// TODO: Ideally this would come from some level editor context
+	if (GCurrentLevelEditingViewportClient)
+	{
+		return GCurrentLevelEditingViewportClient->GetElementsToManipulate(false)->Num() > 0;
+	}
+
+	return false;
+}
+
+bool FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove()
+{
+	// TODO: Ideally this would come from some level editor context
+	if (GCurrentLevelEditingViewportClient)
+	{
+		return GCurrentLevelEditingViewportClient->GetElementsToManipulate(false)->Num() > 1;
+	}
+
+	return false;
 }
 
 void FLevelEditorActionCallbacks::GeometryCollection_SelectAllGeometry()
@@ -3896,7 +3952,20 @@ void FLevelEditorCommands::RegisterCommands()
 		if (!IsRunningCommandlet() && !GUsingNullRHI)
 		{
 			EShaderPlatform ShaderPlatform = FDataDrivenShaderPlatformInfo::GetShaderPlatformFromName(Item.PreviewShaderPlatformName);
-			FriendlyNameBuilder.AppendLine(FDataDrivenShaderPlatformInfo::GetFriendlyName(ShaderPlatform));
+			if (ShaderPlatform == SP_NumPlatforms)
+			{
+				// if the shader platform isn't compiled in, we don't have a friendly name available, so use ugly name
+				FriendlyNameBuilder.AppendLine(FText::FromName(Item.PreviewShaderPlatformName));
+			}
+			else if (!Item.OptionalFriendlyNameOverride.IsEmpty())
+			{
+				FriendlyNameBuilder.AppendLine(Item.OptionalFriendlyNameOverride);
+			}
+			else
+			{
+				FriendlyNameBuilder.AppendLine(FDataDrivenShaderPlatformInfo::GetFriendlyName(ShaderPlatform));
+				FPlatformMisc::LowLevelOutputDebugStringf(TEXT("MENU friendly name %s\n"), *FriendlyNameBuilder.ToText().ToString());
+			}
 			if (FDataDrivenShaderPlatformInfo::GetShaderPlatformFromName(Item.ShaderPlatformToPreview) == GMaxRHIShaderPlatform)
 			{
 				FriendlyNameBuilder.AppendLine(NSLOCTEXT("PreviewPlatform", "PreviewMenuText_DisablePreview", "(Disable Preview)"));
@@ -3906,7 +3975,7 @@ void FLevelEditorCommands::RegisterCommands()
 		PreviewPlatformOverrides.Add(
 			FUICommandInfoDecl(
 				this->AsShared(),
-				FName(*FString::Printf(TEXT("PreviewPlatformOverrides_%s_%s"), *Item.PlatformName.ToString(), *Item.ShaderFormat.ToString())),
+				FName(*FString::Printf(TEXT("PreviewPlatformOverrides_%s_%s_%s"), *Item.PlatformName.ToString(), *Item.ShaderFormat.ToString(), *Item.DeviceProfileName.ToString())),
 				FriendlyNameBuilder.ToText(),
 				Item.MenuTooltip)
 			.UserInterfaceType(EUserInterfaceActionType::Check)

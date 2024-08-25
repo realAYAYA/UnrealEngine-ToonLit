@@ -74,7 +74,7 @@ public:
 		SLATE_ARGUMENT(TSharedPtr<FAssetThumbnailPool>, ThumbnailPool)
 		SLATE_ARGUMENT(FIntPoint, ThumbnailSize)
 		SLATE_ATTRIBUTE(FString, ObjectPath)
-		SLATE_ARGUMENT(UClass*, Class)
+		SLATE_ARGUMENT(const UClass*, Class)
 		SLATE_ARGUMENT(TOptional<TArray<UFactory*>>, NewAssetFactories)
 		SLATE_EVENT(FOnSetObject, OnSetObject)
 		SLATE_EVENT(FOnShouldFilterAsset, OnShouldFilterAsset)
@@ -111,23 +111,21 @@ private:
 		UObject* Object;
 		FSoftObjectPath ObjectPath;
 		FAssetData AssetData;
+		UObject* EditorPathOwner;
 
-		FObjectOrAssetData( UObject* InObject = nullptr )
-			: Object( InObject )
-			, ObjectPath( Object )
-		{
-			AssetData = InObject != nullptr && !InObject->IsA<AActor>() ? FAssetData( InObject ) : FAssetData();
-		}
+		FObjectOrAssetData(UObject* InObject = nullptr, UObject* EditorPathOwner = nullptr);
 
 		FObjectOrAssetData( const FSoftObjectPath& InObjectPath )
 			: Object(nullptr)
 			, ObjectPath(InObjectPath)
+			, EditorPathOwner(nullptr)
 		{}
 
 		FObjectOrAssetData( const FAssetData& InAssetData )
-			: Object( nullptr )
+			: Object(nullptr)
 			, ObjectPath( InAssetData.ToSoftObjectPath() )
 			, AssetData( InAssetData )
+			, EditorPathOwner(nullptr)
 		{}
 
 		bool IsValid() const
@@ -221,7 +219,7 @@ private:
 	 * or the Class value this widget was constructed with.
 	 * @returns the UClass to display
 	 */
-	UClass* GetDisplayedClass() const;
+	const UClass* GetDisplayedClass() const;
 
 	/** 
 	 * Delegate for handling selection in the asset browser.
@@ -356,8 +354,8 @@ private:
 	 */
 	void InitializeAssetDataTags(const FProperty* Property);
 
-	/** @return Returns true if the asset is relevant for this property*/
-	bool IsAssetAllowed(const FAssetData& InAssetData);
+	/** @return Returns true if the asset is excluded for this property*/
+	bool IsAssetFiltered(const FAssetData& InAssetData);
 
 private:
 
@@ -377,7 +375,7 @@ private:
 	mutable FAssetData CachedAssetData;
 
 	/** The class of the object we are editing */
-	UClass* ObjectClass;
+	const UClass* ObjectClass;
 
 	/** Classes that can be used with this property */
 	TArray<const UClass*> AllowedClassFilters;
@@ -405,6 +403,12 @@ private:
 
 	/** Whether the classes in the AllowedClassFilters list are exact or whether valid classes can be derived. */
 	bool bExactClass;
+
+	/** Wheter the property is a soft reference */
+	bool bIsSoftObjectPath;
+
+	/** Editor Path context if any */
+	UObject* EditorPathOwner;
 
 	/** The number of additional buttons this picker has. */
 	int32 NumButtons;

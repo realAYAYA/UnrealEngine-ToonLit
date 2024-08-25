@@ -75,7 +75,7 @@ struct FContextualAnimNewAnimSetData
 	TObjectPtr<class UAnimMontage> Animation = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Settings")
-	bool bRequiresFlyingMode = false;
+	TEnumAsByte<enum EMovementMode> MovementMode = EMovementMode::MOVE_Walking;
 
 	UPROPERTY(EditAnywhere, Category = "Settings")
 	bool bOptional = false;

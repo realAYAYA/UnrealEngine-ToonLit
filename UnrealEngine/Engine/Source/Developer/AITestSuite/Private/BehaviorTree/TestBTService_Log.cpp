@@ -59,7 +59,7 @@ void UTestBTService_Log::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* Node
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
 
-	if (KeyNameTick != NAME_None)
+	if (KeyNameTick != NAME_None && NumTicks >= TicksDelaySetKeyNameTick)
 	{
 		OwnerComp.GetBlackboardComponent()->SetValueAsBool(KeyNameTick, bToggleValue ? !OwnerComp.GetBlackboardComponent()->GetValueAsBool(KeyNameTick) : true);
 	}
@@ -68,6 +68,7 @@ void UTestBTService_Log::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* Node
 	{
 		UMockAI_BT::ExecutionLog.Add(LogTick);
 	}
+	++NumTicks;
 }
 
 void UTestBTService_Log::SetFlagOnTick(FName InKeyNameTick, bool bInCallTickOnSearchStart /* = false */)

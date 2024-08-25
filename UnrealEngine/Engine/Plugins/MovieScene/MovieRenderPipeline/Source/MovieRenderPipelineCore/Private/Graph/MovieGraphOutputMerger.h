@@ -22,8 +22,8 @@ namespace UE::MovieGraph
 		FMovieGraphOutputMerger(UMovieGraphPipeline* InOwningMoviePipeline);
 
 		// IMovieGraphOutputMerger Interface
-		virtual FMovieGraphOutputMergerFrame& AllocateNewOutputFrame_GameThread(const int32 InFrameNumber) override;
-		virtual FMovieGraphOutputMergerFrame& GetOutputFrame_GameThread(int32 InFrameNumber) override;
+		virtual FMovieGraphOutputMergerFrame& AllocateNewOutputFrame_GameThread(const int32 InRenderedFrameNumber) override;
+		virtual FMovieGraphOutputMergerFrame& GetOutputFrame_GameThread(const int32 InRenderedFrameNumber) override;
 		virtual void OnCompleteRenderPassDataAvailable_AnyThread(TUniquePtr<FImagePixelData>&& InData) override;
 		virtual void OnSingleSampleDataAvailable_AnyThread(TUniquePtr<FImagePixelData>&& InData) override;
 		virtual void AbandonOutstandingWork() override;

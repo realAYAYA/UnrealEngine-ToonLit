@@ -23,25 +23,31 @@ FString FMaterialXSurfaceShaderAbstract::EmptyString{};
 FString FMaterialXSurfaceShaderAbstract::DefaultOutput{TEXT("out")};
 
 FMaterialXSurfaceShaderAbstract::FMaterialXSurfaceShaderAbstract(UInterchangeBaseNodeContainer& BaseNodeContainer)
-	: FMaterialXBase(BaseNodeContainer)
+	: FMaterialXBase{ BaseNodeContainer }
+	, ShaderGraphNode{ nullptr }
+	, bTangentSpaceInput{ false }
 {}
 
-bool FMaterialXSurfaceShaderAbstract::AddAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode) const
+bool FMaterialXSurfaceShaderAbstract::AddAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode)
 {
+	using namespace UE::Interchange::Materials::Standard::Nodes;
 	if(Input)
 	{
-		if(Input->getType() == mx::Type::Float)
+		if(Input->getType() == mx::Type::Boolean)
 		{
-			return ShaderNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputChannelName), mx::fromValueString<float>(Input->getValueString()));
+			return AddBooleanAttribute(Input, InputChannelName, ShaderNode);
 		}
-		else if(Input->getType() == mx::Type::Integer) //Let's add it a Float attribute, because Interchange doesn't create a scalar if it's an int
+		else if(Input->getType() == mx::Type::Float)
+		{
+			return AddFloatAttribute(Input, InputChannelName, ShaderNode);
+		}
+		else if(Input->getType() == mx::Type::Integer) //Let's add Float attribute, because Interchange doesn't create a scalar if it's an int
 		{
 			return ShaderNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputChannelName), mx::fromValueString<int32>(Input->getValueString()));
 		}
 		else if(Input->getType() == mx::Type::Color3 || Input->getType() == mx::Type::Color4)
 		{
-			FLinearColor LinearColor = GetLinearColor(Input);
-			return ShaderNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputChannelName), LinearColor);
+			return AddLinearColorAttribute(Input, InputChannelName, ShaderNode);
 		}
 		else if(Input->getType() == mx::Type::Vector2)
 		{
@@ -50,73 +56,134 @@ bool FMaterialXSurfaceShaderAbstract::AddAttribute(MaterialX::InputPtr Input, co
 		}
 		else if(Input->getType() == mx::Type::Vector3 || Input->getType() == mx::Type::Vector4)
 		{
-			FLinearColor Vector = GetVector(Input);
-			return ShaderNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputChannelName), Vector);
+			return AddVectorAttribute(Input, InputChannelName, ShaderNode);
 		}
 	}
 
 	return false;
 }
 
-bool FMaterialXSurfaceShaderAbstract::AddAttributeFromValueOrInterface(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode) const
+bool FMaterialXSurfaceShaderAbstract::AddAttributeFromValueOrInterface(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode)
 {
+	bool bAttribute = false;
+
 	if(Input)
 	{
+		UInterchangeShaderNode* ShaderNodeToConnectTo = ShaderNode;
+		FString InputToConnectTo = InputChannelName;
+
+		if(Input->hasChannels())
+		{
+			using namespace UE::Interchange::Materials::Standard::Nodes;
+
+			UInterchangeShaderNode* SwizzleNode = CreateShaderNode(Input->getParent()->asA<mx::Node>()->getName().c_str() + FString{ TEXT("_Channels_") } + Input->getName().c_str(), Swizzle::Name.ToString());
+			SwizzleNode->AddStringAttribute(Swizzle::Attributes::Channels.ToString(), Input->getChannels().c_str());
+
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderNode, InputChannelName, SwizzleNode->GetUniqueID());
+
+			ShaderNodeToConnectTo = SwizzleNode;
+			InputToConnectTo = TEXT("Input");
+		}
+
 		if(Input->hasValue())
 		{
-			return AddAttribute(Input, InputChannelName, ShaderNode);
+			bAttribute = AddAttribute(Input, InputToConnectTo, ShaderNodeToConnectTo);
 		}
 		else if(Input->hasInterfaceName())
 		{
 			if(mx::InputPtr InputInterface = Input->getInterfaceInput(); InputInterface->hasValue())
 			{
-				return AddAttribute(InputInterface, InputChannelName, ShaderNode);
+				bAttribute = AddAttribute(InputInterface, InputToConnectTo, ShaderNodeToConnectTo);
 			}
 		}
+	}
+
+	return bAttribute;
+}
+
+bool FMaterialXSurfaceShaderAbstract::AddBooleanAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode)
+{
+	using namespace UE::Interchange::Materials::Standard::Nodes;
+	if(Input && Input->hasValue())
+	{
+		bool Value = mx::fromValueString<bool>(Input->getValueString());
+
+		// The parent is either a node, or it's an interfacename and we just take the name of the input
+		mx::NodePtr Node = Input->getParent()->asA<mx::Node>();
+		FString NodeName = Node ? Node->getName().c_str() + FString{ TEXT("_") } : FString{};
+		NodeName += Input->getName().c_str();
+
+		UInterchangeShaderNode* StaticBoolParameterNode = CreateShaderNode(NodeName, StaticBoolParameter::Name.ToString());
+		StaticBoolParameterNode->AddBooleanAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(StaticBoolParameter::Attributes::DefaultValue.ToString()), Value);
+		return UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderNode, InputChannelName, StaticBoolParameterNode->GetUniqueID());
 	}
 
 	return false;
 }
 
-bool FMaterialXSurfaceShaderAbstract::AddFloatAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, float DefaultValue) const
+bool FMaterialXSurfaceShaderAbstract::AddFloatAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, float DefaultValue)
 {
+	using namespace UE::Interchange::Materials::Standard::Nodes;
 	if(Input && Input->hasValue())
 	{
 		float Value = mx::fromValueString<float>(Input->getValueString());
 
 		if(!FMath::IsNearlyEqual(Value, DefaultValue))
 		{
-			return ShaderNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputChannelName), Value);
+			// The parent is either a node, or it's an interfacename and we just take the name of the input
+			mx::NodePtr Node = Input->getParent()->asA<mx::Node>();
+			FString NodeName = Node ? Node->getName().c_str() + FString{ TEXT("_") } : FString{};
+			NodeName += Input->getName().c_str();
+
+			UInterchangeShaderNode* ScalarParameterNode = CreateShaderNode(NodeName, ScalarParameter::Name.ToString());
+			ScalarParameterNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(ScalarParameter::Attributes::DefaultValue.ToString()), Value);
+			return UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderNode, InputChannelName, ScalarParameterNode->GetUniqueID());
 		}
 	}
 
 	return false;
 }
 
-bool FMaterialXSurfaceShaderAbstract::AddLinearColorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FLinearColor& DefaultValue) const
+bool FMaterialXSurfaceShaderAbstract::AddLinearColorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FLinearColor& DefaultValue)
 {
+	using namespace UE::Interchange::Materials::Standard::Nodes;
 	if(Input && Input->hasValue())
 	{
 		const FLinearColor Value = GetLinearColor(Input);
 
 		if(!Value.Equals(DefaultValue))
 		{
-			return ShaderNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputChannelName), Value);
+			// The parent is either a node, or it's an interfacename and we just take the name of the input
+			mx::NodePtr Node = Input->getParent()->asA<mx::Node>();
+			FString NodeName = Node ? Node->getName().c_str() + FString{ TEXT("_") } : FString{};
+			NodeName += Input->getName().c_str();
+
+			UInterchangeShaderNode* VectorParameterNode = CreateShaderNode(NodeName, VectorParameter::Name.ToString());
+			VectorParameterNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(VectorParameter::Attributes::DefaultValue.ToString()), Value);
+			return UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderNode, InputChannelName, VectorParameterNode->GetUniqueID());
 		}
 	}
 
 	return false;
 }
 
-bool FMaterialXSurfaceShaderAbstract::AddVectorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FVector4f& DefaultValue) const
+bool FMaterialXSurfaceShaderAbstract::AddVectorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FVector4f& DefaultValue)
 {
+	using namespace UE::Interchange::Materials::Standard::Nodes;
 	if(Input && Input->hasValue())
 	{
 		const FLinearColor Value = GetVector(Input);
 
 		if(!Value.Equals(DefaultValue))
 		{
-			return ShaderNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputChannelName), Value);
+			// The parent is either a node, or it's an interfacename and we just take the name of the input
+			mx::NodePtr Node = Input->getParent()->asA<mx::Node>();
+			FString NodeName = Node ? Node->getName().c_str() + FString{ TEXT("_") } : FString{};
+			NodeName += Input->getName().c_str();
+
+			UInterchangeShaderNode* VectorParameterNode = CreateShaderNode(NodeName, VectorParameter::Name.ToString());
+			VectorParameterNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(VectorParameter::Attributes::DefaultValue.ToString()), Value);
+			return UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderNode, InputChannelName, VectorParameterNode->GetUniqueID());
 		}
 	}
 
@@ -137,13 +204,15 @@ bool FMaterialXSurfaceShaderAbstract::ConnectNodeGraphOutputToInput(MaterialX::I
 
 		if(!Output)
 		{
-			UE_LOG(LogInterchangeImport, Warning, TEXT("Couldn't find a connected output to (%s)"), *GetInputName(InputToNodeGraph));
+			UE_LOG(LogInterchangeImport, Warning, TEXT("Couldn't find a connected output to (%s)."), *GetInputName(InputToNodeGraph));
 			return false;
 		}
 
 		for(mx::Edge Edge : Output->traverseGraph())
 		{
-			ConnectNodeCategoryOutputToInput(Edge, ShaderNode, ParentInputName);
+			Output->hasOutputString() ?
+				ConnectNodeCategoryOutputToInput(Edge, ShaderNode, ParentInputName, Output->getOutputString().c_str()) :
+				ConnectNodeCategoryOutputToInput(Edge, ShaderNode, ParentInputName);
 		}
 	}
 
@@ -154,34 +223,83 @@ bool FMaterialXSurfaceShaderAbstract::ConnectMatchingNodeOutputToInput(const FCo
 {
 	FMaterialXManager& Manager = FMaterialXManager::GetInstance();
 
+	auto GetIndexOutput = [&Connect]()
+	{
+		mx::NodeDefPtr NodeDef = Connect.UpstreamNode->getNodeDef(mx::EMPTY_STRING, true);
+		int Index = NodeDef->getChildIndex(TCHAR_TO_UTF8(*Connect.OutputName));
+		return Index < 0 ? Index : Index % NodeDef->getInputCount();
+	};
+
 	bool bIsConnected = false;
 
-	// First search a matching Material Expression
-	if(const FString* ShaderType = Manager.FindMatchingMaterialExpression(Connect.UpstreamNode->getCategory().c_str()))
+	auto ConnectOutputToInputInternal = [&](UInterchangeShaderNode* OperatorNode, bool bFindMatchingInput = true)
 	{
-		UInterchangeShaderNode* OperatorNode = nullptr;
-		
-		OperatorNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str(), *ShaderType);
-
 		for(mx::InputPtr Input : Connect.UpstreamNode->getInputs())
 		{
-			if(const FString* InputNameFound = Manager.FindMaterialExpressionInput(GetInputName(Input)))
+			if(!bFindMatchingInput)
+			{
+				AddAttributeFromValueOrInterface(Input, Input->getName().c_str(), OperatorNode);
+			}
+			else if(const FString* InputNameFound = Manager.FindMaterialExpressionInput(GetInputName(Input)))
 			{
 				AddAttributeFromValueOrInterface(Input, *InputNameFound, OperatorNode);
 			}
 		}
 
-		bIsConnected = UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(Connect.ParentShaderNode, Connect.InputChannelName, OperatorNode->GetUniqueID());
+		int IndexOutput = GetIndexOutput();
+
+		bIsConnected = IndexOutput < 0 ?
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(Connect.ParentShaderNode, Connect.InputChannelName, OperatorNode->GetUniqueID()) :
+			UInterchangeShaderPortsAPI::ConnectOuputToInputByIndex(Connect.ParentShaderNode, Connect.InputChannelName, OperatorNode->GetUniqueID(), IndexOutput);
+	};
+
+	auto ConnectOutputToInput = [&](const FString* ShaderType, auto* (FMaterialXSurfaceShaderAbstract::* CreateFunctionCallOrShaderNode)(const FString&, const FString&, const FString&), bool bFindMatchingInput = true)
+	{
+		UInterchangeShaderNode* OperatorNode = nullptr;
+
+		//We don't take the node output here because it would cause the creation of a new node (output is meaningful with ComponentMaskNode/separate where we have to create a new expression
+		OperatorNode = (this->*CreateFunctionCallOrShaderNode)(Connect.UpstreamNode->getName().c_str(), *ShaderType, DefaultOutput);
+
+		ConnectOutputToInputInternal(OperatorNode, bFindMatchingInput);
+	};
+
+	auto ConnectFunctionShaderNodeOutputToInput = [&](uint8 EnumType, uint8 EnumValue, auto* (FMaterialXSurfaceShaderAbstract::* CreateFunctionCallOrShaderNode)(const FString&, uint8, uint8, const FString&), bool bFindMatchingInput = true)
+	{
+		UInterchangeShaderNode* OperatorNode = nullptr;
+
+		//We don't take the node output here because it would cause the creation of a new node (output is meaningful with ComponentMaskNode/separate where we have to create a new expression
+		OperatorNode = (this->*CreateFunctionCallOrShaderNode)(Connect.UpstreamNode->getName().c_str(), EnumType, EnumValue, DefaultOutput);
+
+		ConnectOutputToInputInternal(OperatorNode, bFindMatchingInput);
+	};
+
+	const FString* MaterialFunctionPath = nullptr;
+
+	// First search a matching Material Expression
+	// search for a Material Expression based on the node group (essentially used for Substrate Mix)
+	if(const FString* ShaderType = Manager.FindMatchingMaterialExpression(Connect.UpstreamNode->getCategory().c_str(), Connect.UpstreamNode->getNodeDef(mx::EMPTY_STRING, true)->getNodeGroup().c_str()))
+	{
+		ConnectOutputToInput(ShaderType, &FMaterialXSurfaceShaderAbstract::CreateShaderNode);
+	}
+	else if((ShaderType = Manager.FindMatchingMaterialExpression(Connect.UpstreamNode->getCategory().c_str())))
+	{
+		ConnectOutputToInput(ShaderType, &FMaterialXSurfaceShaderAbstract::CreateShaderNode);
 	}
 	else if(FOnConnectNodeOutputToInput* Delegate = MatchingConnectNodeDelegates.Find(Connect.UpstreamNode->getCategory().c_str()))
 	{
 		bIsConnected = Delegate->ExecuteIfBound(Connect);
 	}
+	else if(uint8 EnumType, EnumValue; Manager.FindMatchingMaterialFunction(Connect.UpstreamNode->getCategory().c_str(), MaterialFunctionPath, EnumType, EnumValue))
+	{
+		MaterialFunctionPath ?
+			ConnectOutputToInput(MaterialFunctionPath, &FMaterialXSurfaceShaderAbstract::CreateFunctionCallShaderNode, false) :
+			ConnectFunctionShaderNodeOutputToInput(EnumType, EnumValue, &FMaterialXSurfaceShaderAbstract::CreateFunctionCallShaderNode, false);
+	}
 
 	return bIsConnected;
 }
 
-void FMaterialXSurfaceShaderAbstract::ConnectNodeCategoryOutputToInput(const MaterialX::Edge& Edge, UInterchangeShaderNode* ShaderNode, const FString& ParentInputName)
+void FMaterialXSurfaceShaderAbstract::ConnectNodeCategoryOutputToInput(const MaterialX::Edge& Edge, UInterchangeShaderNode* ShaderNode, const FString& ParentInputName, const FString& OutputName)
 {
 	if(mx::NodePtr UpstreamNode = Edge.getUpstreamElement()->asA<mx::Node>())
 	{
@@ -193,7 +311,10 @@ void FMaterialXSurfaceShaderAbstract::ConnectNodeCategoryOutputToInput(const Mat
 		//Replace the input's name by the one used in UE
 		SetMatchingInputsNames(UpstreamNode);
 
-		FString OutputChannelName = DefaultOutput;
+		FString OutputChannelName = OutputName;
+
+		// Swizzle node for the attribute 'channels'
+		UInterchangeShaderNode* ChannelsNode = nullptr;
 
 		if(mx::ElementPtr DownstreamElement = Edge.getDownstreamElement())
 		{
@@ -205,6 +326,13 @@ void FMaterialXSurfaceShaderAbstract::ConnectNodeCategoryOutputToInput(const Mat
 					if(ConnectedInput->hasOutputString())
 					{
 						OutputChannelName = ConnectedInput->getOutputString().c_str();
+					}
+
+					if(ConnectedInput->hasChannels())
+					{
+						using namespace UE::Interchange::Materials::Standard::Nodes;
+						ChannelsNode = CreateShaderNode((UpstreamNode->getName() + ConnectedInput->getName()).c_str() + FString{ TEXT("_Channels") }, Swizzle::Name.ToString());
+						ChannelsNode->AddStringAttribute(Swizzle::Attributes::Channels.ToString(), ConnectedInput->getChannels().c_str());
 					}
 				}
 
@@ -219,6 +347,14 @@ void FMaterialXSurfaceShaderAbstract::ConnectNodeCategoryOutputToInput(const Mat
 				{
 					if(UInterchangeShaderNode** FoundNode = ShaderNodes.Find({ GetAttributeParentName(DownstreamNode), Outputs[i]->getName().c_str()}))
 					{
+						//Connect the swizzle node between the upstream and downstream node
+						if(ChannelsNode)
+						{
+							UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(*FoundNode, InputChannelName, ChannelsNode->GetUniqueID());
+							InputChannelName = TEXT("Input");
+							FoundNode = &ChannelsNode;
+						}
+
 						ParentShaderNodeOutputs.Emplace(*FoundNode);
 					}
 				}
@@ -229,7 +365,7 @@ void FMaterialXSurfaceShaderAbstract::ConnectNodeCategoryOutputToInput(const Mat
 		{
 			if(!ConnectMatchingNodeOutputToInput({ UpstreamNode, ParentShaderNode, InputChannelName, OutputChannelName }))
 			{
-				UE_LOG(LogInterchangeImport, Warning, TEXT("<%s> is not supported yet"), ANSI_TO_TCHAR(UpstreamNode->getCategory().c_str()));
+				UE_LOG(LogInterchangeImport, Warning, TEXT("<%s> is not supported."), ANSI_TO_TCHAR(UpstreamNode->getCategory().c_str()));
 			}
 		}
 	}
@@ -290,7 +426,7 @@ void FMaterialXSurfaceShaderAbstract::ConnectExtractInputToOutput(const FConnect
 		case 2: MaskShaderNode->AddBooleanAttribute(Mask::Attributes::B.ToString(), true); break;
 		case 3: MaskShaderNode->AddBooleanAttribute(Mask::Attributes::A.ToString(), true); break;
 		default:
-			UE_LOG(LogInterchangeImport, Warning, TEXT("Wrong index number for extract node, values are from [0-3]"));
+			UE_LOG(LogInterchangeImport, Warning, TEXT("Wrong index number for extracted node. Values are from [0-3]."));
 			break;
 		}
 	}
@@ -411,7 +547,7 @@ void FMaterialXSurfaceShaderAbstract::ConnectConvertInputToOutput(const FConnect
 
 	if(!bIsNodeTypeSupported || !bIsInputTypeSupported)
 	{
-		UE_LOG(LogInterchangeImport, Warning, TEXT("<convert> node has non supported types"));
+		UE_LOG(LogInterchangeImport, Warning, TEXT("<convert> node has unsupported types."));
 		return;
 	}
 
@@ -545,16 +681,13 @@ void FMaterialXSurfaceShaderAbstract::ConnectIfGreaterInputToOutput(const FConne
 	mx::InputPtr Input = Connect.UpstreamNode->getInput("in2");
 	if(Input)
 	{
-		bool bHasValue = AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
+		AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
 		AddAttributeFromValueOrInterface(Input, TEXT("AEqualsB"), NodeIf);
 
-		if(bHasValue)
-		{
-			//Let's add a new input that is a copy of in2 to connect it to the equal input
-			mx::InputPtr Input3 = Connect.UpstreamNode->addInput("in3");
-			Input3->copyContentFrom(Input);
-			SetAttributeNewName(Input3, "AEqualsB");
-		}
+		//Let's add a new input that is a copy of in2 to connect it to the equal input
+		mx::InputPtr Input3 = Connect.UpstreamNode->addInput("in3");
+		Input3->copyContentFrom(Input);
+		SetAttributeNewName(Input3, "AEqualsB");
 	}
 }
 
@@ -582,16 +715,13 @@ void FMaterialXSurfaceShaderAbstract::ConnectIfGreaterEqInputToOutput(const FCon
 	mx::InputPtr Input = Connect.UpstreamNode->getInput("in1");
 	if(Input)
 	{
-		bool bHasValue = AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
+		AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
 		AddAttributeFromValueOrInterface(Input, TEXT("AEqualsB"), NodeIf);
 
-		if(bHasValue)
-		{
-			//Let's add a new input that is a copy of in2 to connect it to the equal input
-			mx::InputPtr Input3 = Connect.UpstreamNode->addInput("in3");
-			Input3->copyContentFrom(Input);
-			SetAttributeNewName(Input3, "AEqualsB");
-		}
+		//Let's add a new input that is a copy of in2 to connect it to the equal input
+		mx::InputPtr Input3 = Connect.UpstreamNode->addInput("in3");
+		Input3->copyContentFrom(Input);
+		SetAttributeNewName(Input3, "AEqualsB");
 	}
 }
 
@@ -600,17 +730,17 @@ void FMaterialXSurfaceShaderAbstract::ConnectIfEqualInputToOutput(const FConnect
 	UInterchangeShaderNode* NodeIf = CreateShaderNode(Connect.UpstreamNode->getName().c_str(), TEXT("If"));
 	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(Connect.ParentShaderNode, Connect.InputChannelName, NodeIf->GetUniqueID());
 
-	if(mx::InputPtr Input = Connect.UpstreamNode->getInput("value1"); Input && Input->hasValue())
+	if(mx::InputPtr Input = Connect.UpstreamNode->getInput("value1"))
 	{
 		AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
 	}
 
-	if(mx::InputPtr Input = Connect.UpstreamNode->getInput("value2"); Input && Input->hasValue())
+	if(mx::InputPtr Input = Connect.UpstreamNode->getInput("value2"))
 	{
 		AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
 	}
 
-	if(mx::InputPtr Input = Connect.UpstreamNode->getInput("in1"); Input && Input->hasValue())
+	if(mx::InputPtr Input = Connect.UpstreamNode->getInput("in1"))
 	{
 		AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
 	}
@@ -619,16 +749,13 @@ void FMaterialXSurfaceShaderAbstract::ConnectIfEqualInputToOutput(const FConnect
 	mx::InputPtr Input = Connect.UpstreamNode->getInput("in2");
 	if(Input)
 	{
-		bool bHasValue = AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
+		AddAttributeFromValueOrInterface(Input, GetInputName(Input), NodeIf);
 		AddAttributeFromValueOrInterface(Input, TEXT("AGreaterThanB"), NodeIf);
 
-		if(bHasValue)
-		{
-			//Let's add a new input that is a copy of in2 to connect it to the equal input
-			mx::InputPtr Input3 = Connect.UpstreamNode->addInput("in3");
-			Input3->copyContentFrom(Input);
-			SetAttributeNewName(Input3, "AGreaterThanB");
-		}
+		//Let's add a new input that is a copy of in2 to connect it to the equal input
+		mx::InputPtr Input3 = Connect.UpstreamNode->addInput("in3");
+		Input3->copyContentFrom(Input);
+		SetAttributeNewName(Input3, "AGreaterThanB");
 	}
 }
 
@@ -644,166 +771,104 @@ void FMaterialXSurfaceShaderAbstract::ConnectOutsideInputToOutput(const FConnect
 	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeMultiply, TEXT("B"), NodeOneMinus->GetUniqueID());
 }
 
-void FMaterialXSurfaceShaderAbstract::ConnectPositionInputToOutput(const FConnectNode& Connect)
+UInterchangeShaderNode* FMaterialXSurfaceShaderAbstract::ConnectGeometryInputToOutput(const FConnectNode& Connect, const FString& ShaderType, const FString& TransformShaderType, const FString& TransformInput, const FString& TransformSourceType, int32 TransformSource, const FString& TransformType, int32 TransformSDestination, bool bIsVector)
 {
 	// MaterialX defines the space as: object, model, world
 	// model: The local coordinate space of the geometry, before any local deformations or global transforms have been applied.
 	// object: The local coordinate space of the geometry, after local deformations have been applied, but before any global transforms.
 	// world : The global coordinate space of the geometry, after local deformationsand global transforms have been applied.
 
-	// For the moment we don't have the distinction between model/object, so let's just create an UMaterialExpressionWorldPosition
-	// In case of model/object we need to add a TransformPoint from world to local space
-	UInterchangeShaderNode* PositionNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Position")), TEXT("WorldPosition"));
-
-	// In case of the position node, it seems that the unit is different, we assume for now a conversion from mm -> m, even if UE by default is cm
-	// See standard_surface_marble_solid file, especially on the fractal3d node
-	UInterchangeShaderNode* UnitNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str(), TEXT("Multiply"));
-	UnitNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(TEXT("B")), 0.001f);
-	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(UnitNode, TEXT("A"), PositionNode->GetUniqueID());
+	// In case of model/object we need to add a TransformVector from world to local space
+	UInterchangeShaderNode* GeometryNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str(), ShaderType);
 
 	UInterchangeShaderNode* NodeToConnectTo = Connect.ParentShaderNode;
 	FString InputToConnectTo = Connect.InputChannelName;
 
-	std::string Space = "world";
 	mx::InputPtr InputSpace = Connect.UpstreamNode->getInput("space");
 
-	if(InputSpace)
-	{
-		Space = InputSpace->getValueString();
-	}
-
 	//the default space defined by the nodedef is "object"
-	if(Space != "world" || !InputSpace)
+	bool bIsObjectSpace = (InputSpace && InputSpace->getValueString() != "world") || !InputSpace;
+
+	// We transform to Tangent Space only for Vector nodes
+	if(bTangentSpaceInput && bIsVector)
 	{
 		using namespace UE::Interchange::Materials::Standard::Nodes;
-
-		UInterchangeShaderNode* TransformNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Transform")), TransformPosition::Name.ToString());
-		NodeToConnectTo = TransformNode;
-		InputToConnectTo = TransformPosition::Inputs::Input.ToString();
-		TransformNode->AddInt32Attribute(TransformPosition::Attributes::TransformSourceType.ToString(), EMaterialPositionTransformSource::TRANSFORMPOSSOURCE_World);
-		TransformNode->AddInt32Attribute(TransformPosition::Attributes::TransformType.ToString(), EMaterialPositionTransformSource::TRANSFORMPOSSOURCE_Local);
-		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(Connect.ParentShaderNode, Connect.InputChannelName, TransformNode->GetUniqueID());
+		UInterchangeShaderNode* TransformTSNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_TransformTS")), TransformShaderType);
+		EMaterialVectorCoordTransformSource SpaceSource = bIsObjectSpace ? EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_Local : EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_World;
+		TransformTSNode->AddInt32Attribute(TransformSourceType, SpaceSource);
+		TransformTSNode->AddInt32Attribute(TransformType, EMaterialVectorCoordTransform::TRANSFORM_Tangent);
+		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, TransformTSNode->GetUniqueID());
+		NodeToConnectTo = TransformTSNode;
+		InputToConnectTo = TransformInput; //Same a TransformVector
 	}
 
-	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, UnitNode->GetUniqueID());
+	if(bIsObjectSpace)
+	{
+		UInterchangeShaderNode* TransformNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Transform")), TransformShaderType);
+		TransformNode->AddInt32Attribute(TransformSourceType, TransformSource);
+		TransformNode->AddInt32Attribute(TransformType, TransformSDestination);
+		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, TransformNode->GetUniqueID());
+		NodeToConnectTo = TransformNode;
+		InputToConnectTo = TransformInput;
+	}
+
+	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, GeometryNode->GetUniqueID());
+
+	return GeometryNode;
+}
+
+void FMaterialXSurfaceShaderAbstract::ConnectPositionInputToOutput(const FConnectNode& Connect)
+{
+	using namespace UE::Interchange::Materials::Standard::Nodes;
+	UInterchangeShaderNode* UnitNode = ConnectGeometryInputToOutput(Connect, TEXT("Multiply"),
+																	TransformPosition::Name.ToString(),
+																	TransformPosition::Inputs::Input.ToString(),
+																	TransformPosition::Attributes::TransformSourceType.ToString(), EMaterialPositionTransformSource::TRANSFORMPOSSOURCE_World,
+																	TransformPosition::Attributes::TransformType.ToString(), EMaterialPositionTransformSource::TRANSFORMPOSSOURCE_Local,
+																	false);
+
+	// In case of the position node, it seems that the unit is different, we assume for now a conversion from mm -> m, even if UE by default is cm
+	// See standard_surface_marble_solid file, especially on the fractal3d node
+	UInterchangeShaderNode* PositionNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Position")), TEXT("WorldPosition"));
+	UnitNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(TEXT("B")), 0.001f);
+	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(UnitNode, TEXT("A"), PositionNode->GetUniqueID());
 }
 
 void FMaterialXSurfaceShaderAbstract::ConnectNormalInputToOutput(const FConnectNode& Connect)
 {
-	// MaterialX defines the space as: object, model, world
-	// model: The local coordinate space of the geometry, before any local deformations or global transforms have been applied.
-	// object: The local coordinate space of the geometry, after local deformations have been applied, but before any global transforms.
-	// world : The global coordinate space of the geometry, after local deformationsand global transforms have been applied.
-
-	// For the moment we don't have the distinction between model/object, so let's just create an UMaterialExpressionVertexNormalWS
-	// In case of model/object we need to add a TransformVector from world to local space
-	UInterchangeShaderNode* NormalNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str(), TEXT("VertexNormalWS"));
-	UInterchangeShaderNode* NodeToConnectTo = Connect.ParentShaderNode;
-	FString InputToConnectTo = Connect.InputChannelName;
-
-	std::string Space = "world";
-	mx::InputPtr InputSpace = Connect.UpstreamNode->getInput("space");
-
-	if(InputSpace)
-	{
-		Space = InputSpace->getValueString();
-	}
-
-	//the default space defined by the nodedef is "object"
-	if(Space != "world" || !InputSpace)
-	{
-		using namespace UE::Interchange::Materials::Standard::Nodes;
-
-		UInterchangeShaderNode* TransformNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Transform")), TransformVector::Name.ToString());
-		NodeToConnectTo = TransformNode;
-		InputToConnectTo = TransformVector::Inputs::Input.ToString();
-		TransformNode->AddInt32Attribute(TransformVector::Attributes::TransformSourceType.ToString(), EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_World);
-		TransformNode->AddInt32Attribute(TransformVector::Attributes::TransformType.ToString(), EMaterialVectorCoordTransform::TRANSFORM_Local);
-		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(Connect.ParentShaderNode, Connect.InputChannelName, TransformNode->GetUniqueID());
-	}
-
-	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, NormalNode->GetUniqueID());
+	using namespace UE::Interchange::Materials::Standard::Nodes;
+	ConnectGeometryInputToOutput(Connect, TEXT("VertexNormalWS"),
+								 TransformVector::Name.ToString(),
+								 TransformVector::Inputs::Input.ToString(),
+								 TransformVector::Attributes::TransformSourceType.ToString(), EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_World,
+								 TransformVector::Attributes::TransformType.ToString(), EMaterialVectorCoordTransform::TRANSFORM_Local);
 }
 
 void FMaterialXSurfaceShaderAbstract::ConnectTangentInputToOutput(const FConnectNode& Connect)
 {
-	// MaterialX defines the space as: object, model, world
-	// model: The local coordinate space of the geometry, before any local deformations or global transforms have been applied.
-	// object: The local coordinate space of the geometry, after local deformations have been applied, but before any global transforms.
-	// world : The global coordinate space of the geometry, after local deformationsand global transforms have been applied.
-
-	// For the moment we don't have the distinction between model/object, so let's just create an UMaterialExpressionVertexTangentWS
-	// In case of model/object we need to add a TransformVector from world to local space
-	UInterchangeShaderNode* TangentNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str(), TEXT("VertexTangentWS"));
-	UInterchangeShaderNode* NodeToConnectTo = Connect.ParentShaderNode;
-	FString InputToConnectTo = Connect.InputChannelName;
-
-	std::string Space = "world";
-	mx::InputPtr InputSpace = Connect.UpstreamNode->getInput("space");
-
-	if(InputSpace)
-	{
-		Space = InputSpace->getValueString();
-	}
-
-	//the default space defined by the nodedef is "object"
-	if(Space != "world" || !InputSpace)
-	{
-		using namespace UE::Interchange::Materials::Standard::Nodes;
-
-		UInterchangeShaderNode* TransformNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Transform")), TransformVector::Name.ToString());
-		NodeToConnectTo = TransformNode;
-		InputToConnectTo = TransformVector::Inputs::Input.ToString();
-		TransformNode->AddInt32Attribute(TransformVector::Attributes::TransformSourceType.ToString(), EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_World);
-		TransformNode->AddInt32Attribute(TransformVector::Attributes::TransformType.ToString(), EMaterialVectorCoordTransform::TRANSFORM_Local);
-		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(Connect.ParentShaderNode, Connect.InputChannelName, TransformNode->GetUniqueID());
-	}
-
-	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, TangentNode->GetUniqueID());
+	using namespace UE::Interchange::Materials::Standard::Nodes;
+	ConnectGeometryInputToOutput(Connect, TEXT("VertexTangentWS"),
+								 TransformVector::Name.ToString(),
+								 TransformVector::Inputs::Input.ToString(),
+								 TransformVector::Attributes::TransformSourceType.ToString(), EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_World,
+								 TransformVector::Attributes::TransformType.ToString(), EMaterialVectorCoordTransform::TRANSFORM_Local);
 }
 
 void FMaterialXSurfaceShaderAbstract::ConnectBitangentInputToOutput(const FConnectNode& Connect)
 {
-	// MaterialX defines the space as: object, model, world
-	// model: The local coordinate space of the geometry, before any local deformations or global transforms have been applied.
-	// object: The local coordinate space of the geometry, after local deformations have been applied, but before any global transforms.
-	// world : The global coordinate space of the geometry, after local deformationsand global transforms have been applied.
+	using namespace UE::Interchange::Materials::Standard::Nodes;
 
-	// For the moment we don't have the distinction between model/object, so let's just do the cross product between the normal and the tangent
-	// In case of model/object we need to add a TransformVector from world to local space
+	UInterchangeShaderNode* BitangentNode = ConnectGeometryInputToOutput(Connect, TEXT("CrossProduct"),
+																		 TransformVector::Name.ToString(),
+																		 TransformVector::Inputs::Input.ToString(),
+																		 TransformVector::Attributes::TransformSourceType.ToString(), EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_World,
+																		 TransformVector::Attributes::TransformType.ToString(), EMaterialVectorCoordTransform::TRANSFORM_Local);
+
 	UInterchangeShaderNode* NormalNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Normal")), TEXT("VertexNormalWS"));
 	UInterchangeShaderNode* TangentNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Tangent")), TEXT("VertexTangentWS"));
-	UInterchangeShaderNode* BitangentNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str(), TEXT("CrossProduct"));
 
 	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(BitangentNode, TEXT("A"), NormalNode->GetUniqueID());
 	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(BitangentNode, TEXT("B"), TangentNode->GetUniqueID());
-
-
-	UInterchangeShaderNode* NodeToConnectTo = Connect.ParentShaderNode;
-	FString InputToConnectTo = Connect.InputChannelName;
-
-	std::string Space = "world";
-	mx::InputPtr InputSpace = Connect.UpstreamNode->getInput("space");
-
-	if(InputSpace)
-	{
-		Space = InputSpace->getValueString();
-	}
-
-	//the default space defined by the nodedef is "object"
-	if(Space != "world" || !InputSpace)
-	{
-		using namespace UE::Interchange::Materials::Standard::Nodes;
-
-		UInterchangeShaderNode* TransformNode = CreateShaderNode(Connect.UpstreamNode->getName().c_str() + FString(TEXT("_Transform")), TransformVector::Name.ToString());
-		NodeToConnectTo = TransformNode;
-		InputToConnectTo = TransformVector::Inputs::Input.ToString();
-		TransformNode->AddInt32Attribute(TransformVector::Attributes::TransformSourceType.ToString(), EMaterialVectorCoordTransformSource::TRANSFORMSOURCE_World);
-		TransformNode->AddInt32Attribute(TransformVector::Attributes::TransformType.ToString(), EMaterialVectorCoordTransform::TRANSFORM_Local);
-		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(Connect.ParentShaderNode, Connect.InputChannelName, TransformNode->GetUniqueID());
-	}
-
-	UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, BitangentNode->GetUniqueID());
 }
 
 void FMaterialXSurfaceShaderAbstract::ConnectTimeInputToOutput(const FConnectNode& Connect)
@@ -910,11 +975,11 @@ void FMaterialXSurfaceShaderAbstract::ConnectHeightToNormalInputToOutput(const F
 			//we need to copy the content of the image node to this node
 			Connect.UpstreamNode->copyContentFrom(ConnectedNode);
 
-			SetMatchingInputsNames(Connect.UpstreamNode);
-
-			//the copy overwrite every attribute of the node, so we need to get them back, essentially the type and the renaming
+			// the copy overwrite every attribute of the node, so we need to get them back, essentially the type and the renaming
 			// the output is always a vec3
 			Connect.UpstreamNode->setType(mx::Type::Vector3);
+
+			SetMatchingInputsNames(Connect.UpstreamNode);
 
 			mx::NodeGraphPtr Graph = Connect.UpstreamNode->getParent()->asA<mx::NodeGraph>();
 			Graph->removeNode(ConnectedNode->getName());
@@ -960,10 +1025,10 @@ void FMaterialXSurfaceShaderAbstract::ConnectBlurInputToOutput(const FConnectNod
 			//we need to copy the content of the image node to this node
 			Connect.UpstreamNode->copyContentFrom(ConnectedNode);
 
-			SetMatchingInputsNames(Connect.UpstreamNode);
-
 			//the copy overwrites every attribute of the node, so we need to get them back, essentially the type and the renaming
 			Connect.UpstreamNode->setType(NodeType);
+
+			SetMatchingInputsNames(Connect.UpstreamNode);
 
 			mx::NodeGraphPtr Graph = Connect.UpstreamNode->getParent()->asA<mx::NodeGraph>();
 			Graph->removeNode(ConnectedNode->getName());
@@ -1014,7 +1079,7 @@ void FMaterialXSurfaceShaderAbstract::ConnectBlurInputToOutput(const FConnectNod
 					}
 					else
 					{
-						UE_LOG(LogInterchangeImport, Warning, TEXT("<%s>: input 'size' must have a value"), ANSI_TO_TCHAR(Connect.UpstreamNode->getName().c_str()));
+						UE_LOG(LogInterchangeImport, Warning, TEXT("<%s>: input 'size' must have a value."), ANSI_TO_TCHAR(Connect.UpstreamNode->getName().c_str()));
 					}
 				}
 			}
@@ -1083,7 +1148,7 @@ void FMaterialXSurfaceShaderAbstract::ConnectSeparateInputToOutput(const FConnec
 	}
 	else
 	{
-		UE_LOG(LogInterchangeImport, Warning, TEXT("output <%s> not defined in <%s>"), *Connect.OutputName, ANSI_TO_TCHAR(Connect.UpstreamNode->getCategory().c_str()));
+		UE_LOG(LogInterchangeImport, Warning, TEXT("output <%s> not defined in <%s>."), *Connect.OutputName, ANSI_TO_TCHAR(Connect.UpstreamNode->getCategory().c_str()));
 	}
 }
 
@@ -1141,6 +1206,47 @@ UInterchangeShaderNode* FMaterialXSurfaceShaderAbstract::CreateShaderNode(const 
 	return Node;
 }
 
+UInterchangeFunctionCallShaderNode* FMaterialXSurfaceShaderAbstract::CreateFunctionCallShaderNode(const FString& NodeName, const FString& FunctionPath, const FString& OutputName)
+{
+	UInterchangeFunctionCallShaderNode* Node;
+
+	const FString NodeUID = UInterchangeShaderNode::MakeNodeUid(NodeName  + TEXT('_') + OutputName, FStringView{});
+
+	if(Node = const_cast<UInterchangeFunctionCallShaderNode*>(Cast<UInterchangeFunctionCallShaderNode>(NodeContainer.GetNode(NodeUID))); !Node)
+	{
+		Node = NewObject<UInterchangeFunctionCallShaderNode>(&NodeContainer);
+		Node->InitializeNode(NodeUID, NodeName, EInterchangeNodeContainerType::TranslatedAsset);
+		Node->SetCustomMaterialFunction(FunctionPath);
+		NodeContainer.AddNode(Node);
+
+		ShaderNodes.Add({ NodeName, OutputName}, Node);
+	}
+
+	return Node;
+}
+
+UInterchangeFunctionCallShaderNode* FMaterialXSurfaceShaderAbstract::CreateFunctionCallShaderNode(const FString& NodeName, uint8 EnumType, uint8 EnumValue, const FString& OutputName)
+{
+	UInterchangeFunctionCallShaderNode* Node;
+
+	const FString NodeUID = UInterchangeShaderNode::MakeNodeUid(NodeName + TEXT('_') + OutputName, FStringView{});
+
+	if(Node = const_cast<UInterchangeFunctionCallShaderNode*>(Cast<UInterchangeFunctionCallShaderNode>(NodeContainer.GetNode(NodeUID))); !Node)
+	{
+		Node = NewObject<UInterchangeFunctionCallShaderNode>(&NodeContainer);
+		Node->InitializeNode(NodeUID, NodeName, EInterchangeNodeContainerType::TranslatedAsset);
+		//this is just a dummy path name so the Generic Material Pipeline consider it as a FunctionCallShader but where in fact the path is given by an enum
+		Node->SetCustomMaterialFunction(TEXT("/Game/Default.Default"));
+		Node->AddInt32Attribute(UE::Interchange::MaterialX::Attributes::EnumType, EnumType);
+		Node->AddInt32Attribute(UE::Interchange::MaterialX::Attributes::EnumValue, EnumValue);
+		NodeContainer.AddNode(Node);
+
+		ShaderNodes.Add({ NodeName, OutputName }, Node);
+	}
+
+	return Node;
+}
+
 const FString& FMaterialXSurfaceShaderAbstract::GetMatchedInputName(MaterialX::NodePtr Node, MaterialX::InputPtr Input) const
 {
 	FMaterialXManager& Manager = FMaterialXManager::GetInstance();
@@ -1148,13 +1254,17 @@ const FString& FMaterialXSurfaceShaderAbstract::GetMatchedInputName(MaterialX::N
 	if(Input)
 	{
 		const FString NodeCategory{ Node->getCategory().c_str() };
-		const FString InputName{ GetInputName(Input) };
-		
-		if(const FString* Result = Manager.FindMatchingInput({ NodeCategory, InputName }))
+		const FString InputName{ GetInputName(Input) };	
+
+		if(const FString* Result = Manager.FindMatchingInput(NodeCategory, InputName, Node->getNodeDef(mx::EMPTY_STRING, true)->getNodeGroup().c_str()))
 		{
 			return *Result;
 		}
-		else if((Result = Manager.FindMatchingInput({ EmptyString, InputName })))
+		else if((Result = Manager.FindMatchingInput(NodeCategory, InputName)))
+		{
+			return *Result;
+		}
+		else if((Result = Manager.FindMatchingInput(EmptyString, InputName)))
 		{
 			return *Result;
 		}
@@ -1215,7 +1325,7 @@ FLinearColor FMaterialXSurfaceShaderAbstract::GetVector(MaterialX::InputPtr Inpu
 	}
 	else
 	{
-		ensureMsgf(false, TEXT("input type can only be a vectorN"));
+		ensureMsgf(false, TEXT("Input type can only be a vectorN."));
 	}
 
 	return LinearColor;

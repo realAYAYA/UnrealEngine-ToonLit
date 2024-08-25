@@ -118,7 +118,7 @@ TArray<FString> UTextureLODSettings::GetTextureGroupNames()
 	// TEXTUREGROUP_MAX is not actually Max, it's count
 	TextureGroupNames.Reserve(TEXTUREGROUP_MAX);
 
-#define GROUPNAMES(g) new(TextureGroupNames) FString(TEXT(#g));
+#define GROUPNAMES(g) TextureGroupNames.Emplace(TEXT(#g));
 	FOREACH_ENUM_TEXTUREGROUP(GROUPNAMES)
 #undef GROUPNAMES
 
@@ -143,6 +143,7 @@ int32 UTextureLODSettings::CalculateLODBias(const UTexture* Texture, bool bIncCi
 	TextureMaxSize = Texture->MaxTextureSize;
 #endif // #if WITH_EDITORONLY_DATA
 
+	// note: these are the Platform texture size and can return 0 during build!
 	float Width = Texture->GetSurfaceWidth();
 	float Height = Texture->GetSurfaceHeight();
 
@@ -298,16 +299,18 @@ void UTextureLODSettings::GetMipGenSettings(const UTexture& Texture, TextureMipG
 
 	// angular filtering only applies to cubemaps
 	// note: currently intentionally NOT allowed on cubearrays
-	if (Setting == TMGS_Angular && !Texture.IsA(UTextureCube::StaticClass()))
+	if (Setting == TMGS_Angular && Texture.GetTextureClass() != ETextureClass::Cube )
 	{
-		Setting = TMGS_NoMipmaps;
+		Setting = TMGS_SimpleAverage;
 	}
 
 	OutMipGenSettings = Setting;
 
 	// ------------
 
-	// default:
+	// default to 2x2 SimpleAverage :
+	// if you generate mips when TMGS was set to NoMipMaps or LeaveExisting, etc.
+	//	it will use these defaults
 	OutSharpen = 0;
 	OutKernelSize = 2;
 

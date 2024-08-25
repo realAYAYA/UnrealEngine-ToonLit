@@ -27,7 +27,7 @@ namespace HairAttribute
 	const FName Strand::CurveType("groom_curve_type");
 	const FName Strand::Knots("groom_knots");
 	const FName Strand::GroupName("groom_group_name");
-	const FName Strand::GroupCardsID("groom_group_cards_id");
+	const FName Strand::GroupCardsName("groom_group_cards_id");
 
 	const FName Groom::Color("groom_color");
 	const FName Groom::Roughness("groom_roughness");

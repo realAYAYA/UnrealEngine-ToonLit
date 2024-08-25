@@ -3,16 +3,11 @@
 #include "ViewModels/NiagaraScratchPadScriptViewModel.h"
 #include "UObject/Linker.h"
 #include "ViewModels/Stack/NiagaraStackGraphUtilities.h"
-#include "ViewModels/Stack/NiagaraStackFunctionInputCollection.h"
 #include "ViewModels/NiagaraParameterPanelViewModel.h"
 #include "NiagaraNodeFunctionCall.h"
-#include "NiagaraEmitter.h"
 #include "NiagaraEditorUtilities.h"
-#include "NiagaraEditorModule.h"
 #include "NiagaraObjectSelection.h"
-#include "NiagaraParameterDefinitions.h"
 #include "NiagaraScriptSource.h"
-#include "NiagaraSystem.h"
 #include "ViewModels/NiagaraScratchPadUtilities.h"
 #include "ViewModels/NiagaraScriptGraphViewModel.h"
 #include "ViewModels/NiagaraSystemViewModel.h"
@@ -67,6 +62,8 @@ void FNiagaraScratchPadScriptViewModel::Initialize(UNiagaraScript* Script, UNiag
 		EditScript.Script = CastChecked<UNiagaraScript>(StaticDuplicateObject(Script, GetTransientPackage()));
 		SetScript(EditScript);
 	}
+	LastAppliedChangeID = GetScriptChangeID();
+	
 	UNiagaraScriptSource* EditScriptSource = CastChecked<UNiagaraScriptSource>(EditScript.Script->GetLatestSource());
 	OnGraphNeedsRecompileHandle = EditScriptSource->NodeGraph->AddOnGraphNeedsRecompileHandler(FOnGraphChanged::FDelegate::CreateSP(this, &FNiagaraScratchPadScriptViewModel::OnScriptGraphChanged));
 	EditScript.Script->OnPropertyChanged().AddSP(this, &FNiagaraScratchPadScriptViewModel::OnScriptPropertyChanged);
@@ -162,6 +159,12 @@ void FNiagaraScratchPadScriptViewModel::SetScriptName(FText InScriptName)
 		FScopedTransaction RenameTransaction(LOCTEXT("RenameScriptTransaction", "Rename scratch pad script."));
 
 		FName NewUniqueName = FNiagaraEditorUtilities::GetUniqueObjectName<UNiagaraScript>(OriginalScript->GetOuter(), *NewName);
+		
+		if(OriginalScript->HasAnyFlags(RF_Transactional) == false)
+		{
+			OriginalScript->SetFlags(RF_Transactional);
+		}
+		
 		OriginalScript->Modify();
 		OriginalScript->Rename(*NewUniqueName.ToString(), nullptr, REN_DontCreateRedirectors);
 
@@ -214,17 +217,16 @@ void FNiagaraScratchPadScriptViewModel::SetEditorHeight(float InEditorHeight)
 
 bool FNiagaraScratchPadScriptViewModel::HasUnappliedChanges() const
 {
-	return bHasPendingChanges;
+	return bHasPendingChanges || (LastAppliedChangeID.IsValid() && LastAppliedChangeID != GetScriptChangeID());
 }
 
 void FNiagaraScratchPadScriptViewModel::ApplyChanges()
 {
 	ResetLoaders(OriginalScript->GetOutermost()); // Make sure that we're not going to get invalid version number linkers into the package we are going into. 
 
-	OriginalScript = (UNiagaraScript*)StaticDuplicateObject(EditScript.Script, OriginalScript->GetOuter(), OriginalScript->GetFName(),
-		RF_AllFlags,
-		OriginalScript->GetClass());
+	OriginalScript = Cast<UNiagaraScript>(StaticDuplicateObject(EditScript.Script, OriginalScript->GetOuter(), OriginalScript->GetFName(), RF_AllFlags, OriginalScript->GetClass()));
 	bHasPendingChanges = false;
+	LastAppliedChangeID = GetScriptChangeID();
 
 	TArray<UNiagaraNodeFunctionCall*> FunctionCallNodesToRefresh;
 	FNiagaraEditorUtilities::GetReferencingFunctionCallNodes(OriginalScript, FunctionCallNodesToRefresh);
@@ -292,6 +294,15 @@ void FNiagaraScratchPadScriptViewModel::OnScriptPropertyChanged(FPropertyChanged
 		bHasPendingChanges = true;
 		OnHasUnappliedChangesChangedDelegate.Broadcast();
 	}
+}
+
+FGuid FNiagaraScratchPadScriptViewModel::GetScriptChangeID() const
+{
+	if (Source.IsValid() && Source->NodeGraph)
+	{
+		return Source->NodeGraph->GetChangeID();
+	}
+	return FGuid();
 }
 
 FNiagaraScratchPadScriptViewModel::FOnNodeIDFocusRequested& FNiagaraScratchPadScriptViewModel::OnNodeIDFocusRequested()

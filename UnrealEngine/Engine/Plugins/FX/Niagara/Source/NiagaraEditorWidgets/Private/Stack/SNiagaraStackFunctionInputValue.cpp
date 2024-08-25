@@ -71,6 +71,10 @@ void SNiagaraStackFunctionInputValue::Construct(const FArguments& InArgs, UNiaga
 	FunctionInput->OnValueChanged().AddSP(this, &SNiagaraStackFunctionInputValue::OnInputValueChanged);
 	SyntaxHighlighter = FNiagaraHLSLSyntaxHighlighter::Create();
 
+	TAttribute<bool> EntryIsEnabled;
+	EntryIsEnabled.Bind(this, &SNiagaraStackFunctionInputValue::GetEntryEnabled);
+	SetEnabled(EntryIsEnabled);
+
 	TSharedPtr<SHorizontalBox> OuterChildrenBox;
 	TSharedPtr<SHorizontalBox> ChildrenBox;
 	ChildSlot
@@ -524,23 +528,36 @@ FSlateColor SNiagaraStackFunctionInputValue::GetVersionSelectorColor() const
 
 void SNiagaraStackFunctionInputValue::SetToLocalValue()
 {
-	const UScriptStruct* LocalValueStruct = FunctionInput->GetInputType().GetScriptStruct();
-	if (LocalValueStruct != nullptr)
+	if (FunctionInput->GetInputType().IsDataInterface())
 	{
-		TSharedRef<FStructOnScope> LocalValue = MakeShared<FStructOnScope>(LocalValueStruct);
-		TArray<uint8> DefaultValueData;
-		FNiagaraEditorUtilities::GetTypeDefaultValue(FunctionInput->GetInputType(), DefaultValueData);
-		if (DefaultValueData.Num() == LocalValueStruct->GetStructureSize())
+		const UNiagaraDataInterface* DefaultDataInterfaceValue = GetDefault<UNiagaraDataInterface>(FunctionInput->GetInputType().GetClass());
+		FunctionInput->SetDataInterfaceValue(*DefaultDataInterfaceValue);
+	}
+	else if (FunctionInput->GetInputType().IsUObject() == false)
+	{
+		const UScriptStruct* LocalValueStruct = FunctionInput->GetInputType().GetScriptStruct();
+		if (LocalValueStruct != nullptr)
 		{
-			FMemory::Memcpy(LocalValue->GetStructMemory(), DefaultValueData.GetData(), DefaultValueData.Num());
-			FunctionInput->SetLocalValue(LocalValue);
+			TSharedRef<FStructOnScope> LocalValue = MakeShared<FStructOnScope>(LocalValueStruct);
+			TArray<uint8> DefaultValueData;
+			FNiagaraEditorUtilities::GetTypeDefaultValue(FunctionInput->GetInputType(), DefaultValueData);
+			if (DefaultValueData.Num() == LocalValueStruct->GetStructureSize())
+			{
+				FMemory::Memcpy(LocalValue->GetStructMemory(), DefaultValueData.GetData(), DefaultValueData.Num());
+				FunctionInput->SetLocalValue(LocalValue);
+			}
 		}
 	}
 }
 
 bool SNiagaraStackFunctionInputValue::GetInputEnabled() const
 {
-	return FunctionInput->GetHasEditCondition() == false || FunctionInput->GetEditConditionEnabled();
+	return FunctionInput->IsFinalized() == false && (FunctionInput->GetHasEditCondition() == false || FunctionInput->GetEditConditionEnabled());
+}
+
+bool SNiagaraStackFunctionInputValue::GetEntryEnabled() const
+{
+	return FunctionInput->IsFinalized() == false && FunctionInput->GetIsEnabledAndOwnerIsEnabled();
 }
 
 TSharedRef<SWidget> SNiagaraStackFunctionInputValue::ConstructLocalValueStructWidget()
@@ -762,14 +779,11 @@ FReply SNiagaraStackFunctionInputValue::OnLinkedInputDoubleClicked(const FGeomet
 	FString ParamName;
 	FunctionInput->GetLinkedValueHandle().GetName().ToString().Split(TEXT("."), &ParamCollection, &ParamName);
 
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	TArray<FAssetData> CollectionAssets;
-	AssetRegistryModule.Get().GetAssetsByClass(UNiagaraParameterCollection::StaticClass()->GetClassPathName(), CollectionAssets);
-
-	for (FAssetData& CollectionAsset : CollectionAssets)
+	TArray<UNiagaraParameterCollection*> AvailableParameterCollections;
+	FNiagaraEditorUtilities::GetAvailableParameterCollections(AvailableParameterCollections);
+	for (UNiagaraParameterCollection* Collection : AvailableParameterCollections)
 	{
-		UNiagaraParameterCollection* Collection = CastChecked<UNiagaraParameterCollection>(CollectionAsset.GetAsset());
-		if (Collection && Collection->GetNamespace() == *ParamCollection)
+		if (Collection->GetNamespace() == *ParamCollection)
 		{
 			if (UNiagaraParameterCollectionInstance* NPCInst = FunctionInput->GetSystemViewModel()->GetSystem().GetParameterCollectionOverride(Collection))
 			{
@@ -1000,7 +1014,7 @@ const FSlateBrush* SNiagaraStackFunctionInputValue::GetTypeModifierIcon() const
 
 FText SNiagaraStackFunctionInputValue::GetTypeModifierIconToolTip() const
 {
-	return LOCTEXT("TypeModifierTooltip", "Static variables can only be set once in the graph and are meant to communicate inputs to static switches across the emitter.");
+	return LOCTEXT("TypeModifierTooltip", "This variable is Static and cannot be changed at runtime, or linked to any dynamic attributes. Static variables can be used to reduce script instructions & memory.");
 }
 
 FSlateColor SNiagaraStackFunctionInputValue::GetTypeModifierIconColor() const
@@ -1208,9 +1222,10 @@ TArray<TSharedPtr<FNiagaraMenuAction_Generic>> SNiagaraStackFunctionInputValue::
 	FNiagaraActionSourceData NiagaraSourceData(EScriptSource::Niagara, FText::FromString(TEXT("Niagara")), true);
 	
 	// Set a local value
-	if(bIsDataInterfaceOrObject == false)
 	{
-		bool bCanSetLocalValue = FunctionInput->GetValueMode() != UNiagaraStackFunctionInput::EValueMode::Local;
+		bool bCanSetLocalValue = 
+			(FunctionInput->GetInputType().IsDataInterface() && FunctionInput->GetValueMode() != UNiagaraStackFunctionInput::EValueMode::Data) ||
+			(bIsDataInterfaceOrObject == false && FunctionInput->GetValueMode() != UNiagaraStackFunctionInput::EValueMode::Local);
 
 		const FText DisplayName = LOCTEXT("LocalValue", "New Local Value");
 		const FText Tooltip = FText::Format(LOCTEXT("LocalValueToolTip", "Set a local editable value for this input."), DisplayName);
@@ -1464,7 +1479,7 @@ bool SNiagaraStackFunctionInputValue::OnCompareCategoriesForEquality(const FStri
 
 bool SNiagaraStackFunctionInputValue::OnCompareCategoriesForSorting(const FString& CategoryA, const FString& CategoryB)
 {
-	return CategoryA.Compare(CategoryB) == -1;
+	return CategoryA.Compare(CategoryB) < 0;
 }
 
 bool SNiagaraStackFunctionInputValue::OnCompareItemsForEquality(const TSharedPtr<FNiagaraMenuAction_Generic>& ItemA,

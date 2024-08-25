@@ -13,11 +13,13 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "UnrealClient.h"
 #include "HitProxies.h"
+#include "SkeletonClipboard.h"
+#include "ToolSetupUtil.h"
 #include "BaseBehaviors/ClickDragBehavior.h"
 #include "BaseGizmos/GizmoViewContext.h"
+#include "DynamicMesh/MeshNormals.h"
+#include "Selection/PolygonSelectionMechanic.h"
 
-#include "Algo/Count.h"
-#include "BaseGizmos/TransformGizmoUtil.h"
 #include "SkeletalMesh/SkeletonTransformProxy.h"
 #include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
 
@@ -109,141 +111,234 @@ void USkeletonEditingTool::Setup()
 		return;
 	}
 
-	// setup modifier
-	Modifier = NewObject<USkeletonModifier>(this);
-	Modifier->SetSkeletalMesh(SkeletalMesh);
-
-	// setup current bone
-	const FReferenceSkeleton& RefSkeleton = Modifier->GetReferenceSkeleton();
-	const int32 NumBones = RefSkeleton.GetNum();
-	const FName& RootBoneName = NumBones ? RefSkeleton.GetBoneName(0) : NAME_None;
-
-	if (NumBones)
-	{
-		Selection = {RootBoneName};
-	}
-
-	// setup preview
-	{
-		PreviewMesh = NewObject<UPreviewMesh>(this);
-		PreviewMesh->bBuildSpatialDataStructure = true;
-		PreviewMesh->CreateInWorld(TargetWorld.Get(), FTransform::Identity);
-
-		PreviewMesh->SetTransform(UE::ToolTarget::GetLocalToWorldTransform(Target));
-
-		PreviewMesh->ReplaceMesh(UE::ToolTarget::GetDynamicMeshCopy(Target));
-
-		const FComponentMaterialSet MaterialSet = UE::ToolTarget::GetMaterialSet(Target);
-		PreviewMesh->SetMaterials(MaterialSet.Materials);
-
-		// hide the skeletal mesh component
-		UE::ToolTarget::HideSourceObject(Target);
-	}
-
-	ToolPropertyObjects.Add(this);
+	SetupModifier(SkeletalMesh);
+	SetupPreviewMesh();
+	SetupProperties();
+	SetupBehaviors();
+	SetupGizmo(Component);
+	SetupWatchers();
+	SetupComponentsSelection();
 	
-	// setup properties
-	{
-		ProjectionProperties = NewObject<UProjectionProperties>();
-		ProjectionProperties->Initialize(this, PreviewMesh);
-		ProjectionProperties->RestoreProperties(this);
-		AddToolPropertySource(ProjectionProperties);
-
-		MirroringProperties = NewObject<UMirroringProperties>();
-		MirroringProperties->Initialize(this);
-		MirroringProperties->RestoreProperties(this);
-		AddToolPropertySource(MirroringProperties);
-
-		OrientingProperties = NewObject<UOrientingProperties>();
-		OrientingProperties->Initialize(this);
-		OrientingProperties->RestoreProperties(this);
-		AddToolPropertySource(OrientingProperties);
-
-		Properties = NewObject<USkeletonEditingProperties>();
-		Properties->Initialize(this);
-		Properties->Name = GetCurrentBone();
-		Properties->RestoreProperties(this);
-		AddToolPropertySource(Properties);
-	}
-
-	// setup drag & drop behaviour
-	{
-		UClickDragInputBehavior* ClickDragBehavior = NewObject<UClickDragInputBehavior>(this);
-		ClickDragBehavior->Initialize(this);
-		ClickDragBehavior->Modifiers.RegisterModifier(AddToSelectionModifier, FInputDeviceState::IsShiftKeyDown);
-		ClickDragBehavior->Modifiers.RegisterModifier(ToggleSelectionModifier, FInputDeviceState::IsCtrlKeyDown);
-		AddInputBehavior(ClickDragBehavior);
-	}
-
-	// setup gizmo
-	if (GizmoContext.IsValid())
-	{
-		UGizmoLambdaStateTarget* NewTarget = NewObject<UGizmoLambdaStateTarget>(this);
-		NewTarget->BeginUpdateFunction = [this]()
-		{
-			if (GizmoWrapper && GizmoWrapper->CanInteract())
-			{
-				TGuardValue OperationGuard(Operation, EEditingOperation::Transform);
-				BeginChange();
-			}
-		};
-		NewTarget->EndUpdateFunction = [this]()
-		{
-			if (GizmoWrapper && GizmoWrapper->CanInteract())
-			{
-				TGuardValue OperationGuard(Operation, EEditingOperation::Transform);
-				EndChange();
-
-				const IToolsContextQueriesAPI* ToolsContextQueries = GetToolManager()->GetPairedGizmoManager()->GetContextQueriesAPI();
-				check(ToolsContextQueries);
-				if (ToolsContextQueries->GetCurrentCoordinateSystem() == EToolContextCoordinateSystem::World)
-				{
-					UpdateGizmo();
-				}
-			}
-		};
-		
-		GizmoWrapper = GizmoContext->GetNewWrapper(GetToolManager(), this, NewTarget);
-		if (GizmoWrapper)
-		{
-			GizmoWrapper->Component = Component;
-		}
-	}
-
-	// setup watchers
-	SelectionWatcher.Initialize(
-	[this]()
-	{
-		return this->Selection;
-	},
-	[this](TArray<FName> InBoneNames)
-	{
-		UpdateGizmo();
-		if (NeedsNotification())
-		{
-			GetNotifier().Notify(InBoneNames, ESkeletalMeshNotifyType::BonesSelected);
-		}
-	},
-	this->Selection);
-
-	IToolsContextQueriesAPI* ToolsContextQueries = GetToolManager()->GetPairedGizmoManager()->GetContextQueriesAPI();
-	CoordinateSystemWatcher.Initialize(
-	[ToolsContextQueries]()
-	{
-		check(ToolsContextQueries);
-		return ToolsContextQueries->GetCurrentCoordinateSystem();
-	},
-	[this](EToolContextCoordinateSystem)
-	{
-		UpdateGizmo();
-	},
-	ToolsContextQueries->GetCurrentCoordinateSystem());
-
 	if (EditorContext.IsValid())
 	{
 		EditorContext->HideSkeleton();
 		EditorContext->BindTo(this);
 	}
+}
+
+void USkeletonEditingTool::SetupModifier(USkeletalMesh* InSkeletalMesh)
+{
+	if (InSkeletalMesh)
+	{
+		Modifier = NewObject<USkeletonModifier>(this);
+		Modifier->SetSkeletalMesh(InSkeletalMesh);
+	}
+	else
+	{
+		Modifier = nullptr;
+	}
+}
+
+void USkeletonEditingTool::SetupPreviewMesh()
+{
+	PreviewMesh = NewObject<UPreviewMesh>(this);
+	PreviewMesh->bBuildSpatialDataStructure = true;
+	PreviewMesh->CreateInWorld(TargetWorld.Get(), FTransform::Identity);
+
+	PreviewMesh->SetTransform(UE::ToolTarget::GetLocalToWorldTransform(Target));
+
+	ToolSetupUtil::ApplyRenderingConfigurationToPreview(PreviewMesh, Target);
+	PreviewMesh->SetTangentsMode(EDynamicMeshComponentTangentsMode::AutoCalculated);
+	PreviewMesh->ReplaceMesh(UE::ToolTarget::GetDynamicMeshCopy(Target));
+
+	const FComponentMaterialSet MaterialSet = UE::ToolTarget::GetMaterialSet(Target);
+	PreviewMesh->SetMaterials(MaterialSet.Materials);
+	
+	// configure secondary render material for selected triangles
+	UMaterialInterface* SelectionMaterial = ToolSetupUtil::GetSelectionMaterial(FLinearColor::Yellow, GetToolManager());
+	if (SelectionMaterial != nullptr)
+	{
+		PreviewMesh->SetSecondaryRenderMaterial(SelectionMaterial);
+	}
+
+	// hide the skeletal mesh component
+	UE::ToolTarget::HideSourceObject(Target);
+}
+
+void USkeletonEditingTool::SetupProperties()
+{
+	ToolPropertyObjects.Add(this);
+		
+	ProjectionProperties = NewObject<UProjectionProperties>();
+	ProjectionProperties->Initialize(this, PreviewMesh);
+	ProjectionProperties->RestoreProperties(this);
+	AddToolPropertySource(ProjectionProperties);
+
+	MirroringProperties = NewObject<UMirroringProperties>();
+	MirroringProperties->Initialize(this);
+	MirroringProperties->RestoreProperties(this);
+	AddToolPropertySource(MirroringProperties);
+
+	OrientingProperties = NewObject<UOrientingProperties>();
+	OrientingProperties->Initialize(this);
+	OrientingProperties->RestoreProperties(this);
+	AddToolPropertySource(OrientingProperties);
+
+	Properties = NewObject<USkeletonEditingProperties>();
+	Properties->Initialize(this);
+	Properties->Name = GetCurrentBone();
+	Properties->RestoreProperties(this);
+	AddToolPropertySource(Properties);
+}
+
+void USkeletonEditingTool::SetupBehaviors()
+{
+	UClickDragInputBehavior* ClickDragBehavior = NewObject<UClickDragInputBehavior>(this);
+	ClickDragBehavior->Initialize(this);
+	ClickDragBehavior->Modifiers.RegisterModifier(AddToSelectionModifier, FInputDeviceState::IsShiftKeyDown);
+	ClickDragBehavior->Modifiers.RegisterModifier(ToggleSelectionModifier, FInputDeviceState::IsCtrlKeyDown);
+	AddInputBehavior(ClickDragBehavior);
+}
+
+void USkeletonEditingTool::SetupGizmo(USkeletalMeshComponent* InComponent)
+{
+	if (!GizmoContext.IsValid() || !InComponent)
+	{
+		return;
+	}
+
+	// create state target
+	UGizmoLambdaStateTarget* NewTarget = NewObject<UGizmoLambdaStateTarget>(this);
+	NewTarget->BeginUpdateFunction = [this]()
+	{
+		if (GizmoWrapper && GizmoWrapper->CanInteract())
+		{
+			TGuardValue OperationGuard(Operation, EEditingOperation::Transform);
+			BeginChange();
+		}
+	};
+	NewTarget->EndUpdateFunction = [this]()
+	{
+		if (GizmoWrapper && GizmoWrapper->CanInteract())
+		{
+			TGuardValue OperationGuard(Operation, EEditingOperation::Transform);
+			EndChange();
+
+			const IToolsContextQueriesAPI* ToolsContextQueries = GetToolManager()->GetPairedGizmoManager()->GetContextQueriesAPI();
+			check(ToolsContextQueries);
+			if (ToolsContextQueries->GetCurrentCoordinateSystem() == EToolContextCoordinateSystem::World)
+			{
+				UpdateGizmo();
+			}
+		}
+	};
+
+	// create gizmo
+	GizmoWrapper = GizmoContext->GetNewWrapper(GetToolManager(), this, NewTarget);
+	if (GizmoWrapper)
+	{
+		GizmoWrapper->Component = InComponent;
+		GizmoWrapper->Initialize();
+	}
+
+	// bind coordinate system change
+	IToolsContextQueriesAPI* ToolsContextQueries = GetToolManager()->GetPairedGizmoManager()->GetContextQueriesAPI();
+	CoordinateSystemWatcher.Initialize(
+		[ToolsContextQueries]()
+		{
+			check(ToolsContextQueries);
+			return ToolsContextQueries->GetCurrentCoordinateSystem();
+		},
+		[this](EToolContextCoordinateSystem)
+		{
+			UpdateGizmo();
+		},
+		ToolsContextQueries->GetCurrentCoordinateSystem()
+	);
+}
+
+void USkeletonEditingTool::SetupWatchers()
+{
+	SelectionWatcher.Initialize(
+		[this]()
+		{
+			return this->Selection;
+		},
+		[this](TArray<FName> InBoneNames)
+		{
+			UpdateGizmo();
+			if (NeedsNotification())
+			{
+				GetNotifier().Notify(InBoneNames, ESkeletalMeshNotifyType::BonesSelected);
+			}
+		},
+		this->Selection
+	);
+}
+
+void USkeletonEditingTool::SetupComponentsSelection()
+{
+	using namespace UE::Geometry;
+	
+	if (!PreviewMesh)
+	{
+		return;
+	}
+	
+	// set up vertex selection mechanic
+	SelectionMechanic = NewObject<UPolygonSelectionMechanic>(this);
+	SelectionMechanic->Setup(this);
+	SelectionMechanic->SetIsEnabled(false);
+	// the property is disabled and managed thru customization
+	SetToolPropertySourceEnabled(SelectionMechanic->Properties, false);
+	SelectionMechanic->SetMarqueeSelectionUpdateType(EMarqueeSelectionUpdateType::OnRelease);
+	SelectionMechanic->Properties->bDisplayPolygroupReliantControls = false;
+
+	SelectionMechanic->Properties->bSelectVertices = true;
+	SelectionMechanic->Properties->bSelectEdges = false;
+	SelectionMechanic->Properties->bSelectFaces = false;
+	SelectionMechanic->SetShowSelectableCorners(true);
+
+	// adjust selection rendering for this context
+	SelectionMechanic->PolyEdgesRenderer.PointColor = FLinearColor(0.78f, 0.f, 0.78f);
+	SelectionMechanic->PolyEdgesRenderer.PointSize = 5.0f;
+	SelectionMechanic->PolyEdgesRenderer.DepthBias = 0.01f;
+	
+	SelectionMechanic->HilightRenderer.PointColor = FLinearColor::Red;
+	SelectionMechanic->HilightRenderer.PointSize = 10.0f;
+	
+	SelectionMechanic->SelectionRenderer.LineThickness = 0.0f;
+	SelectionMechanic->SelectionRenderer.DepthBias = 0.01f;
+	SelectionMechanic->SelectionRenderer.PointColor = FLinearColor::Yellow;
+	SelectionMechanic->SelectionRenderer.PointSize = 5.0f;
+	SelectionMechanic->SetShowEdges(false);
+	
+	// initialize the polygon selection mechanic
+	PreviewMesh->ProcessMesh([this](const FDynamicMesh3& Mesh)
+	{
+		Topology = MakeUnique<FTriangleGroupTopology>(&Mesh, true);
+		SelectionMechanic->Initialize(&Mesh,
+			FTransform::Identity,
+			TargetWorld.Get(),
+			Topology.Get(),
+			[this]() { return PreviewMesh->GetSpatial(); });
+	});
+
+	// triangles rendering
+	PreviewMesh->EnableSecondaryTriangleBuffers([this](const FDynamicMesh3* Mesh, int32 TriangleID)
+	{
+		return	Properties->bEnableComponentSelection &&
+				SelectionMechanic->Properties->bSelectFaces &&
+				SelectionMechanic->GetActiveSelection().IsSelectedTriangle(Mesh, Topology.Get(), TriangleID);
+	});
+	SelectionMechanic->OnSelectionChanged.AddWeakLambda(this, [this]()
+	{
+		PreviewMesh->FastNotifySecondaryTrianglesChanged();
+	});
+	SelectionMechanic->OnFaceSelectionPreviewChanged.AddWeakLambda(this, [this]()
+	{
+		PreviewMesh->FastNotifySecondaryTrianglesChanged();
+	});
 }
 
 void USkeletonEditingTool::UpdateGizmo() const
@@ -255,7 +350,7 @@ void USkeletonEditingTool::UpdateGizmo() const
 
 	GizmoWrapper->Initialize();
 
-	const bool bUseGizmo = Operation == EEditingOperation::Select || Operation == EEditingOperation::Transform; 
+	const bool bUseGizmo = !Properties->bEnableComponentSelection && (Operation == EEditingOperation::Select || Operation == EEditingOperation::Transform); 
 	if (Selection.IsEmpty() || !bUseGizmo)
 	{
 		return;
@@ -318,6 +413,13 @@ void USkeletonEditingTool::Shutdown(EToolShutdownType ShutdownType)
 	
 	Super::Shutdown(ShutdownType);
 
+	if (SelectionMechanic)
+	{
+		SelectionMechanic->Properties->SaveProperties(this);
+		SelectionMechanic->Shutdown();
+		SelectionMechanic = nullptr;
+	}
+	
 	// remove preview mesh
 	if (PreviewMesh != nullptr)
 	{
@@ -348,18 +450,32 @@ void USkeletonEditingTool::Shutdown(EToolShutdownType ShutdownType)
 	}
 }
 
-void USkeletonEditingTool::RegisterActions(FInteractiveToolActionSet& ActionSet)
+void USkeletonEditingTool::RegisterActions(FInteractiveToolActionSet& InOutActionSet)
 {
-	Super::RegisterActions(ActionSet);
+	Super::RegisterActions(InOutActionSet);
 
 	int32 ActionId = static_cast<int32>(EStandardToolActions::BaseClientDefinedActionID) + 400;
 	auto GetActionId = [&ActionId]
 	{
 		return ActionId++;
 	};
-	
-	// register New key
-	ActionSet.RegisterAction(this, GetActionId(), TEXT("CreateNewBone"),
+
+	RegisterCreateAction(InOutActionSet, GetActionId());
+	RegisterDeleteAction(InOutActionSet, GetActionId());
+	RegisterSelectAction(InOutActionSet, GetActionId());
+	RegisterParentAction(InOutActionSet, GetActionId());
+	RegisterUnParentAction(InOutActionSet, GetActionId());
+	RegisterCopyAction(InOutActionSet, GetActionId());
+	RegisterPasteAction(InOutActionSet, GetActionId());
+	RegisterDuplicateAction(InOutActionSet, GetActionId());
+	RegisterSelectComponentsAction(InOutActionSet, GetActionId());
+	RegisterSelectionFilterCyclingAction(InOutActionSet, GetActionId());
+	RegisterSnapAction(InOutActionSet, GetActionId());
+}
+
+void USkeletonEditingTool::RegisterCreateAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("CreateNewBone"),
 		LOCTEXT("CreateNewBone", "Create New Bone"),
 		LOCTEXT("CreateNewBoneDesc", "Create New Bone"),
 		EModifierKey::None, EKeys::N,
@@ -369,9 +485,11 @@ void USkeletonEditingTool::RegisterActions(FInteractiveToolActionSet& ActionSet)
 			UpdateGizmo();
 			GetToolManager()->DisplayMessage(LOCTEXT("Create", "Click & Drag to place a new bone."), EToolMessageLevel::UserNotification);
 		});
-	
-	// register Delete key
-	ActionSet.RegisterAction(this, GetActionId(), TEXT("DeleteSelectedBones"),
+}
+
+void USkeletonEditingTool::RegisterDeleteAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("DeleteSelectedBones"),
 		LOCTEXT("DeleteSelectedBones", "Delete Selected Bone(s)"),
 		LOCTEXT("DeleteSelectedBonesDesc", "Delete Selected Bone(s)"),
 		EModifierKey::None, EKeys::Delete,
@@ -379,9 +497,11 @@ void USkeletonEditingTool::RegisterActions(FInteractiveToolActionSet& ActionSet)
 		{
 			RemoveBones();
 		});
+}
 
-	// register Select key
-	ActionSet.RegisterAction(this, GetActionId(), TEXT("SelectBones"),
+void USkeletonEditingTool::RegisterSelectAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("SelectBones"),
 		LOCTEXT("SelectBone", "Select Bone"),
 		LOCTEXT("SelectDesc", "Select Bone"),
 		EModifierKey::None, EKeys::Escape,
@@ -394,19 +514,11 @@ void USkeletonEditingTool::RegisterActions(FInteractiveToolActionSet& ActionSet)
 				GetToolManager()->DisplayMessage(LOCTEXT("Select", "Click on a bone to select it."), EToolMessageLevel::UserNotification);
 			}
 		});
+}
 
-	// register UnParent key
-	ActionSet.RegisterAction(this, GetActionId(), TEXT("UnparentBones"),
-		LOCTEXT("UnparentBones", "Unparent Bones"),
-		LOCTEXT("UnparentBonesDesc", "Unparent Bones"),
-		EModifierKey::Shift, EKeys::P,
-		[this]()
-		{
-			UnParentBones();
-		});
-		
-	// register Parent key
-	ActionSet.RegisterAction(this, GetActionId(), TEXT("ParentBones"),
+void USkeletonEditingTool::RegisterParentAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("ParentBones"),
 		LOCTEXT("ParentBones", "Parent Bones"),
 		LOCTEXT("ParentBonesDesc", "Parent Bones"),
 		EModifierKey::None, EKeys::B, // FIXME find another shortcut
@@ -416,6 +528,220 @@ void USkeletonEditingTool::RegisterActions(FInteractiveToolActionSet& ActionSet)
 			UpdateGizmo();
 			GetToolManager()->DisplayMessage(LOCTEXT("Parent", "Click on a bone to be set as the new parent."), EToolMessageLevel::UserNotification);
 		});
+}
+
+void USkeletonEditingTool::RegisterUnParentAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("UnparentBones"),
+		LOCTEXT("UnparentBones", "Unparent Bones"),
+		LOCTEXT("UnparentBonesDesc", "Unparent Bones"),
+		EModifierKey::Shift, EKeys::P,
+		[this]()
+		{
+			UnParentBones();
+			UpdateGizmo();
+		});
+}
+
+void USkeletonEditingTool::RegisterCopyAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("CopyBones"),
+		LOCTEXT("CopyBones", "Copy Bone(s)"),
+		LOCTEXT("CopyBonesDesc", "Copy Bone(s)"),
+		EModifierKey::Control, EKeys::C,
+		[this]()
+		{
+			if (Selection.IsEmpty())
+			{
+				return;
+			}
+			SkeletonClipboard::CopyToClipboard(*Modifier.Get(), Selection);
+		});
+}
+
+void USkeletonEditingTool::RegisterPasteAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("PasteBones"),
+		LOCTEXT("PasteBones", "Paste Bone(s)"),
+		LOCTEXT("PasteBonesDesc", "Paste Bone(s)"),
+		EModifierKey::Control, EKeys::V,
+		[this]()
+		{
+			if (!SkeletonClipboard::IsClipboardValid())
+			{
+				return;
+			}
+			
+			const FName DefaultParent = Selection.IsEmpty() ? NAME_None : Selection[0];
+
+			TGuardValue OperationGuard(Operation, EEditingOperation::Create);
+			BeginChange();
+				
+			const TArray<FName> NewBones = SkeletonClipboard::PasteFromClipboard(*Modifier.Get(), DefaultParent);
+			if (!NewBones.IsEmpty())
+			{
+				Selection = NewBones;
+
+				if (NeedsNotification())
+				{
+					GetNotifier().Notify(NewBones, ESkeletalMeshNotifyType::HierarchyChanged);
+					GetNotifier().Notify(NewBones, ESkeletalMeshNotifyType::BonesSelected);
+				}
+
+				EndChange();
+			}
+			
+			CancelChange();
+		});
+}
+
+void USkeletonEditingTool::RegisterDuplicateAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("DuplicateBones"),
+		LOCTEXT("DuplicateBones", "Duplicate Bone(s)"),
+		LOCTEXT("DuplicateBonesDesc", "Duplicate Bone(s)"),
+		EModifierKey::Control, EKeys::D,
+		[this]()
+		{
+			if (Selection.IsEmpty())
+			{
+				return;
+			}
+			
+			SkeletonClipboard::CopyToClipboard(*Modifier.Get(), Selection);
+
+			if (!SkeletonClipboard::IsClipboardValid())
+			{
+				return;
+			} 
+
+			TGuardValue OperationGuard(Operation, EEditingOperation::Create);
+			BeginChange();
+				
+			const TArray<FName> NewBones = SkeletonClipboard::PasteFromClipboard(*Modifier.Get(), NAME_None);
+			if (!NewBones.IsEmpty())
+			{
+				Selection = NewBones;
+
+				if (NeedsNotification())
+				{
+					GetNotifier().Notify(NewBones, ESkeletalMeshNotifyType::HierarchyChanged);
+					GetNotifier().Notify(NewBones, ESkeletalMeshNotifyType::BonesSelected);
+				}
+
+				EndChange();
+				return;
+			}
+			
+			CancelChange();
+		});
+}
+
+void USkeletonEditingTool::RegisterSelectComponentsAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId,
+		TEXT("SelectComponents"),
+		LOCTEXT("SelectComponents", "Select Components"),
+		LOCTEXT("SelectComponentsDesc", "Select Components"),
+		EModifierKey::None, EKeys::T,
+		[this]()
+		{
+			Properties->bEnableComponentSelection = !Properties->bEnableComponentSelection;
+			PreviewMesh->FastNotifySecondaryTrianglesChanged();
+			UpdateGizmo();
+		});
+}
+
+void USkeletonEditingTool::RegisterSelectionFilterCyclingAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	auto UpdateSelect = [this](bool bSelectVertices, bool bSelectEdges, bool bSelectFaces)
+	{
+		const bool bChangingFace = SelectionMechanic->Properties->bSelectFaces != bSelectFaces;
+
+		SelectionMechanic->Properties->bSelectVertices = bSelectVertices;
+		SelectionMechanic->Properties->bSelectEdges = bSelectEdges;
+		SelectionMechanic->Properties->bSelectFaces = bSelectFaces;
+		SelectionMechanic->SetShowSelectableCorners(bSelectVertices);
+
+		if (bChangingFace)
+		{
+			PreviewMesh->FastNotifySecondaryTrianglesChanged();
+		}
+	};
+	
+	InOutActionSet.RegisterAction(this, InActionId,
+		TEXT("ComponentCycling"),
+		LOCTEXT("ComponentCycling", "Cycle Selection Filter"),
+		LOCTEXT("ComponentCyclingDesc", "Cycle between vertex, edge, face selection"),
+		EModifierKey::None, EKeys::Y,
+		[this, UpdateSelect]()
+		{
+			if (SelectionMechanic->Properties->bSelectVertices)
+			{
+				return UpdateSelect(false, true, false);
+			}
+			
+			if (SelectionMechanic->Properties->bSelectEdges)
+			{
+				return UpdateSelect(false, false, true);
+			}
+
+			if (SelectionMechanic->Properties->bSelectFaces)
+			{
+				return UpdateSelect(true, false, false);
+			}
+			
+			UpdateSelect(true, false, false);
+		});
+}
+
+void USkeletonEditingTool::RegisterSnapAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId)
+{
+	InOutActionSet.RegisterAction(this, InActionId, TEXT("SnapBone"),
+		LOCTEXT("SnapBone", "Snap Bone"),
+		LOCTEXT("SnapBoneBonesDesc", "Snap Bone"),
+		EModifierKey::None, EKeys::V,
+		[this]()
+		{
+			if (Properties->bEnableComponentSelection)
+			{
+				SnapBoneToComponentSelection(Operation == EEditingOperation::Create);
+				UpdateGizmo();
+			}
+		});
+}
+
+TArray<int32> USkeletonEditingTool::GetSelectedComponents() const
+{
+	TArray<int32> IDs;
+
+	PreviewMesh->ProcessMesh([this, &IDs](const FDynamicMesh3& Mesh)
+	{
+		const FGroupTopologySelection& TopologySelection = SelectionMechanic->GetActiveSelection();
+		if (SelectionMechanic->Properties->bSelectVertices)
+		{
+			Algo::CopyIf(TopologySelection.SelectedCornerIDs, IDs, [&Mesh](int ID)
+			{
+				return Mesh.IsVertex(ID);	
+			});
+		}
+		else if (SelectionMechanic->Properties->bSelectEdges)
+		{
+			Algo::CopyIf(TopologySelection.SelectedEdgeIDs, IDs, [&Mesh](int ID)
+			{
+				return Mesh.IsEdge(ID);	
+			});
+		}
+		else if (SelectionMechanic->Properties->bSelectFaces)
+		{
+			Algo::CopyIf(TopologySelection.SelectedGroupIDs, IDs, [&Mesh](int ID)
+			{
+				return Mesh.IsTriangle(ID);	
+			});
+		}
+	});
+	
+	return MoveTemp(IDs);
 }
 
 void USkeletonEditingTool::CreateNewBone()
@@ -441,7 +767,6 @@ void USkeletonEditingTool::CreateNewBone()
 		Selection = {BoneName};
 		Properties->Name = BoneName;
 
-		EndChange();
 		return;
 	}
 
@@ -517,6 +842,83 @@ void USkeletonEditingTool::UnParentBones()
 	}
 	
 	CancelChange();
+}
+
+void USkeletonEditingTool::SnapBoneToComponentSelection(const bool bCreate)
+{
+	const TArray<int32> IDs = GetSelectedComponents();
+	if (IDs.IsEmpty())
+	{
+		return;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Modifier->GetReferenceSkeleton();
+	const TArray<FName> Bones = GetSelectedBones();
+
+	if (!bCreate)
+	{
+		const bool bHasValidBone = Bones.ContainsByPredicate([&](const FName& InBoneName)
+	   {
+		   return RefSkeleton.FindRawBoneIndex(InBoneName) > INDEX_NONE;
+	   });
+
+		if (!bHasValidBone)
+		{
+			return;
+		}
+	}
+
+	const int32 BoneIndex = RefSkeleton.FindRawBoneIndex(GetCurrentBone());
+	const int32 ParentBoneIndex = bCreate ? BoneIndex : RefSkeleton.GetRawParentIndex(BoneIndex);
+	
+	FTransform NewTransform = ComputeTransformFromComponents(IDs);
+	const FTransform& ParentGlobal = Modifier->GetTransform(ParentBoneIndex, true);
+	NewTransform = NewTransform.GetRelativeTransform(ParentGlobal);
+
+	bool bSuccess = false;
+	if (bCreate)
+	{
+		TGuardValue OperationGuard(Operation, EEditingOperation::Create);
+		BeginChange();
+
+		static const FName DefaultName("joint");
+		const FName BoneName = Modifier->GetUniqueName(DefaultName);
+		const FName ParentName = Selection.IsEmpty() ? NAME_None : Selection.Last(); 
+		bSuccess = Modifier->AddBone(BoneName, ParentName, NewTransform);
+		if (bSuccess)
+		{
+			if (NeedsNotification())
+			{
+				GetNotifier().Notify({BoneName}, ESkeletalMeshNotifyType::BonesAdded);
+			}
+	
+			Selection = {BoneName};
+			Properties->Name = BoneName;
+			EndChange();
+		}
+	}
+	else
+	{
+		TGuardValue OperationGuard(Operation, EEditingOperation::Transform);
+		BeginChange();
+
+		bSuccess = Modifier->SetBoneTransform(GetCurrentBone(), NewTransform, Properties->bUpdateChildren);
+		if (bSuccess)
+		{
+			EndChange();
+		}
+	}
+
+	if (bSuccess)
+	{
+		Properties->Transform = NewTransform;
+		SelectionMechanic->ClearSelection();
+		UpdateGizmo();
+	}
+	else
+	{
+		CancelChange();	
+	}
 }
 
 void USkeletonEditingTool::ParentBones(const FName& InParentName)
@@ -628,6 +1030,274 @@ void USkeletonEditingTool::RenameBones()
 	CancelChange();
 }
 
+namespace SkeletonEditingTool
+{
+	using namespace UE::Geometry;
+	
+	// this is a helper class to compute a transform from a Components selection.
+	// NOTE: the code bellow assumes that the ids are safe to use with Mesh
+	// so make sure they are tested before calling any function in here.
+	
+	struct FTransformFromMesh
+	{
+		FTransformFromMesh() = delete;
+		FTransformFromMesh(const FDynamicMesh3& InMesh)
+			: Mesh(InMesh)
+		{}
+		
+		FTransform GetVertexTransform(const int32 InId) const
+		{
+			static constexpr bool bFrameNormalY = false;
+			FVector3d Normal = FMeshNormals::ComputeVertexNormal(Mesh, InId);
+			const FFrame3d VertexFrame = Mesh.GetVertexFrame(InId, bFrameNormalY, &Normal);
+			return VertexFrame.ToFTransform();
+		}
+
+		FTransform GetEdgeTransform(const int32 InId) const
+		{
+			const FDynamicMesh3::FEdge& EdgeRef = Mesh.GetEdgeRef(InId);
+			
+			const FVector3d& V0 = Mesh.GetVertexRef(EdgeRef.Vert[0]);
+			const FVector3d& V1 = Mesh.GetVertexRef(EdgeRef.Vert[1]);
+			const FVector3d Centroid = (V0 + V1) * 0.5;
+			
+			const FVector3d Normal = Mesh.GetEdgeNormal(InId);
+			const FVector3d X = (V1 - V0).GetSafeNormal();
+			const FVector3d Y = Normal.Cross(X);
+			const FQuat Rotation = FRotationMatrix::MakeFromXY(X, Y).ToQuat();
+
+			return FTransform(Rotation, Centroid);
+		}
+
+		FTransform GetTriangleTransform(const int32 InId) const
+		{
+			return Mesh.GetTriFrame(InId, 0).ToFTransform();	
+		}
+		
+		FTransform GetTwoVerticesTransform(const int32 InId0, const int32 InId1) const
+		{
+			// check if this is an edge
+			auto GetEdgeId = [this, InId0, InId1]() -> int32
+			{	
+				for (const int32 EdgeId : Mesh.EdgeIndicesItr())
+				{
+					const FDynamicMesh3::FEdge& EdgeRef = Mesh.GetEdgeRef(EdgeId);
+					if (EdgeRef.Vert.Contains(InId0) && EdgeRef.Vert.Contains(InId1))
+					{
+						return EdgeId;
+					}
+				}
+				return INDEX_NONE;
+			};
+
+			const int32 EdgeId = GetEdgeId();
+			if (EdgeId != INDEX_NONE)
+			{
+				return GetEdgeTransform(EdgeId);
+			}
+
+			const FVector3d& V0 = Mesh.GetVertexRef(InId0);
+			const FVector3d& V1 = Mesh.GetVertexRef(InId1);
+			const FVector3d Centroid = (V0 + V1) * 0.5;
+			
+			const FVector3d N0 = FMeshNormals::ComputeVertexNormal(Mesh, InId0);
+			const FVector3d N1 = FMeshNormals::ComputeVertexNormal(Mesh, InId1);
+			const FVector3d Normal = ((N0 + N1) * 0.5).GetSafeNormal();
+			
+			const FVector3d X = (V1 - V0).GetSafeNormal();
+			const FVector3d Y = Normal.Cross(X);
+			const FQuat Rotation = FRotationMatrix::MakeFromXY(X, Y).ToQuat();
+
+			return FTransform(Rotation, Centroid);;
+		}
+		
+		FTransform GetThreeVerticesTransform(const int32 InId0, const int32 InId1, const int32 InId2) const
+		{
+			// check if this is a triangle
+			auto GetTriangleId = [this, InId0, InId1, InId2]() -> int32
+			{
+				for (const int32 TriangleID : Mesh.TriangleIndicesItr())
+				{
+					const FIndex3i& TriRef = Mesh.GetTriangleRef(TriangleID);
+					if (TriRef.Contains(InId0) && TriRef.Contains(InId1) && TriRef.Contains(InId2))
+					{
+						return TriangleID;
+					}
+				}
+				return INDEX_NONE;
+			};
+
+			const int32 TriangleID = GetTriangleId();
+			if (TriangleID != INDEX_NONE)
+			{
+				return GetTriangleTransform(TriangleID);
+			}
+
+			const FVector3d& V0 = Mesh.GetVertexRef(InId0);
+			const FVector3d& V1 = Mesh.GetVertexRef(InId1);
+			const FVector3d& V2 = Mesh.GetVertexRef(InId2);
+			const FVector3d Centroid = (V0 + V1 + V2) / 3.0;
+
+			const FVector3d Normal = VectorUtil::Normal(V0, V1, V2);
+			const FVector3d X = (V1 - V0).GetSafeNormal();
+			const FVector3d Y = Normal.Cross(X);
+			const FQuat Rotation = FRotationMatrix::MakeFromXY(X, Y).ToQuat();
+
+			return FTransform(Rotation, Centroid);
+		}
+
+		FTransform GetVerticesTransform(const TArray<int32>& InVertexIDs) const
+		{
+			const int32 NumVertices = InVertexIDs.Num();
+			switch(NumVertices)
+			{
+			case 0:
+				return FTransform::Identity;
+			case 1:
+				return GetVertexTransform(InVertexIDs[0]);
+			case 2:
+				return GetTwoVerticesTransform(InVertexIDs[0], InVertexIDs[1]);
+			case 3:
+				return GetThreeVerticesTransform(InVertexIDs[0], InVertexIDs[1], InVertexIDs[2]);
+			default:
+				break;
+			}
+
+			// compute centroid and normal
+			FVector Centroid(0.0), Normal(0.0);
+			for (const int32 VertexID: InVertexIDs)
+			{
+				Centroid += Mesh.GetVertexRef(VertexID);
+				Normal += FMeshNormals::ComputeVertexNormal(Mesh, VertexID);
+			}
+			
+			const double InvNumVertices = 1.0 / static_cast<double>(NumVertices);
+			Centroid *= InvNumVertices;
+			Normal *= InvNumVertices;
+			
+			const FVector3d& V0 = Mesh.GetVertexRef(InVertexIDs[0]);
+			FVector3d X = (Centroid - V0).GetSafeNormal();
+			if (X.IsNearlyZero())
+			{
+				for (int32 VertexID = 0; VertexID < NumVertices && X.IsNearlyZero(); VertexID++)
+				{
+					X = (Centroid - Mesh.GetVertexRef(InVertexIDs[VertexID])).GetSafeNormal();
+				}	
+			}
+
+			FQuat Rotation = FQuat::Identity;
+			const bool bParallel = FMath::IsNearlyEqual(FMath::Abs(FVector::DotProduct(Normal, X)), 1.0);
+			if (!bParallel)
+			{
+				const FVector3d Y = Normal.Cross(X);
+				Rotation = FRotationMatrix::MakeFromXY(X, Y).ToQuat();
+			}
+			
+			return FTransform(Rotation, Centroid);
+		}
+		
+		FTransform GetEdgesTransform(const TArray<int32>& InEdgeIDs) const
+		{
+			switch (InEdgeIDs.Num())
+			{
+			case 0:
+				return FTransform::Identity;
+			case 1:
+				return GetEdgeTransform(InEdgeIDs[0]);
+			default:
+				break;
+			}
+
+			FVector Centroid(0.0), Normal(0.0);
+			for (const int32 EdgeID: InEdgeIDs)
+			{
+				const FDynamicMesh3::FEdge& EdgeRef = Mesh.GetEdgeRef(EdgeID);
+				const FVector3d& V0 = Mesh.GetVertexRef(EdgeRef.Vert[0]);
+				const FVector3d& V1 = Mesh.GetVertexRef(EdgeRef.Vert[1]);
+				Centroid += ((V0 + V1) * 0.5);
+				Normal += Mesh.GetEdgeNormal(EdgeID);
+			}
+			
+			Centroid /= static_cast<double>(InEdgeIDs.Num());
+			Normalize(Normal);
+
+			const FDynamicMesh3::FEdge& EdgeRef = Mesh.GetEdgeRef(InEdgeIDs[0]);
+			const FVector3d& V0 = Mesh.GetVertexRef(EdgeRef.Vert[0]);
+			const FVector3d& V1 = Mesh.GetVertexRef(EdgeRef.Vert[1]);
+			const FVector3d X = (((V0 + V1) * 0.5) - Centroid).GetSafeNormal();
+			const FVector3d Y = Normal.Cross(X);
+			const FQuat Rotation = FRotationMatrix::MakeFromXY(X, Y).ToQuat();
+
+			return FTransform(Rotation, Centroid);
+		}
+
+		FTransform GetFacesTransform(const TArray<int32>& InTriIDs) const
+		{
+			switch (InTriIDs.Num())
+			{
+			case 0:
+				return FTransform::Identity;
+			case 1:
+				return GetTriangleTransform(InTriIDs[0]);
+			default:
+				break;
+			}
+
+			FVector Centroid(0.0), Normal(0.0);
+			for (const int32 TriID: InTriIDs)
+			{
+				Centroid += Mesh.GetTriCentroid(TriID);
+				Normal += Mesh.GetTriNormal(TriID);
+			}
+			
+			Centroid /= static_cast<double>(InTriIDs.Num());
+			Normalize(Normal);
+
+			const FVector3d X = (Mesh.GetTriCentroid(InTriIDs[0]) - Centroid).GetSafeNormal();
+			const FVector3d Y = Normal.Cross(X);
+			const FQuat Rotation = FRotationMatrix::MakeFromXY(X, Y).ToQuat();
+
+			return FTransform(Rotation, Centroid);
+		}
+
+	private:
+		const FDynamicMesh3& Mesh;
+	};
+}
+
+FTransform USkeletonEditingTool::ComputeTransformFromComponents(const TArray<int32>& InIDs) const
+{
+	const int32 NumComponents = InIDs.Num();
+	if (NumComponents == 0)
+	{
+		return FTransform::Identity;
+	}
+
+	const FDynamicMesh3* Mesh = PreviewMesh->GetMesh();
+	if (!ensure(Mesh))
+	{
+		return FTransform::Identity;
+	}
+
+	const SkeletonEditingTool::FTransformFromMesh TransformFromMesh(*Mesh);
+	if (SelectionMechanic->Properties->bSelectVertices)
+	{
+		return TransformFromMesh.GetVerticesTransform(InIDs);
+	}
+	
+	if (SelectionMechanic->Properties->bSelectEdges)
+	{
+		return TransformFromMesh.GetEdgesTransform(InIDs);
+	}
+	
+	if (SelectionMechanic->Properties->bSelectFaces)
+	{
+		return TransformFromMesh.GetFacesTransform(InIDs);
+	}
+
+	return FTransform::Identity;
+}
+
 void USkeletonEditingTool::OnClickPress(const FInputDeviceRay& InPressPos)
 {
 	if (PendingFunction)
@@ -635,7 +1305,10 @@ void USkeletonEditingTool::OnClickPress(const FInputDeviceRay& InPressPos)
 		PendingFunction();
 		PendingFunction.Reset();
 	}
-	BeginChange();
+	else
+	{ // make sure that the PendingFunction handles BeginChange if it needs to
+		BeginChange();
+	}
 }
 
 void USkeletonEditingTool::OnClickDrag(const FInputDeviceRay& InDragPos)
@@ -747,6 +1420,11 @@ void USkeletonEditingTool::SetOperation(const EEditingOperation InOperation, con
 	}
 }
 
+bool USkeletonEditingTool::HasSelectedComponent() const
+{
+	return !SelectionMechanic->GetActiveSelection().IsEmpty();
+}
+
 void USkeletonEditingTool::SelectBone(const FName& InBoneName)
 {
 	TArray<FName> NewSelection = Selection;
@@ -839,6 +1517,11 @@ void USkeletonEditingTool::NormalizeSelection()
 
 void USkeletonEditingTool::OnClickRelease(const FInputDeviceRay& InReleasePos)
 {
+	if (Operation == EEditingOperation::Create)
+	{
+		return EndChange();
+	}
+	
 	TGuardValue OperationGuard(Operation, EEditingOperation::Transform);
 	EndChange();
 }
@@ -856,10 +1539,19 @@ void USkeletonEditingTool::OnTick(float DeltaTime)
 	
 	SelectionWatcher.CheckAndUpdate();
 	CoordinateSystemWatcher.CheckAndUpdate();
+
+	PreviewMesh->EnableWireframe(Properties->bEnableComponentSelection);
+	SelectionMechanic->SetIsEnabled(Properties->bEnableComponentSelection);
+	SelectionMechanic->Tick(DeltaTime);
 }
 
 FInputRayHit USkeletonEditingTool::CanBeginClickDragSequence(const FInputDeviceRay& InPressPos)
 {
+	if (Properties->bEnableComponentSelection)
+	{
+		return FInputRayHit();
+	}
+	
 	PendingFunction.Reset();
 	ParentIndex = INDEX_NONE;
 	
@@ -993,6 +1685,7 @@ void USkeletonEditingTool::HandleSkeletalMeshModified(const TArray<FName>& InBon
 			Selection = BoneNames;
 			break;
 		case ESkeletalMeshNotifyType::HierarchyChanged:
+			UpdateGizmo();
 			break;
 		default:
 			break;
@@ -1001,6 +1694,16 @@ void USkeletonEditingTool::HandleSkeletalMeshModified(const TArray<FName>& InBon
 	NormalizeSelection();
 	
 	Properties->Name = GetCurrentBone();
+}
+
+void USkeletonEditingTool::DrawHUD(FCanvas* Canvas, IToolsContextRenderAPI* RenderAPI)
+{
+	Super::DrawHUD(Canvas, RenderAPI);
+
+	if (SelectionMechanic && Properties->bEnableComponentSelection)
+	{
+		SelectionMechanic->DrawHUD(Canvas, RenderAPI);
+	}
 }
 
 void USkeletonEditingTool::Render(IToolsContextRenderAPI* RenderAPI)
@@ -1060,10 +1763,57 @@ void USkeletonEditingTool::Render(IToolsContextRenderAPI* RenderAPI)
 		HitProxies,
 		DrawConfig
 	);
+
+	if (SelectionMechanic && Properties->bEnableComponentSelection)
+	{
+		SelectionMechanic->Render(RenderAPI);
+	}
+}
+
+void USkeletonEditingTool::OnPropertyModified(UObject* PropertySet, FProperty* Property)
+{
+	if (PropertySet == SelectionMechanic->Properties && Property)
+	{
+		if (Property->GetFName() == GET_MEMBER_NAME_CHECKED(UMeshTopologySelectionMechanicProperties, bSelectVertices))
+		{
+			if (SelectionMechanic->Properties->bSelectVertices)
+			{
+				SelectionMechanic->Properties->bSelectEdges = SelectionMechanic->Properties->bSelectFaces = false;
+			}
+		}
+		else if (Property->GetFName() == GET_MEMBER_NAME_CHECKED(UMeshTopologySelectionMechanicProperties, bSelectEdges))
+		{
+			if (SelectionMechanic->Properties->bSelectEdges)
+			{
+				SelectionMechanic->Properties->bSelectVertices = SelectionMechanic->Properties->bSelectFaces = false;
+			}
+		}
+		else if (Property->GetFName() == GET_MEMBER_NAME_CHECKED(UMeshTopologySelectionMechanicProperties, bSelectFaces))
+		{
+			if (SelectionMechanic->Properties->bSelectFaces)
+			{
+				SelectionMechanic->Properties->bSelectEdges = SelectionMechanic->Properties->bSelectVertices = false;
+			}
+		}
+		SelectionMechanic->SetShowSelectableCorners(SelectionMechanic->Properties->bSelectVertices);
+		PreviewMesh->FastNotifySecondaryTrianglesChanged();
+	}
+	Super::OnPropertyModified(PropertySet, Property);
 }
 
 FBox USkeletonEditingTool::GetWorldSpaceFocusBox()
 {
+	if (Properties->bEnableComponentSelection)
+	{
+		const FGroupTopologySelection& ActiveSelection = SelectionMechanic->GetActiveSelection();
+		if (!ActiveSelection.IsEmpty())
+		{
+			static constexpr bool bWorld = true;
+			const FAxisAlignedBox3d Bounds = SelectionMechanic->GetSelectionBounds(bWorld);
+			return static_cast<FBox>(Bounds);
+		}
+	}
+	
 	const TArray<int32> BoneIndexes = GetSelectedBoneIndexes();
 	if (!BoneIndexes.IsEmpty())
 	{
@@ -1198,8 +1948,8 @@ void USkeletonEditingTool::EndChange()
 	ActiveChange->StoreSkeleton(this);
 
 	static const UEnum* OperationEnum = StaticEnum<EEditingOperation>();
-	const FName OperationName = OperationEnum->GetNameByValue(static_cast<int64>(Operation));
-	const FText TransactionDesc = FText::Format(LOCTEXT("RefSkeletonChanged", "Skeleton Edit - {0}"), FText::FromName(OperationName));
+	const FString OperationString = OperationEnum->GetNameStringByValue(static_cast<int64>(Operation));
+	const FText TransactionDesc = FText::Format(LOCTEXT("RefSkeletonChanged", "Skeleton Edit - {0}"), FText::FromString(OperationString));
 	
 	UInteractiveToolManager* ToolManager = GetToolManager();
 	ToolManager->BeginUndoTransaction(TransactionDesc);
@@ -1261,23 +2011,45 @@ void UOrientingProperties::PostEditChangeProperty(FPropertyChangedEvent &Propert
 
 	if (PropertyChangedEvent.ChangeType == EPropertyChangeType::ValueSet)
 	{
-		auto CheckAxis = [&](const TEnumAsByte<EAxis::Type>& InRef, TEnumAsByte<EAxis::Type>& OutOther)
+		auto CheckAxis = [&](const EOrientAxis& InRef, EOrientAxis& OutOther)
 		{
-			if (OutOther != InRef)
-			{
-				return;
-			}
-
 			switch (InRef)
 			{
-			case EAxis::X:
-				OutOther = EAxis::Y;
+			case EOrientAxis::PositiveX:
+				if (OutOther == InRef || OutOther == EOrientAxis::NegativeX)
+				{
+					OutOther = EOrientAxis::PositiveY;
+				}
 				break;
-			case EAxis::Y:
-				OutOther = EAxis::Z;
+			case EOrientAxis::PositiveY:
+				if (OutOther == InRef || OutOther == EOrientAxis::NegativeY)
+				{
+					OutOther = EOrientAxis::PositiveZ;
+				}
 				break;
-			case EAxis::Z:
-				OutOther = EAxis::X;
+			case EOrientAxis::PositiveZ:
+				if (OutOther == InRef || OutOther == EOrientAxis::NegativeZ)
+				{
+					OutOther = EOrientAxis::PositiveX;
+				}
+				break;
+			case EOrientAxis::NegativeX:
+				if (OutOther == InRef || OutOther == EOrientAxis::PositiveX)
+				{
+					OutOther = EOrientAxis::PositiveY;
+				}
+				break;
+			case EOrientAxis::NegativeY:
+				if (OutOther == InRef || OutOther == EOrientAxis::PositiveY)
+				{
+					OutOther = EOrientAxis::PositiveZ;
+				}
+				break;
+			case EOrientAxis::NegativeZ:
+				if (OutOther == InRef || OutOther == EOrientAxis::PositiveZ)
+				{
+					OutOther = EOrientAxis::PositiveX;
+				}
 				break;
 			default:
 				break;
@@ -1287,12 +2059,6 @@ void UOrientingProperties::PostEditChangeProperty(FPropertyChangedEvent &Propert
 		const FName PropertyName = PropertyChangedEvent.GetPropertyName();
 		if (PropertyName == GET_MEMBER_NAME_CHECKED(FOrientOptions, Primary))
 		{
-			if (Options.Primary == EAxis::None)
-			{
-				Options.Primary = EAxis::X;
-				Options.Secondary = EAxis::Y;
-				return;
-			}
 			CheckAxis(Options.Primary, Options.Secondary);
 			return;
 		}

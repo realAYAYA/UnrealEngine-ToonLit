@@ -82,7 +82,7 @@ void UNiagaraStackModuleItemLinkedInputCollection::RefreshChildrenInternal(const
 			: FCompileConstantResolver();
 		FunctionCallNode->BuildParameterMapHistory(Builder, false);
 
-		if (ensureMsgf(Builder.Histories.Num() == 1, TEXT("Invalid Stack Graph - Function call node has invalid history count!")))
+		if (Builder.Histories.Num() == 1)
 		{
 			for (int32 i = 0; i < Builder.Histories[0].Variables.Num(); i++)
 			{
@@ -113,6 +113,10 @@ void UNiagaraStackModuleItemLinkedInputCollection::RefreshChildrenInternal(const
 					}
 				}
 			}
+		}
+		else
+		{
+			UE_LOG(LogNiagaraEditor, Log, TEXT("Invalid Stack Graph - Function call node has invalid history count!"));
 		}
 
 		auto SortNewChildrenPred = [](const UNiagaraStackEntry& EntryA, const UNiagaraStackEntry& EntryB) {

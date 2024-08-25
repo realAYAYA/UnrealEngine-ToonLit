@@ -52,6 +52,8 @@ public:
 	 */
 	static TArray<FMVVMAvailableBinding> GetAvailableBindingsForStruct(const UScriptStruct* Struct);
 
+	static TArray<FMVVMAvailableBinding> GetAvailableBindingsForEvent(const UClass* Class, const UClass* Accessor);
+
 	/** @return The AvailableBinding from a BindingName. */
 	UFUNCTION(BlueprintCallable, Category = "Viewmodel", meta = (DisplayName = "Get Available Binding"))
 	FMVVMAvailableBinding K2_GetAvailableBinding(const UClass* Class, FMVVMBindingName BindingName, const UClass* Accessor) const;
@@ -60,6 +62,10 @@ public:
 
 	/** @return The AvailableBinding from a field. */
 	static FMVVMAvailableBinding GetAvailableBindingForField(UE::MVVM::FMVVMConstFieldVariant Variant, const UClass* Accessor);
+
+	static FMVVMAvailableBinding GetAvailableBindingForEvent(UE::MVVM::FMVVMConstFieldVariant FieldVariant, const UClass* Accessor);
+
+	static FMVVMAvailableBinding GetAvailableBindingForEvent(const UClass* Class, FMVVMBindingName BindingName, const UClass* Accessor);
 
 	UE_DEPRECATED(5.3, "GetGlobalViewModelCollection has been deprecated, please use the game instance subsystem.")
 	UFUNCTION(BlueprintCallable, Category = "Viewmodel", meta=(DeprecatedFunction, DeprecatedMessage = "This version of GetGlobalViewModelCollection has been deprecated, please use GetGlobalViewModelCollection from the Viewmodel Game subsystem."))
@@ -95,9 +101,9 @@ public:
 		FDirectionalBindingArgs BackwardArgs;
 	};
 
-	UE_NODISCARD TValueOrError<bool, FText> IsBindingValid(FConstDirectionalBindingArgs Args) const;
-	UE_NODISCARD TValueOrError<bool, FText> IsBindingValid(FDirectionalBindingArgs Args) const;
-	UE_NODISCARD TValueOrError<bool, FText> IsBindingValid(FBindingArgs Args) const;
+	[[nodiscard]] TValueOrError<bool, FText> IsBindingValid(FConstDirectionalBindingArgs Args) const;
+	[[nodiscard]] TValueOrError<bool, FText> IsBindingValid(FDirectionalBindingArgs Args) const;
+	[[nodiscard]] TValueOrError<bool, FText> IsBindingValid(FBindingArgs Args) const;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

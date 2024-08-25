@@ -42,7 +42,7 @@ namespace ChaosTest {
 			Evolution.AddConstraintContainer(PositionConstraints);
 			Evolution.AdvanceOneTimeStep(0.1);
 			Evolution.EndFrame(0.1);
-			EXPECT_LT(Evolution.GetParticleHandles().Handle(0)->X().SizeSquared(), SMALL_NUMBER);
+			EXPECT_LT(Evolution.GetParticleHandles().Handle(0)->GetX().SizeSquared(), SMALL_NUMBER);
 		}
 		{
 			FParticleUniqueIndicesMultithreaded UniqueIndices;
@@ -65,16 +65,16 @@ namespace ChaosTest {
 			Evolution.AdvanceOneTimeStep(0.1);
 			Evolution.EndFrame(0.1);
 			auto& Handle = Evolution.GetParticleHandles().Handle(0);
-			EXPECT_LT(FMath::Abs(Handle->X()[0] - 0.5), (FReal)SMALL_NUMBER);
-			EXPECT_LT(FMath::Abs(Handle->X()[1] - 0.5), (FReal)SMALL_NUMBER);
-			EXPECT_LT(FMath::Abs(Handle->X()[2] - 0.5), (FReal)SMALL_NUMBER);
+			EXPECT_LT(FMath::Abs(Handle->GetX()[0] - 0.5), (FReal)SMALL_NUMBER);
+			EXPECT_LT(FMath::Abs(Handle->GetX()[1] - 0.5), (FReal)SMALL_NUMBER);
+			EXPECT_LT(FMath::Abs(Handle->GetX()[2] - 0.5), (FReal)SMALL_NUMBER);
 
 			Evolution.AdvanceOneTimeStep(0.1);
 			Evolution.EndFrame(0.1);
 
-			EXPECT_LT(FMath::Abs(Handle->X()[0] - 1), (FReal)SMALL_NUMBER);
-			EXPECT_LT(FMath::Abs(Handle->X()[1] - 1), (FReal)SMALL_NUMBER);
-			EXPECT_LT(FMath::Abs(Handle->X()[2] - 1), (FReal)SMALL_NUMBER);
+			EXPECT_LT(FMath::Abs(Handle->GetX()[0] - 1), (FReal)SMALL_NUMBER);
+			EXPECT_LT(FMath::Abs(Handle->GetX()[1] - 1), (FReal)SMALL_NUMBER);
+			EXPECT_LT(FMath::Abs(Handle->GetX()[2] - 1), (FReal)SMALL_NUMBER);
 		}
 	}
 
@@ -97,7 +97,7 @@ namespace ChaosTest {
 
 		Evolution.SetNumPositionIterations(Iterations);
 
-		Dynamics[1]->X() = FVec3(500, 0, 0);
+		Dynamics[1]->SetX(FVec3(500, 0, 0));
 		FVec3 JointConstraintPosition = FVec3(0, 0, 0);
 
 		TArray<FPBDRigidParticleHandle*> PositionParticles = { Dynamics[0] };
@@ -118,8 +118,8 @@ namespace ChaosTest {
 			Evolution.AdvanceOneTimeStep(Dt);
 			Evolution.EndFrame(Dt);
 
-			const auto& Pos0 = Dynamics[0]->X();
-			const auto& Pos1 = Dynamics[1]->X();
+			const auto& Pos0 = Dynamics[0]->GetX();
+			const auto& Pos1 = Dynamics[1]->GetX();
 			const float Delta0 = (Pos0 - FVec3(0, 0, 0)).Size();
 			const float Separation = (Pos1 - Pos0).Size();
 
@@ -159,7 +159,7 @@ namespace ChaosTest {
 
 			// chassis particle
 			auto* DynamicParticle = Evolution.CreateDynamicParticles(1)[0];
-			DynamicParticle->X() = FVec3(0, 10, 10);
+			DynamicParticle->SetX(FVec3(0, 10, 10));
 			//	DynamicParticle->R() = FRotation3::FromAxisAngle(FVec3(0,1,0), PI); // upside down
 			DynamicParticle->I() = TVec3<FRealSingle>(100.0f);
 			DynamicParticle->InvI() = TVec3<FRealSingle>(1.0f / 100.0f);
@@ -178,8 +178,8 @@ namespace ChaosTest {
 			Evolution.AdvanceOneTimeStep(0.1);
 			Evolution.EndFrame(0.1);
 
-			const FVec3& Pos = Evolution.GetParticleHandles().Handle(0)->X();
-			const FRotation3& Rot = Evolution.GetParticleHandles().Handle(0)->R();
+			const FVec3& Pos = Evolution.GetParticleHandles().Handle(0)->GetX();
+			const FRotation3& Rot = Evolution.GetParticleHandles().Handle(0)->GetR();
 
 			//UE_LOG(LogChaos, Warning, TEXT("Pos %s"), *Pos.ToString());
 			//UE_LOG(LogChaos, Warning, TEXT("Rot %s"), *Rot.ToString());
@@ -205,7 +205,7 @@ namespace ChaosTest {
 
 			// chassis particle
 			auto* DynamicParticle = Evolution.CreateDynamicParticles(1)[0];
-			DynamicParticle->X() = FVec3(50, 10, 10);
+			DynamicParticle->SetX(FVec3(50, 10, 10));
 
 			// minimize rotation using high inertia
 			DynamicParticle->I() = TVec3<FRealSingle>(100000.0f);
@@ -226,8 +226,8 @@ namespace ChaosTest {
 			Evolution.AddConstraintContainer(SuspensionConstraints);
 			Evolution.EnableParticle(DynamicParticle);
 
-			const FVec3& Pos = Evolution.GetParticleHandles().Handle(0)->X();
-			const FRotation3& Rot = Evolution.GetParticleHandles().Handle(0)->R();
+			const FVec3& Pos = Evolution.GetParticleHandles().Handle(0)->GetX();
+			const FRotation3& Rot = Evolution.GetParticleHandles().Handle(0)->GetR();
 
 			Evolution.AdvanceOneTimeStep(0.1);
 			Evolution.EndFrame(0.1);
@@ -268,7 +268,7 @@ namespace ChaosTest {
 		// chassis particle
 		auto* DynamicParticle = Evolution.CreateDynamicParticles(1)[0];
 		DynamicParticle->SetLinearEtherDrag(0.f);
-		DynamicParticle->X() = FVec3(0, 0, 10);
+		DynamicParticle->SetX(FVec3(0, 0, 10));
 		DynamicParticle->M() = Mass;
 		DynamicParticle->InvM() = 1.0f / Mass;
 		DynamicParticle->I() = TVec3<FRealSingle>(100000.0f);
@@ -303,8 +303,8 @@ namespace ChaosTest {
 		Evolution.AddConstraintContainer(SuspensionConstraints);
 		Evolution.EnableParticle(DynamicParticle);
 
-		const FVec3& Pos = Evolution.GetParticleHandles().Handle(0)->X();
-		const FRotation3& Rot = Evolution.GetParticleHandles().Handle(0)->R();
+		const FVec3& Pos = Evolution.GetParticleHandles().Handle(0)->GetX();
+		const FRotation3& Rot = Evolution.GetParticleHandles().Handle(0)->GetR();
 		const float DeltaTime = 1.0f / 30.0f;
 
 		const float PositionTolerance = KINDA_SMALL_NUMBER;

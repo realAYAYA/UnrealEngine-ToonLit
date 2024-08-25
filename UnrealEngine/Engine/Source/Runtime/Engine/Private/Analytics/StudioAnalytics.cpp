@@ -13,6 +13,7 @@
 #include "Experimental/ZenServerInterface.h"
 #endif
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 bool FStudioAnalytics::bInitialized = false;
 std::atomic<double> FStudioAnalytics::TimeEstimation { 0 };
 FThread FStudioAnalytics::TimerThread;
@@ -133,54 +134,4 @@ void FStudioAnalytics::RecordEvent(const FString& EventName, const TArray<FAnaly
 	}
 }
 
-void FStudioAnalytics::FireEvent_Loading(const FString& LoadingName, double SecondsSpentLoading, const TArray<FAnalyticsEventAttribute>& InAttributes)
-{
-	const int SchemaVersion = 2;
-
-	// Ignore anything less than a 1/4th a second.
-	if (SecondsSpentLoading < 0.250)
-	{
-		return;
-	}
-
-	// Throw out anything over 10 hours - 
-	if (SecondsSpentLoading > 36000)
-	{
-		return;
-	}
-
-	TArray<FAnalyticsEventAttribute> Attributes;
-
-	Attributes.Emplace(TEXT("SchemaVersion"), SchemaVersion);
-	Attributes.Emplace(TEXT("LoadingName"), LoadingName);
-	Attributes.Emplace(TEXT("LoadingSeconds"), SecondsSpentLoading);
-	Attributes.Append(InAttributes);
-
-	if (FStudioAnalytics::IsAvailable())
-	{
-		FStudioAnalytics::GetProvider().RecordEvent(TEXT("Performance.Loading"), Attributes);
-	}
-
-#if ENABLE_COOK_STATS
-
-	// Gather DDC analytics
-	GetDerivedDataCacheRef().GatherAnalytics(Attributes);
-
-	// Gather Virtualization analytics
-	UE::Virtualization::IVirtualizationSystem::Get().GatherAnalytics(Attributes);
-
-#if UE_WITH_ZEN
-	// Gather Zen analytics
-	if (UE::Zen::IsDefaultServicePresent())
-	{
-		UE::Zen::GetDefaultServiceInstance().GatherAnalytics(Attributes);
-	}
-#endif
-
-	if (FStudioAnalytics::IsAvailable())
-	{
-		// Store it all in the loading event
-		FStudioAnalytics::GetProvider().RecordEvent(TEXT("Core.Loading"), Attributes);
-	}
-#endif
-}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS

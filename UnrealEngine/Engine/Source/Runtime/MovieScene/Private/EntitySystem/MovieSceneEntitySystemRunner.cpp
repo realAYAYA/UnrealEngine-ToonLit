@@ -26,6 +26,22 @@ DECLARE_CYCLE_STAT(TEXT("Evaluation Phase"), 			MovieSceneEval_EvaluationPhase, 
 DECLARE_CYCLE_STAT(TEXT("Finalization Phase"),          MovieSceneEval_FinalizationPhase,       	STATGROUP_MovieSceneECS);
 DECLARE_CYCLE_STAT(TEXT("Post Evaluation Phase"),       MovieSceneEval_PostEvaluationPhase,     	STATGROUP_MovieSceneECS);
 
+namespace UE::MovieScene::FlushState
+{
+	// Signifies that, during the Finalization task, there were still outstanding tasks and we need to perform another iteration
+	ERunnerFlushState LoopEval = ERunnerFlushState::ConditionalRecompile
+		| ERunnerFlushState::Import
+		| ERunnerFlushState::Spawn
+		| ERunnerFlushState::Instantiation
+		| ERunnerFlushState::Evaluation
+		| ERunnerFlushState::Finalization
+		| ERunnerFlushState::EventTriggers
+		| ERunnerFlushState::PostEvaluation
+		| ERunnerFlushState::End;
+
+	ERunnerFlushState Everything = ERunnerFlushState::Start | LoopEval;
+}
+
 
 /**
  * Structure for making it possible to make re-entrant evaluation on a linker.
@@ -80,6 +96,7 @@ FMovieSceneEntitySystemRunner::FMovieSceneEntitySystemRunner()
 	, FlushState(UE::MovieScene::ERunnerFlushState::None)
 	, CurrentFlushState(UE::MovieScene::ERunnerFlushState::None)
 	, bRequireFullFlush(false)
+	, bIsUpdatingSequence(false)
 {
 }
 
@@ -157,6 +174,11 @@ UE::MovieScene::FInstanceRegistry* FMovieSceneEntitySystemRunner::GetInstanceReg
 bool FMovieSceneEntitySystemRunner::IsCurrentlyEvaluating() const
 {
 	return FlushState != UE::MovieScene::ERunnerFlushState::None;
+}
+
+bool FMovieSceneEntitySystemRunner::IsUpdatingSequence() const
+{
+	return bIsUpdatingSequence;
 }
 
 int32 FMovieSceneEntitySystemRunner::GetQueuedUpdateCount() const
@@ -244,13 +266,13 @@ bool FMovieSceneEntitySystemRunner::QueueFinalUpdateImpl(FInstanceHandle InInsta
 	// 2. we're not in the middle of an update loop 
 	// 3. the instance has no current updates
 	//
-	const bool bCanFinishImmediately = Instance.CanFinishImmediately(Linker);
-	const ERunnerFlushState UnsafeDestroyMask = ERunnerFlushState::Everything & ~(ERunnerFlushState::PostEvaluation | ERunnerFlushState::End);
+	const bool bCanFinishImmediately = Instance.CanFinishImmediately();
+	const ERunnerFlushState UnsafeDestroyMask = FlushState::Everything & ~(ERunnerFlushState::PostEvaluation | ERunnerFlushState::End);
 	const bool bSafeToDestroyNow = !EnumHasAnyFlags(FlushState, UnsafeDestroyMask);
 	if (bCanFinishImmediately && bSafeToDestroyNow && !HasQueuedUpdates(InInstanceHandle))
 	{
-		Instance.Finish(Linker);
-		Instance.PostEvaluation(Linker);
+		Instance.Finish();
+		Instance.PostEvaluation();
 
 		InOnLastFlushDelegate.ExecuteIfBound();
 
@@ -284,7 +306,7 @@ void FMovieSceneEntitySystemRunner::AbandonAndDestroyInstance(FInstanceHandle In
 	}
 }
 
-bool FMovieSceneEntitySystemRunner::StartEvaluation(UMovieSceneEntitySystemLinker* Linker)
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::StartEvaluation(UMovieSceneEntitySystemLinker* Linker)
 {
 	using namespace UE::MovieScene;
 
@@ -296,12 +318,12 @@ bool FMovieSceneEntitySystemRunner::StartEvaluation(UMovieSceneEntitySystemLinke
 	{
 		// If nothing has changed, and we have no pending updates, we don't run any evaluation
 		FlushState = ERunnerFlushState::None;
-		return false;
+		return ERunnerFlushResult::Break;
 	}
 
 	if (!Linker->StartEvaluation(*this))
 	{
-		return false;
+		return ERunnerFlushResult::Break;
 	}
 
 	EnterFlushState(ERunnerFlushState::Start);
@@ -314,7 +336,7 @@ bool FMovieSceneEntitySystemRunner::StartEvaluation(UMovieSceneEntitySystemLinke
 	EntityManager.SetDispatchThread(ENamedThreads::GameThread_Local);
 	EntityManager.SetGatherThread(ENamedThreads::GameThread_Local);
 
-	return true;
+	return ERunnerFlushResult::ContinueAllowBudget;
 }
 
 void FMovieSceneEntitySystemRunner::EndEvaluation(UMovieSceneEntitySystemLinker* Linker)
@@ -323,7 +345,7 @@ void FMovieSceneEntitySystemRunner::EndEvaluation(UMovieSceneEntitySystemLinker*
 	Linker->EndEvaluation(*this);
 }
 
-bool FMovieSceneEntitySystemRunner::FlushNext(UMovieSceneEntitySystemLinker* Linker)
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::FlushNext(UMovieSceneEntitySystemLinker* Linker)
 {
 	using namespace UE::MovieScene;
 
@@ -345,7 +367,14 @@ bool FMovieSceneEntitySystemRunner::FlushNext(UMovieSceneEntitySystemLinker* Lin
 		return StartEvaluation(Linker);
 	}
 
-	// Step 2: Update sequence instances and import entities
+	// Step 2: Execute any conditional recompiles for dirtied sequences.
+	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::ConditionalRecompile))
+	{
+		EnterFlushState(ERunnerFlushState::ConditionalRecompile);
+		return GameThread_ConditionalRecompile(Linker);
+	}
+
+	// Step 3: Update sequence instances and import entities
 	//         This is the entry-point for for each iteration
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::Import))
 	{
@@ -353,7 +382,14 @@ bool FMovieSceneEntitySystemRunner::FlushNext(UMovieSceneEntitySystemLinker* Lin
 		return GameThread_UpdateSequenceInstances(Linker);
 	}
 
-	// Step 3: Conditionally run the spawn phase of the system graph
+	// Step 4: Maybe re-update sequence instances if a recompile has ocurred after they were last updated, but before evaluation finished
+	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::ReimportAfterCompile))
+	{
+		EnterFlushState(ERunnerFlushState::ReimportAfterCompile);
+		return GameThread_ReimportSequenceInstances(Linker);
+	}
+
+	// Step 5: Conditionally run the spawn phase of the system graph
 	//
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::Spawn))
 	{
@@ -361,7 +397,7 @@ bool FMovieSceneEntitySystemRunner::FlushNext(UMovieSceneEntitySystemLinker* Lin
 		return GameThread_SpawnPhase(Linker);
 	}
 
-	// Step 4: Conditionally run the instantiation phase of the system graph
+	// Step 6: Conditionally run the instantiation phase of the system graph
 	//
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::Instantiation))
 	{
@@ -369,7 +405,7 @@ bool FMovieSceneEntitySystemRunner::FlushNext(UMovieSceneEntitySystemLinker* Lin
 		return GameThread_InstantiationPhase(Linker);
 	}
 
-	// Step 5: Run the evaluation phase of the system graph
+	// Step 7: Run the evaluation phase of the system graph
 	//
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::Evaluation))
 	{
@@ -377,56 +413,60 @@ bool FMovieSceneEntitySystemRunner::FlushNext(UMovieSceneEntitySystemLinker* Lin
 		return GameThread_EvaluationPhase(Linker);
 	}
 
-	// Step 6: Run the finalization phase of the system graph, including legacy templates
+	// Step 8: Run the finalization phase of the system graph, including legacy templates
 	//
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::Finalization))
 	{
 		EnterFlushState(ERunnerFlushState::Finalization);
 		GameThread_EvaluationFinalizationPhase(Linker);
-		return true;
+		return ERunnerFlushResult::ContinueAllowBudget;
 	}
 
-	// Step 7: Trigger events
+	// Step 9: Trigger events
 	//
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::EventTriggers))
 	{
 		EnterFlushState(ERunnerFlushState::EventTriggers);
 		GameThread_EventTriggerPhase(Linker);
-		return true;
+		return ERunnerFlushResult::ContinueAllowBudget;
 	}
 
-	// Step 7: Call PostEvaluation on all current sequence instances
+	// Step 10: Call PostEvaluation on all current sequence instances
 	//
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::PostEvaluation))
 	{
 		EnterFlushState(ERunnerFlushState::PostEvaluation);
 		GameThread_PostEvaluationPhase(Linker);
-		return true;
+		return ERunnerFlushResult::ContinueAllowBudget;
 	}
 
-	// Step 7: Perform any clean up and broadcast 'end eval' events
-	//         NOTE: Only ever called once regardless of how many iterations we perform
+	// Step 11: Perform any clean up and broadcast 'end eval' events
+	//          NOTE: Only ever called once regardless of how many iterations we perform
 	if (EnumHasAnyFlags(FlushState, ERunnerFlushState::End))
 	{
 		EnterFlushState(ERunnerFlushState::End);
 		EndEvaluation(Linker);
-		return true;
+		return ERunnerFlushResult::ContinueAllowBudget;
 	}
 
-	return false;
+	return ERunnerFlushResult::Break;
 }
 
-void FMovieSceneEntitySystemRunner::Flush(double BudgetMs)
+void FMovieSceneEntitySystemRunner::Flush(double BudgetMs, UE::MovieScene::ERunnerFlushState TargetState)
 {
 	using namespace UE::MovieScene;
 
 	// If we're not currently evaluating, start by flushing everything
 	if (FlushState == ERunnerFlushState::None)
 	{
-		FlushState = ERunnerFlushState::Everything;
+		FlushState = FlushState::Everything;
+	}
+	if (TargetState == ERunnerFlushState::None)
+	{
+		TargetState = FlushState::Everything;
 	}
 
-	FlushOutstanding(BudgetMs);
+	FlushOutstanding(BudgetMs, TargetState);
 }
 
 void FMovieSceneEntitySystemRunner::FlushOutstanding(double BudgetMs, UE::MovieScene::ERunnerFlushState TargetState)
@@ -439,15 +479,17 @@ void FMovieSceneEntitySystemRunner::FlushOutstanding(double BudgetMs, UE::MovieS
 		return;
 	}
 
+	// If this runner is already being flushed, early return
+	if (CurrentFlushState != ERunnerFlushState::None)
+	{
+		UE_LOG(LogMovieSceneECS, Warning, TEXT("Cannot flush this runner while it is already being flushed outside of a re-entrancy window"));
+		return;
+	}
+
 	UMovieSceneEntitySystemLinker* Linker = GetLinker();
 
 	// Check that we are attached to a linker that allows starting a new evaluation.
 	if (!ensureMsgf(Linker, TEXT("Runner isn't attached to a valid linker")))
-	{
-		return;
-	}
-
-	if (!ensureMsgf(CurrentFlushState == ERunnerFlushState::None, TEXT("Cannot flush this runner while it is already being flushed outside of a re-entrancy window")))
 	{
 		return;
 	}
@@ -469,34 +511,55 @@ void FMovieSceneEntitySystemRunner::FlushOutstanding(double BudgetMs, UE::MovieS
 	// For the purposes of this function, None means that everything must be flushed
 	if (TargetState == ERunnerFlushState::None)
 	{
-		TargetState = ERunnerFlushState::Everything;
+		TargetState = FlushState::Everything;
 	}
 
 	const double BudgetSeconds = BudgetMs / 1000.f;
-	if (!bRequireFullFlush && BudgetSeconds > 0.0)
+	if (bRequireFullFlush)
 	{
-		double StartTime = FPlatformTime::Seconds();
-		do
+		while (EnumHasAnyFlags(FlushState, FlushState::Everything))
 		{
-			if (!FlushNext(Linker))
+			if (FlushNext(Linker) == ERunnerFlushResult::Break)
 			{
 				break;
 			}
 		}
-		while (FPlatformTime::Seconds() - StartTime < BudgetSeconds && EnumHasAnyFlags(FlushState, TargetState));
+
+		bRequireFullFlush = false;
+	}
+	else if (BudgetSeconds > 0.0)
+	{
+		double StartTime = FPlatformTime::Seconds();
+		while (EnumHasAnyFlags(FlushState, TargetState))
+		{
+			ERunnerFlushResult Result = FlushNext(Linker);
+			if (Result == ERunnerFlushResult::Break)
+			{
+				break;
+			}
+
+			if (Result == ERunnerFlushResult::ContinueAllowBudget && FPlatformTime::Seconds() - StartTime >= BudgetSeconds)
+			{
+				break;
+			}
+		}
 	}
 	else
 	{
 		while (EnumHasAnyFlags(FlushState, TargetState))
 		{
-			if (!FlushNext(Linker))
+			if (FlushNext(Linker) == ERunnerFlushResult::Break)
 			{
 				break;
 			}
 		}
 	}
 
-	bRequireFullFlush = false;
+	// If we are not right at the end of evaluation, we must check for compilation next time
+	if (FlushState != ERunnerFlushState::None && FlushState != ERunnerFlushState::End)
+	{
+		FlushState |= ERunnerFlushState::ConditionalRecompile;
+	}
 }
 
 void FMovieSceneEntitySystemRunner::ResetFlushState()
@@ -511,7 +574,7 @@ void FMovieSceneEntitySystemRunner::ResetFlushState()
 	{
 		// When resetting - we don't need to (or want to) re-import anything, we just want to re-run the current
 		// frame of updates 
-		FlushState = UE::MovieScene::ERunnerFlushState::LoopEval & ~UE::MovieScene::ERunnerFlushState::Import;
+		FlushState = UE::MovieScene::FlushState::LoopEval & ~UE::MovieScene::ERunnerFlushState::Import;
 	}
 }
 
@@ -523,14 +586,14 @@ void FMovieSceneEntitySystemRunner::DiscardQueuedUpdates(FInstanceHandle Instanc
 	{
 		if (UpdateQueue[Index].Params.InstanceHandle == Instance)
 		{
-			UpdateQueue.RemoveAt(Index, 1, false);
+			UpdateQueue.RemoveAt(Index, 1, EAllowShrinking::No);
 		}
 	}
 	for (int32 Index = DissectedUpdates.Num()-1; Index >= 0; --Index)
 	{
 		if (DissectedUpdates[Index].InstanceHandle == Instance)
 		{
-			DissectedUpdates.RemoveAt(Index, 1, false);
+			DissectedUpdates.RemoveAt(Index, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -538,7 +601,7 @@ void FMovieSceneEntitySystemRunner::DiscardQueuedUpdates(FInstanceHandle Instanc
 	{
 		if (CurrentInstances[Index].InstanceHandle == Instance)
 		{
-			CurrentInstances.RemoveAt(Index, 1, false);
+			CurrentInstances.RemoveAt(Index, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -556,7 +619,72 @@ void FMovieSceneEntitySystemRunner::SkipFlushState(UE::MovieScene::ERunnerFlushS
 	FlushState &= ~FlushStateToSkip;
 }
 
-bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSceneEntitySystemLinker* Linker)
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::GameThread_ConditionalRecompile(UMovieSceneEntitySystemLinker* Linker)
+{
+	using namespace UE::MovieScene;
+
+	TRACE_CPUPROFILER_EVENT_SCOPE(FMovieSceneEntitySystemRunner::GameThread_ConditionalRecompile);
+
+	FInstanceRegistry* InstanceRegistry = GetInstanceRegistry();
+
+	bool bAnyRecompile = false;
+
+	// If we have currently running instances, use those for the conditional compile
+	if (CurrentInstances.Num())
+	{
+		for (const FQueuedUpdateParams& UpdatedInstance : CurrentInstances)
+		{
+			if (InstanceRegistry->IsHandleValid(UpdatedInstance.InstanceHandle) && !EnumHasAnyFlags(UpdatedInstance.UpdateFlags, ERunnerUpdateFlags::Finish | ERunnerUpdateFlags::Destroy))
+			{
+				FSequenceInstance& Instance = InstanceRegistry->MutateInstance(UpdatedInstance.InstanceHandle);
+				if (Instance.IsRootSequence() && Instance.ConditionalRecompile())
+				{
+					bAnyRecompile = true;
+				}
+			}
+		}
+	}
+	// Otherwise process the update queue
+	else for (int32 UpdateIndex = 0; UpdateIndex < UpdateQueue.Num(); ++UpdateIndex)
+	{
+		const FUpdateParamsAndContext& Request = UpdateQueue[UpdateIndex];
+		if (InstanceRegistry->IsHandleValid(Request.Params.InstanceHandle) && !EnumHasAnyFlags(Request.Params.UpdateFlags, ERunnerUpdateFlags::Finish | ERunnerUpdateFlags::Destroy))
+		{
+			FSequenceInstance& Instance = InstanceRegistry->MutateInstance(Request.Params.InstanceHandle);
+			if (Instance.IsRootSequence() && Instance.ConditionalRecompile())
+			{
+				bAnyRecompile = true;
+			}
+		}
+	}
+
+	if (bAnyRecompile)
+	{
+		if (!EnumHasAnyFlags(FlushState, ERunnerFlushState::Import))
+		{
+			// If we are part-way through a phase that depends on NeedsLink/NeedsUnlink to match,
+			// we need to flush through those before we allow Reimport to run
+			if (Linker->EntityManager.ContainsComponent(FBuiltInComponentTypes::Get()->Tags.NeedsUnlink) || Linker->EntityManager.ContainsComponent(FBuiltInComponentTypes::Get()->Tags.NeedsLink))
+			{
+				TGuardValue<ERunnerFlushState> FlushStateGuard(CurrentFlushState, ERunnerFlushState::None);
+				FlushOutstanding(0.0, ERunnerFlushState::Spawn | ERunnerFlushState::Instantiation);
+			}
+
+			// If we have already imported everything, we have to run a reimport to make sure everything is imported correctly
+			FlushState |= ERunnerFlushState::ReimportAfterCompile;
+		}
+
+		// If a recompile has occurred, we need to make sure we run everything again (except for checking for another recompile!)
+		FlushState |= (FlushState::LoopEval & ~(ERunnerFlushState::ConditionalRecompile | ERunnerFlushState::Import));
+
+		return ERunnerFlushResult::ContinueAllowBudget;
+	}
+
+	// Do not allow us to get stuck in an infinite loop checking for compilation
+	return ERunnerFlushResult::ContinueNoBudgeting;
+}
+
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSceneEntitySystemLinker* Linker)
 {
 	using namespace UE::MovieScene;
 
@@ -600,7 +728,7 @@ bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSce
 
 			// If the request is to destroy the instance, we must assume it is no longer valid and should
 			// not be updated
-			if (EnumHasAnyFlags(Request.Params.UpdateFlags, ERunnerUpdateFlags::Destroy))
+			if (EnumHasAnyFlags(Request.Params.UpdateFlags, ERunnerUpdateFlags::Finish | ERunnerUpdateFlags::Destroy))
 			{
 				DissectedUpdates.Add(FDissectedUpdate{ MoveTemp(Request.OnFlushed), Request.Context, Request.Params.InstanceHandle, MAX_int32, Request.Params.UpdateFlags });
 				MarkForUpdate(Request.Params.InstanceHandle, Request.Params.UpdateFlags);
@@ -623,8 +751,7 @@ bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSce
 				continue;
 			}
 
-			Instance.ConditionalRecompile(Linker);
-			Instance.DissectContext(Linker, Request.Context, Dissections);
+			Instance.DissectContext(Request.Context, Dissections);
 
 			if (Dissections.Num() != 0)
 			{
@@ -708,11 +835,15 @@ bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSce
 			FSequenceInstance& SequenceInstance = InstanceRegistry->MutateInstance(UpdatedInstance.InstanceHandle);
 
 			AccumulatedUpdateFlags |= SequenceInstance.GetUpdateFlags();
-			IMovieScenePlayer::SetIsEvaluatingFlag(SequenceInstance.GetPlayerIndex(), true);
+			uint16 PlayerIndex = FPlayerIndexPlaybackCapability::GetPlayerIndex(SequenceInstance.GetSharedPlaybackState());
+			if (PlayerIndex != (uint16)-1)
+			{
+				IMovieScenePlayer::SetIsEvaluatingFlag(PlayerIndex, true);
+			}
 
 			if (EnumHasAnyFlags(SequenceInstance.GetUpdateFlags(), ESequenceInstanceUpdateFlags::NeedsPreEvaluation))
 			{
-				SequenceInstance.PreEvaluation(Linker);
+				SequenceInstance.PreEvaluation();
 			}
 		}
 	}
@@ -724,6 +855,8 @@ bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSce
 	// Update all systems
 	if (DissectedUpdates.Num() != 0)
 	{
+		TGuardValue<bool> IsUpdatingSequenceGuard(bIsUpdatingSequence, true);
+
 		const int32 PredicateOrder = DissectedUpdates[0].Order;
 		int32 Index = 0;
 		for (; Index < DissectedUpdates.Num() && DissectedUpdates[Index].Order == PredicateOrder; ++Index)
@@ -739,11 +872,6 @@ bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSce
 				AccumulatedUpdateFlags |= ESequenceInstanceUpdateFlags::NeedsPostEvaluation;
 			}
 
-			if (EnumHasAnyFlags(Update.UpdateFlags, ERunnerUpdateFlags::Destroy))
-			{
-				continue;
-			}
-
 			if (ensure(InstanceRegistry->IsHandleValid(Update.InstanceHandle)))
 			{
 				FSequenceInstance& Instance = InstanceRegistry->MutateInstance(Update.InstanceHandle);
@@ -751,11 +879,15 @@ bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSce
 				if (EnumHasAnyFlags(Update.UpdateFlags, ERunnerUpdateFlags::Finish))
 				{
 					// Context is irrelevant for Finishing sequences
-					Instance.Finish(Linker);
+					Instance.Finish();
+				}
+				else if (EnumHasAnyFlags(Update.UpdateFlags, ERunnerUpdateFlags::Destroy))
+				{
+					ensure(Instance.HasFinished());
 				}
 				else
 				{
-					Instance.Update(Linker, Update.Context);
+					Instance.Update(Update.Context);
 				}
 			}
 		}
@@ -779,10 +911,64 @@ bool FMovieSceneEntitySystemRunner::GameThread_UpdateSequenceInstances(UMovieSce
 	}
 #endif
 
-	return true;
+	return ERunnerFlushResult::ContinueAllowBudget;
 }
 
-bool FMovieSceneEntitySystemRunner::GameThread_SpawnPhase(UMovieSceneEntitySystemLinker* Linker)
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::GameThread_ReimportSequenceInstances(UMovieSceneEntitySystemLinker* Linker)
+{
+	using namespace UE::MovieScene;
+
+	// Only called after a sequence has been recompiled after we have already updated the current instances
+	// This allows us to re-update all the sequence instances in case anything has changed
+
+	TGuardValue<bool> IsUpdatingSequenceGuard(bIsUpdatingSequence, true);
+
+	FInstanceRegistry* InstanceRegistry = WeakLinker.Get()->GetInstanceRegistry();
+
+	// NOTE: IncrementSystemSerial must be called before any instance updates are made
+	//       to ensure that up-to-date versions are used inside FEntityManager::OnStructureChanged
+	Linker->EntityManager.IncrementSystemSerial();
+
+	// Operate on a copy of the update params since it is possible CurrentInstances can change if sequence instances are destroyed
+	TArray<FQueuedUpdateParams> CurrentInstancesCopy(MoveTemp(CurrentInstances));
+	CurrentInstances.Reset(CurrentInstancesCopy.Num());
+
+	for (const FQueuedUpdateParams& UpdatedInstance : CurrentInstancesCopy)
+	{
+		if (!InstanceRegistry->IsHandleValid(UpdatedInstance.InstanceHandle))
+		{
+			continue;
+		}
+
+		if (EnumHasAnyFlags(UpdatedInstance.UpdateFlags, ERunnerUpdateFlags::Destroy | ERunnerUpdateFlags::Finish))
+		{
+			FSequenceInstance& SequenceInstance = InstanceRegistry->MutateInstance(UpdatedInstance.InstanceHandle);
+			// Need to check whether this has actually finished yet or not
+			if (!SequenceInstance.HasFinished())
+			{
+				SequenceInstance.Finish();
+			}
+
+			// If it is being finished or destroyed, just re-add this update back.
+			CurrentInstances.Add(UpdatedInstance);
+		}
+		else
+		{
+			FSequenceInstance& SequenceInstance = InstanceRegistry->MutateInstance(UpdatedInstance.InstanceHandle);
+			// Only update root instances
+			if (SequenceInstance.IsRootSequence())
+			{
+				// Add root sequences back to the CurrentInstances array. When we call Update any active sub-sequences will be re-added via MarkForUpdate
+				CurrentInstances.Add(UpdatedInstance);
+				SequenceInstance.Update(SequenceInstance.GetContext());
+			}
+		}
+	}
+
+	return ERunnerFlushResult::ContinueAllowBudget;
+}
+
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::GameThread_SpawnPhase(UMovieSceneEntitySystemLinker* Linker)
 {
 	using namespace UE::MovieScene;
 
@@ -845,10 +1031,10 @@ bool FMovieSceneEntitySystemRunner::GameThread_SpawnPhase(UMovieSceneEntitySyste
 		SkipFlushState(ERunnerFlushState::Instantiation);
 	}
 
-	return true;
+	return ERunnerFlushResult::ContinueAllowBudget;
 }
 
-bool FMovieSceneEntitySystemRunner::GameThread_InstantiationPhase(UMovieSceneEntitySystemLinker* Linker)
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::GameThread_InstantiationPhase(UMovieSceneEntitySystemLinker* Linker)
 {
 	using namespace UE::MovieScene;
 
@@ -873,7 +1059,7 @@ bool FMovieSceneEntitySystemRunner::GameThread_InstantiationPhase(UMovieSceneEnt
 	return GameThread_PostInstantiation(Linker);
 }
 
-bool FMovieSceneEntitySystemRunner::GameThread_PostInstantiation(UMovieSceneEntitySystemLinker* Linker)
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::GameThread_PostInstantiation(UMovieSceneEntitySystemLinker* Linker)
 {
 	using namespace UE::MovieScene;
 
@@ -907,10 +1093,10 @@ bool FMovieSceneEntitySystemRunner::GameThread_PostInstantiation(UMovieSceneEnti
 	{
 		Linker->SystemGraph.ReconstructTaskSchedule(&Linker->EntityManager);
 	}
-	return true;
+	return ERunnerFlushResult::ContinueAllowBudget;
 }
 
-bool FMovieSceneEntitySystemRunner::GameThread_EvaluationPhase(UMovieSceneEntitySystemLinker* Linker)
+UE::MovieScene::ERunnerFlushResult FMovieSceneEntitySystemRunner::GameThread_EvaluationPhase(UMovieSceneEntitySystemLinker* Linker)
 {
 	using namespace UE::MovieScene;
 
@@ -951,7 +1137,7 @@ bool FMovieSceneEntitySystemRunner::GameThread_EvaluationPhase(UMovieSceneEntity
 		SkipFlushState(ERunnerFlushState::Finalization | ERunnerFlushState::EventTriggers);
 	}
 
-	return true;
+	return ERunnerFlushResult::ContinueAllowBudget;
 }
 
 void FMovieSceneEntitySystemRunner::GameThread_EvaluationFinalizationPhase(UMovieSceneEntitySystemLinker* Linker)
@@ -1061,11 +1247,15 @@ void FMovieSceneEntitySystemRunner::GameThread_PostEvaluationPhase(UMovieSceneEn
 				FSequenceInstance& Instance = InstanceRegistry->MutateInstance(UpdateParams.InstanceHandle);
 
 				Instance.Ledger.UnlinkOneShots(Linker);
-				IMovieScenePlayer::SetIsEvaluatingFlag(Instance.GetPlayerIndex(), false);
+				uint16 PlayerIndex = FPlayerIndexPlaybackCapability::GetPlayerIndex(Instance.GetSharedPlaybackState());
+				if (PlayerIndex != (uint16)-1)
+				{
+					IMovieScenePlayer::SetIsEvaluatingFlag(PlayerIndex, false);
+				}
 
 				if (EnumHasAnyFlags(Instance.GetUpdateFlags(), ESequenceInstanceUpdateFlags::NeedsPostEvaluation))
 				{
-					Instance.PostEvaluation(Linker);
+					Instance.PostEvaluation();
 				}
 
 				if (EnumHasAnyFlags(UpdateParams.UpdateFlags, ERunnerUpdateFlags::Destroy))
@@ -1112,12 +1302,30 @@ void FMovieSceneEntitySystemRunner::GameThread_PostEvaluationPhase(UMovieSceneEn
 	// which will pick up the next updates
 	if (UpdateQueue.Num() > 0 || DissectedUpdates.Num() > 0)
 	{
-		FlushState = ERunnerFlushState::LoopEval;
+		FlushState = FlushState::LoopEval;
 	}
 }
 
 void FMovieSceneEntitySystemRunner::MarkForUpdate(FInstanceHandle InInstanceHandle, UE::MovieScene::ERunnerUpdateFlags UpdateFlags)
 {
+	using namespace UE::MovieScene;
+
+	// If we are reimporting after a compile, we might be finishing/destroying a sequence for the first time and so the call to
+	//    Finish from GameThread_UpdateSequenceInstances may have been missed. In this case we have to check whether the sequence
+	//    needs finishing so we don't have entities left in the ledger when it comes to being destroyed.
+	if (bIsUpdatingSequence && EnumHasAnyFlags(UpdateFlags, ERunnerUpdateFlags::Finish | ERunnerUpdateFlags::Destroy))
+	{
+		UMovieSceneEntitySystemLinker* Linker = WeakLinker.Get();
+		FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
+		FSequenceInstance& SequenceInstance = InstanceRegistry->MutateInstance(InInstanceHandle);
+
+		// Need to check whether this has actually finished yet or not
+		if (!SequenceInstance.HasFinished())
+		{
+			SequenceInstance.Finish();
+		}
+	}
+
 	CurrentInstances.Add(FQueuedUpdateParams{ InInstanceHandle, UpdateFlags });
 }
 

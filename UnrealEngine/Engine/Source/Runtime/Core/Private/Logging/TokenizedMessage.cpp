@@ -22,6 +22,13 @@ TSharedRef<FTokenizedMessage> FTokenizedMessage::Create(EMessageSeverity::Type I
 	return Message;
 }
 
+TSharedRef<FTokenizedMessage> FTokenizedMessage::Clone() const
+{
+	TSharedRef<FTokenizedMessage> Message = MakeShared<FTokenizedMessage>(FPrivateToken());
+	*Message = *this;
+	return Message;
+}
+
 FText FTokenizedMessage::ToText() const
 {
 	FText OutMessage;
@@ -117,6 +124,12 @@ TSharedRef<FTokenizedMessage> FTokenizedMessage::AddToken( const TSharedRef<IMes
 	return AsShared();
 }
 
+TSharedRef<FTokenizedMessage> FTokenizedMessage::AddText(const FText& InText)
+{
+	MessageTokens.Add(FTextToken::Create(InText));
+	return AsShared();
+}
+
 
 void FTokenizedMessage::SetMessageLink(const TSharedRef<IMessageToken>& InToken)
 {
@@ -125,7 +138,18 @@ void FTokenizedMessage::SetMessageLink(const TSharedRef<IMessageToken>& InToken)
 
 void FTokenizedMessage::SetSeverity( const EMessageSeverity::Type InSeverity )
 {
-	Severity = InSeverity;
+	if (Severity != InSeverity)
+	{
+		if (MessageTokens.Num() > 0 && MessageTokens[0]->GetType() == EMessageToken::Severity)
+		{
+			if (TSharedRef<FSeverityToken> SeverityToken = StaticCastSharedRef<FSeverityToken>(MessageTokens[0]);
+				SeverityToken->GetSeverity() == Severity)
+			{
+				MessageTokens[0] = FSeverityToken::Create(InSeverity);
+			}
+		}
+		Severity = InSeverity;
+	}
 }
 
 EMessageSeverity::Type FTokenizedMessage::GetSeverity() const

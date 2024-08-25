@@ -69,21 +69,20 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace Metasound;
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-
-			FWaveTableBankAssetReadRef WaveTableBankReadRef = InputCollection.GetDataReadReferenceOrConstruct<FWaveTableBankAsset>("WaveTableBank");
-			FFloatReadRef TableIndexReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, "TableIndex", InParams.OperatorSettings);
+			FWaveTableBankAssetReadRef WaveTableBankReadRef = InputData.GetOrConstructDataReadReference<FWaveTableBankAsset>("WaveTableBank");
+			FFloatReadRef TableIndexReadRef = InputData.GetOrCreateDefaultDataReadReference<float>("TableIndex", InParams.OperatorSettings);
 
 			return MakeUnique<FMetasoundWaveTableGetNodeOperator>(InParams, WaveTableBankReadRef, TableIndexReadRef);
 		}
 
 		FMetasoundWaveTableGetNodeOperator(
-			const FCreateOperatorParams& InParams,
+			const FBuildOperatorParams& InParams,
 			const FWaveTableBankAssetReadRef& InWaveTableBankReadRef,
 			const FFloatReadRef& InTableIndexReadRef)
 			: WaveTableBankReadRef(InWaveTableBankReadRef)
@@ -125,14 +124,6 @@ namespace Metasound
 		}
 
 	private:
-		FORCEINLINE static void WrapIndex(int32 InMax, float& InOutIndex)
-		{
-			InOutIndex = FMath::Abs(InOutIndex); // Avoids remainder offset flip at 0 crossing
-			const int32 WrapIndex = FMath::TruncToInt32(InOutIndex) % InMax;
-			const float Remainder = FMath::Frac(InOutIndex);
-			InOutIndex = WrapIndex + Remainder;
-		};
-
 		void ComputeGainIndexData(const TArray<FWaveTableData>& WaveTables, EWaveTableSamplingMode InSampleMode, ::WaveTable::FWaveTable& OutputWaveTable)
 		{
 			checkf(!WaveTables.IsEmpty(), TEXT("ComputGainIndexData must have WaveTable to operate on"));
@@ -211,7 +202,7 @@ namespace Metasound
 			}
 
 			GainIndexData.TableIndex = *TableIndexReadRef;
-			WrapIndex(WaveTables.Num(), GainIndexData.TableIndex);
+			FWaveTable::WrapIndexSmooth(WaveTables.Num(), GainIndexData.TableIndex);
 
 			const bool bIsLastIndex = FMath::IsNearlyEqual(GainIndexData.LastTableIndex, GainIndexData.TableIndex);
 			const bool bIsLastProxy = LastTableId == Proxy->GetObjectId();

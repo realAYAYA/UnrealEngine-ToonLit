@@ -5,6 +5,7 @@
 
 #include "MaterialGraph/MaterialGraph.h"
 #include "MaterialGraph/MaterialGraphNode_Comment.h"
+#include "MaterialGraph/MaterialGraphNode_Custom.h"
 #include "MaterialGraph/MaterialGraphNode_Composite.h"
 #include "MaterialGraph/MaterialGraphNode_PinBase.h"
 #include "MaterialGraph/MaterialGraphNode.h"
@@ -14,6 +15,7 @@
 #include "Materials/MaterialAttributeDefinitionMap.h"
 #include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionComposite.h"
+#include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionPinBase.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionCustomOutput.h"
@@ -119,7 +121,7 @@ void PrepareHLSLTree(UE::HLSLTree::FEmitContext& EmitContext,
 	FEmitScope* EmitResultScope = EmitContext.PrepareScope(CachedTree.GetResultScope());
 
 	FRequestedType RequestedAttributesType(CachedTree.GetMaterialAttributesType(), false);
-	CachedTree.SetRequestedFields(ShaderFrequency, RequestedAttributesType);
+	CachedTree.SetRequestedFields(EmitContext, RequestedAttributesType);
 
 	FOwnedNodeMaterial MaterialOwner(Material);
 	FEmitOwnerScope OwnerScope(EmitContext, &MaterialOwner);
@@ -171,6 +173,7 @@ void UMaterialGraph::UpdatePinTypes()
 	FMemStackBase Allocator;
 	const FMaterialCachedHLSLTree& CachedTree = Material->GetCachedHLSLTree();
 	FEmitContext EmitContext(Allocator, FTargetParameters(), NullErrorHandler, CachedTree.GetTypeRegistry());
+	EmitContext.MaterialInterface = Material;
 
 	Material::FEmitData& EmitMaterialData = EmitContext.AcquireData<Material::FEmitData>();
 
@@ -181,7 +184,7 @@ void UMaterialGraph::UpdatePinTypes()
 	{
 		const FMaterialConnectionKey& Key = It.Key;
 		const FExpression* OutputExpression = It.Value;
-		const UE::Shader::FType OutputType = EmitContext.GetType(OutputExpression);
+		const UE::Shader::FType OutputType = EmitContext.GetTypeForPinColoring(OutputExpression);
 		if (!OutputType.IsVoid())
 		{
 			const FConnectionKey InputKey(Key.InputObject, OutputExpression);
@@ -262,11 +265,13 @@ void UMaterialGraph::RebuildGraphInternal(const TMap<UMaterialExpression*, TArra
 		MaterialInputs.Add(FMaterialInputInfo(FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_PixelDepthOffset, Material), MP_PixelDepthOffset, LOCTEXT("PixelDepthOffsetToolTip", "Pixel Depth Offset")));
 		MaterialInputs.Add(FMaterialInputInfo(FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_ShadingModel, Material), MP_ShadingModel, LOCTEXT("ShadingModelToolTip", "Selects which shading model should be used per pixel")));
 		MaterialInputs.Add(FMaterialInputInfo(FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_SurfaceThickness, Material), MP_SurfaceThickness, LOCTEXT("SurfaceThicknessToolTip", "Defines the surface's thickness when IsThinSurface is enabled")));
-		MaterialInputs.Add(FMaterialInputInfo(FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_FrontMaterial, Material), MP_FrontMaterial, LOCTEXT("FrontMaterialToolTip", "Specify the front facing material")));
 		MaterialInputs.Add(FMaterialInputInfo(FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_Displacement, Material), MP_Displacement, LOCTEXT("DisplacementToolTip", "Specifies scalar vertex displacement."))); 
 
 		//^^^ New material properties go above here. ^^^^
 		MaterialInputs.Add(FMaterialInputInfo(LOCTEXT("MaterialAttributes", "Material Attributes"), MP_MaterialAttributes, LOCTEXT("MaterialAttributesToolTip", "Material Attributes")));
+
+		// FrontMaterial is always added the latest for UX purpose
+		MaterialInputs.Add(FMaterialInputInfo(FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_FrontMaterial, Material), MP_FrontMaterial, LOCTEXT("FrontMaterialToolTip", "Specify the front facing material")));
 
 		// Add Root Node
 		{
@@ -368,6 +373,17 @@ UMaterialGraphNode* UMaterialGraph::AddExpression(UMaterialExpression* Expressio
 		{
 			Node = InitExpressionNewNode<UMaterialGraphNode_PinBase>(this, Expression, false);
 		}
+		else if (Expression->IsA(UMaterialExpressionCustom::StaticClass()))
+		{
+			// This is for backward compatibility. We don't want people's custom HLSL nodes to suddenly explode
+			// when they open their materials for the first time with inline HLSL custom nodes working in the engine.
+			// This ensures that only new nodes or nodes that are subsequently saved as uncollapsed show the code.
+			UMaterialExpressionCustom* CustomNode = Cast<UMaterialExpressionCustom>(Expression);
+			if (bUserInvoked)
+				CustomNode->ShowCode = 1;
+
+			Node = InitExpressionNewNode<UMaterialGraphNode_Custom>(this, Expression, bUserInvoked);
+		}
 		else 
 		{
 			Node = InitExpressionNewNode<UMaterialGraphNode>(this, Expression, bUserInvoked);
@@ -466,19 +482,22 @@ void UMaterialGraph::LinkGraphNodesFromMaterial()
 					// This is an unseen composite reroute expression, find the actual expression output to connect to.
 					UMaterialExpressionComposite* OwningComposite = CastChecked<UMaterialExpressionComposite>(CompositeReroute->SubgraphExpression);
 
-					UMaterialGraphNode* OutputGraphNode;
-					int32 OutputPinIndex = OwningComposite->InputExpressions->ReroutePins.FindLastByPredicate(ExpressionMatchesPredicate(CompositeReroute));
-					if (OutputPinIndex != INDEX_NONE)
+					if (OwningComposite && OwningComposite->InputExpressions && OwningComposite->OutputExpressions)
 					{
-						OutputGraphNode = CastChecked<UMaterialGraphNode>(OwningComposite->InputExpressions->GraphNode);
+						UMaterialGraphNode* OutputGraphNode;
+						int32 OutputPinIndex = OwningComposite->InputExpressions->ReroutePins.FindLastByPredicate(ExpressionMatchesPredicate(CompositeReroute));
+						if (OutputPinIndex != INDEX_NONE)
+						{
+							OutputGraphNode = CastChecked<UMaterialGraphNode>(OwningComposite->InputExpressions->GraphNode);
+						}
+						else
+						{
+							// Output pin base in the subgraph cannot have outputs, if this reroute isn't in the inputs connect to composite's outputs
+							OutputPinIndex = OwningComposite->OutputExpressions->ReroutePins.FindLastByPredicate(ExpressionMatchesPredicate(CompositeReroute));
+							OutputGraphNode = CastChecked<UMaterialGraphNode>(OwningComposite->GraphNode);
+						}
+						InputPin->MakeLinkTo(OutputGraphNode->GetOutputPin(OutputPinIndex));
 					}
-					else
-					{
-						// Output pin base in the subgraph cannot have outputs, if this reroute isn't in the inputs connect to composite's outputs
-						OutputPinIndex = OwningComposite->OutputExpressions->ReroutePins.FindLastByPredicate(ExpressionMatchesPredicate(CompositeReroute));
-						OutputGraphNode = CastChecked<UMaterialGraphNode>(OwningComposite->GraphNode);
-					}
-					InputPin->MakeLinkTo(OutputGraphNode->GetOutputPin(OutputPinIndex));
 				}
 			}
 		}
@@ -604,6 +623,8 @@ void UMaterialGraph::LinkMaterialExpressionsFromGraph()
 					{
 						MaterialInput.Expression = NULL;
 					}
+
+					RootNode->UpdateInputUseConstant(Pin, MaterialInput.Expression == nullptr);
 				}
 			}
 		}
@@ -631,13 +652,12 @@ void UMaterialGraph::LinkMaterialExpressionsFromGraph()
 						Expression->Desc = GraphNode->NodeComment;
 					}
 
-					TArrayView<FExpressionInput*> ExpressionInputs = Expression->GetInputsView();
-
 					TArray<FExpressionExecOutputEntry> ExecOutputs;
 					Expression->GetExecOutputs(ExecOutputs);
 
 					for (UEdGraphPin* Pin : GraphNode->Pins)
 					{
+						TArrayView<FExpressionInput*> ExpressionInputs = Expression->GetInputsView();
 						if (Pin->Direction == EGPD_Input && Pin->PinType.PinCategory != UMaterialGraphSchema::PC_Exec)
 						{
 							// Wire up non-execution input pins

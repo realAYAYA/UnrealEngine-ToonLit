@@ -7,6 +7,7 @@
 #include "AudioLinkSettingsAbstract.h"
 #include "Sound/SoundCue.h"
 #include "Engine/Engine.h"
+#include "Engine/HitResult.h"
 #include "Engine/World.h"
 #include "Sound/SoundNodeAttenuation.h"
 #include "IAudioParameterTransmitter.h"
@@ -52,6 +53,7 @@ FActiveSound::FActiveSound()
 	, WorldID(0)
 	, Sound(nullptr)
 	, SourceEffectChain(nullptr)
+	, SoundAttenuation(nullptr)
 	, AudioComponentID(0)
 	, OwnerID(0)
 	, PlayOrder(INDEX_NONE)
@@ -98,6 +100,7 @@ FActiveSound::FActiveSound()
 	, bIsFirstAttenuationUpdate(true)
 	, bStartedWithinNonBinauralRadius(false)
 	, bModulationRoutingUpdated(false)
+	, bIsAttenuationSettingsOverridden(false)
 	, UserIndex(0)
 	, FadeOut(EFadeOut::None)
 	, bIsOccluded(false)
@@ -225,6 +228,8 @@ void FActiveSound::AddReferencedObjects(FReferenceCollector& Collector)
 		Sound->SourceEffectChain->AddReferencedEffects(Collector);
 	}
 
+	Collector.AddReferencedObject(SoundAttenuation);
+
 	for (auto& Concurrency : ConcurrencySet)
 	{
 		if (Concurrency)
@@ -276,8 +281,15 @@ void FActiveSound::SetWorld(UWorld* InWorld)
 void FActiveSound::SetSound(USoundBase* InSound)
 {
 	Sound = InSound;
-	bApplyInteriorVolumes = (SoundClassOverride && SoundClassOverride->Properties.bApplyAmbientVolumes)
-		|| (Sound && Sound->ShouldApplyInteriorVolumes());
+	
+	if (SoundClassOverride)
+	{
+		bApplyInteriorVolumes = SoundClassOverride->Properties.bApplyAmbientVolumes;
+	}
+	else
+	{
+		bApplyInteriorVolumes = Sound && Sound->ShouldApplyInteriorVolumes();
+	}
 }
 
 void FActiveSound::SetSourceEffectChain(USoundEffectSourcePresetChain* InSourceEffectChain)
@@ -288,8 +300,25 @@ void FActiveSound::SetSourceEffectChain(USoundEffectSourcePresetChain* InSourceE
 void FActiveSound::SetSoundClass(USoundClass* SoundClass)
 {
 	SoundClassOverride = SoundClass;
-	bApplyInteriorVolumes = (SoundClassOverride && SoundClassOverride->Properties.bApplyAmbientVolumes)
-		|| (Sound && Sound->ShouldApplyInteriorVolumes());
+	
+	if (SoundClassOverride)
+	{
+		bApplyInteriorVolumes = SoundClassOverride->Properties.bApplyAmbientVolumes;
+	}
+	else
+	{
+		bApplyInteriorVolumes = Sound && Sound->ShouldApplyInteriorVolumes();
+	}
+}
+
+void FActiveSound::SetAttenuationSettingsAsset(TObjectPtr<USoundAttenuation> InSoundAttenuation)
+{
+	SoundAttenuation = InSoundAttenuation;
+}
+
+void FActiveSound::SetAttenuationSettingsOverride(bool bInattenuationSettingsOverride)
+{
+	bIsAttenuationSettingsOverridden = bInattenuationSettingsOverride;
 }
 
 bool FActiveSound::IsPlayWhenSilent() const
@@ -1425,7 +1454,14 @@ void FActiveSound::CollectAttenuationShapesForVisualization(TMultiMap<EAttenuati
 
 	if (bHasAttenuationSettings)
 	{
-		AttenuationSettings.CollectAttenuationShapesForVisualization(ShapeDetailsMap);
+		if (bIsAttenuationSettingsOverridden)
+		{
+			AttenuationSettings.CollectAttenuationShapesForVisualization(ShapeDetailsMap);
+		}
+		else if (SoundAttenuation)
+		{
+			SoundAttenuation->Attenuation.CollectAttenuationShapesForVisualization(ShapeDetailsMap);
+		}
 	}
 
 	// For sound cues we'll dig in and see if we can find any attenuation sound nodes that will affect the settings
@@ -1640,12 +1676,22 @@ void FActiveSound::UpdateAttenuation(float DeltaTime, FSoundParseParameters& Par
 
 void FActiveSound::UpdateAttenuation(float DeltaTime, FSoundParseParameters& ParseParams, int32 ListenerIndex, const FSoundAttenuationSettings* SettingsAttenuationNode)
 {
+	// We default to using the copied off "overridden" settings (or default constructed settings)
+	const FSoundAttenuationSettings* Settings = &AttenuationSettings;
+
 	// Get the attenuation settings to use for this application to the active sound
-	const FSoundAttenuationSettings* Settings = SettingsAttenuationNode ? SettingsAttenuationNode : &AttenuationSettings;
-	if (!Settings)
+	// Use the passed-in attenuation settings
+	if (!bIsAttenuationSettingsOverridden)
 	{
-		UE_LOG(LogAudio, Warning, TEXT("No attenuation settings found for active sound."));
-		return;
+		if (SettingsAttenuationNode)
+		{
+			Settings = SettingsAttenuationNode;
+		}
+		// We fallback to using the asset's settings directly
+		else if (SoundAttenuation)
+		{
+			Settings = &SoundAttenuation->Attenuation;
+		}
 	}
 
 	// Reset Focus data and recompute if necessary
@@ -1663,12 +1709,12 @@ void FActiveSound::UpdateAttenuation(float DeltaTime, FSoundParseParameters& Par
 
 	if (Settings->bEnableSubmixSends)
 	{
-		ParseParams.SubmixSendSettings.Reset();
+		ParseParams.AttenuationSubmixSends.Reset();
 		for (const FAttenuationSubmixSendSettings& SendSettings : Settings->SubmixSendSettings)
 		{
-			if (SendSettings.Submix)
+			if (SendSettings.SoundSubmix)
 			{
-				ParseParams.SubmixSendSettings.Add(SendSettings);
+				ParseParams.AttenuationSubmixSends.Add(SendSettings);
 			}
 		}
 	}

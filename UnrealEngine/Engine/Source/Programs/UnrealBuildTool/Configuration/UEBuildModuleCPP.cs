@@ -29,7 +29,9 @@ namespace UnrealBuildTool
 			public readonly List<FileItem> CPPFiles = new List<FileItem>();
 			public readonly List<FileItem> CFiles = new List<FileItem>();
 			public readonly List<FileItem> CCFiles = new List<FileItem>();
+			public readonly List<FileItem> MFiles = new List<FileItem>();
 			public readonly List<FileItem> MMFiles = new List<FileItem>();
+			public readonly List<FileItem> SwiftFiles = new List<FileItem>();
 			public readonly List<FileItem> RCFiles = new List<FileItem>();
 			public readonly List<FileItem> ISPCFiles = new List<FileItem>();
 		}
@@ -528,6 +530,7 @@ namespace UnrealBuildTool
 							}
 						}
 					}
+					ModuleCompileEnvironment.FileInlineGenCPPMap = CompileEnvironment.FileInlineGenCPPMap;
 
 					if (Rules.bEnableNonInlinedGenCppWarnings)
 					{
@@ -555,6 +558,13 @@ namespace UnrealBuildTool
 					{
 						GeneratedCPPCompileEnvironment = new CppCompileEnvironment(GeneratedCPPCompileEnvironment);
 						GeneratedCPPCompileEnvironment.bCreateDebugInfo = false;
+						bMergeUnityFiles = false;
+					}
+
+					if (Target.StaticAnalyzer != StaticAnalyzer.None && !Target.bStaticAnalyzerIncludeGenerated)
+					{
+						GeneratedCPPCompileEnvironment = new CppCompileEnvironment(GeneratedCPPCompileEnvironment);
+						GeneratedCPPCompileEnvironment.bDisableStaticAnalysis = true;
 						bMergeUnityFiles = false;
 					}
 
@@ -637,6 +647,31 @@ namespace UnrealBuildTool
 				Logger.LogTrace("Module '{ModuleName}' not using unity build mode", Name);
 			}
 
+			CompileEnvironment.bUseUnity = bModuleUsesUnityBuild;
+			GeneratedCPPCompileEnvironment.bUseUnity = bModuleUsesUnityBuild;
+
+			// Create and register a special action that can be used to compile single files (even when unity is enabled) for generated files
+			if (GeneratedFileItems.Any())
+			{
+				CppCompileEnvironment SingleGeneratedCPPCompileEnvironment = new CppCompileEnvironment(GeneratedCPPCompileEnvironment);
+				SingleGeneratedCPPCompileEnvironment.PrecompiledHeaderAction = PrecompiledHeaderAction.None;
+				foreach (DirectoryReference Directory in GeneratedFileItems.Select(x => x.Location.Directory).Distinct())
+				{
+					ToolChain.CreateSpecificFileAction(SingleGeneratedCPPCompileEnvironment, Directory, IntermediateDirectory, Graph);
+				}
+			}
+
+			// Create and register a special action that can be used to compile single files (even when unity is enabled) for normal files
+			if (ModuleDirectories.Any())
+			{
+				CppCompileEnvironment SingleCompileEnvironment = new CppCompileEnvironment(CompileEnvironment);
+				SingleCompileEnvironment.PrecompiledHeaderAction = PrecompiledHeaderAction.None;
+				foreach (DirectoryReference Directory in ModuleDirectories)
+				{
+					ToolChain.CreateSpecificFileAction(SingleCompileEnvironment, Directory, IntermediateDirectory, Graph);
+				}
+			}
+
 			// Compile Generated CPP Files
 			if (bModuleUsesUnityBuild)
 			{
@@ -692,13 +727,33 @@ namespace UnrealBuildTool
 			// Compile CC files directly.
 			if (InputFiles.CCFiles.Count > 0)
 			{
-				LinkInputFiles.AddRange(ToolChain.CompileAllCPPFiles(CompileEnvironment, InputFiles.CCFiles, IntermediateDirectory, Name, Graph).ObjectFiles);
+				CppCompileEnvironment CCCompileEnvironment = new CppCompileEnvironment(CompileEnvironment);
+				CreateHeaderForDefinitions(CCCompileEnvironment, IntermediateDirectory, "cc", Graph);
+				LinkInputFiles.AddRange(ToolChain.CompileAllCPPFiles(CCCompileEnvironment, InputFiles.CCFiles, IntermediateDirectory, Name, Graph).ObjectFiles);
+			}
+
+			// Compile M files directly. Do not use a PCH here, because a C++ PCH is not compatible with C source files.
+			if (InputFiles.MFiles.Count > 0)
+			{
+				CppCompileEnvironment MCompileEnvironment = new CppCompileEnvironment(ModuleCompileEnvironment);
+				CreateHeaderForDefinitions(MCompileEnvironment, IntermediateDirectory, "m", Graph);
+				LinkInputFiles.AddRange(ToolChain.CompileAllCPPFiles(MCompileEnvironment, InputFiles.MFiles, IntermediateDirectory, Name, Graph).ObjectFiles);
 			}
 
 			// Compile MM files directly.
 			if (InputFiles.MMFiles.Count > 0)
 			{
-				LinkInputFiles.AddRange(ToolChain.CompileAllCPPFiles(CompileEnvironment, InputFiles.MMFiles, IntermediateDirectory, Name, Graph).ObjectFiles);
+				CppCompileEnvironment MMCompileEnvironment = new CppCompileEnvironment(CompileEnvironment);
+				CreateHeaderForDefinitions(MMCompileEnvironment, IntermediateDirectory, "mm", Graph);
+				LinkInputFiles.AddRange(ToolChain.CompileAllCPPFiles(MMCompileEnvironment, InputFiles.MMFiles, IntermediateDirectory, Name, Graph).ObjectFiles);
+			}
+
+			// Compile Swift files directly.
+			if (InputFiles.SwiftFiles.Count > 0)
+			{
+				CppCompileEnvironment SwiftCompileEnvironment = new CppCompileEnvironment(CompileEnvironment);
+				CreateHeaderForDefinitions(SwiftCompileEnvironment, IntermediateDirectory, "swift", Graph);
+				LinkInputFiles.AddRange(ToolChain.CompileAllCPPFiles(SwiftCompileEnvironment, InputFiles.SwiftFiles, IntermediateDirectory, Name, Graph).ObjectFiles);
 			}
 
 			// Compile RC files. The resource compiler does not work with response files, and using the regular compile environment can easily result in the 
@@ -823,18 +878,22 @@ namespace UnrealBuildTool
 		}
 
 		// Cache of files found while searching the includes
-		static ConcurrentDictionary<DirectoryReference, HashSet<FileReference>> KnownIncludeFilesDict = new();
-		static HashSet<FileReference> GetIncludeFiles(DirectoryReference Directory)
+		static ConcurrentDictionary<DirectoryReference, HashSet<FileReference>?> KnownIncludeFilesDict = new();
+		static HashSet<FileReference>? GetIncludeFiles(DirectoryReference Directory)
 		{
+			if (Directory == null)
+			{
+				return null;
+			}
 			return KnownIncludeFilesDict.GetOrAdd(Directory, (_) =>
 			{
-				if (DirectoryReference.Exists(Directory))
+				if (DirectoryLookupCache.DirectoryExists(Directory))
 				{
-					return DirectoryReference.EnumerateFiles(Directory, "*").ToHashSet();
+					return DirectoryLookupCache.EnumerateFiles(Directory).ToHashSet();
 				}
 				else
 				{
-					return new HashSet<FileReference>();
+					return null;
 				}
 			});
 		}
@@ -847,8 +906,7 @@ namespace UnrealBuildTool
 				if (TranformedHeaderInclude.Contains("COMPILED_PLATFORM_HEADER("))
 				{
 					string PlatformName = UEBuildPlatform.GetBuildPlatform(CompileEnvironment.Platform).GetPlatformName();
-					TranformedHeaderInclude = TranformedHeaderInclude.Replace("COMPILED_PLATFORM_HEADER(", PlatformName + "/" + PlatformName);
-					TranformedHeaderInclude = TranformedHeaderInclude.TrimEnd(')');
+					TranformedHeaderInclude = TranformedHeaderInclude.Replace("COMPILED_PLATFORM_HEADER(", PlatformName + "/" + PlatformName).TrimEnd(')');
 				}
 
 				if (VisitedIncludes.Add(TranformedHeaderInclude))
@@ -856,7 +914,8 @@ namespace UnrealBuildTool
 					var SearchForFileItem = (DirectoryReference dir) =>
 					{
 						FileReference FileRef = FileReference.Combine(dir, TranformedHeaderInclude);
-						if (GetIncludeFiles(FileRef.Directory).Contains(FileRef))
+						HashSet<FileReference>? Files = GetIncludeFiles(FileRef.Directory);
+						if (Files != null && Files.Contains(FileRef))
 						{
 							return FileItem.GetItemByFileReference(FileRef);
 						}
@@ -890,15 +949,21 @@ namespace UnrealBuildTool
 					{
 						if (!TranformedHeaderInclude.Contains('.'))
 						{
+#if DEBUG
 							Logger.LogDebug("{0} SharedPCH - Skipping '{1}' found in '{2}' because it doesn't appear to be a module header.", Name, TranformedHeaderInclude, FileToSearch.Location);
+#endif
 						}
 						else if (TranformedHeaderInclude.EndsWith(".generated.h"))
 						{
+#if DEBUG
 							Logger.LogDebug("{0} SharedPCH - Skipping '{1}' found in '{2}' because it appears to be a generated UHT header.", Name, TranformedHeaderInclude, FileToSearch.Location);
+#endif
 						}
 						else
 						{
+#if DEBUG
 							Logger.LogDebug("{0} SharedPCH - Could not find include directory for '{1}' found in '{2}'.", Name, TranformedHeaderInclude, FileToSearch.Location);
+#endif
 							IncludesNotFound.Add(TranformedHeaderInclude);
 						}
 					}
@@ -947,28 +1012,36 @@ namespace UnrealBuildTool
 					UEBuildModule? FoundModule = ModuleDeps.FirstOrDefault(Module => Module.ContainsFile(IncludeFile.Location));
 					if (FoundModule != null)
 					{
+#if DEBUG
 						if (ModuleToIncludePathsOnlyFlag[FoundModule])
 						{
 							Logger.LogDebug("{0} SharedPCH - '{1}' is exporting types but '{2}' isn't declared as a public dependency.", Name, IncludeFile.Location, FoundModule);
 						}
+#endif
 
 						OptModules.Add(FoundModule);
 					}
 					else
 					{
+#if DEBUG
 						Logger.LogDebug("{0} SharedPCH - '{1}' is exporting types but the module this file belongs to isn't declared as a public dependency or include.", Name, IncludeFile.Location);
+#endif
 						FoundAllModules = false;
 					}
 				}
 				else
 				{
+#if DEBUG
 					Logger.LogDebug("{0} SharedPCH - '{1}' is not exporting types so we are ignoring the dependency", Name, IncludeFile.Location);
-				}	
+#endif
+				}
 			}
 
 			if (!FoundAllModules)
 			{
+#if DEBUG
 				Logger.LogDebug("{0} SharedPCH - Is missing public dependencies. To be safe, this shared PCH will fall back to use all the module dependencies. Note that this could affect compile times.", Name);
+#endif
 				return AllModuleDeps;
 			}
 			else
@@ -1007,10 +1080,12 @@ namespace UnrealBuildTool
 			HashSet<string> ImmutableDefinitions = new();
 			foreach (string Definition in Definitions)
 			{
-				if (Definition.Contains("UE_IS_ENGINE_MODULE") ||
-					Definition.Contains("DEPRECATED_FORGAME") ||
-					Definition.Contains("UE_DEPRECATED_FORGAME") ||
-					Definition.Contains("UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_"))
+				if (Definition.Contains("UE_IS_ENGINE_MODULE", StringComparison.Ordinal) ||
+					Definition.Contains("UE_VALIDATE_FORMAT_STRINGS", StringComparison.Ordinal) ||
+					Definition.Contains("UE_VALIDATE_INTERNAL_API", StringComparison.Ordinal) ||
+					Definition.Contains("DEPRECATED_FORGAME", StringComparison.Ordinal) ||
+					Definition.Contains("UE_DEPRECATED_FORGAME", StringComparison.Ordinal) ||
+					Definition.Contains("UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_", StringComparison.Ordinal))
 				{
 					continue;
 				}
@@ -1082,14 +1157,42 @@ namespace UnrealBuildTool
 					Definitions.AddRange(EngineIncludeOrderHelper.GetDeprecationDefines(ModuleCompileEnvironment.IncludeOrderVersion));
 				}
 
-				// Create a suffix to distinguish this shared PCH variant from any others. Currently only optimized and non-optimized shared PCHs are supported.
+				// Modify definitions if we need to create a new shared pch for project modules
+				if (ModuleCompileEnvironment.bTreatAsEngineModule != Template.BaseCompileEnvironment.bTreatAsEngineModule)
+				{
+					Definitions = new List<string>(Definitions);
+					Definitions.RemoveAll(x => x.Contains("UE_IS_ENGINE_MODULE", StringComparison.Ordinal));
+					Definitions.RemoveAll(x => x.Contains("DEPRECATED_FORGAME", StringComparison.Ordinal));
+					Definitions.RemoveAll(x => x.Contains("UE_DEPRECATED_FORGAME", StringComparison.Ordinal));
+
+					Definitions.Add($"UE_IS_ENGINE_MODULE={(Rules.bTreatAsEngineModule ? "1" : "0")}");
+					Definitions.Add($"DEPRECATED_FORGAME={(Rules.bTreatAsEngineModule ? String.Empty : "DEPRECATED")}");
+					Definitions.Add($"UE_DEPRECATED_FORGAME={(Rules.bTreatAsEngineModule ? String.Empty : "UE_DEPRECATED")}");
+				}
+
+				// Modify definitions if we need to create a new shared pch for validating format strings
+				if (ModuleCompileEnvironment.bValidateFormatStrings != Template.BaseCompileEnvironment.bValidateFormatStrings)
+				{
+					Definitions = new List<string>(Definitions);
+					Definitions.RemoveAll(x => x.Contains("UE_VALIDATE_FORMAT_STRINGS", StringComparison.Ordinal));
+					Definitions.Add($"UE_VALIDATE_FORMAT_STRINGS={(ModuleCompileEnvironment.bValidateFormatStrings ? "1" : "0")}");
+				}
+
+				// Modify definitions if we need to create a new shared pch for validating internal api usage
+				if (ModuleCompileEnvironment.bValidateInternalApi != Template.BaseCompileEnvironment.bValidateInternalApi)
+				{
+					Definitions = new List<string>(Definitions);
+					Definitions.RemoveAll(x => x.Contains("UE_VALIDATE_INTERNAL_API", StringComparison.Ordinal));
+					Definitions.Add($"UE_VALIDATE_INTERNAL_API={(ModuleCompileEnvironment.bValidateInternalApi ? "1" : "0")}");
+				}
+
+				// Create a suffix to distinguish this shared PCH variant from any others.
 				string Variant = GetSuffixForSharedPCH(ModuleCompileEnvironment, Template.BaseCompileEnvironment);
 
 				FileReference SharedDefinitionsLocation = FileReference.Combine(Template.OutputDir, String.Format("SharedDefinitions.{0}{1}.h", Template.Module.Name, Variant));
 				List<string> NewDefinitions = new();
 				StringBuilder Writer = new StringBuilder();
-				Writer.AppendLine("#pragma once");
-				WriteDefinitions(Definitions, Writer);
+				WriteDefinitions($"Shared Definitions for {Template.Module.Name}{Variant}", Array.Empty<string>(), Definitions, Array.Empty<string>(), Writer);
 				FileItem SharedDefinitionsFileItem = Graph.CreateIntermediateTextFile(SharedDefinitionsLocation, Writer.ToString(), AllowAsync: false);
 
 				// Create the wrapper file, which sets all the definitions needed to compile it
@@ -1179,6 +1282,11 @@ namespace UnrealBuildTool
 		/// <returns>True if the two compile enviroments are compatible</returns>
 		internal static bool IsCompatibleForSharedPCH(CppCompileEnvironment ModuleCompileEnvironment, CppCompileEnvironment CompileEnvironment)
 		{
+			if (ModuleCompileEnvironment.bTreatAsEngineModule != CompileEnvironment.bTreatAsEngineModule)
+			{
+				return false;
+			}
+
 			if (ModuleCompileEnvironment.bOptimizeCode != CompileEnvironment.bOptimizeCode)
 			{
 				return false;
@@ -1196,12 +1304,17 @@ namespace UnrealBuildTool
 				return false;
 			}
 
-			if (ModuleCompileEnvironment.CStandard != CompileEnvironment.CStandard)
+			if (ModuleCompileEnvironment.IncludeOrderVersion != CompileEnvironment.IncludeOrderVersion)
+			{
+				return false;
+			}
+			
+			if (ModuleCompileEnvironment.bValidateFormatStrings != CompileEnvironment.bValidateFormatStrings)
 			{
 				return false;
 			}
 
-			if (ModuleCompileEnvironment.IncludeOrderVersion != CompileEnvironment.IncludeOrderVersion)
+			if (ModuleCompileEnvironment.bValidateInternalApi != CompileEnvironment.bValidateInternalApi)
 			{
 				return false;
 			}
@@ -1217,6 +1330,17 @@ namespace UnrealBuildTool
 		private static string GetSuffixForSharedPCH(CppCompileEnvironment CompileEnvironment, CppCompileEnvironment BaseCompileEnvironment)
 		{
 			string Variant = "";
+			if (CompileEnvironment.bTreatAsEngineModule != BaseCompileEnvironment.bTreatAsEngineModule)
+			{
+				if (CompileEnvironment.bTreatAsEngineModule)
+				{
+					Variant += ".Engine";
+				}
+				else
+				{
+					Variant += ".Project";
+				}
+			}
 			if (CompileEnvironment.bOptimizeCode != BaseCompileEnvironment.bOptimizeCode)
 			{
 				if (CompileEnvironment.bOptimizeCode)
@@ -1250,6 +1374,29 @@ namespace UnrealBuildTool
 					Variant += ".NoExceptions";
 				}
 			}
+			if (CompileEnvironment.bValidateFormatStrings != BaseCompileEnvironment.bValidateFormatStrings)
+			{
+				if (CompileEnvironment.bValidateFormatStrings)
+				{
+					Variant += ".ValFmtStr";
+				}
+				else
+				{
+					Variant += ".NoValFmtStr";
+				}
+			}
+
+			if (CompileEnvironment.bValidateInternalApi != BaseCompileEnvironment.bValidateInternalApi)
+			{
+				if (CompileEnvironment.bValidateInternalApi)
+				{
+					Variant += ".ValApi";
+				}
+				else
+				{
+					Variant += ".NoValApi";
+				}
+			}
 
 			if (CompileEnvironment.bDeterministic != BaseCompileEnvironment.bDeterministic)
 			{
@@ -1270,19 +1417,6 @@ namespace UnrealBuildTool
 				case CppStandardVersion.Cpp17: Variant += ".Cpp17"; break;
 				case CppStandardVersion.Cpp20: Variant += ".Cpp20"; break;
 				case CppStandardVersion.Latest: Variant += ".CppLatest"; break;
-			}
-
-			if (CompileEnvironment.CStandard != BaseCompileEnvironment.CStandard)
-			{
-				switch (CompileEnvironment.CStandard)
-				{
-					case CStandardVersion.None: Variant += ".CNone"; break;
-					case CStandardVersion.C89: Variant += ".C89"; break;
-					case CStandardVersion.C99: Variant += ".C99"; break;
-					case CStandardVersion.C11: Variant += ".C11"; break;
-					case CStandardVersion.C17: Variant += ".C17"; break;
-					case CStandardVersion.Latest: Variant += ".CLatest"; break;
-				}
 			}
 
 			if (CompileEnvironment.IncludeOrderVersion != BaseCompileEnvironment.IncludeOrderVersion)
@@ -1307,10 +1441,14 @@ namespace UnrealBuildTool
 			CompileEnvironment.bCodeCoverage = ModuleCompileEnvironment.bCodeCoverage;
 			CompileEnvironment.bUseRTTI = ModuleCompileEnvironment.bUseRTTI;
 			CompileEnvironment.bEnableExceptions = ModuleCompileEnvironment.bEnableExceptions;
+			CompileEnvironment.bTreatAsEngineModule = ModuleCompileEnvironment.bTreatAsEngineModule;
 			CompileEnvironment.CppStandardEngine = ModuleCompileEnvironment.CppStandardEngine;
 			CompileEnvironment.CppStandard = ModuleCompileEnvironment.CppStandard;
-			CompileEnvironment.CStandard = ModuleCompileEnvironment.CStandard;
 			CompileEnvironment.IncludeOrderVersion = ModuleCompileEnvironment.IncludeOrderVersion;
+			CompileEnvironment.bUseAutoRTFMCompiler = ModuleCompileEnvironment.bUseAutoRTFMCompiler;
+			CompileEnvironment.bAllowAutoRTFMInstrumentation = ModuleCompileEnvironment.bAllowAutoRTFMInstrumentation;
+			CompileEnvironment.bValidateFormatStrings = ModuleCompileEnvironment.bValidateFormatStrings;
+			CompileEnvironment.bValidateInternalApi = ModuleCompileEnvironment.bValidateInternalApi;
 		}
 
 		/// <summary>
@@ -1366,15 +1504,6 @@ namespace UnrealBuildTool
 			{
 				NormalFiles = NormalFiles.Concat(AdaptiveFiles).ToList();
 				AdaptiveFiles = new List<FileItem>();
-			}
-
-			// Create and register a special action that can be used to compile single files (even when unity is enabled)
-			if (NormalFiles.Count > 0 || AdaptiveFiles.Count > 0)
-			{
-				PrecompiledHeaderAction OldAction = CompileEnvironment.PrecompiledHeaderAction;
-				CompileEnvironment.PrecompiledHeaderAction = PrecompiledHeaderAction.None;
-				ToolChain.CreateSpecificFileAction(CompileEnvironment, ModuleDirectory, IntermediateDirectory, Graph);
-				CompileEnvironment.PrecompiledHeaderAction = OldAction;
 			}
 
 			CPPOutput OutputFiles = new CPPOutput();
@@ -1458,9 +1587,7 @@ namespace UnrealBuildTool
 						FileString = File.Location.MakeRelativeTo(Unreal.EngineSourceDirectory);
 					}
 					FileString = FileString.Replace('\\', '/');
-					WrapperContents.AppendLine("// Dedicated PCH for {0}", FileString);
-					WrapperContents.AppendLine();
-					WriteDefinitions(CompileEnvironment.Definitions, WrapperContents);
+					WriteDefinitions($"Dedicated PCH for {FileString}", Array.Empty<string>(), CompileEnvironment.Definitions, Array.Empty<string>(), WrapperContents);
 					WrapperContents.AppendLine();
 					using (StreamReader Reader = new StreamReader(File.Location.FullName))
 					{
@@ -1539,26 +1666,9 @@ namespace UnrealBuildTool
 
 						FileItem PrivateDefinitionsFileItem;
 						{
-							StringBuilder Writer = new();
-
-							Writer.AppendLine($"#include \"{GetIncludeString(Instance.DefinitionsFile)}\"");
-
-							// Games may choose to use shared PCHs from the engine, so allow them to change the value of these macros
-							if (!Rules.bTreatAsEngineModule)
-							{
-								Writer.AppendLine("#undef UE_IS_ENGINE_MODULE");
-								Writer.AppendLine("#undef DEPRECATED_FORGAME");
-								Writer.AppendLine("#define DEPRECATED_FORGAME DEPRECATED");
-								Writer.AppendLine("#undef UE_DEPRECATED_FORGAME");
-								Writer.AppendLine("#define UE_DEPRECATED_FORGAME UE_DEPRECATED");
-								foreach (string DeprecationDefine in EngineIncludeOrderHelper.GetAllDeprecationDefines())
-								{
-									Writer.AppendLine("#undef " + DeprecationDefine);
-								}
-							}
-
 							// Only add new definitions that are not already existing in the shared pch
 							List<string> NewDefinitions = new();
+							List<string> Undefintions = new();
 							bool ModuleApiUndef = false;
 							foreach (string Definition in CompileEnvironment.Definitions)
 							{
@@ -1570,13 +1680,15 @@ namespace UnrealBuildTool
 								NewDefinitions.Add(Definition);
 
 								// Remove the module _API definition for cases where there are circular dependencies between the shared PCH module and modules using it
-								if (!ModuleApiUndef && Definition.StartsWith(ModuleApiDefine))
+								if (!ModuleApiUndef && Definition.StartsWith(ModuleApiDefine, StringComparison.Ordinal))
 								{
 									ModuleApiUndef = true;
-									Writer.AppendLine("#undef {0}", ModuleApiDefine);
+									Undefintions.Add(ModuleApiDefine);
 								}
 							}
-							WriteDefinitions(NewDefinitions, Writer);
+
+							StringBuilder Writer = new();
+							WriteDefinitions($"Shared PCH Definitions for {Name}", new string[] { GetIncludeString(Instance.DefinitionsFile) }, NewDefinitions, Undefintions, Writer);
 							PrivateDefinitionsFileItem = Graph.CreateIntermediateTextFile(PrivateDefinitionsFile, Writer.ToString());
 						}
 
@@ -1617,8 +1729,7 @@ namespace UnrealBuildTool
 				FileReference PrivateDefinitionsFile = FileReference.Combine(IntermediateDirectory, PrivateDefinitionsName);
 				{
 					StringBuilder Writer = new();
-					Writer.AppendLine("#pragma once");
-					WriteDefinitions(CompileEnvironment.Definitions, Writer);
+					WriteDefinitions("Definitions", Array.Empty<string>(), CompileEnvironment.Definitions, Array.Empty<string>(), Writer);
 					CompileEnvironment.Definitions.Clear();
 
 					FileItem PrivateDefinitionsFileItem = Graph.CreateIntermediateTextFile(PrivateDefinitionsFile, Writer.ToString());
@@ -1692,14 +1803,28 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Write a list of macro definitions to an output file
 		/// </summary>
+		/// <param name="Context">Additional context to add to generated comment</param>
+		/// <param name="Includes">List of includes</param>
 		/// <param name="Definitions">List of definitions</param>
+		/// <param name="Undefinitions">List of definitions to undefine</param>
 		/// <param name="Writer">Writer to receive output</param>
-		static void WriteDefinitions(IEnumerable<string> Definitions, StringBuilder Writer)
+		static void WriteDefinitions(string Context, IEnumerable<string> Includes, IEnumerable<string> Definitions, IEnumerable<string> Undefinitions, StringBuilder Writer)
 		{
-			Writer.AppendLine("// Generated by UnrealBuildTool (UEBuildModuleCPP.cs)");
-			foreach (string Definition in Definitions)
+			Writer.AppendLine($"// Generated by UnrealBuildTool (UEBuildModuleCPP.cs) : {Context}");
+			Writer.AppendLine("#pragma once");
+			foreach (string Include in Includes)
 			{
-				int EqualsIdx = Definition.IndexOf('=');
+				Writer.Append("#include \"").Append(Include).Append('\"').AppendLine();
+			}
+			foreach (string Undefinition in Undefinitions)
+			{
+				Writer.Append("#undef ").Append(Undefinition).AppendLine();
+			}
+
+			HashSet<string> Processed = new();
+			foreach (string Definition in Definitions.Where(x => Processed.Add(x)))
+			{
+				int EqualsIdx = Definition.IndexOf('=', StringComparison.Ordinal);
 				if (EqualsIdx == -1)
 				{
 					Writer.Append("#define ").Append(Definition).AppendLine(" 1");
@@ -1771,6 +1896,89 @@ namespace UnrealBuildTool
 			return false;
 		}
 
+		private void CompileEnvironmentDebugInfoSettings(ReadOnlyTargetRules Target, CppCompileEnvironment Result)
+		{
+			// If bCreateDebugInfo is disabled for the whole target do not adjust any settings
+			if (!Result.bCreateDebugInfo)
+			{
+				return;
+			}
+
+			if (Rules.Target.ProjectFile != null && Rules.File.IsUnderDirectory(Rules.Target.ProjectFile.Directory))
+			{
+				if (Target.DebugInfoLineTablesOnly.HasFlag(DebugInfoMode.ProjectPlugins) && Rules.Plugin != null)
+				{
+					Result.bDebugLineTablesOnly = true;
+				}
+				else if (Target.DebugInfoLineTablesOnly.HasFlag(DebugInfoMode.Project) && Rules.Plugin == null)
+				{
+					Result.bDebugLineTablesOnly = true;
+				}
+			}
+			else
+			{
+				if (Target.DebugInfoLineTablesOnly.HasFlag(DebugInfoMode.EnginePlugins) && Rules.Plugin != null)
+				{
+					Result.bDebugLineTablesOnly = true;
+				}
+				else if (Target.DebugInfoLineTablesOnly.HasFlag(DebugInfoMode.Engine) && Rules.Plugin == null)
+				{
+					Result.bDebugLineTablesOnly = true;
+				}
+			}
+
+			if (Rules.Plugin != null && Rules.Target.DebugInfoLineTablesOnlyPlugins.Contains(Rules.Plugin.Name))
+			{
+				Result.bDebugLineTablesOnly = true;
+			}
+			else if (Rules.Target.DebugInfoLineTablesOnlyModules.Contains(Name))
+			{
+				Result.bDebugLineTablesOnly = true;
+			}
+
+			if (Result.bDebugLineTablesOnly)
+			{
+				// Don't disable debug info if only line tables are requested
+				return;
+			}
+
+			// Disable debug info for modules if requested
+			if (!Target.bUsePDBFiles || !Target.Platform.IsInGroup("Microsoft"))
+			{
+				if (Rules.Target.ProjectFile != null && Rules.File.IsUnderDirectory(Rules.Target.ProjectFile.Directory))
+				{
+					if (!Target.DebugInfo.HasFlag(DebugInfoMode.ProjectPlugins) && Rules.Plugin != null)
+					{
+						Result.bCreateDebugInfo = false;
+					}
+					else if (!Target.DebugInfo.HasFlag(DebugInfoMode.Project) && Rules.Plugin == null)
+					{
+						Result.bCreateDebugInfo = false;
+					}
+				}
+				else
+				{
+					if (!Target.DebugInfo.HasFlag(DebugInfoMode.EnginePlugins) && Rules.Plugin != null)
+					{
+						Result.bCreateDebugInfo = false;
+					}
+					else if (!Target.DebugInfo.HasFlag(DebugInfoMode.Engine) && Rules.Plugin == null)
+					{
+						Result.bCreateDebugInfo = false;
+					}
+				}
+
+				if (Rules.Plugin != null && Rules.Target.DisableDebugInfoPlugins.Contains(Rules.Plugin.Name))
+				{
+					Result.bCreateDebugInfo = false;
+				}
+				else if (Rules.Target.DisableDebugInfoModules.Contains(Name))
+				{
+					Result.bCreateDebugInfo = false;
+				}
+			}
+		}
+
 		/// <summary>
 		/// Determine whether optimization should be enabled for a given target
 		/// </summary>
@@ -1822,6 +2030,7 @@ namespace UnrealBuildTool
 			Result.bCodeCoverage = Target.bCodeCoverage;
 			Result.bOptimizeCode = ShouldEnableOptimization(Rules.OptimizeCode, Target.Configuration, Rules.bTreatAsEngineModule, Result.bCodeCoverage);
 			Result.bUseRTTI |= Rules.bUseRTTI;
+			Result.bVcRemoveUnreferencedComdat &= Rules.bVcRemoveUnreferencedComdat;
 			Result.bEnableBufferSecurityChecks = Rules.bEnableBufferSecurityChecks;
 			Result.MinSourceFilesForUnityBuildOverride = Rules.MinSourceFilesForUnityBuildOverride;
 			Result.MinFilesUsingPrecompiledHeaderOverride = Rules.MinFilesUsingPrecompiledHeaderOverride;
@@ -1832,15 +2041,21 @@ namespace UnrealBuildTool
 			Result.bWarningsAsErrors |= Rules.bWarningsAsErrors;
 			Result.ShadowVariableWarningLevel = Rules.ShadowVariableWarningLevel;
 			Result.UnsafeTypeCastWarningLevel = Rules.UnsafeTypeCastWarningLevel;
-			Result.bDisableStaticAnalysis = Rules.bDisableStaticAnalysis;
+			Result.bDisableStaticAnalysis = Rules.bDisableStaticAnalysis || (Target.bStaticAnalyzerProjectOnly && Rules.bTreatAsEngineModule);
 			Result.bStaticAnalyzerExtensions = Rules.bStaticAnalyzerExtensions;
 			Result.StaticAnalyzerRulesets = Rules.StaticAnalyzerRulesets;
 			Result.StaticAnalyzerCheckers = Rules.StaticAnalyzerCheckers;
 			Result.StaticAnalyzerDisabledCheckers = Rules.StaticAnalyzerDisabledCheckers;
 			Result.StaticAnalyzerAdditionalCheckers = Rules.StaticAnalyzerAdditionalCheckers;
 			Result.bEnableUndefinedIdentifierWarnings = Rules.bEnableUndefinedIdentifierWarnings;
+			Result.bTreatAsEngineModule = Rules.bTreatAsEngineModule;
 			Result.IncludeOrderVersion = Rules.IncludeOrderVersion;
 			Result.DeterministicWarningLevel = Rules.DeterministicWarningLevel;
+			Result.bValidateFormatStrings = Rules.bValidateFormatStrings;
+			Result.bValidateInternalApi = Rules.bValidateInternalApi;
+			Result.bUseAutoRTFMCompiler = Target.bUseAutoRTFMCompiler;
+
+			CompileEnvironmentDebugInfoSettings(Target, Result);
 
 			// Only enable the AutoRTFM flag if we are using the AutoRTFM compiler
 			if (Target.bUseAutoRTFMCompiler)
@@ -1865,6 +2080,24 @@ namespace UnrealBuildTool
 					Rules.PCHUsage = ModuleRules.PCHUsageMode.NoSharedPCHs;
 				}
 				Result.OptimizationLevel = Rules.OptimizationLevel;
+			}
+
+			if (Result.FPSemantics != Rules.FPSemantics)
+			{
+				if (Rules.PrivatePCHHeaderFile == null)
+				{
+					if (Rules.PCHUsage != ModuleRules.PCHUsageMode.NoPCHs)
+					{
+						Logger.LogInformation($"  Overriding FPSemantics requires a private PCH. Disabling PCH usage for {Name}");
+						Rules.PCHUsage = ModuleRules.PCHUsageMode.NoPCHs;
+					}
+				}
+				else if (Rules.PCHUsage == ModuleRules.PCHUsageMode.UseSharedPCHs)
+				{
+					Logger.LogInformation($"  Overriding FPSemantics requires a private PCH. A private PCH exists but UseSharedPCHs was specified. Overriding to NoSharedPCHs for {Name}");
+					Rules.PCHUsage = ModuleRules.PCHUsageMode.NoSharedPCHs;
+				}
+				Result.FPSemantics = Rules.FPSemantics;
 			}
 
 			// If the module overrides the C++ language version, override it on the compile environment
@@ -1902,14 +2135,16 @@ namespace UnrealBuildTool
 			}
 
 			// Add a macro for when we're compiling an engine module, to enable additional compiler diagnostics through code.
-			if (Rules.bTreatAsEngineModule || Target.bWarnAboutMonolithicHeadersIncluded)
+			Result.Definitions.Add($"UE_IS_ENGINE_MODULE={(Rules.bTreatAsEngineModule || Target.bWarnAboutMonolithicHeadersIncluded ? "1" : "0")}");
+
+			if (!Rules.bTreatAsEngineModule)
 			{
-				Result.Definitions.Add("UE_IS_ENGINE_MODULE=1");
+				Result.Definitions.Add("DEPRECATED_FORGAME=DEPRECATED");
+				Result.Definitions.Add("UE_DEPRECATED_FORGAME=UE_DEPRECATED");
 			}
-			else
-			{
-				Result.Definitions.Add("UE_IS_ENGINE_MODULE=0");
-			}
+
+			Result.Definitions.Add($"UE_VALIDATE_FORMAT_STRINGS={(Rules.bValidateFormatStrings ? "1" : "0")}");
+			Result.Definitions.Add($"UE_VALIDATE_INTERNAL_API={(Rules.bValidateInternalApi ? "1" : "0")}");
 
 			Result.Definitions.AddRange(EngineIncludeOrderHelper.GetDeprecationDefines(Rules.IncludeOrderVersion));
 
@@ -1957,20 +2192,25 @@ namespace UnrealBuildTool
 			// Use the default optimization setting for
 			CompileEnvironment.bOptimizeCode = ShouldEnableOptimization(ModuleRules.CodeOptimization.Default, Target.Configuration, Rules.bTreatAsEngineModule, Rules.bCodeCoverage);
 			CompileEnvironment.bCodeCoverage = Rules.bCodeCoverage;
+			CompileEnvironment.bTreatAsEngineModule = Rules.bTreatAsEngineModule;
+			CompileEnvironment.bValidateFormatStrings = Rules.bValidateFormatStrings;
+			CompileEnvironment.bValidateInternalApi = Rules.bValidateInternalApi;
 
 			// Override compile environment
 			CompileEnvironment.bIsBuildingDLL = !Target.ShouldCompileMonolithic();
 			CompileEnvironment.bIsBuildingLibrary = false;
 
 			// Add a macro for when we're compiling an engine module, to enable additional compiler diagnostics through code.
-			if (Rules.bTreatAsEngineModule)
+			CompileEnvironment.Definitions.Add($"UE_IS_ENGINE_MODULE={(Rules.bTreatAsEngineModule ? "1" : "0")}");
+
+			if (!Rules.bTreatAsEngineModule)
 			{
-				CompileEnvironment.Definitions.Add("UE_IS_ENGINE_MODULE=1");
+				CompileEnvironment.Definitions.Add("DEPRECATED_FORGAME=DEPRECATED");
+				CompileEnvironment.Definitions.Add("UE_DEPRECATED_FORGAME=UE_DEPRECATED");
 			}
-			else
-			{
-				CompileEnvironment.Definitions.Add("UE_IS_ENGINE_MODULE=0");
-			}
+
+			CompileEnvironment.Definitions.Add($"UE_VALIDATE_FORMAT_STRINGS={(Rules.bValidateFormatStrings ? "1" : "0")}");
+			CompileEnvironment.Definitions.Add($"UE_VALIDATE_INTERNAL_API={(Rules.bValidateInternalApi ? "1" : "0")}");
 
 			CompileEnvironment.Definitions.AddRange(EngineIncludeOrderHelper.GetDeprecationDefines(Rules.IncludeOrderVersion));
 
@@ -2052,7 +2292,7 @@ namespace UnrealBuildTool
 		{
 			".h", ".ipsh",
 			".cpp", ".ixx", ".c", ".cc",
-			".m", ".mm",
+			".m", ".mm", ".swift",
 			".rc", ".ispc",
 		};
 
@@ -2111,10 +2351,20 @@ namespace UnrealBuildTool
 					SourceFiles.Add(InputFile);
 					InputFiles.CCFiles.Add(InputFile);
 				}
-				else if (InputFile.HasExtension(".m") || InputFile.HasExtension(".mm"))
+				else if (InputFile.HasExtension(".m"))
+				{
+					SourceFiles.Add(InputFile);
+					InputFiles.MFiles.Add(InputFile);
+				}
+				else if (InputFile.HasExtension(".mm"))
 				{
 					SourceFiles.Add(InputFile);
 					InputFiles.MMFiles.Add(InputFile);
+				}
+				else if (InputFile.HasExtension(".swift"))
+				{
+					SourceFiles.Add(InputFile);
+					InputFiles.SwiftFiles.Add(InputFile);
 				}
 				else if (InputFile.HasExtension(".rc"))
 				{
@@ -2146,6 +2396,25 @@ namespace UnrealBuildTool
 				return Array.Empty<FileItem>();
 			}
 			return Files;
+		}
+
+		/// <summary>
+		/// Gets a set of source files and headers for the given directory. Used to detect when the makefile is out of date due to a new directory
+		/// </summary>
+		/// <param name="Directory"></param>
+		/// <param name="Logger">Logger for output</param>
+		/// <returns>Array of source files and headers</returns>
+		public static FileItem[] GetSourceFilesAndHeaders(DirectoryItem Directory, ILogger Logger)
+		{
+			bool bIgnoreFileFound;
+			InputFileCollection InputFiles = new InputFileCollection();
+			List<FileItem> Files = new List<FileItem>(FindInputFilesFromDirectory(Directory, InputFiles, out bIgnoreFileFound, Logger));
+			if (bIgnoreFileFound)
+			{
+				return Array.Empty<FileItem>();
+			}
+			Files.AddRange(InputFiles.HeaderFiles);
+			return Files.ToArray();
 		}
 
 		/// <summary>

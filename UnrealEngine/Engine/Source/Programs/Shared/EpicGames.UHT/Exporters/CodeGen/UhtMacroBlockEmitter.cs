@@ -2,43 +2,41 @@
 
 using System;
 using System.Text;
+using EpicGames.UHT.Types;
 
 namespace EpicGames.UHT.Exporters.CodeGen
 {
 	internal struct UhtMacroBlockEmitter : IDisposable
 	{
 		private readonly StringBuilder _builder;
-		private readonly string _macroName;
-		private bool _bEmitted;
+		private readonly UhtDefineScopeNames _defineScopeNames;
+		private UhtDefineScope _current = UhtDefineScope.None;
 
-		public UhtMacroBlockEmitter(StringBuilder builder, string macroName, bool initialState = false)
+		public UhtMacroBlockEmitter(StringBuilder builder, UhtDefineScopeNames defineScopeNames, UhtDefineScope initialState)
 		{
 			_builder = builder;
-			_macroName = macroName;
-			_bEmitted = false;
+			_defineScopeNames = defineScopeNames;
 			Set(initialState);
 		}
 
-		public void Set(bool emit)
+		public void Set(UhtDefineScope defineScope)
 		{
-			if (_bEmitted == emit)
+			if (defineScope == UhtDefineScope.Invalid)
+			{
+				defineScope = UhtDefineScope.None;
+			}
+			if (_current == defineScope)
 			{
 				return;
 			}
-			_bEmitted = emit;
-			if (_bEmitted)
-			{
-				_builder.Append("#if ").Append(_macroName).Append("\r\n");
-			}
-			else
-			{
-				_builder.Append("#endif // ").Append(_macroName).Append("\r\n");
-			}
+			_builder.AppendEndIfPreprocessor(_current, _defineScopeNames);
+			_builder.AppendIfPreprocessor(defineScope, _defineScopeNames);
+			_current = defineScope;
 		}
 
 		public void Dispose()
 		{
-			Set(false);
+			Set(UhtDefineScope.None);
 		}
 	}
 }

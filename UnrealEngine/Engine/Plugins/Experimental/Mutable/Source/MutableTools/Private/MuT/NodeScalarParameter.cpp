@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeScalarParameter::Private::s_type =
-			NODE_TYPE( "ScalarParameter", NodeScalar::GetStaticType() );
+	FNodeType NodeScalarParameter::Private::s_type =
+			FNodeType( "ScalarParameter", NodeScalar::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -28,83 +28,16 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	int NodeScalarParameter::GetInputCount() const
+	void NodeScalarParameter::SetName( const FString& Name )
 	{
-        return m_pD->m_ranges.Num();
+		m_pD->m_name = Name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    Node* NodeScalarParameter::GetInputNode( int i ) const
+	void NodeScalarParameter::SetUid( const FString& Uid )
 	{
-        check( i<GetInputCount() );
-
-        int rangeCount = int(m_pD->m_ranges.Num());
-		if ( i < rangeCount )
-        {
-            return m_pD->m_ranges[i].get();
-        }
-        return nullptr;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeScalarParameter::SetInputNode( int i, NodePtr n )
-	{
-        check( i<GetInputCount() );
-        int rangeCount = int(m_pD->m_ranges.Num());
-        if ( i < rangeCount )
-        {
-            m_pD->m_ranges[i] = dynamic_cast<NodeRange*>(n.get());
-        }
-    }
-
-
-	//---------------------------------------------------------------------------------------------
-	const char* NodeScalarParameter::GetName() const
-	{
-		return m_pD->m_name.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeScalarParameter::SetName( const char* strName )
-	{
-		if ( strName )
-		{
-			m_pD->m_name = strName;
-		}
-		else
-		{
-			m_pD->m_name = "";
-		}
-	}
-
-
-	const char* NodeScalarParameter::GetUid() const
-	{
-		return m_pD->m_uid.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeScalarParameter::SetUid( const char* strUid )
-	{
-		if ( strUid )
-		{
-			m_pD->m_uid = strUid;
-		}
-		else
-		{
-			m_pD->m_uid = "";
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	float NodeScalarParameter::GetDefaultValue() const
-	{
-		return m_pD->m_defaultValue;
+		m_pD->m_uid = Uid;
 	}
 
 
@@ -112,20 +45,6 @@ namespace mu
 	void NodeScalarParameter::SetDefaultValue( float v )
 	{
 		m_pD->m_defaultValue = v;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	PARAMETER_DETAILED_TYPE NodeScalarParameter::GetDetailedType() const
-	{
-		return m_pD->m_detailedType;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeScalarParameter::SetDetailedType( PARAMETER_DETAILED_TYPE t )
-	{
-		m_pD->m_detailedType = t;
 	}
 
 

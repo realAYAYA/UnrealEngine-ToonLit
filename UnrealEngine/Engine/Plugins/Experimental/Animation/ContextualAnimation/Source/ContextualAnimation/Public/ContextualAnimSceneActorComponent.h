@@ -67,12 +67,16 @@ struct FContextualAnimRepBindingsData : public FContextualAnimRepData
 	FContextualAnimSceneBindings Bindings;
 
 	UPROPERTY()
+	TArray<FContextualAnimWarpPoint> WarpPoints;
+
+	UPROPERTY()
 	TArray<FContextualAnimWarpTarget> ExternalWarpTargets;
 
 	void Reset()
 	{
 		RepCounter = 0;
 		Bindings.Reset();
+		WarpPoints.Reset();
 		ExternalWarpTargets.Reset();
 	}
 };
@@ -92,6 +96,9 @@ struct FContextualAnimRepLateJoinData : public FContextualAnimRepData
 	FName Role = NAME_None;
 
 	UPROPERTY()
+	TArray<FContextualAnimWarpPoint> WarpPoints;
+
+	UPROPERTY()
 	TArray<FContextualAnimWarpTarget> ExternalWarpTargets;
 
 	void Reset()
@@ -99,6 +106,7 @@ struct FContextualAnimRepLateJoinData : public FContextualAnimRepData
 		RepCounter = 0;
 		Actor = nullptr;
 		Role = NAME_None;
+		WarpPoints.Reset();
 		ExternalWarpTargets.Reset();
 	}
 };
@@ -119,6 +127,9 @@ struct FContextualAnimRepTransitionData : public FContextualAnimRepData
 	uint8 AnimSetIdx = 0;
 
 	UPROPERTY()
+	TArray<FContextualAnimWarpPoint> WarpPoints;
+
+	UPROPERTY()
 	TArray<FContextualAnimWarpTarget> ExternalWarpTargets;
 
 	void Reset()
@@ -127,6 +138,7 @@ struct FContextualAnimRepTransitionData : public FContextualAnimRepData
 		Id = 0;
 		SectionIdx = 0;
 		AnimSetIdx = 0;
+		WarpPoints.Reset();
 		ExternalWarpTargets.Reset();
 	}
 };
@@ -159,8 +171,6 @@ public:
 
 	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 	virtual void GetLifetimeReplicatedProps(TArray< FLifetimeProperty >& OutLifetimeProps) const;
-	virtual void OnRegister() override;
-	virtual void OnUnregister() override;
 	virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const;
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 
@@ -168,10 +178,13 @@ public:
 
 	const FContextualAnimSceneBindings& GetBindings() const { return Bindings; };
 
+	UFUNCTION(BlueprintPure, Category = "Contextual Anim|Scene Actor Component")
+	bool IsInActiveScene() const;
+
 	/** Called when the actor owner of this component joins an scene */
 	UFUNCTION(BlueprintCallable, Category = "Contextual Anim|Scene Actor Component")
 	void OnJoinedScene(const FContextualAnimSceneBindings& InBindings);
-	
+
 	/** Called from the scene instance when the actor owner of this component leave an scene */
 	UFUNCTION(BlueprintCallable, Category = "Contextual Anim|Scene Actor Component")
 	void OnLeftScene();
@@ -201,6 +214,7 @@ public:
 	bool TransitionSingleActor(int32 SectionIdx, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
 	bool TransitionSingleActor(int32 SectionIdx, int32 AnimSetIdx, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
 
+	UFUNCTION(BlueprintCallable, Category = "Contextual Anim|Scene Actor Component")
 	void EarlyOutContextualAnimScene();
 
 	bool IsOwnerLocallyControlled() const;
@@ -240,6 +254,8 @@ protected:
 		bool bAllowPhysicsRotationDuringAnimRootMotion = false;
 		bool bUseControllerDesiredRotation = false;
 		bool bOrientRotationToMovement = false;
+		EMovementMode MovementMode = EMovementMode::MOVE_Walking;
+		TArray<TTuple<ECollisionChannel, ECollisionResponse>> CollisionResponses;
 	};
 	FCharacterProperties CharacterPropertiesBackup;
 
@@ -250,7 +266,7 @@ protected:
 	 * Used to update IK Targets before animation need them 
 	 */
 	UFUNCTION()
-	void OnTickPose(class USkinnedMeshComponent* SkinnedMeshComponent, float DeltaTime, bool bNeedsValidRootMotion);
+	virtual void OnTickPose(class USkinnedMeshComponent* SkinnedMeshComponent, float DeltaTime, bool bNeedsValidRootMotion);
 
 	UFUNCTION()
 	void OnRep_Bindings();
@@ -264,10 +280,14 @@ protected:
 	UFUNCTION()
 	void OnRep_TransitionData();
 
+	void SetIgnoreCollisionWithActor(AActor& Actor, bool bValue) const;
 	void SetIgnoreCollisionWithOtherActors(bool bValue) const;
+	
+	virtual void SetCollisionState(const FContextualAnimSceneBinding& Binding);
+	virtual void RestoreCollisionState(const FContextualAnimSceneBinding& Binding);
 
-	void SetMovementState(bool bRequireFlyingMode);
-	void RestoreMovementState(bool bRequireFlyingMode);
+	void SetMovementState(const FContextualAnimSceneBinding& Binding, EMovementMode DesiredMoveMode);
+	void RestoreMovementState(const FContextualAnimSceneBinding& Binding);
 
 	UFUNCTION()
 	void OnMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
@@ -278,13 +298,19 @@ protected:
 	// @TODO: These two functions are going to replace OnJoinedScene and OnLeftScene
 	// main different is that these new functions are taking care of animation playback too
 
-	void JoinScene(const FContextualAnimSceneBindings& InBindings, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+	void JoinScene(const FContextualAnimSceneBindings& InBindings, const TArray<FContextualAnimWarpPoint> WarpPoints, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+
+	virtual void OnJoinScene(const FContextualAnimSceneBinding& Binding);
 
 	void LeaveScene();
 
-	void LateJoinScene(const FContextualAnimSceneBindings& InBindings, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+	virtual bool CanLeaveScene(const FContextualAnimSceneBinding& Binding);
 
-	bool HandleLateJoin(AActor* Actor, FName Role, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+	virtual void OnLeaveScene(const FContextualAnimSceneBinding& Binding);
+
+	void LateJoinScene(const FContextualAnimSceneBindings& InBindings, int32 SectionIdx, int32 AnimSetIdx, const TArray<FContextualAnimWarpPoint>& WarpPoints, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+
+	virtual void OnLateJoinScene(const FContextualAnimSceneBinding& Binding, int32 SectionIdx, int32 AnimSetIdx);
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerStartContextualAnimScene(const FContextualAnimSceneBindings& InBindings);
@@ -292,18 +318,23 @@ protected:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerEarlyOutContextualAnimScene();
 
-	void PlayAnimation_Internal(UAnimSequenceBase* Animation, float StartTime, bool bSyncPlaybackTime);
+	virtual void PlayAnimation_Internal(UAnimSequenceBase* Animation, float StartTime, bool bSyncPlaybackTime);
 
-	void AddOrUpdateWarpTargets(int32 SectionIdx, int32 AnimSetIdx, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+	virtual void AddOrUpdateWarpTargets(int32 SectionIdx, int32 AnimSetIdx, const TArray<FContextualAnimWarpPoint>& WarpPoints, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
 
-	void HandleTransitionSelf(int32 NewSectionIdx, int32 NewAnimSetIdx, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+	void HandleTransitionSelf(int32 NewSectionIdx, int32 NewAnimSetIdx, const TArray<FContextualAnimWarpPoint>& WarpPoints, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
 
-	void HandleTransitionEveryone(int32 NewSectionIdx, int32 NewAnimSetIdx, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+	void HandleTransitionEveryone(int32 NewSectionIdx, int32 NewAnimSetIdx, const TArray<FContextualAnimWarpPoint>& WarpPoints, const TArray<FContextualAnimWarpTarget>& ExternalWarpTargets);
+
+	virtual void OnTransitionScene(const FContextualAnimSceneBinding& Binding, int32 SectionIdx, int32 AnimSetIdx);
+
+	virtual void OnTransitionSingleActor(const FContextualAnimSceneBinding& Binding, int32 SectionIdx, int32 AnimSetIdx);
+
+	void OtherActorLeftScene(AActor& Actor);
 
 private:
 
-	bool bRegistered = false;
-	bool bGuardAnimEvents = false;
+	TArray<TWeakObjectPtr<const UAnimMontage>, TInlineAllocator<5>> AnimsPlayed;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

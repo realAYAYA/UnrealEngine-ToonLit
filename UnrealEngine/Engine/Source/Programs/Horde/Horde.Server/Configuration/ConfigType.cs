@@ -12,12 +12,11 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
-using Microsoft.Extensions.Logging;
-
-using JsonObject = System.Text.Json.Nodes.JsonObject;
 
 namespace Horde.Server.Configuration
 {
+	using JsonObject = System.Text.Json.Nodes.JsonObject;
+
 	/// <summary>
 	/// Attribute used to mark <see cref="Uri"/> properties that include other config files
 	/// </summary>
@@ -48,6 +47,68 @@ namespace Horde.Server.Configuration
 	[AttributeUsage(AttributeTargets.Property)]
 	public sealed class ConfigRelativePathAttribute : Attribute
 	{
+	}
+
+	/// <summary>
+	/// Attribute used to mark <see cref="Uri"/> properties that are relative to their containing file
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Class)]
+	public sealed class ConfigMacroScopeAttribute : Attribute
+	{
+	}
+
+	/// <summary>
+	/// Declares a config macro
+	/// </summary>
+	public class ConfigMacro
+	{
+		/// <summary>
+		/// Name of the macro property
+		/// </summary>
+		public string Name { get; set; } = String.Empty;
+
+		/// <summary>
+		/// Value for the macro property
+		/// </summary>
+		public string Value { get; set; } = String.Empty;
+	}
+
+	/// <summary>
+	/// Possible methods for merging config values
+	/// </summary>
+	public enum ConfigMergeStrategy
+	{
+		/// <summary>
+		/// Default strategy; replace with the base value if the current value is null
+		/// </summary>
+		Default,
+
+		/// <summary>
+		/// Append the contents of this list to the base list
+		/// </summary>
+		Append,
+
+		/// <summary>
+		/// Recursively merge object properties
+		/// </summary>
+		Recursive,
+	}
+
+	/// <summary>
+	/// Attribute used to mark object properties whose child properties should be merged individually
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Property)]
+	public sealed class ConfigMergeStrategyAttribute : Attribute
+	{
+		/// <summary>
+		/// Strategy for merging this property
+		/// </summary>
+		public ConfigMergeStrategy Strategy { get; }
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		public ConfigMergeStrategyAttribute(ConfigMergeStrategy strategy) => Strategy = strategy;
 	}
 
 	/// <summary>
@@ -117,6 +178,134 @@ namespace Horde.Server.Configuration
 		}
 
 		/// <summary>
+		/// Merges any unassigned properties from the source object to the target
+		/// </summary>
+		/// <param name="objects">Set of objects to use for merging</param>
+		public static void MergeDefaults<TKey, TValue>(IEnumerable<(TKey Key, TKey? BaseKey, TValue Value)> objects)
+			where TKey : notnull
+			where TValue : class
+		{
+			// Convert the objects to a dictionary
+			List<(TKey Key, TKey BaseKey, TValue Value)> remainingObjects = new List<(TKey Key, TKey BaseKey, TValue Value)>();
+
+			// Find all the objects with no base
+			Dictionary<TKey, TValue> handledValues = new Dictionary<TKey, TValue>();
+			foreach ((TKey key, TKey? baseKey, TValue value) in objects)
+			{
+#pragma warning disable CA1508 // Avoid dead conditional code (false positive due to generics)
+				if (baseKey == null || Object.Equals(baseKey, default(TKey)))
+				{
+					handledValues.Add(key, value);
+				}
+				else
+				{
+					remainingObjects.Add((key, baseKey, value));
+				}
+#pragma warning restore CA1508 // Avoid dead conditional code
+			}
+
+			// Iteratively merge objects with their base
+			for (int lastRemainingObjectCount = 0; remainingObjects.Count != lastRemainingObjectCount;)
+			{
+				lastRemainingObjectCount = remainingObjects.Count;
+				for (int idx = remainingObjects.Count - 1; idx >= 0; idx--)
+				{
+					(TKey key, TKey baseKey, TValue value) = remainingObjects[idx];
+					if (handledValues.TryGetValue(baseKey, out TValue? baseValue))
+					{
+						MergeDefaults(value, baseValue);
+						handledValues.Add(key, value);
+						remainingObjects.RemoveAt(idx);
+					}
+				}
+			}
+
+			// Check we were able to merge everything
+			if (remainingObjects.Count > 0)
+			{
+				HashSet<TKey> validKeys = new HashSet<TKey>(objects.Select(x => x.Key));
+				foreach ((TKey key, TKey baseKey, TValue value) in remainingObjects)
+				{
+					if (!validKeys.Contains(baseKey!))
+					{
+						throw new Exception($"{key} has invalid/missing base {baseKey}");
+					}
+				}
+
+				List<TKey> circularKeys = objects.Where(x => !handledValues.ContainsKey(x.Key)).Select(x => x.Key).ToList();
+				if (circularKeys.Count == 1)
+				{
+					throw new Exception($"{circularKeys[0]} has a circular dependency on itself");
+				}
+				else
+				{
+					throw new Exception($"{StringUtils.FormatList(circularKeys.Select(x => x.ToString() ?? "(unknown)"))} have circular dependencies.");
+				}
+			}
+		}
+
+		/// <summary>
+		/// Merges any unassigned properties from the source object to the target
+		/// </summary>
+		/// <param name="target">Target object to merge into</param>
+		/// <param name="source">Source object to merge from</param>
+		public static void MergeDefaults<T>(T target, T source) where T : class
+		{
+			MergeDefaults(typeof(T), target, source);
+		}
+
+		/// <summary>
+		/// Merges any unassigned properties from the source object to the target
+		/// </summary>
+		/// <param name="type">Type of the referenced object</param>
+		/// <param name="target">Target object to merge into</param>
+		/// <param name="source">Source object to merge from</param>
+		public static void MergeDefaults(Type type, object target, object source)
+		{
+			foreach (PropertyInfo propertyInfo in type.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+			{
+				object? targetValue = propertyInfo.GetValue(target);
+				object? sourceValue = propertyInfo.GetValue(source);
+
+				ConfigMergeStrategy strategy = propertyInfo.GetCustomAttribute<ConfigMergeStrategyAttribute>()?.Strategy ?? ConfigMergeStrategy.Default;
+				switch (strategy)
+				{
+					case ConfigMergeStrategy.Default:
+						if (targetValue == null)
+						{
+							propertyInfo.SetValue(target, sourceValue);
+						}
+						break;
+					case ConfigMergeStrategy.Append:
+						if (targetValue == null)
+						{
+							propertyInfo.SetValue(target, sourceValue);
+						}
+						else if (sourceValue != null)
+						{
+							IList sourceList = (IList)sourceValue;
+							IList targetList = (IList)targetValue;
+							for (int idx = 0; idx < sourceList.Count; idx++)
+							{
+								targetList.Insert(idx, sourceList[idx]);
+							}
+						}
+						break;
+					case ConfigMergeStrategy.Recursive:
+						if (targetValue == null)
+						{
+							propertyInfo.SetValue(target, sourceValue);
+						}
+						else if (sourceValue != null)
+						{
+							MergeDefaults(propertyInfo.PropertyType, targetValue, sourceValue);
+						}
+						break;
+				}
+			}
+		}
+
+		/// <summary>
 		/// Reads an object from a particular URL
 		/// </summary>
 		/// <typeparam name="T">Type of object to read</typeparam>
@@ -180,8 +369,23 @@ namespace Horde.Server.Configuration
 			}
 			else
 			{
-				return new ValueTask<object?>(node.Deserialize(_type, context.JsonOptions));
+				return new ValueTask<object?>(Deserialize(node, _type, context));
 			}
+		}
+
+		public static object? Deserialize(JsonNode node, Type propertyType, ConfigContext context)
+		{
+			JsonElement element = node.GetValue<JsonElement>();
+			if (element.ValueKind == JsonValueKind.String)
+			{
+				string strValue = element.GetString()!;
+				string expandedStrValue = context.ExpandMacros(strValue);
+				if (!ReferenceEquals(strValue, expandedStrValue))
+				{
+					node = JsonValue.Create(expandedStrValue);
+				}
+			}
+			return JsonSerializer.Deserialize(node, propertyType, context.JsonOptions);
 		}
 	}
 
@@ -195,11 +399,15 @@ namespace Horde.Server.Configuration
 			public string Name { get; }
 			public PropertyInfo PropertyInfo { get; }
 
-			public Property(string name, PropertyInfo propertyInfo)
+			protected Property(string name, PropertyInfo propertyInfo)
 			{
 				Name = name;
 				PropertyInfo = propertyInfo;
 			}
+
+			public abstract bool HasMacros();
+
+			public abstract void ParseMacros(JsonNode jsonNode, ConfigContext context, Dictionary<string, string> macros);
 
 			public abstract bool HasIncludes();
 
@@ -215,6 +423,10 @@ namespace Horde.Server.Configuration
 			{
 			}
 
+			public override bool HasMacros() => false;
+
+			public override void ParseMacros(JsonNode jsonNode, ConfigContext context, Dictionary<string, string> macros) { }
+
 			public override bool HasIncludes() => PropertyInfo.GetCustomAttribute<ConfigIncludeAttribute>() != null;
 
 			public override Task MergeAsync(object target, JsonNode? node, ConfigContext context, CancellationToken cancellationToken)
@@ -222,13 +434,17 @@ namespace Horde.Server.Configuration
 				context.AddProperty(Name);
 
 				object? value;
-				if (PropertyInfo.GetCustomAttribute<ConfigRelativePathAttribute>() != null)
+				if (node == null)
+				{
+					value = null;
+				}
+				else if (PropertyInfo.GetCustomAttribute<ConfigRelativePathAttribute>() != null)
 				{
 					value = CombinePaths(context.CurrentFile, JsonSerializer.Deserialize<string>(node, context.JsonOptions) ?? String.Empty).AbsoluteUri;
 				}
 				else
 				{
-					value = JsonSerializer.Deserialize(node, PropertyInfo.PropertyType, context.JsonOptions);
+					value = ScalarConfigType.Deserialize(node, PropertyInfo.PropertyType, context);
 				}
 
 				if (!PropertyInfo.CanWrite)
@@ -245,7 +461,7 @@ namespace Horde.Server.Configuration
 			{
 				string? path = (string?)jsonNode;
 
-				Uri uri = ConfigType.CombinePaths(context.CurrentFile, path!);
+				Uri uri = ConfigType.CombinePaths(context.CurrentFile, context.ExpandMacros(path!));
 				IConfigFile file = await ReadFileAsync(uri, context, cancellationToken);
 
 				context.IncludeStack.Push(file);
@@ -293,12 +509,26 @@ namespace Horde.Server.Configuration
 				_elementType = elementType;
 			}
 
+			public override bool HasMacros() => _elementType is ClassConfigType elementType && elementType.HasMacros();
+
+			public override void ParseMacros(JsonNode jsonNode, ConfigContext context, Dictionary<string, string> macros)
+			{
+				if (jsonNode is JsonArray jsonArrayValue)
+				{
+					ClassConfigType classElementType = (ClassConfigType)_elementType;
+					foreach (JsonObject jsonObjectElement in jsonArrayValue.OfType<JsonObject>())
+					{
+						classElementType.ParseMacros(jsonObjectElement, context, macros);
+					}
+				}
+			}
+
 			public override bool HasIncludes() => _elementType is ClassConfigType elementType && elementType.HasIncludes();
 
 			public override async Task MergeAsync(object target, JsonNode? node, ConfigContext context, CancellationToken cancellationToken)
 			{
 				IList? list = (IList?)PropertyInfo.GetValue(target);
-				if(list == null)
+				if (list == null)
 				{
 					object value = Activator.CreateInstance(PropertyInfo.PropertyType)!;
 					PropertyInfo.SetValue(target, value);
@@ -340,6 +570,10 @@ namespace Horde.Server.Configuration
 				_elementType = elementType;
 			}
 
+			public override bool HasMacros() => false;
+
+			public override void ParseMacros(JsonNode jsonNode, ConfigContext context, Dictionary<string, string> macros) { }
+
 			public override bool HasIncludes() => _elementType is ClassConfigType elementType && elementType.HasIncludes();
 
 			public override async Task MergeAsync(object target, JsonNode? node, ConfigContext context, CancellationToken cancellationToken)
@@ -377,6 +611,55 @@ namespace Horde.Server.Configuration
 			}
 		}
 
+		class JsonNodeProperty : Property
+		{
+			public JsonNodeProperty(string name, PropertyInfo propertyInfo)
+				: base(name, propertyInfo)
+			{
+			}
+
+			public override bool HasMacros() => false;
+
+			public override void ParseMacros(JsonNode jsonNode, ConfigContext context, Dictionary<string, string> macros)
+			{
+			}
+
+			public override bool HasIncludes() => false;
+
+			public override Task MergeAsync(object target, JsonNode? node, ConfigContext context, CancellationToken cancellationToken)
+			{
+				JsonNode? current = (JsonNode?)PropertyInfo.GetValue(target)!;
+				PropertyInfo.SetValue(target, MergeNodes(current, node));
+				return Task.CompletedTask;
+			}
+
+			static JsonNode? MergeNodes(JsonNode? first, JsonNode? second)
+			{
+				if (second == null)
+				{
+					return first?.DeepClone();
+				}
+				else if (first is JsonObject firstObj && second is JsonObject secondObj)
+				{
+					JsonObject mergedObj = new JsonObject(firstObj);
+					foreach ((string childName, JsonNode? childNode) in secondObj)
+					{
+						mergedObj[childName] = MergeNodes(firstObj[childName], childNode);
+					}
+					return mergedObj;
+				}
+				else
+				{
+					return second.DeepClone();
+				}
+			}
+
+			public override Task ParseIncludesAsync(JsonNode jsonNode, object targetObject, ClassConfigType targetType, ConfigContext context, CancellationToken cancellationToken)
+			{
+				return Task.CompletedTask;
+			}
+		}
+
 		class ObjectProperty : Property
 		{
 			readonly ClassConfigType _classConfigType;
@@ -385,6 +668,16 @@ namespace Horde.Server.Configuration
 				: base(name, propertyInfo)
 			{
 				_classConfigType = classConfigType;
+			}
+
+			public override bool HasMacros() => _classConfigType.HasMacros();
+
+			public override void ParseMacros(JsonNode jsonNode, ConfigContext context, Dictionary<string, string> macros)
+			{
+				if (jsonNode is JsonObject obj)
+				{
+					_classConfigType.ParseMacros(obj, context, macros);
+				}
 			}
 
 			public override bool HasIncludes() => _classConfigType.HasIncludes();
@@ -419,7 +712,18 @@ namespace Horde.Server.Configuration
 				else
 				{
 					context.AddProperty(Name);
-					PropertyInfo.SetValue(target, JsonSerializer.Deserialize(node, PropertyInfo.PropertyType, context.JsonOptions));
+
+					object? value;
+					try
+					{
+						value = JsonSerializer.Deserialize(node, PropertyInfo.PropertyType, context.JsonOptions);
+					}
+					catch (Exception ex)
+					{
+						throw new ConfigException(context, $"Unable to parse property {context.CurrentScope}.{Name} from '{node?.ToJsonString(context.JsonOptions)}': {ex.Message}", ex);
+					}
+
+					PropertyInfo.SetValue(target, value);
 				}
 			}
 
@@ -435,7 +739,9 @@ namespace Horde.Server.Configuration
 		readonly Type _type;
 		readonly bool _isIncludeRoot;
 		readonly bool _isIncludeContext;
+		readonly bool _isMacroScope;
 		readonly Dictionary<string, Property> _nameToProperty = new Dictionary<string, Property>(StringComparer.OrdinalIgnoreCase);
+		readonly Dictionary<string, Property> _nameToMacroProperty = new Dictionary<string, Property>(StringComparer.OrdinalIgnoreCase);
 		readonly Dictionary<string, Property> _nameToIncludeProperty = new Dictionary<string, Property>(StringComparer.OrdinalIgnoreCase);
 		readonly Dictionary<string, ClassConfigType>? _knownTypes;
 
@@ -448,6 +754,7 @@ namespace Horde.Server.Configuration
 			_type = type;
 			_isIncludeRoot = type.GetCustomAttribute<ConfigIncludeRootAttribute>() != null;
 			_isIncludeContext = type.GetCustomAttribute<ConfigIncludeContextAttribute>() != null;
+			_isMacroScope = type.GetCustomAttribute<ConfigMacroScopeAttribute>() != null;
 
 			// Find all the direct include properties
 			PropertyInfo[] propertyInfos = type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.GetProperty);
@@ -460,9 +767,13 @@ namespace Horde.Server.Configuration
 				}
 			}
 
-			// Build a map of all the properties which can include other files
+			// Build a map of all the properties which can contain macros or include other files
 			foreach (Property property in _nameToProperty.Values)
 			{
+				if (property.HasMacros())
+				{
+					_nameToMacroProperty.Add(property.Name, property);
+				}
 				if (property.HasIncludes())
 				{
 					_nameToIncludeProperty.Add(property.Name, property);
@@ -484,6 +795,8 @@ namespace Horde.Server.Configuration
 				}
 			}
 		}
+
+		bool HasMacros() => !_isMacroScope && (_type == typeof(ConfigMacro) || _nameToMacroProperty.Count > 0);
 
 		bool HasIncludes() => !_isIncludeRoot && _nameToIncludeProperty.Count > 0;
 
@@ -523,6 +836,10 @@ namespace Horde.Server.Configuration
 			{
 				Type elementType = propertyType.GetGenericArguments()[1];
 				return new DictionaryProperty(name, propertyInfo, FindOrAddValueType(elementType));
+			}
+			else if (propertyType.IsAssignableTo(typeof(JsonNode)))
+			{
+				return new JsonNodeProperty(name, propertyInfo);
 			}
 			else
 			{
@@ -619,12 +936,48 @@ namespace Horde.Server.Configuration
 				await ParseIncludesAsync(obj, target, this, context, cancellationToken);
 			}
 
+			// Parse all the macros for this scope
+			if (_isMacroScope)
+			{
+				Dictionary<string, string> macros = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+				ParseMacros(obj, context, macros);
+				context.MacroScopes.Add(macros);
+			}
+
 			// Parse all the properties into this object
 			foreach ((string name, JsonNode? node) in obj)
 			{
 				if (_nameToProperty.TryGetValue(name, out Property? property))
 				{
 					await property.MergeAsync(target, node, context, cancellationToken);
+				}
+			}
+
+			// Parse all the macros for this scope
+			if (_isMacroScope)
+			{
+				context.MacroScopes.RemoveAt(context.MacroScopes.Count - 1);
+			}
+		}
+
+		void ParseMacros(JsonObject jsonObject, ConfigContext context, Dictionary<string, string> macros)
+		{
+			if (_type == typeof(ConfigMacro))
+			{
+				ConfigMacro? macro = JsonSerializer.Deserialize<ConfigMacro>(jsonObject, context.JsonOptions);
+				if (macro != null)
+				{
+					macros.Add(macro.Name, macro.Value);
+				}
+			}
+			else
+			{
+				foreach ((string name, JsonNode? node) in jsonObject)
+				{
+					if (node != null && _nameToMacroProperty.TryGetValue(name, out Property? property))
+					{
+						property.ParseMacros(node, context, macros);
+					}
 				}
 			}
 		}

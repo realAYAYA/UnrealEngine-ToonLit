@@ -25,50 +25,46 @@ void UInAppPurchaseCallbackProxy2::Trigger(APlayerController* PlayerController, 
 {
 	bFailedToEvenSubmit = true;
 	WorldPtr = nullptr;
-	APlayerState* PlayerState = nullptr;
-	if (PlayerController != nullptr)
+	if (PlayerController)
 	{
 		WorldPtr = PlayerController->GetWorld();
-		PlayerState = ToRawPtr(PlayerController->PlayerState);
-	}
-
-	if (PlayerState != nullptr)
-	{
-		if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
+		if (APlayerState* PlayerState = ToRawPtr(PlayerController->PlayerState))
 		{
-			PurchaseInterface = OnlineSub->GetPurchaseInterface();
-			if (PurchaseInterface.IsValid())
+			if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
 			{
-				bFailedToEvenSubmit = false;
+				PurchaseInterface = OnlineSub->GetPurchaseInterface();
+				if (PurchaseInterface.IsValid())
+				{
+					bFailedToEvenSubmit = false;
 
-				// Register the completion callback
-				InAppPurchaseCompleteDelegate = FOnPurchaseCheckoutComplete::CreateUObject(this, &UInAppPurchaseCallbackProxy2::OnCheckoutComplete);
+					// Register the completion callback
+					InAppPurchaseCompleteDelegate = FOnPurchaseCheckoutComplete::CreateUObject(this, &UInAppPurchaseCallbackProxy2::OnCheckoutComplete);
 
-				// Set-up, and trigger the transaction through the store interface
-				FPurchaseCheckoutRequest CheckoutRequest = FPurchaseCheckoutRequest();
-				CheckoutRequest.AddPurchaseOffer("", ProductRequest.ProductIdentifier, 1, ProductRequest.bIsConsumable);
-				check(PlayerController);
-				PurchasingPlayer = (*PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId()).AsShared();
-				PurchaseInterface->Checkout(*PurchasingPlayer, CheckoutRequest, InAppPurchaseCompleteDelegate);
+					// Set-up, and trigger the transaction through the store interface
+					FPurchaseCheckoutRequest CheckoutRequest = FPurchaseCheckoutRequest();
+					CheckoutRequest.AddPurchaseOffer("", ProductRequest.ProductIdentifier, 1, ProductRequest.bIsConsumable);
+					PurchasingPlayer = (*PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId()).AsShared();
+					PurchaseInterface->Checkout(*PurchasingPlayer, CheckoutRequest, InAppPurchaseCompleteDelegate);
+				}
+				else
+				{
+					FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - In-App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
+				}
 			}
 			else
 			{
-				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - In-App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
+				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
 			}
 		}
 		else
 		{
-			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
+			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid player state"), ELogVerbosity::Warning);
 		}
-	}
-	else
-	{
-		FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid player state"), ELogVerbosity::Warning);
-	}
 
-	if (bFailedToEvenSubmit && (PlayerController != NULL))
-	{
-		OnPurchaseComplete();
+		if (bFailedToEvenSubmit)
+		{
+			OnPurchaseComplete();
+		}
 	}
 }
 
@@ -113,42 +109,39 @@ void UInAppPurchaseCallbackProxy2::TriggerGetOwnedPurchases(APlayerController* P
 {
 	bFailedToEvenSubmit = true;
 	WorldPtr = nullptr;
-	APlayerState* PlayerState = nullptr;
-	if (PlayerController != nullptr)
+	if (PlayerController)
 	{
 		WorldPtr = PlayerController->GetWorld();
-		PlayerState = ToRawPtr(PlayerController->PlayerState);
-	}
-
-	if (PlayerState != nullptr)
-	{
-		if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
+		if (APlayerState* PlayerState = ToRawPtr(PlayerController->PlayerState))
 		{
-			PurchaseInterface = OnlineSub->GetPurchaseInterface();
-			if (PurchaseInterface.IsValid())
+			if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
 			{
-				check(PlayerController);
-				PurchasingPlayer = (*PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId()).AsShared();
-				PurchaseInterface->QueryReceipts(*PurchasingPlayer, false, FOnQueryReceiptsComplete::CreateUObject(this, &UInAppPurchaseCallbackProxy2::OnQueryReceiptsComplete));
+				PurchaseInterface = OnlineSub->GetPurchaseInterface();
+				if (PurchaseInterface.IsValid())
+				{
+					check(PlayerController);
+					PurchasingPlayer = (*PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId()).AsShared();
+					PurchaseInterface->QueryReceipts(*PurchasingPlayer, false, FOnQueryReceiptsComplete::CreateUObject(this, &UInAppPurchaseCallbackProxy2::OnQueryReceiptsComplete));
+				}
+				else
+				{
+					FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - In-App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
+				}
 			}
 			else
 			{
-				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - In-App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
+				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
 			}
 		}
 		else
 		{
-			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
+			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid player state"), ELogVerbosity::Warning);
 		}
-	}
-	else
-	{
-		FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseCallbackProxy::Trigger - Invalid player state"), ELogVerbosity::Warning);
-	}
 
-	if (bFailedToEvenSubmit && (PlayerController != NULL))
-	{
-		OnPurchaseComplete();
+		if (bFailedToEvenSubmit)
+		{
+			OnPurchaseComplete();
+		}
 	}
 }
 

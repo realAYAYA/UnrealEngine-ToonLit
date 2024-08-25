@@ -4,10 +4,11 @@
 
 #include "QuicIncludes.h"
 
+#include "Containers/StringConv.h"
 #include "HAL/FileManagerGeneric.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-
+#include "Templates/Tuple.h"
 
 namespace QuicCertificateUtils
 {
@@ -156,7 +157,7 @@ namespace QuicCertificateUtils
 	/**
 	 * Get the paths for self-signed certificate and key.
 	 */
-	TPair<FString, FString> GetSelfSignedPaths()
+	TTuple<FString, FString> GetSelfSignedPaths()
 	{
 		IPlatformFile& FileManager = FPlatformFileManager::Get().GetPlatformFile();
 
@@ -168,7 +169,7 @@ namespace QuicCertificateUtils
 		FString CertificateFile = CertificatesDir + TEXT("/transportcert.pem");
 		FString PrivateKeyFile = CertificatesDir + TEXT("/transportkey.key");
 
-		return TPair<FString, FString>(CertificateFile, PrivateKeyFile);
+		return TTuple<FString, FString>(CertificateFile, PrivateKeyFile);
 	}
 
 
@@ -193,7 +194,7 @@ namespace QuicCertificateUtils
 			return false;
 		}
 
-		TPair<FString, FString> Paths = GetSelfSignedPaths();
+		TTuple<FString, FString> Paths = GetSelfSignedPaths();
 
 		FString CertificateFile = Paths.Key;
 		FString PrivateKeyFile = Paths.Value;

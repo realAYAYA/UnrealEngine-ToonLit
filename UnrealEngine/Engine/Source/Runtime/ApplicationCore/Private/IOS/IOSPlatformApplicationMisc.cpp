@@ -25,7 +25,7 @@ static TAutoConsoleVariable<int32> CVarPhysicalScreenDensity(
 
 EAppReturnType::Type MessageBoxExtImpl( EAppMsgType::Type MsgType, const TCHAR* Text, const TCHAR* Caption )
 {
-#if PLATFORM_TVOS
+#if PLATFORM_TVOS || PLATFORM_VISIONOS
 	return FGenericPlatformMisc::MessageBoxExt(MsgType, Text, Caption);
 #else
 	NSString* CocoaText = (NSString*)FPlatformString::TCHARToCFString(Text);
@@ -284,7 +284,11 @@ EScreenPhysicalAccuracy FIOSPlatformApplicationMisc::ComputePhysicalScreenDensit
 
 	// If it hasn't been set, assume that the density is a multiple of the 
 	// native Content Scaling Factor.  Won't be exact, but should be close enough.
+#if PLATFORM_VISIONOS
+	const double NativeScale = 1.0;
+#else
 	const double NativeScale =[[UIScreen mainScreen] scale];
+#endif
 	ScreenDensity = FMath::TruncToInt(163 * NativeScale);
 
 	// look up the current scale factor

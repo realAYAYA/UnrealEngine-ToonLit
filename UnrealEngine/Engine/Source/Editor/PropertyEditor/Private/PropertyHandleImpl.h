@@ -430,6 +430,7 @@ public:
 	virtual TSharedRef<SWidget> CreatePropertyNameWidget( const FText& NameOverride, const FText& ToolTipOverride, bool bDisplayResetToDefault, bool bDisplayText, bool bDisplayThumbnail ) const override;
 	virtual TSharedRef<SWidget> CreatePropertyNameWidget(const FText& NameOverride, const FText& ToolTipOverride) const override;
 	virtual TSharedRef<SWidget> CreatePropertyValueWidget( bool bDisplayDefaultPropertyButtons = true ) const override;
+	virtual TSharedRef<SWidget> CreatePropertyValueWidgetWithCustomization( const IDetailsView* DetailsView ) override;
 	virtual TSharedRef<SWidget> CreateDefaultPropertyButtonWidgets() const override;
 	virtual void CreateDefaultPropertyCopyPasteActions(FUIAction& OutCopyAction, FUIAction& OutPasteAction) const override;
 	virtual bool IsEditConst() const override;
@@ -458,6 +459,7 @@ public:
 	virtual void AccessRawData( TArray<const void*>& RawData ) const override;
 	virtual uint32 GetNumOuterObjects() const override;
 	virtual void GetOuterObjects(TArray<UObject*>& OuterObjects) const override;
+	virtual void GetOuterStructs( TArray<TSharedPtr<FStructOnScope>>& OutStructs ) const override;
 	virtual const UClass* GetOuterBaseClass() const override;
 	virtual void ReplaceOuterObjects(const TArray<UObject*>& OuterObjects) override;
 	virtual void GetOuterPackages(TArray<UPackage*>& OuterPackages) const override;
@@ -465,6 +467,7 @@ public:
 	virtual TSharedPtr<IPropertyHandleArray> AsArray() override { return nullptr; }
 	virtual TSharedPtr<IPropertyHandleSet> AsSet() override { return nullptr; }
 	virtual TSharedPtr<IPropertyHandleMap> AsMap() override { return nullptr; }
+	virtual TSharedPtr<IPropertyHandleOptional> AsOptional() override { return nullptr; }
 	virtual TSharedPtr<IPropertyHandleStruct> AsStruct() override { return nullptr; }
 	virtual const FFieldClass* GetPropertyClass() const override;
 	virtual FProperty* GetProperty() const override;
@@ -511,9 +514,11 @@ public:
 	virtual FName GetDefaultCategoryName() const override;
 	virtual FText GetDefaultCategoryText() const override;
 	virtual FStringView GetPropertyPath() const override;
+	virtual TSharedPtr<FPropertyPath> CreateFPropertyPath() const override;
 	virtual int32 GetArrayIndex() const override;
 	virtual void RequestRebuildChildren() override;
 	virtual bool IsFavorite() const override;
+	virtual bool IsCategoryHandle() const override;
 
 	PROPERTYEDITOR_API TSharedPtr<FPropertyNode> GetPropertyNode() const;
 	void OnCustomResetToDefault(const FResetToDefaultOverride& OnCustomResetToDefault);
@@ -709,6 +714,20 @@ public:
 	virtual TSharedPtr<IPropertyHandleArray> AsArray() override;
 	virtual TSharedRef<IPropertyHandle> GetElement( int32 Index ) const override;
 	virtual FPropertyAccess::Result MoveElementTo(int32 OriginalIndex, int32 NewIndex) override;
+	virtual FPropertyAccess::Result SetValueFromFormattedString(const FString& InValue, EPropertyValueSetFlags::Type Flags = EPropertyValueSetFlags::DefaultFlags) override;
+	virtual bool IsEditable() const override;
+};
+
+class FPropertyHandleOptional : public FPropertyHandleBase, public IPropertyHandleOptional
+{
+public:
+	FPropertyHandleOptional(TSharedRef<FPropertyNode> PropertyNode, FNotifyHook* NotifyHook, TSharedPtr<IPropertyUtilities> PropertyUtilities);
+	static bool Supports(TSharedRef<FPropertyNode> PropertyNode);
+	/** IPropertyHandleOptional interface */
+	virtual FPropertyAccess::Result GetOptionalValue(FProperty*& OutValue) override;
+	virtual FPropertyAccess::Result SetOptionalValue(FProperty* NewValue) override;
+	virtual FPropertyAccess::Result ClearOptionalValue() override;
+	virtual TSharedPtr<IPropertyHandleOptional> AsOptional() override;
 	virtual bool IsEditable() const override;
 };
 
@@ -738,6 +757,7 @@ public:
 	virtual FPropertyAccess::Result DeleteItem(int32 Index) override;
 	virtual FPropertyAccess::Result GetNumElements(uint32& OutNumElements) override;
 	virtual TSharedRef<IPropertyHandle> GetElement(int32 Index) const override;
+	virtual FPropertyAccess::Result SetValueFromFormattedString(const FString& InValue, EPropertyValueSetFlags::Type Flags = EPropertyValueSetFlags::DefaultFlags) override;
 
 	virtual FDelegateHandle SetOnNumElementsChanged( const FSimpleDelegate& InOnNumElementsChanged ) override;
 	virtual void UnregisterOnNumElementsChanged(FDelegateHandle Handle) override;
@@ -760,6 +780,7 @@ public:
 	virtual FPropertyAccess::Result Empty() override;
 	virtual FPropertyAccess::Result DeleteItem(int32 Index) override;
 	virtual FPropertyAccess::Result GetNumElements(uint32& OutNumElements) override;
+	virtual TSharedRef<IPropertyHandle> GetElement(int32 Index) const override;
 	virtual FDelegateHandle SetOnNumElementsChanged( const FSimpleDelegate& InOnNumElementsChanged ) override;
 	virtual void UnregisterOnNumElementsChanged(FDelegateHandle Handle) override;
 	virtual bool HasDocumentation() override { return true; }

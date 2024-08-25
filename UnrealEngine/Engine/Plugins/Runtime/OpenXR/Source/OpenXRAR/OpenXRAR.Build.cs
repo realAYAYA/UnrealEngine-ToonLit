@@ -7,9 +7,6 @@ public class OpenXRAR : ModuleRules
 {
     public OpenXRAR(ReadOnlyTargetRules Target) : base(Target)
     {
-		var EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
-		PrivateIncludePaths.Add(Path.Combine(GetModuleDirectory("OpenXRHMD"), "Private"));
-
 		PublicDependencyModuleNames.AddRange(
             new string[]
             {

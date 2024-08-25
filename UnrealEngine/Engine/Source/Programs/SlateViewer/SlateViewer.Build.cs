@@ -44,7 +44,7 @@ public class SlateViewer : ModuleRules
 			PrivateDependencyModuleNames.Add("VisualStudioSourceCodeAccess");
 		}
 
-		if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			PrivateDependencyModuleNames.AddRange(
                 new string [] {

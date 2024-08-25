@@ -26,7 +26,7 @@ public class PhysicsControlEditor : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"Core"
+				"Core",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -35,21 +35,44 @@ public class PhysicsControlEditor : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AnimationCore",
+				"AnimationEditMode",
+				"AnimGraph",
+				"AnimGraphRuntime",
+				"ApplicationCore",
+				"BlueprintGraph",
+				"ComponentVisualizers",
+				"Core",
 				"CoreUObject",
 				"EditorFramework",
 				"Engine",
+				"InputCore",
+				"Persona",
+				"PhysicsControl",
+				"PhysicsControlUncookedOnly",
 				"Slate",
 				"SlateCore",
+				"ToolMenus",
+				"ToolWidgets",
 				"UnrealEd",
-				"Persona",
-				"AnimationEditMode",
-				"ComponentVisualizers",
-				"AnimGraph",
-				"PhysicsControl"
 			}
 			);
-		
-		
+
+		if (Target.bBuildEditor == true)
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+						"AnimationEditor",
+						"AnimGraph",
+						"BlueprintGraph",
+						"EditorFramework",
+						"Kismet",
+						"UnrealEd",
+				}
+			);
+		}
+
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]
 			{

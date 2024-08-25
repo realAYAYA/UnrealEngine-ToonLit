@@ -77,12 +77,14 @@ struct FOptionalVulkanDeviceExtensions
 			uint64 HasEXTShaderViewportIndexLayer : 1;
 			uint64 HasSeparateDepthStencilLayouts : 1;
 			uint64 HasEXTHostQueryReset : 1;
+			uint64 HasQcomRenderPassShaderResolve : 1;
 
 			// Promoted to 1.3
 			uint64 HasEXTTextureCompressionASTCHDR : 1;
 			uint64 HasKHRMaintenance4 : 1;
 			uint64 HasKHRSynchronization2 : 1;
 			uint64 HasEXTSubgroupSizeControl : 1;
+			uint64 HasEXTPipelineCreationCacheControl : 1;
 		};
 		uint64 Packed;
 	};
@@ -130,6 +132,8 @@ struct FOptionalVulkanDeviceExtensionProperties
 #endif // VULKAN_RHI_RAYTRACING
 
 	VkPhysicalDeviceFragmentShadingRateFeaturesKHR FragmentShadingRateFeatures;
+	VkPhysicalDeviceFragmentDensityMapFeaturesEXT FragmentDensityMapFeatures;
+	VkPhysicalDeviceFragmentDensityMap2FeaturesEXT FragmentDensityMap2Features;
 };
 
 class FVulkanPhysicalDeviceFeatures
@@ -243,6 +247,7 @@ public:
 	void InitGPU();
 
 	void CreateDevice(TArray<const ANSICHAR*>& DeviceLayers, FVulkanDeviceExtensionArray& UEExtensions);
+	void ChooseVariableRateShadingMethod();
 
 	void PrepareForDestroy();
 	void Destroy();
@@ -445,22 +450,6 @@ public:
 	void NotifyDeletedImage(VkImage Image, bool bRenderTarget);
 
 #if VULKAN_ENABLE_DRAW_MARKERS
-	inline PFN_vkCmdDebugMarkerBeginEXT GetCmdDbgMarkerBegin() const
-	{
-		return DebugMarkers.CmdBegin;
-	}
-
-	inline PFN_vkCmdDebugMarkerEndEXT GetCmdDbgMarkerEnd() const
-	{
-		return DebugMarkers.CmdEnd;
-	}
-
-	inline PFN_vkDebugMarkerSetObjectNameEXT GetDebugMarkerSetObjectName() const
-	{
-		return DebugMarkers.CmdSetObjectName;
-	}
-
-#if 0//VULKAN_SUPPORTS_DEBUG_UTILS
 	inline PFN_vkCmdBeginDebugUtilsLabelEXT GetCmdBeginDebugLabel() const
 	{
 		return DebugMarkers.CmdBeginDebugLabel;
@@ -475,8 +464,6 @@ public:
 	{
 		return DebugMarkers.SetDebugName;
 	}
-#endif
-
 #endif
 
 	void PrepareForCPURead();
@@ -534,11 +521,6 @@ public:
 	FVulkanTransientHeapCache& GetOrCreateTransientHeapCache();
 
 	const TArray<const ANSICHAR*>& GetDeviceExtensions() { return DeviceExtensions; }
-
-	inline void SetDebugMarkersFound()
-	{
-		bDebugMarkersFound = true;
-	}
 
 	// Performs a GPU and CPU timestamp at nearly the same time.
 	// This allows aligning GPU and CPU events on the same timeline in profile visualization.
@@ -652,15 +634,9 @@ private:
 #if VULKAN_ENABLE_DRAW_MARKERS
 	struct
 	{
-		PFN_vkCmdDebugMarkerBeginEXT		CmdBegin = nullptr;
-		PFN_vkCmdDebugMarkerEndEXT			CmdEnd = nullptr;
-		PFN_vkDebugMarkerSetObjectNameEXT	CmdSetObjectName = nullptr;
 		PFN_vkSetDebugUtilsObjectNameEXT	SetDebugName = nullptr;
-
-#if 0//VULKAN_SUPPORTS_DEBUG_UTILS
 		PFN_vkCmdBeginDebugUtilsLabelEXT	CmdBeginDebugLabel = nullptr;
 		PFN_vkCmdEndDebugUtilsLabelEXT		CmdEndDebugLabel = nullptr;
-#endif
 	} DebugMarkers;
 	friend class FVulkanCommandListContext;
 #endif

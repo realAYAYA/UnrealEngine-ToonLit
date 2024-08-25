@@ -1,12 +1,14 @@
 import { FocusZone, FocusZoneDirection, ScrollablePane, ScrollbarVisibility, Stack, Text } from "@fluentui/react";
 import { Link } from 'react-router-dom';
 import { useWindowSize } from "../base/utilities/hooks";
-import { detailClasses, hordeClasses } from "../styles/Styles";
+import { getHordeStyling } from "../styles/Styles";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { TopNav } from "./TopNav";
 
 
 const WelcomePanel: React.FC = () => {
+
+   const { hordeClasses } = getHordeStyling();
 
     return (<Stack style={{ width: 1390, marginLeft: 4 }}>
         <Stack className={hordeClasses.raised}>
@@ -25,6 +27,8 @@ const WelcomePanel: React.FC = () => {
 
 const BuildPanel: React.FC = () => {
 
+   const { hordeClasses } = getHordeStyling();
+
     return (<Stack style={{ width: 1390, marginLeft: 4 }}>
         <Stack className={hordeClasses.raised}>
             <Stack tokens={{ childrenGap: 12 }}>
@@ -40,6 +44,7 @@ const BuildPanel: React.FC = () => {
 
 const WelcomeViewInner: React.FC = () => {
 
+   const { detailClasses } = getHordeStyling();
 
     return <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: "#fffffff", margin: 0, paddingTop: 8 } }}>
         <Stack style={{ padding: 0 }} className={detailClasses.detailsRow}>
@@ -67,8 +72,9 @@ const WelcomeViewInner: React.FC = () => {
 export const WelcomeView: React.FC = () => {
 
     const windowSize = useWindowSize();
-
-    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+   const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+   
+   const { hordeClasses } = getHordeStyling();
 
     return (
         <Stack className={hordeClasses.horde}>

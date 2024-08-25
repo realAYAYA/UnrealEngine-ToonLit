@@ -29,6 +29,7 @@ URigVMEdGraphTemplateNodeSpawner* URigVMEdGraphTemplateNodeSpawner::CreateFromNo
 {
 	URigVMEdGraphTemplateNodeSpawner* NodeSpawner = NewObject<URigVMEdGraphTemplateNodeSpawner>(GetTransientPackage());
 	NodeSpawner->TemplateNotation = InNotation;
+	NodeSpawner->Template =	FRigVMRegistry::Get().FindTemplate(InNotation);
 	NodeSpawner->NodeClass = URigVMEdGraphNode::StaticClass();
 
 	FBlueprintActionUiSpec& MenuSignature = NodeSpawner->DefaultMenuSignature;
@@ -80,8 +81,7 @@ bool URigVMEdGraphTemplateNodeSpawner::IsTemplateNodeFilteredOut(FBlueprintActio
 		return true;
 	}
 
-	bool bFilteredOut = true;
-	for (UEdGraphPin* Pin : Filter.Context.Pins)
+	for (const UEdGraphPin* Pin : Filter.Context.Pins)
 	{
 		for (UEdGraph* Graph : Filter.Context.Graphs)
 		{
@@ -90,48 +90,41 @@ bool URigVMEdGraphTemplateNodeSpawner::IsTemplateNodeFilteredOut(FBlueprintActio
 				continue;
 			}
 
-			if (URigVMEdGraph* EdGraph = Cast<URigVMEdGraph>(Graph))
+			if (const URigVMEdGraph* EdGraph = Cast<URigVMEdGraph>(Graph))
 			{
-				if (URigVMGraph* RigGraph = EdGraph->GetModel())
+				if (const URigVMGraph* RigGraph = EdGraph->GetModel())
 				{
-					if (URigVMPin* ModelPin = RigGraph->FindPin(Pin->GetName()))
+					if (const URigVMPin* ModelPin = RigGraph->FindPin(Pin->GetName()))
 					{
-						if (URigVMTemplateNode* TemplateNode = Cast<URigVMTemplateNode>(ModelPin->GetNode()))
+						// Only filter when the source pin is not a wildcard
+						if (ModelPin->GetCPPType() != RigVMTypeUtils::GetWildCardCPPType())
 						{
-							// Only filter when the sourece pin is not a wildcard
-							if (ModelPin->GetCPPType() != RigVMTypeUtils::GetWildCardCPPType())
+							if (Template)
 							{
-								if (const FRigVMTemplate* Template = FRigVMRegistry::Get().FindTemplate(TemplateNotation))
+								if(ModelPin->IsExecuteContext())
 								{
-									if(ModelPin->IsExecuteContext())
+									FRigVMDispatchContext DispatchContext;
+									if(const URigVMDispatchNode* DispatchNode = Cast<URigVMDispatchNode>(ModelPin->GetNode()))
 									{
-										FRigVMDispatchContext DispatchContext;
-										if(const URigVMDispatchNode* DispatchNode = Cast<URigVMDispatchNode>(ModelPin->GetNode()))
-										{
-											DispatchContext = DispatchNode->GetDispatchContext();
-										}
+										DispatchContext = DispatchNode->GetDispatchContext();
+									}
 
-										if(Template->NumExecuteArguments(DispatchContext) > 0)
-										{
-											return false;
-										}
-									}
-									
-									for (int32 i=0; i<Template->NumArguments(); ++i)
+									if(Template->NumExecuteArguments(DispatchContext) > 0)
 									{
-										const FRigVMTemplateArgument* Argument = Template->GetArgument(i);
-										if (Template->ArgumentSupportsTypeIndex(Argument->GetName(), ModelPin->GetTypeIndex()))
-										{
-											return false;
-										}
+										return false;
 									}
-									return true;
-								}									
-							}
-							else
-							{
-								// TODO: given the filtered types of the source pin, provide only the nodes that will not break any connections
-							}
+								}
+								
+								for (int32 i=0; i<Template->NumArguments(); ++i)
+								{
+									const FRigVMTemplateArgument* Argument = Template->GetArgument(i);
+									if (Template->ArgumentSupportsTypeIndex(Argument->GetName(), ModelPin->GetTypeIndex()))
+									{
+										return false;
+									}
+								}
+								return true;
+							}									
 						}
 					}					
 				}
@@ -155,7 +148,7 @@ UEdGraphNode* URigVMEdGraphTemplateNodeSpawner::Invoke(UEdGraph* ParentGraph, FB
 {
 	URigVMEdGraphNode* NewNode = nullptr;
 
-	if(!TemplateNotation.IsNone())
+	if(Template)
 	{
 #if WITH_EDITOR
 		if (GEditor)
@@ -164,14 +157,61 @@ UEdGraphNode* URigVMEdGraphTemplateNodeSpawner::Invoke(UEdGraph* ParentGraph, FB
 		}
 #endif
 
+		bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
+		if(bIsTemplateNode)
+		{
+			const int32 NotationHash = (int32)GetTypeHash(Template->GetNotation());
+			const FString TemplateName = TEXT("RigVMTemplate_") + FString::FromInt(NotationHash);
+			FName Name = *TemplateName;
+
+			const FRigVMRegistry& Registry = FRigVMRegistry::Get();
+
+			TArray<FPinInfo> Pins;
+
+			static const FRigVMDispatchContext Context;
+			for (int32 Index = 0; Index < Template->NumExecuteArguments(Context); Index++)
+			{
+				const FRigVMExecuteArgument* Argument = Template->GetExecuteArgument(Index, Context);
+				check(Argument);
+				static UScriptStruct* ExecuteScriptStruct = FRigVMExecuteContext::StaticStruct();
+				static const FName ExecuteStructName = *ExecuteScriptStruct->GetStructCPPName();
+				Pins.Emplace(Argument->Name, Argument->Direction, ExecuteStructName, ExecuteScriptStruct);
+			}
+
+			for (int32 Index = 0; Index < Template->NumArguments(); Index++)
+			{
+				const FRigVMTemplateArgument* Argument = Template->GetArgument(Index);
+				check(Argument);
+
+				FName CPPType = RigVMTypeUtils::GetWildCardCPPTypeName();
+				UObject* CPPTypeObject = RigVMTypeUtils::GetWildCardCPPTypeObject();
+
+				if(Argument->IsSingleton())
+				{
+					const TRigVMTypeIndex TypeIndex = Argument->GetTypeIndex(0);
+					const FRigVMTemplateArgumentType& Type = Registry.GetType(TypeIndex);
+					CPPType = Type.CPPType;
+					CPPTypeObject = Type.CPPTypeObject;
+				}
+				
+				Pins.Emplace(Argument->GetName(), Argument->GetDirection(), CPPType, CPPTypeObject);
+			}
+			NewNode = SpawnTemplateNode(ParentGraph, Pins, Name);
+			if(NewNode)
+			{
+				NewNode->ModelNodePath = Template->GetNotation().ToString();
+			}
+			return NewNode;
+		}			
+
 		UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(ParentGraph);
-		NewNode = SpawnNode(ParentGraph, Blueprint, TemplateNotation, Location);
+		NewNode = SpawnNode(ParentGraph, Blueprint, Template, Location);
 	}
 
 	return NewNode;
 }
 
-URigVMEdGraphNode* URigVMEdGraphTemplateNodeSpawner::SpawnNode(UEdGraph* ParentGraph, UBlueprint* Blueprint, const FName& InNotation, FVector2D const Location)
+URigVMEdGraphNode* URigVMEdGraphTemplateNodeSpawner::SpawnNode(UEdGraph* ParentGraph, UBlueprint* Blueprint, const FRigVMTemplate* Template, FVector2D const Location)
 {
 	URigVMEdGraphNode* NewNode = nullptr;
 	URigVMBlueprint* RigBlueprint = Cast<URigVMBlueprint>(Blueprint);
@@ -179,31 +219,16 @@ URigVMEdGraphNode* URigVMEdGraphTemplateNodeSpawner::SpawnNode(UEdGraph* ParentG
 
 	if (RigBlueprint != nullptr && RigGraph != nullptr)
 	{
-		bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
-		bool const bIsUserFacingNode = !bIsTemplateNode;
+		const FName Name = FRigVMBlueprintUtils::ValidateName(RigBlueprint, Template->GetName().ToString());
+		URigVMController* Controller = RigBlueprint->GetController(ParentGraph);
 
-		const FRigVMTemplate* Template = FRigVMRegistry::Get().FindTemplate(InNotation);
-		if (Template == nullptr)
-		{
-			return nullptr;
-		}
+		Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
 
-		const int32 NotationHash = (int32)GetTypeHash(InNotation);
-		const FString TemplateName = TEXT("RigVMTemplate_") + FString::FromInt(NotationHash);
-
-		FName Name = bIsTemplateNode ? *TemplateName : FRigVMBlueprintUtils::ValidateName(RigBlueprint, Template->GetName().ToString());
-		URigVMController* Controller = bIsTemplateNode ? RigGraph->GetTemplateController() : RigBlueprint->GetController(ParentGraph);
-
-		if (!bIsTemplateNode)
-		{
-			Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
-		}
-
-		if (URigVMTemplateNode* ModelNode = Controller->AddTemplateNode(InNotation, Location, Name.ToString(), bIsUserFacingNode, !bIsTemplateNode))
+		if (URigVMTemplateNode* ModelNode = Controller->AddTemplateNode(Template->GetNotation(), Location, Name.ToString(), true, true))
 		{
 			NewNode = Cast<URigVMEdGraphNode>(RigGraph->FindNodeForModelNodeName(ModelNode->GetFName()));
 
-			if (NewNode && bIsUserFacingNode)
+			if (NewNode)
 			{
 				Controller->ClearNodeSelection(true);
 				Controller->SelectNode(ModelNode, true, true);
@@ -211,25 +236,11 @@ URigVMEdGraphNode* URigVMEdGraphTemplateNodeSpawner::SpawnNode(UEdGraph* ParentG
 				URigVMEdGraphUnitNodeSpawner::HookupMutableNode(ModelNode, RigBlueprint);
 			}
 
-			if (bIsUserFacingNode)
-			{
-				Controller->CloseUndoBracket();
-			}
-			else
-			{
-				if(NewNode)
-				{
-					NewNode->ModelNodePath = Template->GetNotation().ToString();
-				}
-				Controller->RemoveNode(ModelNode, false);
-			}
+			Controller->CloseUndoBracket();
 		}
 		else
 		{
-			if (bIsUserFacingNode)
-			{
-				Controller->CancelUndoBracket();
-			}
+			Controller->CancelUndoBracket();
 		}
 	}
 	return NewNode;

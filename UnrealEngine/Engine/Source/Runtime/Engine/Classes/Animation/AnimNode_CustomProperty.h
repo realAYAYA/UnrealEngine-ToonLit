@@ -53,8 +53,11 @@ public:
 	// FAnimNode_Base interface
 	ENGINE_API virtual void OnInitializeAnimInstance(const FAnimInstanceProxy* InProxy, const UAnimInstance* InAnimInstance) override;
 	virtual bool NeedsOnInitializeAnimInstance() const override { return true; }
+
+	// Handle object reinstancing in editor
+	ENGINE_API void HandleObjectsReinstanced(const TMap<UObject*, UObject*>& OldToNewInstanceMap);
 #endif
-	
+
 protected:
 	/** List of source properties to use, 1-1 with Dest names below, built by the compiler */
 	UPROPERTY(meta=(BlueprintCompilerGeneratedDefaults))
@@ -92,10 +95,6 @@ protected:
 	 * replacement.
 	 */
 	ENGINE_API virtual void HandleObjectsReinstanced_Impl(UObject* InSourceObject, UObject* InTargetObject, const TMap<UObject*, UObject*>& OldToNewInstanceMap);
-	
-private:
-	// Handle object reinstancing in editor
-	ENGINE_API void HandleObjectsReinstanced(const TMap<UObject*, UObject*>& OldToNewInstanceMap);
 #endif // WITH_EDITOR
 
 #if WITH_EDITORONLY_DATA
@@ -113,6 +112,8 @@ protected:
 #endif // ANIMNODE_STATS_VERBOSE
 
 	friend class UAnimGraphNode_CustomProperty;
+	friend class UAnimInstance;
+	friend class UControlRigLayerInstance;
 };
 
 template<>

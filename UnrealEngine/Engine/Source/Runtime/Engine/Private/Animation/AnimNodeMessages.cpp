@@ -150,7 +150,12 @@ void FMessageStack::BottomMessage(FName InMessageType, TFunctionRef<void(IGraphM
 
 bool FMessageStack::HasMessage(FName InMessageType) const
 {
-	return MessageStacks.Contains(InMessageType);
+	if (const FMessageStackEntry* StackEntryPtr = MessageStacks.Find(InMessageType))
+	{
+		return !StackEntryPtr->IsEmpty();
+	}
+
+	return false;
 }
 
 void FMessageStack::PushTag(FAnimNode_Base* InNode, const UScriptStruct* InStruct, FName InTag)

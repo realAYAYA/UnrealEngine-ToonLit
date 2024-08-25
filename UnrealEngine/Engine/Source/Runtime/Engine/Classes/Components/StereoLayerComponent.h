@@ -45,6 +45,16 @@ enum EStereoLayerShape : int
 	SLSH_MAX,
 };
 
+UCLASS()
+class UEditorFlagCollector : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	UFUNCTION()
+	static TArray<FName> GetFlagNames();
+};
+
 UCLASS(EditInlineNew, Abstract, BlueprintType, CollapseCategories, MinimalAPI)
 class UStereoLayerShape : public UObject
 {
@@ -264,6 +274,7 @@ class UStereoLayerComponent : public USceneComponent
 public:
 
 	//~ Begin UObject Interface
+	ENGINE_API virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	ENGINE_API virtual void OnUnregister() override;
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
 	ENGINE_API virtual void PostLoad() override;
@@ -371,6 +382,10 @@ public:
 	/** True if the quad should internally set it's Y value based on the set texture's dimensions */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "StereoLayer")
 	uint32 bQuadPreserveTextureRatio : 1;
+
+	/** Additional flags not included in IStereoLayers::ELayerFlags */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "StereoLayer", Meta=(GetOptions= "EditorFlagCollector.GetFlagNames"))
+	TArray<FName> AdditionalFlags;
 
 protected:
 	/** Size of the rendered stereo layer quad **/

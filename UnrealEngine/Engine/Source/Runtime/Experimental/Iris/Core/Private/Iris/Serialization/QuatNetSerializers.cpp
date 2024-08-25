@@ -89,7 +89,7 @@ inline typename FUnitQuatNetSerializerBase<T>::FloatType FUnitQuatNetSerializerB
 template<typename T>
 T FUnitQuatNetSerializerBase<T>::GetUnitQuat(const T& Value)
 {
-	constexpr FloatType SmallNumber = (sizeof(FloatType) == 4 ? SMALL_NUMBER : DOUBLE_SMALL_NUMBER);
+	constexpr FloatType SmallNumber = FloatType(UE_SMALL_NUMBER);
 	T UnitQuat = Value;
 	if (UnitQuat.SizeSquared() <= SmallNumber)
 	{

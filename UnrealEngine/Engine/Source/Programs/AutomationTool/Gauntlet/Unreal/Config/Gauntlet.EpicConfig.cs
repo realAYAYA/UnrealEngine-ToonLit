@@ -9,6 +9,7 @@ using System.Linq;
 using System.Text.Json.Serialization;
 using System.Collections.Generic;
 using UnrealBuildTool;
+using UnrealBuildBase;
 
 namespace EpicConfig
 {
@@ -76,7 +77,7 @@ namespace EpicConfig
 		{
 			return new List<string>() {
 				BuildID.ToString(),
-				Environment.MachineName,
+				Unreal.MachineName,
 				DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
 				Context.GetProperty("Platform").ToString(),
 				Context.GetProperty("Configuration").ToString(),

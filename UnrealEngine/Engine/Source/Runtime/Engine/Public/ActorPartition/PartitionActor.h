@@ -41,7 +41,11 @@ public:
 	UPROPERTY()
 	uint32 GridSize;
 
-	static ENGINE_API FString GetActorName(UWorld* World, const UClass* Class, const FGuid& GridGuid, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize, int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ, uint32 DataLayerEditorContext);
+	UE_DEPRECATED(5.4, "Use version that takes FActorPartitionIdentifier as second parameter")
+	static ENGINE_API FString GetActorName(UWorld* World, const UClass* Class, const FGuid& GridGuid, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize, int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ, uint32 ContextHash);
+
+	static ENGINE_API FString GetActorName(UWorld* World, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize, int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ);
+	static ENGINE_API void SetLabelForActor(APartitionActor* PartitionActor, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize, int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ);
 #endif
 };
 

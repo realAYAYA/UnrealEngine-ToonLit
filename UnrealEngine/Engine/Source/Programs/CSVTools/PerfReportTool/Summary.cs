@@ -8,6 +8,7 @@ using CSVStats;
 using PerfReportTool;
 using System.Reflection;
 using System.Drawing;
+using System.Text;
 
 namespace PerfSummaries
 {
@@ -27,11 +28,11 @@ namespace PerfSummaries
 			}
 		}
 
-		public static Summary Create(string summaryTypeName, XElement summaryXmlElement, string baseXmlDirectory)
+		public static Summary Create(string summaryTypeName, XElement summaryXmlElement, XmlVariableMappings vars, string baseXmlDirectory)
 		{
 			if ( summaryNameLookup.TryGetValue(summaryTypeName, out System.Type summaryType ) )
 			{
-				object[] constructArgs = new object[2] { summaryXmlElement, baseXmlDirectory };
+				object[] constructArgs = new object[3] { summaryXmlElement, vars, baseXmlDirectory };
 				return (Summary)Activator.CreateInstance(summaryType, constructArgs);
 			}
 			throw new Exception("Summary type " + summaryType + " not found!");
@@ -79,10 +80,12 @@ namespace PerfSummaries
             StatThresholds = new Dictionary<string, ColourThresholdList>();
 
         }
-        public virtual void WriteSummaryData(System.IO.StreamWriter htmlFile, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
-        { }
+		public virtual HtmlSection WriteSummaryData(bool bWriteHtml, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
+		{
+			return null;
+		}
 
-        public virtual void PostInit(ReportTypeInfo reportTypeInfo, CsvStats csvStats)
+		public virtual void PostInit(ReportTypeInfo reportTypeInfo, CsvStats csvStats)
         {
 			// Resolve wildcards and remove duplicates
 			stats = csvStats.GetStatNamesMatchingStringList(stats.ToArray());
@@ -90,23 +93,28 @@ namespace PerfSummaries
 
 		public abstract string GetName();
 
-        public void ReadStatsFromXML(XElement element)
+        public void ReadStatsFromXML(XElement element, XmlVariableMappings vars)
         {
-			useUnstrippedCsvStats = element.GetSafeAttibute<bool>("useUnstrippedCsvStats", false);
+			if (element == null) 
+			{
+				return;
+			}
+			useUnstrippedCsvStats = element.GetSafeAttribute<bool>(vars, "useUnstrippedCsvStats", false);
+			bStartCollapsed = element.GetSafeAttribute<bool>(vars, "collapsed", false);
 			XElement statsElement = element.Element("stats");
 			if (statsElement != null)
 			{
-				stats = statsElement.Value.Split(',').ToList();
+				stats = statsElement.GetValue(vars).Split(',').ToList();
 			}
             foreach (XElement child in element.Elements())
             {
                 if (child.Name == "capture")
                 {
-                    string captureName = child.Attribute("name").Value;
-                    string captureStart = child.Attribute("startEvent").Value;
-                    string captureEnd = child.Attribute("endEvent").Value;
-                    bool incFirstFrame = Convert.ToBoolean(child.Attribute("includeFirstFrame").Value);
-                    bool incLastFrame = Convert.ToBoolean(child.Attribute("includeLastFrame").Value);
+                    string captureName = child.GetRequiredAttribute<string>(vars, "name");
+                    string captureStart = child.GetRequiredAttribute<string>(vars, "startEvent");
+                    string captureEnd = child.GetRequiredAttribute<string>(vars, "endEvent");
+					bool incFirstFrame = child.GetSafeAttribute<bool>(vars, "includeFirstFrame", true);
+					bool incLastFrame = child.GetSafeAttribute<bool>(vars, "includeLastFrame", true);
                     CaptureRange newRange = new CaptureRange(captureName, captureStart, captureEnd);
                     newRange.includeFirstFrame = incFirstFrame;
                     newRange.includeLastFrame = incLastFrame;
@@ -118,13 +126,17 @@ namespace PerfSummaries
                     {
                         continue;
                     }
-                    string statName = child.Attribute("stat").Value;
-                    string[] hitchThresholdsStrList = child.Value.Split(',');
+                    string statName = child.GetRequiredAttribute<string>(vars, "stat");
+					string hitchThresholdsStr = child.GetValue(vars);
+					if (hitchThresholdsStr == "")
+					{
+						continue;
+					}
+                    string[] hitchThresholdsStrList = hitchThresholdsStr.Split(',');
 					ColourThresholdList HitchThresholds = new ColourThresholdList();
 					for (int i = 0; i < hitchThresholdsStrList.Length; i++)
                     {
 						string hitchThresholdStr = hitchThresholdsStrList[i];
-						double thresholdValue = 0.0;
 						string hitchThresholdNumStr = hitchThresholdStr;
 						Colour thresholdColour = null;
 
@@ -133,13 +145,13 @@ namespace PerfSummaries
 						{
 							hitchThresholdNumStr = hitchThresholdStr.Substring(0, openBracketIndex);
 							int closeBracketIndex = hitchThresholdStr.IndexOf(')');
-							if (closeBracketIndex > openBracketIndex)
+							if (closeBracketIndex > openBracketIndex) 
 							{
 								string colourString = hitchThresholdStr.Substring(openBracketIndex+1, closeBracketIndex - openBracketIndex-1);
 								thresholdColour = new Colour(colourString);
 							}
 						}
-						thresholdValue = Convert.ToDouble(hitchThresholdNumStr, System.Globalization.CultureInfo.InvariantCulture);
+						double thresholdValue = Convert.ToDouble(hitchThresholdNumStr, System.Globalization.CultureInfo.InvariantCulture);
 
 						HitchThresholds.Add(new ThresholdInfo(thresholdValue, thresholdColour));
                     }
@@ -196,14 +208,14 @@ namespace PerfSummaries
             return uniqueStats.ToArray();
         }
 
-		protected ColourThresholdList ReadColourThresholdListXML(XElement colourThresholdEl)
+		protected ColourThresholdList ReadColourThresholdListXML(XElement colourThresholdEl, XmlVariableMappings vars)
 		{
-			return ColourThresholdList.ReadColourThresholdListXML(colourThresholdEl);
+			return ColourThresholdList.ReadColourThresholdListXML(colourThresholdEl, vars);
 		}
 
-		protected double [] ReadColourThresholdsXML(XElement colourThresholdEl)
+		protected double [] ReadColourThresholdsXML(XElement colourThresholdEl, XmlVariableMappings vars)
 		{
-			return ColourThresholdList.ReadColourThresholdsXML(colourThresholdEl);
+			return ColourThresholdList.ReadColourThresholdsXML(colourThresholdEl, vars);
 		}
 
         public string GetStatThresholdColour(string StatToUse, double value)
@@ -229,11 +241,94 @@ namespace PerfSummaries
         public List<string> stats;
         public Dictionary<string, ColourThresholdList> StatThresholds;
 		public bool useUnstrippedCsvStats;
+		public bool bStartCollapsed;
     };
 
 
 
+	class HtmlSection
+	{
+		public HtmlSection(string titleIn, bool bStartCollapsedIn, string elementIdIn = null, int headingLevel=2)
+		{
+			title = titleIn;
+			bStartCollapsed = bStartCollapsedIn;
+			elementId = elementIdIn;
+			headingType = "h" + headingLevel.ToString();
+		}
 
+		public void WriteLine(string text) 
+		{
+			FlushPendingLine();
+			lines.Add(text);
+		}
+		public void Write(string text)
+		{
+			pendingLine.Append(text);
+		}
+
+		public void WriteToFile( System.IO.StreamWriter htmlFile )
+		{
+			FlushPendingLine();
+			BeginHtmlSection(htmlFile);
+			foreach (string line in lines)
+			{
+				htmlFile.WriteLine(line);
+			}
+			EndHtmlSection(htmlFile);
+		}
+
+		private void FlushPendingLine()
+		{
+			if (pendingLine.Length > 0)
+			{
+				lines.Add(pendingLine.ToString());
+				pendingLine.Clear();
+			}
+		}
+
+		protected void BeginHtmlSection(System.IO.StreamWriter htmlFile)
+		{
+			if (htmlFile != null)
+			{
+				string headingClass = "collapsibleHeading";
+				string divClass = "collapsibleSection";
+
+				if (!bStartCollapsed)
+				{
+					headingClass += " expanded";
+					divClass += " expanded";
+				}
+
+				string extraHeadingAttributes = "";
+				if (elementId != null)
+				{
+					htmlFile.WriteLine("<a name='" + elementId + "'></a>");
+					extraHeadingAttributes = "id='" + elementId + "'";
+				}
+				htmlFile.WriteLine("<"+ headingType + " class='" + headingClass + "' "+ extraHeadingAttributes + ">" + title + "</"+ headingType + ">");
+				htmlFile.WriteLine("<div class='" + divClass + "'>");
+				htmlFile.WriteLine("<div class='collapsibleSectionInner'>");
+			}
+		}
+
+		protected void EndHtmlSection(System.IO.StreamWriter htmlFile)
+		{
+			if (htmlFile != null)
+			{
+				htmlFile.WriteLine("<br>");
+				htmlFile.WriteLine("</div>");
+				htmlFile.WriteLine("</div>");
+			}
+		}
+
+
+		string title;
+		StringBuilder pendingLine = new StringBuilder();
+		List<string> lines = new List<string>();
+		bool bStartCollapsed;
+		string elementId;
+		string headingType;
+	};
 
 
 

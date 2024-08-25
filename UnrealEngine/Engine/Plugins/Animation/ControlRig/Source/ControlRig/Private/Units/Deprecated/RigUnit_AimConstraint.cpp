@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "RigUnit_AimConstraint.h"
+#include "Units/Deprecated/RigUnit_AimConstraint.h"
 #include "Units/RigUnitContext.h"
 #include "HelperUtil.h"
 #include "AnimationCoreLibrary.h"

@@ -5,9 +5,6 @@
 #include "CoreMinimal.h"
 #include "BaseTools/MeshSurfacePointTool.h"
 #include "InteractiveTool.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/EngineTypes.h"
-#endif
 #include "Engine/HitResult.h"
 #include "BaseBrushTool.generated.h"
 
@@ -175,6 +172,7 @@ public:
 	INTERACTIVETOOLSFRAMEWORK_API virtual void OnBeginDrag(const FRay& Ray) override;
 	INTERACTIVETOOLSFRAMEWORK_API virtual void OnUpdateDrag(const FRay& Ray) override;
 	INTERACTIVETOOLSFRAMEWORK_API virtual void OnEndDrag(const FRay& Ray) override;
+	INTERACTIVETOOLSFRAMEWORK_API virtual void OnCancelDrag() override;
 	INTERACTIVETOOLSFRAMEWORK_API virtual bool OnUpdateHover(const FInputDeviceRay& DevicePos) override;
 
 public:

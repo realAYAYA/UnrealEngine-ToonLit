@@ -11,13 +11,14 @@
 #include "Engine/EngineBaseTypes.h"
 #include "Templates/SharedPointer.h"
 
-#include "Actor.h"
+#include "GameFramework/Actor.h"
+#include "Engine/ActorInstanceManagerInterface.h"
 
 #include "LightWeightInstanceManager.generated.h"
 
 
+class AActor;
 struct FActorSpawnParameters;
-//DECLARE_DYNAMIC_DELEGATE_RetVal_OneParam(FActorInstanceHandle, FOnActorReady, FActorInstanceHandle, InHandle);
 
 // Used for initializing light weight instances.
 struct FLWIData
@@ -26,31 +27,8 @@ struct FLWIData
 };
 
 
-// Base class for interfaces for each handle
-UCLASS(Experimental, MinimalAPI)
-class UActorInstanceHandleInterface : public UObject
-{
-	GENERATED_UCLASS_BODY()
-
-	friend class ALightWeightInstanceManager;
-
-	// Returns a pointer to the actor for this handle. This will create a new copy of the actor if it was being stored as a light weight instance.
-	template<typename T>
-	T* FetchActor();
-
-protected:
-
-	// Handle to the actor or instance that is associated with this interface
-	FActorInstanceHandle Handle;
-
-	// A cached pointer to the manager associated with Handle so we don't need to find it every time
-	ALightWeightInstanceManager* Manager;
-};
-
-
-
 UCLASS(BlueprintType, Blueprintable, Experimental, MinimalAPI)
-class ALightWeightInstanceManager : public AActor
+class ALightWeightInstanceManager : public AActor, public IActorInstanceManagerInterface
 {
 	GENERATED_UCLASS_BODY()
 
@@ -69,9 +47,6 @@ public:
 	// Returns the rotation of the instance specified by Handle
 	ENGINE_API FRotator GetRotation(const FActorInstanceHandle& Handle) const;
 
-	// Returns the transform of the instance specified by Handle
-	ENGINE_API FTransform GetTransform(const FActorInstanceHandle& Handle) const;
-
 	// Returns the name of the instance specified by Handle
 	ENGINE_API FString GetName(const FActorInstanceHandle& Handle) const;
 
@@ -81,29 +56,17 @@ public:
 	// Returns true if this manager is capable of representing objects of type OtherClass
 	ENGINE_API bool DoesAcceptClass(const UClass* OtherClass) const;
 
-	// Returns the specific class that this manages
-	ENGINE_API UClass* GetRepresentedClass() const;
-
 	// Returns the base class of types that this can manage
 	ENGINE_API UClass* GetAcceptedClass() const;
 
 	// Sets the specific class that this manages
 	ENGINE_API virtual void SetRepresentedClass(UClass* ActorClass);
 
-	// Returns the actor associated with Handle if one exists
-	ENGINE_API AActor* FetchActorFromHandle(const FActorInstanceHandle& Handle);
-
 	// Returns the index of the light weight instance associated with InActor if one exists; otherwise we return INDEX_NONE
 	ENGINE_API int32 FindIndexForActor(const AActor* InActor) const;
 
 	// Returns a handle to a light weight instance representing the same object as InActor and calls destroy on InActor if successful.
 	ENGINE_API FActorInstanceHandle ConvertActorToLightWeightInstance(AActor* InActor);
-
-	// Returns the index used internally by the light weight instance manager that is associated with the instance referred to by InIndex used by collision and rendering
-	ENGINE_API virtual int32 ConvertCollisionIndexToLightWeightIndex(int32 InIndex) const;
-
-	// Returns the index used by collision and rendering that is associated with the instance referred to by InIndex
-	ENGINE_API virtual int32 ConvertLightWeightIndexToCollisionIndex(int32 InIndex) const;
 
 	// LWI grid size to use for this manager.
 	ENGINE_API virtual int32 GetGridSize() const;
@@ -114,42 +77,23 @@ public:
 	// Helper that retrieve the world space bounds of the LWI grid cell encompassing the provided coordinate.
 	ENGINE_API FBox ConvertPositionToGridBounds(const FVector& InPosition) const;
 
-	template<typename U>
-	bool IsInterfaceSupported() const
-	{
-		const UClass* const InterfaceClass = GetInterfaceClass();
-		return InterfaceClass && InterfaceClass->ImplementsInterface(U::StaticClass());
-	}
-
-	template<typename I>
-	I* FetchInterfaceObject(const FActorInstanceHandle& Handle)
-	{
-		// if we have a valid actor, use it
-		if (Handle.Actor.IsValid())
-		{
-			return Cast<I>(Handle.Actor.Get());
-		}
-
-		// TODO: once we have a better idea of how we're going to use this we should add some kind of caching so we don't always need to create a new uobject.
-		// if we can support the interface using just the handle then do that
-		if (I* InterfaceObj = Cast<I>(CreateInterfaceObject(Handle)))
-		{
-			return InterfaceObj;
-		}
-
-		// fallback to creating the actor
-		return Cast<I>(FetchActorFromHandle(Handle));
-	}
-
-	ENGINE_API AActor* FindActorForInstanceIndex(const int32 InstanceIndex);
-
 	ENGINE_API bool HasAnyValidInstancesOrManagedActors() const;
 
+	// IActorInstanceManagerInterface begin
+	ENGINE_API virtual int32 ConvertCollisionIndexToInstanceIndex(int32 InIndex, const UPrimitiveComponent* RelevantComponent) const;
+	ENGINE_API virtual AActor* FindActor(const FActorInstanceHandle& Handle) override;
+	ENGINE_API virtual AActor* FindOrCreateActor(const FActorInstanceHandle& Handle) override;
+	ENGINE_API virtual UClass* GetRepresentedClass(const int32 InstanceIndex) const override { return GetRepresentedClassInternal(); }
+	ENGINE_API virtual ULevel* GetLevelForInstance(const int32 InstanceIndex) const override { return GetLevel(); }
+	ENGINE_API virtual FTransform GetTransform(const FActorInstanceHandle& Handle) const;
+	// IActorInstanceManagerInterface end
+
 protected:
+	UClass* GetRepresentedClassInternal() const;
+
 	// Creates an actor to replace the instance specified by Handle
 	ENGINE_API AActor* ConvertInstanceToActor(const FActorInstanceHandle& Handle);
 
-	// Takes a polymorphic struct to set the initial data for a new instance
 	ENGINE_API int32 AddNewInstance(FLWIData* InitData);
 
 	// Adds a new instance at the specified index. This function should only be called by AddNewInstance.
@@ -179,18 +123,6 @@ protected:
 
 	// Called after a spawned actor is destroyed
 	ENGINE_API virtual void OnSpawnedActorDestroyed(AActor* DestroyedActor, const int32 DestroyedActorInstanceIndex);
-
-	// Create an object that implements interfaces for the light weight instance specified by Handle
-	UObject* CreateInterfaceObject(const FActorInstanceHandle& Handle)
-	{
-		UActorInstanceHandleInterface* InterfaceObj = NewObject<UActorInstanceHandleInterface>(this, GetInterfaceClass());
-		InterfaceObj->Handle = Handle;
-		InterfaceObj->Manager = this;
-		return InterfaceObj;
-	}
-
-	// Gets the class that implements interfaces for light weight instances owned by this manager
-	ENGINE_API virtual UClass* GetInterfaceClass() const;
 
 	// Helper functions for converting between our internal storage indices and the indices used by external bookkeeping
 	virtual int32 ConvertInternalIndexToHandleIndex(int32 InInternalIndex) const { return InInternalIndex; }

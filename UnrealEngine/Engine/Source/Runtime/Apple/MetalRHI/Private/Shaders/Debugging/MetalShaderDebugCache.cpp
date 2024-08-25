@@ -7,7 +7,7 @@
 #include "CoreMinimal.h"
 
 THIRD_PARTY_INCLUDES_START
-#include "mtlpp.hpp"
+#include "MetalInclude.h"
 THIRD_PARTY_INCLUDES_END
 
 #include "HAL/FileManager.h"
@@ -32,9 +32,9 @@ FMetalShaderDebugZipFile* FMetalShaderDebugCache::GetDebugFile(FString Path)
 	return Ref;
 }
 
-ns::String FMetalShaderDebugCache::GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC)
+NS::String* FMetalShaderDebugCache::GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC)
 {
-	ns::String Code;
+    NS::String* Code = nullptr;
 	FScopeLock Lock(&Mutex);
 	for (auto const& Ref : DebugFiles)
 	{
@@ -44,7 +44,8 @@ ns::String FMetalShaderDebugCache::GetShaderCode(uint32 ShaderSrcLen, uint32 Sha
 			break;
 		}
 	}
-	return Code;
+    
+    return Code;
 }
 
 #endif // !UE_BUILD_SHIPPING

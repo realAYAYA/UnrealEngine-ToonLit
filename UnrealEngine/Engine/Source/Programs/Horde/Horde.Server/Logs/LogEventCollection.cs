@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using EpicGames.Horde.Logs;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
 using HordeCommon;
@@ -132,12 +133,12 @@ namespace Horde.Server.Logs
 		/// <inheritdoc/>
 		public async Task<List<ILogEvent>> FindAsync(LogId logId, ObjectId? spanId = null, int? index = null, int? count = null)
 		{
-			_logger.LogInformation("Querying for log events for log {LogId} creation time {CreateTime}", logId, logId.Id.CreationTime);
+			_logger.LogInformation("Querying for log events for log {LogId}", logId);
 
 			FilterDefinitionBuilder<LogEventDocument> builder = Builders<LogEventDocument>.Filter;
 
 			FilterDefinition<LogEventDocument> filter = builder.Eq(x => x.Id.LogId, logId);
-			if(spanId != null)
+			if (spanId != null)
 			{
 				filter &= builder.Eq(x => x.SpanId, spanId.Value);
 			}

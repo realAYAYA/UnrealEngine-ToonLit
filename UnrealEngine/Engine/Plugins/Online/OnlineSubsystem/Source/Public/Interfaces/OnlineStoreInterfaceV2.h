@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
-
+#include "Internationalization/Text.h"
 #include "Misc/DateTime.h"
 #include "OnlineDelegateMacros.h"
 #include "OnlineStoreInterfaceV2.generated.h"

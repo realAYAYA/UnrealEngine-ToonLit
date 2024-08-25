@@ -79,11 +79,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Cheat Manager")
 	ENGINE_API APlayerController* GetPlayerController() const;
 
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName = "Added To Cheat Manager", Keywords="Begin Play"))
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName = "Added To Cheat Manager", Keywords="Begin Play"))
 	ENGINE_API void AddedToCheatManager();
+	ENGINE_API virtual void AddedToCheatManager_Implementation();
 
-	UFUNCTION(BlueprintImplementableEvent, meta = (DisplayName = "Removed From Cheat Manager", Keywords = "End Play"))
+	UFUNCTION(BlueprintNativeEvent, meta = (DisplayName = "Removed From Cheat Manager", Keywords = "End Play"))
 	ENGINE_API void RemovedFromCheatManager();
+	ENGINE_API virtual void RemovedFromCheatManager_Implementation();
 
 	ENGINE_API virtual void DoExtensionSpecificBugItLog(FOutputDevice& OutputFile);
 };
@@ -243,6 +245,9 @@ class UCheatManager : public UObject
 	/** Toggle between debug camera/player camera without locking gameplay and with locking local player controller input. */
 	UFUNCTION(exec)
 	ENGINE_API virtual void ToggleDebugCamera();
+
+	/** Returns true if the player currently has a debug camera */
+	ENGINE_API virtual bool IsDebugCameraActive() const;
 
 	/** toggles AI logging */
 	UFUNCTION(exec)

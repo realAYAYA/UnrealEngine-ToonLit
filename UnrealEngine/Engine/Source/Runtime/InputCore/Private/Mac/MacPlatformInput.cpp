@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Mac/MacPlatformInput.h"
+#include "Misc/ConfigCacheIni.h"	// For GConfig
 
 uint32 FMacPlatformInput::GetKeyMap( uint32* KeyCodes, FString* KeyNames, uint32 MaxMappings )
 {
@@ -81,3 +82,15 @@ uint32 FMacPlatformInput::GetCharKeyMap(uint32* KeyCodes, FString* KeyNames, uin
 	return FGenericPlatformInput::GetStandardPrintableKeyMap(KeyCodes, KeyNames, MaxMappings, false, true);
 }
 
+FKey FMacPlatformInput::GetPlatformDeleteKey()
+{
+	// The legacy behavior is that Platform Delete is "Backspace". In 5.4 we added this option to have it
+	// be the normal "Delete" key. 
+	bool bPlatformDeleteIsBackspace = true;
+	if (GConfig)
+	{
+		GConfig->GetBool(TEXT("MacInput"), TEXT("bPlatformDeleteIsBackspace"), bPlatformDeleteIsBackspace, GInputIni);
+	}
+
+	return bPlatformDeleteIsBackspace ? EKeys::BackSpace : EKeys::Delete;
+}

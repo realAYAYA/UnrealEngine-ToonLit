@@ -4,6 +4,7 @@
 #include "InterchangeEditorLog.h"
 
 #include "InterchangeManager.h"
+#include "InterchangeFbxAssetImportDataConverter.h"
 
 #include "Engine/Engine.h"
 #include "IMessageLogListing.h"
@@ -55,13 +56,13 @@ namespace UE::Interchange::InterchangeEditorModule
 				const EInterchangeResultType ResultType = Result->GetResultType();
 				if (ResultType != EInterchangeResultType::Success)
 				{
-					TokenizedMessages.Add(FTokenizedMessage::Create(ResultType == EInterchangeResultType::Error ? EMessageSeverity::Error : EMessageSeverity::Warning, Result->GetText()));
+					TokenizedMessages.Add(FTokenizedMessage::Create(ResultType == EInterchangeResultType::Error ? EMessageSeverity::Error : EMessageSeverity::Warning, Result->GetMessageLogText()));
 					bHasErrors |= ResultType == EInterchangeResultType::Error;
 				}
 			}
 
 			LogListing->AddMessages(TokenizedMessages);
-			LogListing->NotifyIfAnyMessages(NSLOCTEXT("Interchange", "LogAndNotify", "There was some issues with the import."), EMessageSeverity::Info);
+			LogListing->NotifyIfAnyMessages(NSLOCTEXT("Interchange", "LogAndNotify", "There were issues with the import."), EMessageSeverity::Info);
 		}
 	}
 }
@@ -86,6 +87,7 @@ void FInterchangeEditorModule::StartupModule()
 
 		UInterchangeManager& InterchangeManager = UInterchangeManager::GetInterchangeManager();
 		InterchangeEditorModuleDelegate = InterchangeManager.OnBatchImportComplete.AddStatic(&InterchangeEditorModule::LogErrors);
+		InterchangeManager.RegisterImportDataConverter(UInterchangeFbxAssetImportDataConverter::StaticClass());
 
 		auto UnregisterItems = [InterchangeEditorModuleDelegate]()
 		{

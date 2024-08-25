@@ -140,7 +140,7 @@ int32 FSlateWindowElementList::PaintDeferred(int32 LayerId, const FSlateRect& My
 {
 	bNeedsDeferredResolve = false;
 
-	int32 ResolveIndex = ResolveToDeferredIndex.Pop(false);
+	int32 ResolveIndex = ResolveToDeferredIndex.Pop(EAllowShrinking::No);
 
 	for ( int32 i = ResolveIndex; i < DeferredPaintList.Num(); ++i )
 	{
@@ -149,7 +149,7 @@ int32 FSlateWindowElementList::PaintDeferred(int32 LayerId, const FSlateRect& My
 
 	for ( int32 i = DeferredPaintList.Num() - 1; i >= ResolveIndex; --i )
 	{
-		DeferredPaintList.RemoveAt(i, 1, false);
+		DeferredPaintList.RemoveAt(i, 1, EAllowShrinking::No);
 	}
 
 	return LayerId;
@@ -192,8 +192,7 @@ FSlateCachedElementsHandle FSlateWindowElementList::PopPaintingWidget(const SWid
 		check(WidgetDrawStack.Top().Widget == &CurrentWidget);
 #endif
 
-		const bool bAllowShrinking = false;
-		return WidgetDrawStack.Pop(bAllowShrinking).CacheHandle;
+		return WidgetDrawStack.Pop(EAllowShrinking::No).CacheHandle;
 	}
 
 	return FSlateCachedElementsHandle::Invalid;

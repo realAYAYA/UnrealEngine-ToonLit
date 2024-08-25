@@ -15,20 +15,6 @@ namespace Metasound
 {
 	namespace MetasoundInputNodePrivate
 	{
-		FDataReferenceCollection FInputOperatorBase::GetInputs() const
-		{
-			// This is slated to be deprecated and removed.
-			checkNoEntry();
-			return {};
-		}
-
-		FDataReferenceCollection FInputOperatorBase::GetOutputs() const
-		{
-			// This is slated to be deprecated and removed.
-			checkNoEntry();
-			return {};
-		}
-
 		FNonExecutableInputOperatorBase::FNonExecutableInputOperatorBase(const FVertexName& InVertexName, FAnyDataReference&& InDataRef)
 		: VertexName(InVertexName)
 		, DataRef(MoveTemp(InDataRef))

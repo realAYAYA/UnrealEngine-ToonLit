@@ -3,15 +3,17 @@
 #include "SLensDistortionToolPanel.h"
 
 #include "AssetRegistry/AssetData.h"
+#include "Calibrators/CameraCalibrationSolver.h"
 #include "CameraCalibrationSettings.h"
 #include "CameraCalibrationSubsystem.h"
 #include "CameraLensDistortionAlgo.h"
 #include "Dialog/SCustomDialog.h"
 #include "EditorFontGlyphs.h"
-#include "Styling/AppStyle.h"
 #include "Engine/Selection.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "LensDistortionTool.h"
 #include "LensFile.h"
+#include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/SlateStyle.h"
 #include "UI/CameraCalibrationWidgetHelpers.h"
@@ -40,6 +42,10 @@ void SLensDistortionToolPanel::Construct(const FArguments& InArgs, ULensDistorti
 		.FillWidth(0.25f)
 		[ 
 			SNew(SVerticalBox)
+
+			+ SVerticalBox::Slot() // Solver picker
+			.MaxHeight(FCameraCalibrationWidgetHelpers::DefaultRowHeight)
+			[FCameraCalibrationWidgetHelpers::BuildLabelWidgetPair(LOCTEXT("SolverPickerWidgetText", "Lens Distortion Solver"), BuildSolverPickerWidget())]
 
 			+ SVerticalBox::Slot() // Algo picker
 			.MaxHeight(FCameraCalibrationWidgetHelpers::DefaultRowHeight)
@@ -195,6 +201,84 @@ void SLensDistortionToolPanel::UpdateAlgosOptions()
 
 	// Ask the ComboBox to refresh its options from its source (that we just updated)
 	AlgosComboBox->RefreshOptions();
+}
+
+TSharedRef<SWidget> SLensDistortionToolPanel::BuildSolverPickerWidget()
+{
+	return SNew(SHorizontalBox)
+
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.Padding(FMargin(0.0f, 0.0f, 0.0f, 0.0f))
+		[
+			SNew(SComboButton)
+			.OnGetMenuContent(this, &SLensDistortionToolPanel::BuildSolverList)
+			.ContentPadding(FMargin(4.0, 2.0))
+			.ButtonContent()
+			[
+				SNew(STextBlock).Text(this, &SLensDistortionToolPanel::GetSelectedSolverName)
+			]
+		];
+}
+
+TSharedRef<SWidget> SLensDistortionToolPanel::BuildSolverList() 
+{
+	// Generate menu
+	FMenuBuilder MenuBuilder(true, nullptr);
+	MenuBuilder.BeginSection("DistortionSolverSection", LOCTEXT("DistortionSolverSectionText", "Distortion Solvers"));
+
+	TArray<UClass*> DerivedSolverClasses;
+	GetDerivedClasses(ULensDistortionSolver::StaticClass(), DerivedSolverClasses);
+
+	if (!DerivedSolverClasses.IsEmpty())
+	{
+		for (UClass* SolverClass : DerivedSolverClasses)
+		{
+			ULensDistortionSolver* SolverCDO = Cast<ULensDistortionSolver>(SolverClass->GetDefaultObject());
+
+			if (SolverCDO->IsEnabled())
+			{
+				MenuBuilder.AddMenuEntry(
+					SolverCDO->GetDisplayName(),
+					SolverCDO->GetDisplayName(), // TODO: If this remains a user-facing option, then it may be better to have the solver implement a class description text field to use as the tooltip instead
+					FSlateIcon(),
+					FUIAction(
+						FExecuteAction::CreateSP(this, &SLensDistortionToolPanel::OnSolverClassSelected, SolverClass),
+						FCanExecuteAction(),
+						FIsActionChecked::CreateSP(this, &SLensDistortionToolPanel::IsSolverClassSelected, SolverClass)
+					),
+					NAME_None,
+					EUserInterfaceActionType::RadioButton
+				);
+			}
+		}
+	}
+
+	MenuBuilder.EndSection();
+
+	return MenuBuilder.MakeWidget();
+
+}
+
+void SLensDistortionToolPanel::OnSolverClassSelected(UClass* SolverClass)
+{
+	Tool->SetSolverClass(SolverClass);
+}
+
+bool SLensDistortionToolPanel::IsSolverClassSelected(UClass* SolverClass) const
+{
+	return (Tool->GetSolverClass() == SolverClass);
+}
+
+FText SLensDistortionToolPanel::GetSelectedSolverName() const
+{
+	if (UClass* SolverClass = Tool->GetSolverClass())
+	{
+		ULensDistortionSolver* SolverCDO = Cast<ULensDistortionSolver>(SolverClass->GetDefaultObject());
+		return SolverCDO->GetDisplayName();
+	}
+	
+	return FText::GetEmpty();
 }
 
 TSharedRef<SWidget> SLensDistortionToolPanel::BuildAlgoPickerWidget()

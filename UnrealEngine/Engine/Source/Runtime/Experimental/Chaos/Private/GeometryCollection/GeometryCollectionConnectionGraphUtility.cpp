@@ -72,7 +72,7 @@ FGeometryCollectionConnectionGraphGenerator::ComputeVoronoiNeighbors(const FGeom
 {
 	FVoronoiNeighbors Neighbors;
 
-	const TManagedArray<FTransform>& Transforms = Collection.Transform;
+	const TManagedArray<FTransform3f>& Transforms = Collection.Transform;
 	const TManagedArray<FTransform>& MassToLocal = Collection.GetAttribute<FTransform>("MassToLocal", FGeometryCollection::TransformGroup);
 
 	const TSet<int32>& Children = Collection.Children[ClusterTransformIndex];
@@ -81,7 +81,7 @@ FGeometryCollectionConnectionGraphGenerator::ComputeVoronoiNeighbors(const FGeom
 	
 	for (const int32& ChildTransformIndex: Children)
 	{
-		const FTransform ChildTransform = MassToLocal[ChildTransformIndex] * Transforms[ChildTransformIndex];
+		const FTransform ChildTransform = MassToLocal[ChildTransformIndex] * FTransform(Transforms[ChildTransformIndex]);
 		Neighbors.Points.Add(ChildTransform.GetLocation());
 	}
 	

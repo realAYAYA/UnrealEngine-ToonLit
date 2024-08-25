@@ -70,7 +70,7 @@ namespace UnrealGameSync
 				Task<T> backgroundTask = Task.Run(() => taskFunc(cancellationSource.Token));
 
 				using ModalTaskWindow window = new ModalTaskWindow(title, message, (owner == null) ? FormStartPosition.CenterScreen : FormStartPosition.CenterParent, backgroundTask, cancellationSource);
-				if(owner == null)
+				if (owner == null)
 				{
 					window.ShowInTaskbar = true;
 				}

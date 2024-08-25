@@ -42,6 +42,7 @@ public:
 		double IntervalStart = 0.0;
 		double IntervalEnd = -1.0;
 		double Resolution = 0;
+		double MaxOccupancy = 0.875; // Leave 1/8 threads free to avoid starvation.
 		EEventSortOrder SortOrder = EEventSortOrder::ByEndTime;
 		typename ITimeline<EventType>::TaskInfoCallback SetupCallback;
 		typename ITimeline<EventType>::AsyncEventRangeCallback Callback;

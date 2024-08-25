@@ -41,6 +41,7 @@ class ISlateSoundDevice;
 class ITextInputMethodSystem;
 class IVirtualKeyboardEntry;
 class IWidgetReflector;
+class SNotificationItem;
 class SViewport;
 class FSlateUser;
 class FSlateVirtualUserHandle;
@@ -326,6 +327,9 @@ public:
 
 	/** Ticks this application */
 	SLATE_API void Tick(ESlateTickType TickType = ESlateTickType::All);
+
+	/** Returns true if we are currently ticking the SlateApplication. */
+	SLATE_API bool IsTicking() const;
 
 	/** Pumps OS messages when a modal window or intra-frame debugging session exists */
 	SLATE_API void PumpMessages();
@@ -752,7 +756,7 @@ public:
 	 * @return True if the application is currently routing high precision mouse movement events (OS specific)
 	 * If this value is true, the mouse is captured and hidden by the widget that originally made the request.
 	 */
-	bool IsUsingHighPrecisionMouseMovment() const { return PlatformApplication.IsValid() ? PlatformApplication->IsUsingHighPrecisionMouseMode() : false; }
+	SLATE_API bool IsUsingHighPrecisionMouseMovment() const { return PlatformApplication.IsValid() ? PlatformApplication->IsUsingHighPrecisionMouseMode() : false; }
 	
 	/**
 	 * @return True if the last mouse event was from a trackpad.
@@ -839,6 +843,16 @@ public:
 	 * @param bLeavingDebugForSingleStep	Whether or not we are leaving debug mode due to single stepping
 	 */
 	SLATE_API void LeaveDebuggingMode( bool bLeavingDebugForSingleStep = false );
+
+#if WITH_EDITOR
+	struct FScopedPreventDebuggingMode
+	{
+		UE_NODISCARD_CTOR SLATE_API FScopedPreventDebuggingMode(FText Reason);
+		SLATE_API ~FScopedPreventDebuggingMode();
+	private:
+		int32 Id;
+	};
+#endif
 	
 	/**
 	 * Calculates the popup window position from the passed in window position and size. 
@@ -1847,7 +1861,13 @@ private:
 #if WITH_EDITOR
 	/** List of all registered game viewports since the last time UnregisterGameViewport was called. */
 	TSet<TWeakPtr<SViewport>> AllGameViewports;
+
+	/** List of reason why we can't enter in debugging mode. */
+	TArray<TPair<FText, int32>> PreventDebuggingModeStack;
 #endif
+
+	/** The message when the EnterDebugginMode failed. */
+	TWeakPtr<SNotificationItem> DebuggingModeNotificationMessage;
 
 	TSharedPtr<ISlateSoundDevice> SlateSoundDevice;
 
@@ -2005,6 +2025,9 @@ private:
 
 	/** Did we synthesize cursor input this frame? */
 	bool bSynthesizedCursorMove = false;
+	
+	/** Are we ticking the SlateApplication. */
+	bool bIsTicking = false;
 
 	/** Platform mouse movement event count. */
 	uint64 PlatformMouseMovementEvents = 0;

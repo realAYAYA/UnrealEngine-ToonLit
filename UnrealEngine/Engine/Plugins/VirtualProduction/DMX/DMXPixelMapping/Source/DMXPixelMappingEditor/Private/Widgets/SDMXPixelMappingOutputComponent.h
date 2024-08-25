@@ -6,163 +6,133 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Layout/SConstraintCanvas.h"
 
-class FDMXPixelMappingOutputComponentModel;
-class FDMXPixelMappingScreenComponentModel;
 class FDMXPixelMappingToolkit;
+class SBorder;
+class SBox;
+class STextBlock;
 class UDMXPixelMappingBaseComponent;
 class UDMXPixelMappingOutputComponent;
 class UDMXPixelMappingScreenComponent;
 
-class SBorder;
-class SBox;
-class STextBlock;
-
-
-/** Interface for Output Component Widgets */
-class IDMXPixelMappingOutputComponentWidgetInterface
+namespace UE::DMX
 {
-public:
-	/** Destructor */
-	virtual ~IDMXPixelMappingOutputComponentWidgetInterface();
-
-	/** Adds the widgets to a canvas. If it already resides in a canvas it is removed from that first. */
-	void AddToCanvas(const TSharedRef<SConstraintCanvas>& InCanvas);
-
-	/** Removes the widget from the canvas, if it was added to one. */
-	void RemoveFromCanvas();
-
-	/** Returns the actual widget implementation */
-	virtual TSharedRef<SWidget> AsWidget() = 0;
-
-	/** Returns true if the widet equals the component */
-	virtual bool Equals(UDMXPixelMappingBaseComponent* Component) const = 0;
-
-protected:
-	/** Returns the position of the widget */
-	virtual FVector2D GetPosition() const = 0;
-
-private:
-	/** When added to a parent, the canvas it was added to */
-	TSharedPtr<SConstraintCanvas> ParentCanvas;
-
-	/** The canvas slot of the component widget */
-	SConstraintCanvas::FSlot* Slot = nullptr;
-};
+	class FDMXPixelMappingOutputComponentModel;
+	class FDMXPixelMappingScreenComponentModel;
 
 
-/** Widget that draws an Output Component. For Screen Component, see SDMXPixelMappingScreenComponent */
-class SDMXPixelMappingOutputComponent
-	: public IDMXPixelMappingOutputComponentWidgetInterface
-	, public SCompoundWidget
-{
-public:
-	SLATE_BEGIN_ARGS(SDMXPixelMappingOutputComponent)
-	{}
-	SLATE_END_ARGS()
+	/** Interface for Output Component Widgets */
+	class IDMXPixelMappingOutputComponentWidgetInterface
+	{
+	public:
+		/** Destructor */
+		virtual ~IDMXPixelMappingOutputComponentWidgetInterface();
 
-	/** Constructs the widget */
-	void Construct(const FArguments& InArgs, const TSharedRef<FDMXPixelMappingToolkit>& InToolkit, TWeakObjectPtr<UDMXPixelMappingOutputComponent> OutputComponent);
+		/** Adds the widgets to a canvas. If it already resides in a canvas it is removed from that first. */
+		void AddToCanvas(const TSharedRef<SConstraintCanvas>& InCanvas);
 
-	//~ Begin IDMXPixelMappingOutputComponentWidgetInterface
-	virtual TSharedRef<SWidget> AsWidget() override { return AsShared(); };
-	virtual bool Equals(UDMXPixelMappingBaseComponent* Component) const override;
-protected:
-	virtual FVector2D GetPosition() const override;
-	//~ End IDMXPixelMappingOutputComponentWidgetInterface
+		/** Removes the widget from the canvas, if it was added to one. */
+		void RemoveFromCanvas();
 
-private:
-	/** Refreshes the widget oo the next tick */
-	void RequestRefresh();
+		/** Returns the actual widget implementation */
+		virtual TSharedRef<SWidget> AsWidget() = 0;
 
-	/** Refreshes the widget */
-	void ForceRefresh();
+		/** Returns true if the widet equals the component */
+		virtual bool Equals(UDMXPixelMappingBaseComponent* Component) const = 0;
 
-	/** Creates content */
-	TSharedRef<SWidget> CreateContent();
+	protected:
+		/** Returns the position of the widget */
+		virtual FVector2D GetPosition() const = 0;
 
-	/** Creates the child slot that displays the component name, above the child slot */
-	void CreateComponentNameChildSlotAbove();
+	private:
+		/** When added to a parent, the canvas it was added to */
+		TWeakPtr<SConstraintCanvas> ParentCanvas;
 
-	/** Creates the child slot that displays the component name, inside the child slot */
-	void CreateComponentNameChildSlotInside();
+		/** The canvas slot of the component widget */
+		SConstraintCanvas::FSlot* Slot = nullptr;
+	};
 
-	/** Creates the child slot that displays the Fixture ID of the component */
-	void CreateCellIDChildSlot();
 
-	/** Creates the child slot that displays info about the patch such as Addresses or the Fixture ID */
-	void CreatePatchInfoChildSlot();
+	/** Widget that draws an Output Component. For Screen Component, see SDMXPixelMappingScreenComponent */
+	class SDMXPixelMappingOutputComponent
+		: public IDMXPixelMappingOutputComponentWidgetInterface
+		, public SCompoundWidget
+	{
+	public:
+		SLATE_BEGIN_ARGS(SDMXPixelMappingOutputComponent)
+		{}
 
-	/** The box that is shown */
-	TSharedPtr<SBox> ComponentBox;
+		SLATE_END_ARGS()
 
-	/** The box that is shown */
-	TSharedPtr<STextBlock> IDTextBlock;
+		/** Constructs the widget */
+		void Construct(const FArguments& InArgs, const TSharedRef<FDMXPixelMappingToolkit>& InToolkit, TWeakObjectPtr<UDMXPixelMappingOutputComponent> InOutputComponent);
 
-	/** Border for content to display names above the widget */
-	TSharedPtr<SBorder> AboveContentBorder;
+		//~ Begin IDMXPixelMappingOutputComponentWidgetInterface
+		virtual TSharedRef<SWidget> AsWidget() override { return AsShared(); };
+		virtual bool Equals(UDMXPixelMappingBaseComponent* Component) const override;
 
-	/** Border for content to display names in the top row of the widget */
-	TSharedPtr<SBorder> TopContentBorder;
+	protected:
+		virtual FVector2D GetPosition() const override;
+		//~ End IDMXPixelMappingOutputComponentWidgetInterface
 
-	/** Border for content to display names in the middle of the widget */
-	TSharedPtr<SBorder> MiddleContentBorder;
+		//~ Begin SWidget Interface
+		virtual int32 OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const override;
+		//~ End SWidget Interface
 
-	/** Border for content to display names in the top row of the widget */
-	TSharedPtr<SBorder> BottomContentBorder;
+	private:
+		/** Returns the render transform for this widget */
+		TOptional<FSlateRenderTransform> GetRenderTransform() const;
 
-	/** Timer handle for request refresh */
-	FTimerHandle RefreshTimerHandle;
+		/** The model for this widget */
+		TSharedPtr<FDMXPixelMappingOutputComponentModel> Model;
 
-	/** The model for this widget */
-	TSharedPtr<FDMXPixelMappingOutputComponentModel> Model;
+		/** The toolkit that owns */
+		TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
+	};
 
-	/** The toolkit that owns */
-	TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
-};
+	/** Widget that draws a Screen Component. While the screen component cannot be added to new assets anymore, we still draw it for old ones. */
+	class SDMXPixelMappingScreenComponent
+		: public IDMXPixelMappingOutputComponentWidgetInterface
+		, public SCompoundWidget
+	{
+	public:
+		SLATE_BEGIN_ARGS(SDMXPixelMappingScreenComponent)
+		{}
+		SLATE_END_ARGS()
 
-/** Widget that draws a Screen Component. */
-class SDMXPixelMappingScreenComponent
-	: public IDMXPixelMappingOutputComponentWidgetInterface
-	, public SCompoundWidget
-{
-public:
-	SLATE_BEGIN_ARGS(SDMXPixelMappingScreenComponent)
-	{}
-	SLATE_END_ARGS()
+		/** Constructs the widget */
+		void Construct(const FArguments& InArgs, const TSharedRef<FDMXPixelMappingToolkit>& InToolkit, TWeakObjectPtr<UDMXPixelMappingScreenComponent> ScreenComponent);
 
-	/** Constructs the widget */
-	void Construct(const FArguments& InArgs, const TSharedRef<FDMXPixelMappingToolkit>& InToolkit, TWeakObjectPtr<UDMXPixelMappingScreenComponent> ScreenComponent);
+		//~ Begin IDMXPixelMappingOutputComponentWidgetInterface
+		virtual TSharedRef<SWidget> AsWidget() override { return AsShared(); };
+		virtual bool Equals(UDMXPixelMappingBaseComponent* Component) const override;
+	protected:
+		virtual FVector2D GetPosition() const override;
+		//~ End IDMXPixelMappingOutputComponentWidgetInterface
 
-	//~ Begin IDMXPixelMappingOutputComponentWidgetInterface
-	virtual TSharedRef<SWidget> AsWidget() override { return AsShared(); };
-	virtual bool Equals(UDMXPixelMappingBaseComponent* Component) const override;
-protected:
-	virtual FVector2D GetPosition() const override;
-	//~ End IDMXPixelMappingOutputComponentWidgetInterface
+		//~ Begin SWidget interface
+		virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
+		//~ End SWidget interface
 
-	//~ Begin SWidget interface
-	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
-	//~ End SWidget interface
+	private:
+		/** Updates the content of the widget */
+		void UpdateContent();
 
-private:
-	/** Updates the content of the widget */
-	void UpdateContent();
+		/** True if them model currently draws a simplistic view of the component */
+		bool bDrawsSimplisticView = false;
 
-	/** True if them model currently draws a simplistic view of the component */
-	bool bDrawsSimplisticView = false;
+		/** When added to a parent, the canvas it was added to */
+		TWeakPtr<SConstraintCanvas> ParentCanvas;
 
-	/** When added to a parent, the canvas it was added to */
-	TSharedPtr<SConstraintCanvas> ParentCanvas;
+		/** The canvas slot of the component widget */
+		SConstraintCanvas::FSlot* Slot = nullptr;
 
-	/** The canvas slot of the component widget */
-	SConstraintCanvas::FSlot* Slot = nullptr;
+		/** Border that holds the content */
+		TSharedPtr<SBorder> ContentBorder;
 
-	/** Border that holds the content */
-	TSharedPtr<SBorder> ContentBorder;
+		/** The model for this widget */
+		TSharedPtr<FDMXPixelMappingScreenComponentModel> Model;
 
-	/** The model for this widget */
-	TSharedPtr<FDMXPixelMappingScreenComponentModel> Model;
-
-	/** The toolkit that owns */
-	TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
-};
+		/** The toolkit that owns */
+		TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
+	};
+}

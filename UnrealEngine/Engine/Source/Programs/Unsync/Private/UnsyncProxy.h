@@ -12,10 +12,13 @@
 #include <functional>
 #include <mutex>
 #include <unordered_map>
+#include <optional>
 
 namespace unsync {
 
 struct FDirectoryManifest;
+struct FAuthDesc;
+struct FHttpConnection;
 
 enum class EDownloadRetryMode
 {
@@ -23,7 +26,17 @@ enum class EDownloadRetryMode
 	Abort,	// unrecoverable error
 };
 
-using FDownloadResult = TResult<FEmpty, EDownloadRetryMode>;
+struct FDownloadError : FError
+{
+	FDownloadError() = default;
+	FDownloadError(EDownloadRetryMode InRetryMode) : RetryMode(InRetryMode) {}
+
+	EDownloadRetryMode RetryMode = EDownloadRetryMode::Abort;
+
+	bool CanRetry() const { return RetryMode == EDownloadRetryMode ::Retry; }
+};
+
+using FDownloadResult = TResult<FEmpty, FDownloadError>;
 
 struct FDownloadedBlock
 {
@@ -75,8 +88,12 @@ private:
 
 struct FRemoteProtocolFeatures
 {
-	bool bTelemetry = false;
-	bool bMirrors = false;
+	bool bTelemetry		   = false;
+	bool bMirrors		   = false;
+	bool bAuthentication   = false;
+	bool bDirectoryListing = false;
+	bool bFileDownload	   = false;
+	bool bDownloadByHash   = false;
 };
 
 struct FTelemetryEventSyncComplete
@@ -122,7 +139,10 @@ struct FRemoteProtocolBase
 class FProxy
 {
 public:
-	FProxy(const FRemoteDesc& InRemoteDesc, const FRemoteProtocolFeatures& InFeatures, const FBlockRequestMap* InRequestMap);
+	FProxy(const FRemoteDesc&			  InRemoteDesc,
+		   const FRemoteProtocolFeatures& InFeatures,
+		   const FAuthDesc*				  InAuthDesc,
+		   const FBlockRequestMap*		  InRequestMap);
 	~FProxy();
 
 	bool Contains(const FDirectoryManifest& Manifest);
@@ -138,7 +158,8 @@ private:
 class FProxyPool
 {
 public:
-	FProxyPool(const FRemoteDesc& InRemoteDesc);
+	FProxyPool();
+	FProxyPool(const FRemoteDesc& InRemoteDesc, const FAuthDesc* InAuthDesc);
 
 	std::unique_ptr<FProxy> Alloc();
 	void					Dealloc(std::unique_ptr<FProxy>&& Proxy);
@@ -149,6 +170,7 @@ public:
 	FSemaphore ParallelDownloadSemaphore;
 
 	const FRemoteDesc RemoteDesc;
+	const FAuthDesc* AuthDesc = nullptr; // optional reference to externally-owned auth parameters
 
 	void InitRequestMap(EStrongHashAlgorithmID InStrongHasher);
 	void BuildFileBlockRequests(const FPath& OriginalFilePath, const FPath& ResolvedFilePath, const FFileManifest& FileManifest);
@@ -169,5 +191,53 @@ private:
 
 	std::mutex Mutex;
 };
+
+namespace ProxyQuery {
+
+struct FHelloResponse
+{
+	std::string Name;
+	std::string VersionNumber;
+	std::string VersionGit;
+	std::string SessionId;
+
+	std::string AuthServerUri;
+	std::string AuthClientId;
+	std::string AuthAudience;
+	std::string CallbackUri;
+
+	std::vector<std::string> FeatureNames;
+	FRemoteProtocolFeatures	 Features;
+
+	std::optional<FHostAddressAndPort> PrimaryHost;
+
+	bool SupportsAuthentication() const { return Features.bAuthentication && !AuthServerUri.empty() && !AuthClientId.empty(); }
+};
+TResult<FHelloResponse> Hello(const FRemoteDesc& RemoteDesc, const FAuthDesc* OptAuthDesc = nullptr);
+TResult<FHelloResponse> Hello(FHttpConnection& Connection, const FAuthDesc* OptAuthDesc = nullptr);
+
+struct FDirectoryListingEntry
+{
+	std::string Name;
+	uint64		Mtime	   = 0;
+	uint64		Size	   = 0;
+	bool		bDirectory = false;
+};
+
+struct FDirectoryListing
+{
+	std::vector<FDirectoryListingEntry> Entries;
+
+	static TResult<FDirectoryListing> FromJson(const char* JsonString);
+};
+
+// TODO: add overloads with HTTP connection
+TResult<FDirectoryListing> ListDirectory(const FRemoteDesc& Remote, const FAuthDesc* AuthDesc, const std::string& Path);
+TResult<FBuffer>		   DownloadFile(const FRemoteDesc& Remote, const FAuthDesc* AuthDesc, const std::string& Path);
+
+using FDownloadOutputCallback = std::function<FIOWriter&(uint64 Size)>;
+TResult<> DownloadFile(const FRemoteDesc& Remote, const FAuthDesc* AuthDesc, const std::string& Path, FDownloadOutputCallback OutputCallback);
+
+} 
 
 }  // namespace unsync

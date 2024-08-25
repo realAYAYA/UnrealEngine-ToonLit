@@ -6,7 +6,13 @@
 #include "SceneInterface.h"
 
 FGeometryCacheUsdSceneProxy::FGeometryCacheUsdSceneProxy(UGeometryCacheUsdComponent* Component)
-: FGeometryCacheSceneProxy(Component, [this]() { return new FGeomCacheTrackUsdProxy(GetScene().GetFeatureLevel()); })
+	: FGeometryCacheSceneProxy(
+		Component,
+		[this]()
+		{
+			return new FGeomCacheTrackUsdProxy(GetScene().GetFeatureLevel());
+		}
+	)
 {
 }
 
@@ -44,12 +50,8 @@ bool FGeomCacheTrackUsdProxy::IsTopologyCompatible(int32 SampleIndexA, int32 Sam
 
 	if (UGeometryCacheTrackUsd* UsdTrack = Cast<UGeometryCacheTrackUsd>(Track))
 	{
-		// The boolean argument is not actually used
-		const float TimeA = UsdTrack->GetTimeFromSampleIndex(SampleIndexA);
-		const int32 NumVerticesA = UsdTrack->GetSampleInfo(TimeA, false).NumVertices;
-
-		const float TimeB = UsdTrack->GetTimeFromSampleIndex(SampleIndexB);
-		const int32 NumVerticesB = UsdTrack->GetSampleInfo(TimeB, false).NumVertices;
+		const int32 NumVerticesA = UsdTrack->GetSampleInfo(SampleIndexA).NumVertices;
+		const int32 NumVerticesB = UsdTrack->GetSampleInfo(SampleIndexB).NumVertices;
 
 		return NumVerticesA == NumVerticesB;
 	}
@@ -62,7 +64,14 @@ const FVisibilitySample& FGeomCacheTrackUsdProxy::GetVisibilitySample(float Time
 	return FVisibilitySample::VisibleSample;
 }
 
-void FGeomCacheTrackUsdProxy::FindSampleIndexesFromTime(float Time, bool bLooping, bool bIsPlayingBackwards, int32 &OutFrameIndex, int32 &OutNextFrameIndex, float &InInterpolationFactor)
+void FGeomCacheTrackUsdProxy::FindSampleIndexesFromTime(
+	float Time,
+	bool bLooping,
+	bool bIsPlayingBackwards,
+	int32& OutFrameIndex,
+	int32& OutNextFrameIndex,
+	float& InInterpolationFactor
+)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FGeomCacheTrackUsdProxy::FindSampleIndexesFromTime);
 

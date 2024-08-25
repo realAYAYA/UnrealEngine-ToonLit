@@ -7,18 +7,15 @@ using UnrealBuildTool;
 
 public class EOSShared : ModuleRules
 {
-	bool bEnableApiVersionWarnings
+	[ConfigFile(ConfigHierarchyType.Engine, "EOSShared")]
+	bool bEnableApiVersionWarnings = true;
+
+	bool EnableApiVersionWarnings
 	{
 		get
 		{
-			bool bResult;
-			ConfigHierarchy Config = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, DirectoryReference.FromFile(Target.ProjectFile), Target.Platform);
-			if(!Config.GetBool("EOSShared", "bEnableApiVersionWarnings", out bResult))
-			{
-				// Default to true
-				bResult = true;
-			}
-			return bResult;
+			ConfigCache.ReadSettings(DirectoryReference.FromFile(Target.ProjectFile), Target.Platform, this);
+			return bEnableApiVersionWarnings;
 		}
 	}
 
@@ -26,7 +23,7 @@ public class EOSShared : ModuleRules
 	{
 		Type = ModuleType.CPlusPlus;
 
-		PublicDefinitions.Add("UE_WITH_EOS_SDK_APIVERSION_WARNINGS=" + (bEnableApiVersionWarnings ? "1" : "0"));
+		PublicDefinitions.Add("UE_WITH_EOS_SDK_APIVERSION_WARNINGS=" + (EnableApiVersionWarnings ? "1" : "0"));
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
@@ -35,5 +32,10 @@ public class EOSShared : ModuleRules
 				"EOSSDK"
 			}
 		);
+
+		if (Target.bCompileAgainstEngine)
+		{
+			PrivateDependencyModuleNames.Add("Slate");
+		}
 	}
 }

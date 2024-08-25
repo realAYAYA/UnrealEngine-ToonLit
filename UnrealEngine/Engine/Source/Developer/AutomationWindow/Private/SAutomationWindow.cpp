@@ -1991,9 +1991,9 @@ TSharedRef<ITableRow> SAutomationWindow::OnGenerateWidgetForLog(TSharedPtr<FAuto
 {
 	check(Message.IsValid());
 
-	// \[((?:[\w]\:|\\)(?:(?:\\[A-Za-z_\-\s0-9\.]+)+)\.(?:cpp|h))\((\d+)\)\]$
+	// \[((?:[\w]\:|\\)(?:(?:\\[A-Za-z_\-\s0-9\.]+)+)\.(?:cpp|h|ini))\((\d+)\)\]$
 	// https://regex101.com/r/vV4cV7/25
-	FRegexPattern FileAndLinePattern(TEXT("\\[((?:[\\w]\\:|\\\\)(?:(?:\\\\[A-Za-z_\\-\\s0-9\\.]+)+)\\.(?:cpp|h))\\((\\d+)\\)\\]$"));
+	FRegexPattern FileAndLinePattern(TEXT("\\[((?:[\\w]\\:|\\\\)(?:(?:\\\\[A-Za-z_\\-\\s0-9\\.]+)+)\\.(?:cpp|h|ini))\\((\\d+)\\)\\]$"));
 	FRegexMatcher FileAndLineRegexMatcher(FileAndLinePattern, Message->Text);
 
 	TSharedRef<SWidget> SourceLink = SNullWidget::NullWidget;
@@ -2006,7 +2006,7 @@ TSharedRef<ITableRow> SAutomationWindow::OnGenerateWidgetForLog(TSharedPtr<FAuto
 		int32 LineNumber = FCString::Atoi(*FileAndLineRegexMatcher.GetCaptureGroup(2));
 
 		// Remove the hyperlink from the message, since we're splitting it into its own string.
-		MessageString.LeftChopInline(FileAndLineRegexMatcher.GetCaptureGroup(0).Len(), false);
+		MessageString.LeftChopInline(FileAndLineRegexMatcher.GetCaptureGroup(0).Len(), EAllowShrinking::No);
 
 		SourceLink = SNew(SHyperlink)
 			.Style(FAutomationWindowStyle::Get(), "Common.GotoNativeCodeHyperlink")

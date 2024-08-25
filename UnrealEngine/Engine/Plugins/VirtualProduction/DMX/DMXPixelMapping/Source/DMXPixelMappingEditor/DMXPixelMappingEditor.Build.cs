@@ -9,13 +9,8 @@ public class DMXPixelMappingEditor : ModuleRules
 	{
 		var EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
 
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				System.IO.Path.Combine(GetModuleDirectory("DMXPixelMappingRuntime"), "Private"),
-			}
-		);
-
 		PrivateDependencyModuleNames.AddRange( new string[] {
+			"AppFramework",
 			"ApplicationCore",
 			"Core",
 			"CoreUObject",

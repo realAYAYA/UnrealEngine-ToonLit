@@ -191,9 +191,19 @@ public:
 	{
 		struct FScopedReadTracker
 		{
-			FScopedReadTracker(FFileHandleUnix& InHandle) : Handle(InHandle) { GFileRegistry.TrackStartRead(&Handle); }
-			~FScopedReadTracker() { GFileRegistry.TrackEndRead(&Handle); }
+			FScopedReadTracker(FFileHandleUnix& InHandle) : Handle(InHandle) 
+			{ 
+				bSuccess = GFileRegistry.TrackStartRead(&Handle);
+			}
+			~FScopedReadTracker() 
+			{
+				if (bSuccess)
+				{
+					GFileRegistry.TrackEndRead(&Handle); 
+				}
+			}
 			FFileHandleUnix& Handle;
+			bool bSuccess = false;
 		};
 
 		check(IsValid());
@@ -201,6 +211,11 @@ public:
 		{
 			// Handle virtual file handles (only in read mode, write mode doesn't use the file handle registry)
 			FScopedReadTracker ScopedReadTracker(*this);
+			if (!ScopedReadTracker.bSuccess)
+			{
+				return false;
+			}
+
 			FScopedDiskUtilizationTracker Tracker(BytesToRead, FileOffset);
 
 			// seek to the offset on seek? this matches console behavior more closely
@@ -780,7 +795,7 @@ public:
 			UE_LOG(LogUnixPlatformFile, Warning, TEXT("Failed to map memory %s, error is %d"), *Filename, errno);
 			return nullptr;
 		}
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, AlignedMapPtr, AlignedSize));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, AlignedMapPtr, AlignedSize));
 
 		// create a mapping for this range
 		const uint8* MapPtr = AlignedMapPtr + Offset - AlignedOffset;
@@ -795,7 +810,7 @@ public:
 		check(NumOutstandingRegions > 0);
 		NumOutstandingRegions--;
 
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Region->AlignedPtr));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Region->AlignedPtr));
 		const int Res = munmap(const_cast<uint8*>(Region->AlignedPtr), Region->AlignedSize);
 		checkf(Res == 0, TEXT("Failed to unmap, error is %d, errno is %d [params: %x, %d]"), Res, errno, MappedPtr, GetFileSize());
 	}
@@ -1300,7 +1315,7 @@ bool FUnixPlatformFile::IterateDirectory(const TCHAR* Directory, FDirectoryVisit
 			}
 		}
 
-		return Visitor.Visit(*(DirectoryStr / UnicodeEntryName), bIsDirectory);
+		return Visitor.CallShouldVisitAndVisit(*(DirectoryStr / UnicodeEntryName), bIsDirectory);
 	});
 }
 
@@ -1317,7 +1332,7 @@ bool FUnixPlatformFile::IterateDirectoryStat(const TCHAR* Directory, FDirectoryS
 		const FString AbsoluteUnicodeName = NormalizedDirectoryStr / UnicodeEntryName;	
 		if (stat(TCHAR_TO_UTF8(*AbsoluteUnicodeName), &FileInfo) != -1)
 		{
-			return Visitor.Visit(*(DirectoryStr / UnicodeEntryName), UnixStatToUEFileData(FileInfo));
+			return Visitor.CallShouldVisitAndVisit(*(DirectoryStr / UnicodeEntryName), UnixStatToUEFileData(FileInfo));
 		}
 
 		return true;

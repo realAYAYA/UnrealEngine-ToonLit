@@ -314,7 +314,7 @@ void FLocTextWordCounts::TrimReport()
 		const FRowData& CurrentRowData = Rows[RowIndex];
 		if (PreviousRowData.IdenticalWordCounts(CurrentRowData))
 		{
-			Rows.RemoveAt(RowIndex--, 1, /*bAllowShrinking*/false);
+			Rows.RemoveAt(RowIndex--, 1, EAllowShrinking::No);
 			continue;
 		}
 	}

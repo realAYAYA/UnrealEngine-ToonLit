@@ -68,6 +68,14 @@ FAutoConsoleVariableRef CVarGeometryCollectionAlwaysRecreateSimulationData(
 	bGeometryCollectionAlwaysRecreateSimulationData,
 	TEXT("always recreate the simulation data even if the simulation data is not marked as dirty - this has runtime cost in editor - only use as a last resort if default has issues [def:false]"));
 
+namespace Chaos
+{
+	namespace CVars
+	{
+		extern CHAOS_API bool bChaosConvexSimplifyUnion;
+	}
+}
+
 
 #if ENABLE_COOK_STATS
 namespace GeometryCollectionCookStats
@@ -93,6 +101,7 @@ UGeometryCollection::UGeometryCollection(const FObjectInitializer& ObjectInitial
 	, DamageModel(EDamageModelTypeEnum::Chaos_Damage_Model_UserDefined_Damage_Threshold)
 	, DamageThreshold({ 500000.f, 50000.f, 5000.f })
 	, bUseSizeSpecificDamageThreshold(false)
+	, bUseMaterialDamageModifiers(false)
 	, PerClusterOnlyDamageThreshold(false)
 	, ClusterConnectionType(EClusterConnectionTypeEnum::Chaos_MinimalSpanningSubsetDelaunayTriangulation)
 	, ConnectionGraphBoundsFilteringMargin(0)
@@ -110,10 +119,12 @@ UGeometryCollection::UGeometryCollection(const FObjectInitializer& ObjectInitial
 	, CollisionObjectReductionPercentage_DEPRECATED(0.0f)
 #endif
 	, bDensityFromPhysicsMaterial(false)
+	, CachedDensityFromPhysicsMaterialInGCm3(0) // <=0 value means not cached yet 
 	, bMassAsDensity(true)
 	, Mass(2500.0f)
 	, MinimumMassClamp(0.1f)
 	, bImportCollisionFromSource(false)
+	, bOptimizeConvexes(Chaos::CVars::bChaosConvexSimplifyUnion)
 	, bScaleOnRemoval(true)
 	, bRemoveOnMaxSleep(false)
 	, MaximumSleepTime(5.0, 10.0)
@@ -317,6 +328,72 @@ void UGeometryCollection::UpdateRootIndex()
 	}
 }
 
+void UGeometryCollection::CacheBreadthFirstTransformIndices()
+{
+	BreadthFirstTransformIndices.Reset();
+	if (GeometryCollection)
+	{
+		Chaos::Facades::FCollectionHierarchyFacade HierarchyFacade(*GeometryCollection);
+		BreadthFirstTransformIndices = HierarchyFacade.ComputeTransformIndicesInBreadthFirstOrder();
+	}
+}
+
+void UGeometryCollection::CacheAutoInstanceTransformRemapIndices()
+{
+	AutoInstanceTransformRemapIndices.Reset();
+	if (GeometryCollection == nullptr)
+	{
+		return;
+	}
+	const GeometryCollection::Facades::FCollectionInstancedMeshFacade InstancedMeshFacade(*GeometryCollection);
+	if (!InstancedMeshFacade.IsValid())
+	{
+		return;
+	}
+
+	const int32 NumMeshes = AutoInstanceMeshes.Num();
+	if(NumMeshes!=0)
+	{
+		TArray<int32> TransformGroups;
+		TransformGroups.AddZeroed(NumMeshes);
+		TArray<int32> TransformStarts;
+		TransformStarts.AddUninitialized(NumMeshes);
+		TArray<int32> InstanceCounts;
+		InstanceCounts.AddUninitialized(NumMeshes);
+		TArray<int32> WrittenTransformCounts;
+		WrittenTransformCounts.AddZeroed(NumMeshes);
+
+
+		for (int32 MeshIndex = 0; MeshIndex < NumMeshes; MeshIndex++)
+		{
+			const int32 NumInstances = AutoInstanceMeshes[MeshIndex].NumInstances;
+			TransformStarts[MeshIndex] = MeshIndex == 0 ? 0 : TransformStarts[MeshIndex - 1] + InstanceCounts[MeshIndex - 1];
+			InstanceCounts[MeshIndex] = NumInstances;
+		}
+
+		AutoInstanceTransformRemapIndices.AddUninitialized(TransformStarts.Last() + InstanceCounts.Last());
+
+		const int32 NumTransforms = InstancedMeshFacade.GetNumIndices();
+		for (int32 TransformIndex = 0; TransformIndex < NumTransforms; TransformIndex++)
+		{
+			if (GeometryCollection->Children[TransformIndex].Num() == 0)
+			{
+				const int32 AutoInstanceMeshIndex = InstancedMeshFacade.GetIndex(TransformIndex);
+				const int32 WriteIndex = WrittenTransformCounts[AutoInstanceMeshIndex];
+				if (WriteIndex < InstanceCounts[AutoInstanceMeshIndex])
+				{
+					const int32 TransformArrayIndex = TransformStarts[AutoInstanceMeshIndex] + WriteIndex;
+					if(AutoInstanceTransformRemapIndices.IsValidIndex(TransformArrayIndex))
+					{
+						AutoInstanceTransformRemapIndices[TransformArrayIndex] = TransformIndex;
+						WrittenTransformCounts[AutoInstanceMeshIndex]++;
+					}
+				}
+			}
+		}
+	}
+}
+
 void UGeometryCollection::UpdateGeometryDependentProperties()
 {
 #if WITH_EDITOR
@@ -328,7 +405,7 @@ void UGeometryCollection::UpdateGeometryDependentProperties()
 
 void UGeometryCollection::UpdateConvexGeometryIfMissing()
 {
-	const bool bConvexAttributeMissing = !GeometryCollection->HasAttribute("ConvexHull", "Convex");
+	const bool bConvexAttributeMissing = !GeometryCollection->HasAttribute(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup);
 	if (GeometryCollection && bConvexAttributeMissing)
 	{
 		UpdateConvexGeometry();
@@ -359,23 +436,51 @@ void UGeometryCollection::PostInitProperties()
 	Super::PostInitProperties();
 }
 
+void UGeometryCollection::CacheMaterialDensity()
+{
+	CachedDensityFromPhysicsMaterialInGCm3 = 0;
+
+	UPhysicalMaterial* PhysicsMaterialForDensity = PhysicsMaterial;
+	if (!PhysicsMaterialForDensity)
+	{
+		PhysicsMaterialForDensity = GEngine ? GEngine->DefaultPhysMaterial : nullptr;
+	}
+	if (PhysicsMaterialForDensity)
+	{
+		CachedDensityFromPhysicsMaterialInGCm3 = PhysicsMaterialForDensity->Density;
+	}
+}
+
 float UGeometryCollection::GetMassOrDensity(bool& bOutIsDensity) const
+{
+	return GetMassOrDensityInternal(bOutIsDensity, /* bCached */ true);
+}
+
+float UGeometryCollection::GetMassOrDensityInternal(bool& bOutIsDensity, bool bCached) const
 {
 	bOutIsDensity = bMassAsDensity;
 	float MassOrDensity = bMassAsDensity ? Chaos::KgM3ToKgCm3(Mass) : Mass;
 	
 	if (bDensityFromPhysicsMaterial)
 	{
-		UPhysicalMaterial* PhysicsMaterialForDensity = PhysicsMaterial;
-		if (!PhysicsMaterialForDensity)
+		if (bCached && CachedDensityFromPhysicsMaterialInGCm3 > 0)
 		{
-			PhysicsMaterialForDensity = GEngine ? GEngine->DefaultPhysMaterial : nullptr;
-		}
-		if (ensureMsgf(PhysicsMaterialForDensity, TEXT("bDensityFromPhysicsMaterial is true but no physics material has been set (and engine default cannot be found )")))
-		{
-			// materials only provide density
 			bOutIsDensity = true;
-			MassOrDensity = Chaos::GCm3ToKgCm3(PhysicsMaterial->Density);
+			MassOrDensity = Chaos::GCm3ToKgCm3(CachedDensityFromPhysicsMaterialInGCm3);
+		}
+		else
+		{
+			UPhysicalMaterial* PhysicsMaterialForDensity = PhysicsMaterial;
+			if (!PhysicsMaterialForDensity)
+			{
+				PhysicsMaterialForDensity = GEngine ? GEngine->DefaultPhysMaterial : nullptr;
+			}
+			if (ensureMsgf(PhysicsMaterialForDensity, TEXT("bDensityFromPhysicsMaterial is true but no physics material has been set (and engine default cannot be found )")))
+			{
+				// materials only provide density
+				bOutIsDensity = true;
+				MassOrDensity = Chaos::GCm3ToKgCm3(PhysicsMaterialForDensity->Density);
+			}
 		}
 	}
 	return MassOrDensity;
@@ -385,7 +490,8 @@ void UGeometryCollection::GetSharedSimulationParams(FSharedSimulationParameters&
 {
 	const FGeometryCollectionSizeSpecificData& SizeSpecificDefault = GetDefaultSizeSpecificData();
 
-	OutParams.Mass = GetMassOrDensity(OutParams.bMassAsDensity);
+	// we grab the non cached version because this is going to be used to generate the mass attribute which will eventually cache the density value if necessary
+	OutParams.Mass = GetMassOrDensityInternal(OutParams.bMassAsDensity, false);
 	OutParams.MinimumMassClamp = MinimumMassClamp;
 
 	FGeometryCollectionSizeSpecificData InfSize;
@@ -679,7 +785,7 @@ bool UGeometryCollection::RemoveLastMaterialSlot()
 /** Returns true if there is anything to render */
 bool UGeometryCollection::HasVisibleGeometry() const
 {
-	if(ensureMsgf(GeometryCollection.IsValid(), TEXT("Geometry Collection %s has an invalid internal collection")))
+	if(ensureMsgf(GeometryCollection.IsValid(), TEXT("Geometry Collection has an invalid internal collection")))
 	{
 		return ( (EnableNanite && RenderData && RenderData->bHasNaniteData) || GeometryCollection->HasVisibleGeometry());
 	}
@@ -744,7 +850,7 @@ static void SerializeOldNaniteData(FArchive& Ar, UGeometryCollection* Owner)
 	for (int32 i = 0; i < NumNaniteResources; ++i)
 	{
 		FStripDataFlags StripFlags(Ar, 0);
-		if (!StripFlags.IsDataStrippedForServer())
+		if (!StripFlags.IsAudioVisualDataStripped())
 		{
 			bool bLZCompressed;
 			TArray< uint8 >						RootClusterPage;
@@ -785,18 +891,21 @@ void UGeometryCollection::Serialize(FArchive& Ar)
 	TObjectPtr<UDataflow> StrippedDataflowAsset = nullptr;
 
 	bool bIsCookedOrCooking = Ar.IsCooking();
-	if (bIsCookedOrCooking && Ar.IsSaving())
+	if ((bIsCookedOrCooking && Ar.IsSaving()) || (Ar.IsCountingMemory() && Ar.IsFilterEditorOnly()))
 	{
 #if WITH_EDITOR
-		// if we have a valid selection material, let's make sure we replace it with one that will be cooked
-		// this avoid getting warning about the selected material being reference but not cooked
-		const int32 SelectedMaterialIndex = GetBoneSelectedMaterialIndex();
-		if (!Materials.IsEmpty() && Materials.IsValidIndex(SelectedMaterialIndex))
+		if (bIsCookedOrCooking && Ar.IsSaving())
 		{
-			Materials[SelectedMaterialIndex] = Materials[0];
+			// if we have a valid selection material, let's make sure we replace it with one that will be cooked
+			// this avoid getting warning about the selected material being reference but not cooked
+			const int32 SelectedMaterialIndex = GetBoneSelectedMaterialIndex();
+			if (!Materials.IsEmpty() && Materials.IsValidIndex(SelectedMaterialIndex))
+			{
+				Materials[SelectedMaterialIndex] = Materials[0];
+			}
+			// Likewise remove the direct reference to the BoneSelectedMaterial on cook
+			BoneSelectedMaterial = nullptr;
 		}
-		// Likewise remove the direct reference to the BoneSelectedMaterial on cook
-		BoneSelectedMaterial = nullptr;
 
 		if (bStripOnCook)
 		{
@@ -876,8 +985,10 @@ void UGeometryCollection::Serialize(FArchive& Ar)
 		DataflowAsset = StrippedDataflowAsset;
 	}
 
-	if (!SizeSpecificData.Num())
+	if ((Ar.IsLoading() || Ar.IsSaving()) && !SizeSpecificData.Num())
 	{
+		// Validation is necessary when loading old version and when saving newly created version
+		// that might not have created the defaults yet; the defaults are used during EnsureDataIsCooked.
 		ValidateSizeSpecificDataDefaults();
 	}
 
@@ -912,23 +1023,56 @@ void UGeometryCollection::Serialize(FArchive& Ar)
 			ArchiveGeometryCollection->Serialize(ChaosAr);
 		}
 
-		// Fix up the type change for implicits here, previously they were unique ptrs, now they're shared
-		TManagedArray<TUniquePtr<Chaos::FImplicitObject>>* OldAttr = ArchiveGeometryCollection->FindAttributeTyped<TUniquePtr<Chaos::FImplicitObject>>(FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup);
-		TManagedArray<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>* NewAttr = ArchiveGeometryCollection->FindAttributeTyped<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>(FGeometryDynamicCollection::SharedImplicitsAttribute, FTransformCollection::TransformGroup);
-		if (OldAttr)
+		TManagedArray<Chaos::FImplicitObjectPtr>* NewAttr = ArchiveGeometryCollection->FindAttributeTyped<Chaos::FImplicitObjectPtr>(
+		FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup);
+		if(!NewAttr && Ar.IsLoading())
 		{
-			if (!NewAttr)
-			{
-				NewAttr = &ArchiveGeometryCollection->AddAttribute<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>(FGeometryDynamicCollection::SharedImplicitsAttribute, FTransformCollection::TransformGroup);
+			const int32 NumElems = GeometryCollection->NumElements(FTransformCollection::TransformGroup);
 
-				const int32 NumElems = GeometryCollection->NumElements(FTransformCollection::TransformGroup);
+			TArray<Chaos::FImplicitObjectPtr> ImplicitObjects;
+			ImplicitObjects.SetNum(NumElems);
+			
+			if( TManagedArray<TUniquePtr<Chaos::FImplicitObject>>* OldAttrA = ArchiveGeometryCollection->FindAttributeTyped<TUniquePtr<Chaos::FImplicitObject>>(
+				FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup))
+			{
 				for (int32 Index = 0; Index < NumElems; ++Index)
 				{
-					(*NewAttr)[Index] = TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>((*OldAttr)[Index].Release());
+					if( (*OldAttrA)[Index] != nullptr)
+					{
+						ImplicitObjects[Index] = Chaos::FImplicitObjectPtr((*OldAttrA)[Index]->DeepCopyGeometry());
+					};
 				}
+				ArchiveGeometryCollection->RemoveAttribute(FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup);
 			}
-
-			ArchiveGeometryCollection->RemoveAttribute(FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup);
+			else if(TManagedArray<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>* OldAttrB = ArchiveGeometryCollection->FindAttributeTyped<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>(
+				FGeometryDynamicCollection::SharedImplicitsAttribute, FTransformCollection::TransformGroup))
+			{
+				for (int32 Index = 0; Index < NumElems; ++Index)
+				{
+					if( (*OldAttrB)[Index] != nullptr)
+                	{
+						ImplicitObjects[Index] = Chaos::FImplicitObjectPtr((*OldAttrB)[Index]->DeepCopyGeometry());
+					}
+				}
+				ArchiveGeometryCollection->RemoveAttribute(FGeometryDynamicCollection::SharedImplicitsAttribute, FTransformCollection::TransformGroup);
+			}
+			else if(TManagedArray<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>* OldAttrC = ArchiveGeometryCollection->FindAttributeTyped<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>(
+				FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup))
+			{
+				for (int32 Index = 0; Index < NumElems; ++Index)
+				{
+					if( (*OldAttrC)[Index] != nullptr)
+					{
+						ImplicitObjects[Index] = Chaos::FImplicitObjectPtr((*OldAttrC)[Index]->DeepCopyGeometry());
+					}
+				}
+				ArchiveGeometryCollection->RemoveAttribute(FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup);
+			}
+			NewAttr = &ArchiveGeometryCollection->AddAttribute<Chaos::FImplicitObjectPtr>(FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup);
+			for (int32 Index = 0; Index < NumElems; ++Index)
+			{
+				(*NewAttr)[Index] = ImplicitObjects[Index];
+			}
 		}
 	}
 
@@ -963,6 +1107,65 @@ void UGeometryCollection::Serialize(FArchive& Ar)
 		}
 	}
 
+	{
+		TManagedArray<Chaos::FConvexPtr>* NewAttr = ArchiveGeometryCollection->FindAttributeTyped<Chaos::FConvexPtr>(
+			FTransformCollection::ConvexHullAttribute, FTransformCollection::ConvexGroup);
+		if(!NewAttr && Ar.IsLoading())
+		{
+			const int32 NumElems = GeometryCollection->NumElements(FTransformCollection::ConvexGroup);
+			
+			TArray<Chaos::FConvexPtr> ImplicitObjects;
+			ImplicitObjects.SetNum(NumElems);
+			
+			if( TManagedArray<TUniquePtr<Chaos::FConvex>>* OldAttr = ArchiveGeometryCollection->FindAttributeTyped<TUniquePtr<Chaos::FConvex>>(
+				FTransformCollection::ConvexHullAttribute, FTransformCollection::ConvexGroup))
+			{
+				for (int32 Index = 0; Index < NumElems; ++Index)
+				{
+					if((*OldAttr)[Index] != nullptr)
+					{
+						ImplicitObjects[Index] = Chaos::FConvexPtr((*OldAttr)[Index].Release());
+					}
+				}
+				ArchiveGeometryCollection->RemoveAttribute(FTransformCollection::ConvexHullAttribute, FTransformCollection::ConvexGroup);
+			}
+			NewAttr = &ArchiveGeometryCollection->AddAttribute<Chaos::FConvexPtr>(FTransformCollection::ConvexHullAttribute, FTransformCollection::ConvexGroup);
+			for (int32 Index = 0; Index < NumElems; ++Index)
+			{
+				(*NewAttr)[Index] = ImplicitObjects[Index];
+			}
+		}
+	}
+	{
+		TManagedArray<Chaos::FImplicitObjectPtr>* NewAttr = ArchiveGeometryCollection->FindAttributeTyped<Chaos::FImplicitObjectPtr>(
+			FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
+			
+		if(!NewAttr && Ar.IsLoading())
+		{
+			const int32 NumElems = GeometryCollection->NumElements(FGeometryCollection::TransformGroup);
+			
+			TArray<Chaos::FImplicitObjectPtr> ImplicitObjects;
+			ImplicitObjects.SetNum(NumElems);
+			
+			if( TManagedArray<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>* OldAttr = ArchiveGeometryCollection->FindAttributeTyped<TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>>(
+				FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup))
+			{
+				for (int32 Index = 0; Index < NumElems; ++Index)
+				{
+					if((*OldAttr)[Index] != nullptr)
+					{
+						ImplicitObjects[Index] = Chaos::FImplicitObjectPtr((*OldAttr)[Index]->DeepCopyGeometry());
+					}
+				}
+				ArchiveGeometryCollection->RemoveAttribute(FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
+			}
+			NewAttr = &ArchiveGeometryCollection->AddAttribute<Chaos::FImplicitObjectPtr>(FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
+			for (int32 Index = 0; Index < NumElems; ++Index)
+			{
+				(*NewAttr)[Index] = ImplicitObjects[Index];
+			}
+		}
+	}
 
 	// will generate convex bodies when they dont exist. 
 	if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::GeometryCollectionConvexDefaults
@@ -1017,6 +1220,11 @@ void UGeometryCollection::Serialize(FArchive& Ar)
 	{
 		UpdateRootIndex();
 	}
+
+	// Generate root to leave order lookup
+	CacheBreadthFirstTransformIndices();
+	// Generate transform remap for AutoInstanceMeshes instances
+	CacheAutoInstanceTransformRemapIndices();
 
 	if (Ar.IsLoading())
 	{
@@ -1086,19 +1294,25 @@ void UGeometryCollection::FillAutoInstanceMeshesInstancesIfNeeded()
 		}
 
 		const GeometryCollection::Facades::FCollectionInstancedMeshFacade InstancedMeshFacade(*GeometryCollection);
-
-		const int32 NumTransforms = GeometryCollection->Children.Num();
-		for (int32 TransformIndex = 0; TransformIndex < NumTransforms; TransformIndex++)
+		if (InstancedMeshFacade.IsValid())
 		{
-			// only applies to leaves nodes
-			if (GeometryCollection->Children[TransformIndex].Num() == 0)
+			const int32 NumTransforms = GeometryCollection->Children.Num();
+			for (int32 TransformIndex = 0; TransformIndex < NumTransforms; TransformIndex++)
 			{
-				const int32 AutoInstanceMeshIndex = InstancedMeshFacade.GetIndex(TransformIndex);
-				if (AutoInstanceMeshes.IsValidIndex(AutoInstanceMeshIndex))
+				// only applies to leaves nodes
+				if (GeometryCollection->Children[TransformIndex].Num() == 0)
 				{
-					AutoInstanceMeshes[AutoInstanceMeshIndex].NumInstances++;
+					const int32 AutoInstanceMeshIndex = InstancedMeshFacade.GetIndex(TransformIndex);
+					if (AutoInstanceMeshes.IsValidIndex(AutoInstanceMeshIndex))
+					{
+						AutoInstanceMeshes[AutoInstanceMeshIndex].NumInstances++;
+					}
 				}
 			}
+		}
+		else
+		{
+			UE_LOG(LogGeometryCollectionInternal, Warning, TEXT("[%s] Could not find AutoInstanceMeshIndex attribute but the asset as instanced meshes assigned, you may need to regenerate this asset"), *GetPathName());
 		}
 	}
 }
@@ -1247,7 +1461,7 @@ TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe> UGeometryCollection::Genera
 	DuplicateGeometryCollection->AddAttribute<FVector3f>("InertiaTensor", FGeometryCollection::TransformGroup);
 	DuplicateGeometryCollection->AddAttribute<float>("Mass", FGeometryCollection::TransformGroup);
 	DuplicateGeometryCollection->AddAttribute<FTransform>("MassToLocal", FGeometryCollection::TransformGroup);
-	DuplicateGeometryCollection->AddAttribute<FGeometryDynamicCollection::FSharedImplicit>(
+	DuplicateGeometryCollection->AddAttribute<Chaos::FImplicitObjectPtr>(
 		FGeometryDynamicCollection::ImplicitsAttribute, FTransformCollection::TransformGroup);
 	DuplicateGeometryCollection->CopyMatchingAttributesFrom(*GeometryCollection, &SkipList);
 	// If we've removed all geometry, we need to make sure any references to that geometry are removed.
@@ -1384,6 +1598,7 @@ void UGeometryCollection::InvalidateCollection()
 {
 	StateGuid = FGuid::NewGuid();
 	UpdateRootIndex();
+	CacheBreadthFirstTransformIndices();
 }
 
 #if WITH_EDITOR
@@ -1452,6 +1667,77 @@ int32 UGeometryCollection::FindOrAddAutoInstanceMesh(const UStaticMesh* StaticMe
 	NewMesh.Materials = MeshMaterials;
 
 	return FindOrAddAutoInstanceMesh(NewMesh);
+}
+
+void UGeometryCollection::SetAutoInstanceMeshes(const TArray<FGeometryCollectionAutoInstanceMesh>& InAutoInstanceMeshes)
+{
+	AutoInstanceMeshes = InAutoInstanceMeshes;
+
+	// dedup array and reassign indices
+	if (AutoInstanceMeshes.Num() > 0)
+	{
+		TArray<FGeometryCollectionAutoInstanceMesh> UniqueAutoInstanceMeshes;
+		TArray<int32> InstanceMeshIndexRemap;
+
+		UniqueAutoInstanceMeshes.Reserve(AutoInstanceMeshes.Num());
+		InstanceMeshIndexRemap.Reserve(AutoInstanceMeshes.Num());
+
+		// now we may have two similar entries  we need to consolidate them 
+		for (int32 InstanceMeshIndex = 0; InstanceMeshIndex < AutoInstanceMeshes.Num(); InstanceMeshIndex++)
+		{
+			const FGeometryCollectionAutoInstanceMesh& InstanceMesh = AutoInstanceMeshes[InstanceMeshIndex];
+			int32 UniqueInstanceMeshIndex = UniqueAutoInstanceMeshes.Find(InstanceMesh);
+			if (UniqueInstanceMeshIndex == INDEX_NONE)
+			{
+				FGeometryCollectionAutoInstanceMesh UniqueInstanceMesh = InstanceMesh;
+				UniqueInstanceMesh.NumInstances = 0;
+				UniqueInstanceMesh.CustomData.Reset();
+				UniqueInstanceMeshIndex = UniqueAutoInstanceMeshes.Add(UniqueInstanceMesh);
+			}
+			// make sure num instances are aggregated
+			UniqueAutoInstanceMeshes[UniqueInstanceMeshIndex].NumInstances += InstanceMesh.NumInstances;
+			InstanceMeshIndexRemap.Add(UniqueInstanceMeshIndex);
+		}
+
+		GeometryCollection::Facades::FCollectionInstancedMeshFacade InstancedMeshFacade(*GetGeometryCollection());
+
+		const TManagedArray<TSet<int32>>& Children = GetGeometryCollection()->Children;
+
+		// relocate custom data : we cannot just aggregate them because we may have interleaved transform indices with alternating colors
+		// also adjust the transform index to instance mesh index via the facade 
+		TArray<int32> DataReadOffsets;
+		DataReadOffsets.SetNumZeroed(AutoInstanceMeshes.Num());
+		for (int32 TransformIndex = 0; TransformIndex < InstancedMeshFacade.GetNumIndices(); TransformIndex++)
+		{
+			// only for leaves
+			if (Children[TransformIndex].Num() == 0)
+			{
+				const int32 OldIndex = InstancedMeshFacade.GetIndex(TransformIndex);
+				if (InstanceMeshIndexRemap.IsValidIndex(OldIndex))
+				{
+					const FGeometryCollectionAutoInstanceMesh& OldInstanceMesh = AutoInstanceMeshes[OldIndex];
+
+					const int32 NewIndex = InstanceMeshIndexRemap[OldIndex];
+					FGeometryCollectionAutoInstanceMesh& NewInstanceMesh = UniqueAutoInstanceMeshes[NewIndex];
+
+					InstancedMeshFacade.SetIndex(TransformIndex, NewIndex);
+
+					const int32 NumDataPerInstance = OldInstanceMesh.GetNumDataPerInstance();
+					if (NumDataPerInstance > 0)
+					{
+						const int32 DataReadOffset = DataReadOffsets[OldIndex];
+						for (int32 DataIndex = 0; DataIndex < NumDataPerInstance; DataIndex++)
+						{
+							const float OldData = OldInstanceMesh.CustomData[DataReadOffset + DataIndex];
+							NewInstanceMesh.CustomData.Add(OldData);
+						}
+						DataReadOffsets[OldIndex] += NumDataPerInstance;
+					}
+				}
+			}
+		}
+		AutoInstanceMeshes = MoveTemp(UniqueAutoInstanceMeshes);
+	}
 }
 
 FGuid UGeometryCollection::GetIdGuid() const
@@ -1710,3 +1996,22 @@ const TArray<UAssetUserData*>* UGeometryCollection::GetAssetUserDataArray() cons
 {
 	return &ToRawPtrTArrayUnsafe(AssetUserData);
 }
+
+#if WITH_EDITOR
+bool UGeometryCollection::CanEditChange(const FProperty* InProperty) const
+{
+	if (!Super::CanEditChange(InProperty))
+	{
+		return false;
+	}
+
+	const FName& Name = InProperty->GetFName();
+
+	if (Name == GET_MEMBER_NAME_CHECKED(ThisClass, bOptimizeConvexes))
+	{
+		return Chaos::CVars::bChaosConvexSimplifyUnion == true;
+	}
+
+	return true;
+}
+#endif

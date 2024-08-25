@@ -14,7 +14,7 @@ class TRequest : public TSharedFromThis<TRequest<PayloadType>>, public FNoncopya
 public:
 	void InitializeRequest(const FString& Route, const FString& InVerb = TEXT("POST"), const FString& InContentType = TEXT("json"));
 
-	UE_NODISCARD static TSharedRef<TRequest<PayloadType>> CopyHeadersToNewRequest(const TSharedRef<TRequest<PayloadType>>& Original);
+	[[nodiscard]] static TSharedRef<TRequest<PayloadType>> CopyHeadersToNewRequest(const TSharedRef<TRequest<PayloadType>>& Original);
 	
 	void Post() const;
 	void Post(PayloadType&& InPayload);
@@ -22,22 +22,24 @@ public:
 
 	void Get() const;
 
-	UE_NODISCARD TRequest<PayloadType>& AddHeader(TPair<FString, FString> NewHeader) const;
-	UE_NODISCARD TRequest<PayloadType>& BindCompletionCallback(TFunction<void(FHttpRequestPtr, FHttpResponsePtr, bool)> CompletionCallback);
-	UE_NODISCARD TRequest<PayloadType>& BindProgressCallback(TFunction<void(FHttpRequestPtr, int32 /* BytesSent */, int32 /* BytesReceived */)> ProgressCallback);
-	UE_NODISCARD TRequest<PayloadType>& BindRetryCallback(TFunction<void(FHttpRequestPtr, FHttpResponsePtr, float /* SecondsToRetry */)> RetryCallback);
-	UE_NODISCARD TRequest<PayloadType>& BindHeaderReceivedCallback(TFunction<void(FHttpRequestPtr, const FString& /* HeaderName */, const FString& /* HeaderValue */)> HeaderReceivedCallback);
+	[[nodiscard]] TRequest<PayloadType>& AddHeader(TPair<FString, FString> NewHeader) const;
+	[[nodiscard]] TRequest<PayloadType>& BindCompletionCallback(TFunction<void(FHttpRequestPtr, FHttpResponsePtr, bool)> CompletionCallback);
+	UE_DEPRECATED(5.3, "BindProgressCallback has been deprecated, use BindProgressCallback64 instead")
+	[[nodiscard]] TRequest<PayloadType>& BindProgressCallback(TFunction<void(FHttpRequestPtr, int32 /* BytesSent */, int32 /* BytesReceived */)> ProgressCallback);
+	[[nodiscard]] TRequest<PayloadType>& BindProgressCallback64(TFunction<void(FHttpRequestPtr, uint64 /* BytesSent */, uint64 /* BytesReceived */)> ProgressCallback);
+	[[nodiscard]] TRequest<PayloadType>& BindRetryCallback(TFunction<void(FHttpRequestPtr, FHttpResponsePtr, float /* SecondsToRetry */)> RetryCallback);
+	[[nodiscard]] TRequest<PayloadType>& BindHeaderReceivedCallback(TFunction<void(FHttpRequestPtr, const FString& /* HeaderName */, const FString& /* HeaderValue */)> HeaderReceivedCallback);
 	TRequest<PayloadType>& SetPayloadData(const PayloadType& InPayloadData);
 	TRequest<PayloadType>& SetPayloadData(TArray<uint8>& InPayloadData);
 
-	UE_NODISCARD bool HasPayload() const;
+	[[nodiscard]] bool HasPayload() const;
 
-	UE_NODISCARD FORCEINLINE FString GetVerb() const { return InternalRequest->GetVerb(); }
-	UE_NODISCARD FORCEINLINE FString GetContentType() const { return InternalRequest->GetContentType(); }
-	UE_NODISCARD FORCEINLINE FString GetRoute() const { return InternalRequest->GetURL(); }
+	[[nodiscard]] FORCEINLINE FString GetVerb() const { return InternalRequest->GetVerb(); }
+	[[nodiscard]] FORCEINLINE FString GetContentType() const { return InternalRequest->GetContentType(); }
+	[[nodiscard]] FORCEINLINE FString GetRoute() const { return InternalRequest->GetURL(); }
 
 	void SetHeaders(const TMap<FString, FString>& Headers) const;
-	UE_NODISCARD TMap<FString, FString> GetAllHeaders() const;
+	[[nodiscard]] TMap<FString, FString> GetAllHeaders() const;
 	
 	void SetRoute(const FString& InURL) const;
 	void SetVerb(const FString& InVerb) const;
@@ -213,10 +215,19 @@ TRequest<PayloadType>& TRequest<PayloadType>::BindCompletionCallback(TFunction<v
 	return *this;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 template <typename PayloadType>
 TRequest<PayloadType>& TRequest<PayloadType>::BindProgressCallback(TFunction<void(FHttpRequestPtr, int32, int32)> ProgressCallback)
 {
 	InternalRequest->OnRequestProgress().BindLambda(MoveTemp(ProgressCallback));
+	return *this;
+}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+template <typename PayloadType>
+TRequest<PayloadType>& TRequest<PayloadType>::BindProgressCallback64(TFunction<void(FHttpRequestPtr, uint64, uint64)> ProgressCallback)
+{
+	InternalRequest->OnRequestProgress64().BindLambda(MoveTemp(ProgressCallback));
 	return *this;
 }
 
@@ -237,7 +248,7 @@ TRequest<PayloadType>& TRequest<PayloadType>::BindHeaderReceivedCallback(TFuncti
 template <typename PayloadType>
 TRequest<PayloadType>& TRequest<PayloadType>::SetPayloadData(const PayloadType& InPayloadData)
 {
-	static_assert(TModels_V<CStaticStructProvider, PayloadType>, TEXT("PayloadType must be a UStruct"));
+	static_assert(TModels_V<CStaticStructProvider, PayloadType>, "PayloadType must be a UStruct");
 
 	FString PayloadAsString = PayloadToString_Internal(InPayloadData).GetValue();
 	PayloadAsString.Append(TEXT("]")).InsertAt(0, TEXT("["));
@@ -262,7 +273,7 @@ bool TRequest<PayloadType>::HasPayload() const
 template <typename PayloadType>
 TValueOrError<FString, FString> TRequest<PayloadType>::PayloadToString_Internal(const PayloadType& InContent) const
 {
-	static_assert(TModels_V<CStaticStructProvider, PayloadType>, TEXT("PayloadType must be a UStruct"));
+	static_assert(TModels_V<CStaticStructProvider, PayloadType>, "PayloadType must be a UStruct");
 
 	FString StringifiedContent;
 	if (!FJsonObjectConverter::UStructToJsonObjectString(InContent, StringifiedContent))

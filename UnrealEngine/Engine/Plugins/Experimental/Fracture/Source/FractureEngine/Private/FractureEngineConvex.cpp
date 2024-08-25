@@ -86,7 +86,7 @@ namespace UE::FractureEngine::Convex
 		}
 
 		const TManagedArray<TSet<int32>>& TransformToConvexInds = Collection.GetAttribute<TSet<int32>>("TransformToConvexIndices", FTransformCollection::TransformGroup);
-		const TManagedArray<TUniquePtr<::Chaos::FConvex>>& ConvexHulls = Collection.GetAttribute<TUniquePtr<::Chaos::FConvex>>("ConvexHull", "Convex");
+		const TManagedArray<Chaos::FConvexPtr>& ConvexHulls = Collection.GetAttribute<Chaos::FConvexPtr>(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup);
 
 		GeometryCollection::Facades::FCollectionTransformFacade TransformFacade(Collection);
 		TArray<FTransform> GlobalTransformArray = TransformFacade.ComputeCollectionSpaceTransforms();
@@ -102,7 +102,7 @@ namespace UE::FractureEngine::Convex
 			{
 				constexpr bool bConvertNonManifold = true; // Add non-manifold faces so they are still included in the debug visualization
 				constexpr bool bInvertFaces = true; // FConvex mesh data appears to have opposite default winding from what we expect for triangle meshes
-				AppendConvexHullToCompactDynamicMesh(ConvexHulls[ConvexIdx].Get(), OutMesh, &GlobalTransformArray[BoneIdx], bConvertNonManifold, bInvertFaces);
+				AppendConvexHullToCompactDynamicMesh(ConvexHulls[ConvexIdx].GetReference(), OutMesh, &GlobalTransformArray[BoneIdx], bConvertNonManifold, bInvertFaces);
 			}
 			return true;
 		};
@@ -138,7 +138,7 @@ namespace UE::FractureEngine::Convex
 		}
 		
 		TManagedArray<TSet<int32>>& TransformToConvexInds = Collection.ModifyAttribute<TSet<int32>>("TransformToConvexIndices", FTransformCollection::TransformGroup);
-		TManagedArray<TUniquePtr<::Chaos::FConvex>>& ConvexHulls = Collection.ModifyAttribute<TUniquePtr<::Chaos::FConvex>>("ConvexHull", "Convex");
+		TManagedArray<Chaos::FConvexPtr>& ConvexHulls = Collection.ModifyAttribute<Chaos::FConvexPtr>(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup);
 		
 		auto SimplifyBone = [&TransformToConvexInds, &ConvexHulls, &Settings](int32 BoneIdx) -> bool
 		{
@@ -150,7 +150,7 @@ namespace UE::FractureEngine::Convex
 			bool bNoFailures = true;
 			for (int32 ConvexIdx : TransformToConvexInds[BoneIdx])
 			{
-				bool bSuccess = SimplifyConvexHull(ConvexHulls[ConvexIdx].Get(), ConvexHulls[ConvexIdx].Get(), Settings);
+				bool bSuccess = SimplifyConvexHull(ConvexHulls[ConvexIdx].GetReference(), ConvexHulls[ConvexIdx].GetReference(), Settings);
 				bNoFailures = bNoFailures && bSuccess;
 			}
 			return bNoFailures;
@@ -199,7 +199,7 @@ namespace UE::FractureEngine::Convex
 		{
 			if (OutConvexHull != InConvexHull)
 			{
-				*OutConvexHull = MoveTemp(*InConvexHull->CopyAsConvex());
+				*OutConvexHull = MoveTemp(*InConvexHull->RawCopyAsConvex());
 			}
 			return true;
 		}
@@ -381,7 +381,7 @@ namespace UE::FractureEngine::Convex
 		}
 
 		TManagedArray<TSet<int32>>& TransformToConvexInds = Collection.ModifyAttribute<TSet<int32>>("TransformToConvexIndices", FTransformCollection::TransformGroup);
-		TManagedArray<TUniquePtr<::Chaos::FConvex>>& ConvexHulls = Collection.ModifyAttribute<TUniquePtr<::Chaos::FConvex>>("ConvexHull", "Convex");
+		TManagedArray<Chaos::FConvexPtr>& ConvexHulls = Collection.ModifyAttribute<Chaos::FConvexPtr>(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup);
 
 		UE::Geometry::FDynamicMesh3 CombinedMesh;
 
@@ -414,7 +414,7 @@ namespace UE::FractureEngine::Convex
 			for (int32 ConvexIdx : TransformToConvexInds[BoneIdx])
 			{
 				constexpr bool bConvertNonManifold = true; // Add non-manifold faces so we don't have holes messing up the sphere covering
-				AppendConvexHullToCompactDynamicMesh(ConvexHulls[ConvexIdx].Get(), CombinedMesh, &GlobalTransformArray[BoneIdx], bConvertNonManifold);
+				AppendConvexHullToCompactDynamicMesh(ConvexHulls[ConvexIdx].GetReference(), CombinedMesh, &GlobalTransformArray[BoneIdx], bConvertNonManifold);
 			}
 			return bNoFailures;
 		};
@@ -428,7 +428,7 @@ namespace UE::FractureEngine::Convex
 
 		UE::Geometry::FDynamicMeshAABBTree3 Tree(&CombinedMesh, true);
 		UE::Geometry::TFastWindingTree<UE::Geometry::FDynamicMesh3> Winding(&Tree, true);
-		OutNegativeSpace.AddNegativeSpace(Winding, Settings);
+		OutNegativeSpace.AddNegativeSpace(Winding, Settings, true);
 
 		return bNoFailures;
 	}

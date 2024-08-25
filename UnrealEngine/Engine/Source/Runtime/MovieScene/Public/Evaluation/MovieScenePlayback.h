@@ -273,9 +273,24 @@ struct FMovieSceneContext : FMovieSceneEvaluationRange
 	/**
 	 * Get the inverse transform of the current sub sequence, to transform local times back to root times.
 	 */
+	UE_DEPRECATED(5.4, "Please use GetSequenceToRootSequenceTransform instead.")
 	FORCEINLINE FMovieSceneTimeTransform GetSequenceToRootTransform() const
 	{
-		return RootToSequenceTransform.InverseFromWarp(RootToSequenceWarpCounter);
+		FMovieSceneSequenceTransform SequenceTransform = RootToSequenceTransform.InverseFromLoop(RootToSequenceWarpCounter);
+		FMovieSceneTimeTransform ReturnTransform = SequenceTransform.LinearTransform;
+		for (int i = 0; i < SequenceTransform.NestedTransforms.Num(); ++i)
+		{
+			ReturnTransform = ReturnTransform * SequenceTransform.NestedTransforms[i].LinearTransform;
+		}
+		return ReturnTransform;
+	}
+
+	/**
+	 * Get the inverse sequence transform of the current sub sequence, to transform local times back to root times.
+	 */
+	FORCEINLINE FMovieSceneSequenceTransform GetSequenceToRootSequenceTransform() const
+	{
+		return RootToSequenceTransform.InverseFromLoop(RootToSequenceWarpCounter);
 	}
 
 	/**
@@ -345,7 +360,7 @@ public:
 		NewContext.RootToSequenceTransform.TransformTime(GetTime(), TransformedTime_Unused, WarpCounter);
 		NewContext.RootToSequenceWarpCounter = WarpCounter;
 
-		if (InTransform.IsWarping())
+		if (InTransform.IsLooping())
 		{
 			// If we have some looping, the transformed range might extend past the end of a loop and into
 			// the beginning of another. In that case, technically, the evaluation range ends up being a
@@ -356,7 +371,7 @@ public:
 			//       actually make contexts have an array of evaluation ranges.
 			TRangeBound<FFrameTime> UpperEvalutionRangeBound = NewContext.EvaluationRange.GetUpperBound();
 			const FMovieSceneNestedSequenceTransform& LeafTransform = InTransform.NestedTransforms.Last();
-			if (UpperEvalutionRangeBound.IsClosed() && LeafTransform.IsWarping())
+			if (UpperEvalutionRangeBound.IsClosed() && LeafTransform.IsLooping())
 			{
 				const FFrameNumber LeafWarpLength = LeafTransform.Warping.Length();
 				// Below: use strictly greater than comparison so that if the evalution range ends on the

@@ -311,7 +311,7 @@ namespace AssetPreviewWidget
 		if ( Tokens.Num() > 0 && !Tokens[0].Equals( StrContent ) )
 		{
 			const int32 StartChar = SubstitutePath.Find(Tokens[0]);
-			SubstitutePath.RemoveAt(StartChar, Tokens[0].Len(), false);
+			SubstitutePath.RemoveAt(StartChar, Tokens[0].Len(), EAllowShrinking::No);
 			SubstitutePath.InsertAt(StartChar, StrContent);
 		}
 

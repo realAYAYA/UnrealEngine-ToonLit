@@ -28,9 +28,16 @@ void UAbilityTask_WaitDelay::Activate()
 	UWorld* World = GetWorld();
 	TimeStarted = World->GetTimeSeconds();
 
-	// Use a dummy timer handle as we don't need to store it for later but we don't need to look for something to clear
-	FTimerHandle TimerHandle;
-	World->GetTimerManager().SetTimer(TimerHandle, this, &UAbilityTask_WaitDelay::OnTimeFinish, Time, false);
+	if (Time <= 0.0f)
+	{
+		World->GetTimerManager().SetTimerForNextTick(this, &UAbilityTask_WaitDelay::OnTimeFinish);
+	}
+	else
+	{
+		// Use a dummy timer handle as we don't need to store it for later but we don't need to look for something to clear
+		FTimerHandle TimerHandle;
+		World->GetTimerManager().SetTimer(TimerHandle, this, &UAbilityTask_WaitDelay::OnTimeFinish, Time, false);
+	}
 }
 
 void UAbilityTask_WaitDelay::OnTimeFinish()

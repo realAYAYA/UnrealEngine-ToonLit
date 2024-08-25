@@ -69,7 +69,7 @@ FString UDefaultImageProvider::Add(UTexture2D* Texture)
 		return FString();
 	}
 
-	const FName Id(Texture->GetFullName());
+	const FName Id(Texture->GetPathName());
 	Textures.Add(Id, Texture);	
 
 	return Id.ToString();

@@ -20,6 +20,20 @@
 
 class UInterchangeBaseNodeContainer;
 
+/**
+ * Base class for translator settings, the UInterchangeAssetImportData will store this data if the source translator exist
+ */
+UCLASS(BlueprintType, Blueprintable, editinlinenew, Abstract, MinimalAPI)
+class UInterchangeTranslatorSettings : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	INTERCHANGECORE_API void LoadSettings();
+
+	INTERCHANGECORE_API void SaveSettings();
+};
+
 UENUM(BlueprintType)
 enum class EInterchangeTranslatorType : uint8
 {
@@ -48,6 +62,13 @@ public:
 
 	/** return true if the translator can translate the given source data. */
 	INTERCHANGECORE_API virtual bool CanImportSourceData(const UInterchangeSourceData* InSourceData) const;
+
+	/**
+	 * Return true if the translator can be instantiate more then one time.
+	 * Some translator are not thread safe and cannot translate two files in same time.
+	 * A non thread safe translator could use the InterchangeWorker program to run in a separate process and return true.
+	 */
+	INTERCHANGECORE_API virtual bool IsThreadSafe() const { return true; }
 
 	/** Specifies the capabilities of a translator. */
 	virtual EInterchangeTranslatorType GetTranslatorType() const { return EInterchangeTranslatorType::Assets; }
@@ -128,6 +149,15 @@ public:
 		return SourceData;
 	}
 
+	/**
+	 * Return this translator settings
+	 */
+	INTERCHANGECORE_API virtual UInterchangeTranslatorSettings* GetSettings() const { return nullptr; }
+
+	/**
+	 * Reimport will set the settings if they exist in UInterchangeAssetImportData
+	 */
+	INTERCHANGECORE_API virtual void SetSettings(const UInterchangeTranslatorSettings* InterchangeTranslatorSettings) { }
 
 	UPROPERTY()
 	TObjectPtr<UInterchangeResultsContainer> Results;

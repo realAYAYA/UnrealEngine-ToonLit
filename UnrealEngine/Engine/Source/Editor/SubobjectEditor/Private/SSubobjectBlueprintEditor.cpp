@@ -189,10 +189,9 @@ void SSubobjectBlueprintEditor::OnDeleteNodes()
 	GUnrealEd->ComponentVisManager.ClearActiveComponentVis();
 
 	UBlueprint* Blueprint = GetBlueprint();
-	check(Blueprint != nullptr);
 	
 	// Get the current render info for the blueprint. If this is NULL then the blueprint is not currently visualizable (no visible primitive components)
-	FThumbnailRenderingInfo* RenderInfo = GUnrealEd->GetThumbnailManager()->GetRenderingInfo( Blueprint );
+	FThumbnailRenderingInfo* RenderInfo = Blueprint ? GUnrealEd->GetThumbnailManager()->GetRenderingInfo( Blueprint ) : nullptr;
 
 	// A lamda for displaying a confirm message to the user if there is a dynamic delegate bound to the 
 	// component they are trying to delete
@@ -260,13 +259,16 @@ void SSubobjectBlueprintEditor::OnDeleteNodes()
 
 			// If we had a thumbnail before we deleted any components, check to see if we should clear it
 			// If we deleted the final visualizable primitive from the blueprint, GetRenderingInfo should return NULL
-			FThumbnailRenderingInfo* NewRenderInfo = GUnrealEd->GetThumbnailManager()->GetRenderingInfo(Blueprint);
-			if (RenderInfo && !NewRenderInfo)
+			if (Blueprint && RenderInfo)
 			{
-				// We removed the last visible primitive component, clear the thumbnail
-				const FString BPFullName = FString::Printf(TEXT("%s %s"), *Blueprint->GetClass()->GetName(), *Blueprint->GetPathName());
-				UPackage* BPPackage = Blueprint->GetOutermost();
-				ThumbnailTools::CacheEmptyThumbnail( BPFullName, BPPackage );
+				FThumbnailRenderingInfo* NewRenderInfo = GUnrealEd->GetThumbnailManager()->GetRenderingInfo(Blueprint);
+				if (RenderInfo && !NewRenderInfo)
+				{
+					// We removed the last visible primitive component, clear the thumbnail
+					const FString BPFullName = FString::Printf(TEXT("%s %s"), *Blueprint->GetClass()->GetName(), *Blueprint->GetPathName());
+					UPackage* BPPackage = Blueprint->GetOutermost();
+					ThumbnailTools::CacheEmptyThumbnail( BPFullName, BPPackage );
+				}
 			}
 			// Do this AFTER marking the Blueprint as modified
 			UpdateSelectionFromNodes(TreeWidget->GetSelectedItems());
@@ -534,7 +536,12 @@ void SSubobjectBlueprintEditor::PopulateContextMenuImpl(UToolMenu* InMenu, TArra
 	FToolMenuSection& BlueprintSCSSection = InMenu->AddSection("BlueprintSCS");
 	if (InSelectedItems.Num() == 1)
 	{
-		BlueprintSCSSection.AddMenuEntry(FGraphEditorCommands::Get().FindReferences);
+		BlueprintSCSSection.AddSubMenu(
+			FName("FindReferenceSubMenu"),
+			LOCTEXT("FindReferences_Label", "Find References"),
+			LOCTEXT("FindReferences_Tooltip", "Options for finding references to class members"),
+			FNewToolMenuChoice(FNewMenuDelegate::CreateStatic(&FGraphEditorCommands::BuildFindReferencesMenu))
+		);
 	}
 
 	// Create an "Add Event" option in the context menu only if we can edit

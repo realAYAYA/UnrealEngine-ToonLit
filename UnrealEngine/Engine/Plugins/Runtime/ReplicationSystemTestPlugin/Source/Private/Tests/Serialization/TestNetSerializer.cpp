@@ -32,7 +32,7 @@ struct FFullNetSerializer
 	typedef int SourceType;
 	typedef FNetSerializerConfig ConfigType;
 
-	static const ConfigType DefaultConfig;
+	inline static const ConfigType DefaultConfig;
 
 	static void Serialize(FNetSerializationContext&, const FNetSerializeArgs&);
 	static void Deserialize(FNetSerializationContext&, const FNetDeserializeArgs&);
@@ -48,15 +48,22 @@ struct FFullNetSerializer
 };
 UE_NET_IMPLEMENT_SERIALIZER(FFullNetSerializer);
 
-const FFullNetSerializer::ConfigType FFullNetSerializer::DefaultConfig;
-
 UE_NET_DECLARE_SERIALIZER(FNetSerializerWithHasConnectionSpecificSerializationTrait, REPLICATIONSYSTEMTESTPLUGIN_API);
-
 struct FNetSerializerWithHasConnectionSpecificSerializationTrait : public FMinimalNetSerializer
 {
 	static constexpr bool bHasConnectionSpecificSerialization = true;
 };
 UE_NET_IMPLEMENT_SERIALIZER(FNetSerializerWithHasConnectionSpecificSerializationTrait);
+
+UE_NET_DECLARE_SERIALIZER(FNetSerializerWithApply, REPLICATIONSYSTEMTESTPLUGIN_API);
+struct FNetSerializerWithApply : public FMinimalNetSerializer
+{
+	typedef int SourceType;
+
+	static void Apply(FNetSerializationContext&, const FNetApplyArgs&);
+};
+UE_NET_IMPLEMENT_SERIALIZER(FNetSerializerWithApply);
+
 
 }
 
@@ -296,6 +303,34 @@ UE_NET_TEST(FNetSerializerWithHasConnectionSpecificSerializationTrait, HasHasCon
 	UE_NET_ASSERT_TRUE(EnumHasAnyFlags(Serializer->Traits, ENetSerializerTraits::HasConnectionSpecificSerialization));
 }
 
+//
+UE_NET_TEST(FNetSerializerWithApply, HasApplyTrait)
+{
+	const FNetSerializer& Serializer = UE_NET_GET_SERIALIZER(FNetSerializerWithApply);
+	UE_NET_ASSERT_TRUE(EnumHasAnyFlags(Serializer.Traits, ENetSerializerTraits::HasApply));
+}
+
+UE_NET_TEST(FNetSerializerWithApply, HasApplyFunction)
+{
+	const FNetSerializer& Serializer = UE_NET_GET_SERIALIZER(FNetSerializerWithApply);
+	UE_NET_ASSERT_NE(Serializer.Apply, NetApplyFunction(0));
+}
+
+UE_NET_TEST(FNetSerializerWithApply, ApplyGetsCalled)
+{
+	const FNetSerializer& Serializer = UE_NET_GET_SERIALIZER(FNetSerializerWithApply);
+
+	FNetSerializerWithApply::SourceType CallCount = 0;
+
+	FNetSerializationContext Context;
+	FNetApplyArgs Args;
+	Args.Version = Serializer.Version;
+	Args.NetSerializerConfig = NetSerializerConfigParam(nullptr);
+	Args.Source = NetSerializerValuePointer(&CallCount);
+	Serializer.Apply(Context, Args);
+	UE_NET_ASSERT_EQ(CallCount, FNetSerializerWithApply::SourceType(1));
+}
+
 }
 
 namespace UE::Net
@@ -366,6 +401,12 @@ void FFullNetSerializer::FreeDynamicState(FNetSerializationContext&, const FNetF
 }
 
 void FFullNetSerializer::CollectNetReferences(FNetSerializationContext&, const FNetCollectReferencesArgs& Args)
+{
+	*reinterpret_cast<SourceType*>(Args.Source) += 1;
+}
+
+// FNetSerializerWithApply
+void FNetSerializerWithApply::Apply(FNetSerializationContext&, const FNetApplyArgs& Args)
 {
 	*reinterpret_cast<SourceType*>(Args.Source) += 1;
 }

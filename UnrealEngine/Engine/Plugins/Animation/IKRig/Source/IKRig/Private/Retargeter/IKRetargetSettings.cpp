@@ -38,17 +38,7 @@ bool FTargetChainIKSettings::operator==(const FTargetChainIKSettings& Other) con
 	&& bAffectedByIKWarping == Other.bAffectedByIKWarping;
 }
 
-void FTargetChainSettings::CopySettingsFromAsset(const URetargetChainSettings* AssetChainSettings)
-{
-	*this = AssetChainSettings->Settings;
-}
-
 bool FTargetChainSettings::operator==(const FTargetChainSettings& Other) const
 {
 	return FK == Other.FK && IK == Other.IK && SpeedPlanting == Other.SpeedPlanting;
-}
-
-void FTargetRootSettings::CopySettingsFromAsset(const URetargetRootSettings* AssetRootSettings)
-{
-	*this = AssetRootSettings->Settings;
 }

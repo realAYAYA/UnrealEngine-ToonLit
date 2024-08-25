@@ -11,10 +11,9 @@
 #include "Memory/MemoryView.h"
 #include "Memory/SharedBuffer.h"
 #include "Templates/UnrealTemplate.h"
+#include "Templates/FunctionFwd.h"
 
 #include <type_traits>
-
-template <typename FuncType> class TFunctionRef;
 
 /**
  * FCompositeBuffer is a non-contiguous buffer composed of zero or more immutable shared buffers.

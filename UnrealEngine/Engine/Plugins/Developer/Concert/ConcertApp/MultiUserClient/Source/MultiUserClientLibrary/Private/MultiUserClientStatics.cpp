@@ -23,54 +23,61 @@ DEFINE_LOG_CATEGORY_STATIC(LogMultiUserClient, Log, All);
 #define LOCTEXT_NAMESPACE "MultiUserClientStatics"
 
 #if WITH_CONCERT
-namespace MultiUserClientUtil
+namespace UE::MultiUserClientLibrary
 {
+	FMultiUserClientInfo ConvertClientInfo(const FGuid& ClientEndpointId, const FConcertClientInfo& ClientInfo)
+	{
+		FMultiUserClientInfo Result;
+		Result.ClientEndpointId = ClientEndpointId;
+		Result.DisplayName = ClientInfo.DisplayName;
+		Result.AvatarColor = ClientInfo.AvatarColor;
+		Result.Tags = ClientInfo.Tags;
+		return Result;
+	}
 
-FMultiUserClientInfo ConvertClientInfo(const FGuid& ClientEndpointId, const FConcertClientInfo& ClientInfo)
-{
-	FMultiUserClientInfo Result;
-	Result.ClientEndpointId = ClientEndpointId;
-	Result.DisplayName = ClientInfo.DisplayName;
-	Result.AvatarColor = ClientInfo.AvatarColor;
-	Result.Tags = ClientInfo.Tags;
-	return Result;
-}
+	FMultiUserConnectionError ConvertConnectionError(FConcertConnectionError Error)
+	{
+		FMultiUserConnectionError MUError;
+		MUError.ErrorCode = static_cast<EMultiUserConnectionError>(Error.ErrorCode);
+		MUError.ErrorMessage = Error.ErrorText;
+		return MUError;
+	}
 
-FMultiUserConnectionError ConvertConnectionError(FConcertConnectionError Error)
-{
-	FMultiUserConnectionError MUError;
-	MUError.ErrorCode = static_cast<EMultiUserConnectionError>(Error.ErrorCode);
-	MUError.ErrorMessage = Error.ErrorText;
-	return MUError;
-}
+	UConcertClientConfig* ModifyClientConfig(const FMultiUserClientConfig& InClientConfig)
+	{
+		UConcertClientConfig* ClientConfig = GetMutableDefault<UConcertClientConfig>();
+		ClientConfig->DefaultServerURL = InClientConfig.DefaultServerURL;
+		ClientConfig->DefaultSessionName = InClientConfig.DefaultSessionName;
+		ClientConfig->DefaultSessionToRestore = InClientConfig.DefaultSessionToRestore;
+		ClientConfig->SourceControlSettings.ValidationMode = static_cast<EConcertSourceValidationMode>(InClientConfig.ValidationMode);
+		return ClientConfig;
+	}
 
-UConcertClientConfig* ModifyClientConfig(const FMultiUserClientConfig& InClientConfig)
-{
-	UConcertClientConfig* ClientConfig = GetMutableDefault<UConcertClientConfig>();
-	ClientConfig->DefaultServerURL = InClientConfig.DefaultServerURL;
-	ClientConfig->DefaultSessionName = InClientConfig.DefaultSessionName;
-	ClientConfig->DefaultSessionToRestore = InClientConfig.DefaultSessionToRestore;
-	ClientConfig->SourceControlSettings.ValidationMode = static_cast<EConcertSourceValidationMode>(InClientConfig.ValidationMode);
-	return ClientConfig;
-}
+	EMultiUserConnectionStatus ConvertConnectionStatus(EConcertConnectionStatus ConnectionStatus)
+	{
+		return static_cast<EMultiUserConnectionStatus>(ConnectionStatus);
+	}
 
-EMultiUserConnectionStatus ConvertConnectionStatus(EConcertConnectionStatus ConnectionStatus)
-{
-	return static_cast<EMultiUserConnectionStatus>(ConnectionStatus);
-}
+	FMultiUserSessionInfo ConvertSessionInfo(const FConcertSessionInfo& InSessionInfo, const FConcertServerInfo& InServerInfo)
+	{
+		FMultiUserSessionInfo ReturnVal;
+		ReturnVal.SessionName = InSessionInfo.SessionName;
+		ReturnVal.ServerName = InServerInfo.ServerName;
+		ReturnVal.EndpointName = InServerInfo.InstanceInfo.InstanceName;
+		ReturnVal.ServerEndpointId = InSessionInfo.ServerInstanceId;
+		ReturnVal.bValid = true;
+		return ReturnVal;
+	}
 
-FMultiUserSessionInfo ConvertSessionInfo(const FConcertSessionInfo& InSessionInfo, const FConcertServerInfo& InServerInfo)
-{
-	FMultiUserSessionInfo ReturnVal;
-	ReturnVal.SessionName = InSessionInfo.SessionName;
-	ReturnVal.ServerName = InServerInfo.ServerName;
-	ReturnVal.EndpointName = InServerInfo.InstanceInfo.InstanceName;
-	ReturnVal.ServerEndpointId = InSessionInfo.ServerInstanceId;
-	ReturnVal.bValid = true;
-	return ReturnVal;
-}
-
-} // namespace MultiUserClientUtil
+	EMultiUserClientStatus ConvertClientStatus(EConcertClientStatus Status)
+	{
+		static_assert(static_cast<int32>(EConcertClientStatus::Count) == 3, "Update this location when modifying EConcertClientStatus");
+		static_assert(static_cast<int32>(EConcertClientStatus::Connected) == static_cast<int32>(EMultiUserClientStatus::Connected));
+		static_assert(static_cast<int32>(EConcertClientStatus::Disconnected) == static_cast<int32>(EMultiUserClientStatus::Disconnected));
+		static_assert(static_cast<int32>(EConcertClientStatus::Updated) == static_cast<int32>(EMultiUserClientStatus::Updated));
+		return static_cast<EMultiUserClientStatus>(Status);
+	}
+} // namespace UE::MultiUserClientLibrary
 #endif
 
 UMultiUserClientStatics::UMultiUserClientStatics(const FObjectInitializer& ObjectInitializer)
@@ -258,7 +265,7 @@ FMultiUserClientInfo UMultiUserClientStatics::GetLocalMultiUserClientInfo()
 
 			FGuid LocalClientEndpointId = ClientSession ? ClientSession->GetSessionClientEndpointId() : FGuid();
 			const FConcertClientInfo& LocalClientInfo = ClientSession ? ClientSession->GetLocalClientInfo() : ConcertClient->GetClientInfo();
-			ClientInfo = MultiUserClientUtil::ConvertClientInfo(LocalClientEndpointId, LocalClientInfo);
+			ClientInfo = UE::MultiUserClientLibrary::ConvertClientInfo(LocalClientEndpointId, LocalClientInfo);
 		}
 	}
 #endif
@@ -284,7 +291,7 @@ FMultiUserSessionInfo UMultiUserClientStatics::GetMultiUserSessionInfo()
 				});
 				if (ServerInfo)
 				{
-					return MultiUserClientUtil::ConvertSessionInfo(SessionInfo, *ServerInfo);
+					return UE::MultiUserClientLibrary::ConvertSessionInfo(SessionInfo, *ServerInfo);
 				}
 			}
 		}
@@ -308,7 +315,7 @@ bool UMultiUserClientStatics::GetMultiUserClientInfoByName(const FString& Client
 			const FConcertClientInfo& LocalClientInfo = ClientSession ? ClientSession->GetLocalClientInfo() : ConcertClient->GetClientInfo();
 			if (ClientName == LocalClientInfo.DisplayName)
 			{
-				ClientInfo = MultiUserClientUtil::ConvertClientInfo(ClientSession ? ClientSession->GetSessionClientEndpointId() : FGuid(), LocalClientInfo);
+				ClientInfo = UE::MultiUserClientLibrary::ConvertClientInfo(ClientSession ? ClientSession->GetSessionClientEndpointId() : FGuid(), LocalClientInfo);
 				return true;
 			}
 
@@ -319,7 +326,7 @@ bool UMultiUserClientStatics::GetMultiUserClientInfoByName(const FString& Client
 				{
 					if (SessionClient.ClientInfo.DisplayName == ClientName)
 					{
-						ClientInfo = MultiUserClientUtil::ConvertClientInfo(SessionClient.ClientEndpointId, SessionClient.ClientInfo);
+						ClientInfo = UE::MultiUserClientLibrary::ConvertClientInfo(SessionClient.ClientEndpointId, SessionClient.ClientInfo);
 						return true;
 					}
 				}
@@ -345,7 +352,7 @@ bool UMultiUserClientStatics::GetRemoteMultiUserClientInfos(TArray<FMultiUserCli
 				const TArray<FConcertSessionClientInfo> SessionClients = ClientSession->GetSessionClients();
 				for (const FConcertSessionClientInfo& SessionClient : SessionClients)
 				{
-					ClientInfos.Add(MultiUserClientUtil::ConvertClientInfo(SessionClient.ClientEndpointId, SessionClient.ClientInfo));
+					ClientInfos.Add(UE::MultiUserClientLibrary::ConvertClientInfo(SessionClient.ClientEndpointId, SessionClient.ClientInfo));
 				}
 
 				return ClientInfos.Num() > 0;
@@ -363,7 +370,7 @@ bool UMultiUserClientStatics::ConfigureMultiUserClient(const FMultiUserClientCon
 	{
 		if (TSharedPtr<IConcertSyncClient> ConcertSyncClient = IMultiUserClientModule::Get().GetClient())
 		{
-			ConcertSyncClient->GetConcertClient()->Configure(MultiUserClientUtil::ModifyClientConfig(ClientConfig));
+			ConcertSyncClient->GetConcertClient()->Configure(UE::MultiUserClientLibrary::ModifyClientConfig(ClientConfig));
 			return true;
 		}
 	}
@@ -390,7 +397,7 @@ FMultiUserConnectionError UMultiUserClientStatics::GetLastMultiUserConnectionErr
 	{
 		if (TSharedPtr<IConcertSyncClient> ConcertSyncClient = IMultiUserClientModule::Get().GetClient())
 		{
-			LastError = MultiUserClientUtil::ConvertConnectionError(ConcertSyncClient->GetConcertClient()->GetLastConnectionError());
+			LastError = UE::MultiUserClientLibrary::ConvertConnectionError(ConcertSyncClient->GetConcertClient()->GetLastConnectionError());
 		}
 	}
 #endif
@@ -409,7 +416,7 @@ EMultiUserConnectionStatus UMultiUserClientStatics::GetMultiUserConnectionStatus
 			const TSharedPtr<IConcertClientSession> ClientSession = ConcertClient->GetCurrentSession();
 			if (ClientSession.IsValid())
 			{
-				return MultiUserClientUtil::ConvertConnectionStatus(ClientSession->GetConnectionStatus());
+				return UE::MultiUserClientLibrary::ConvertConnectionStatus(ClientSession->GetConnectionStatus());
 			}
 		}
 	}

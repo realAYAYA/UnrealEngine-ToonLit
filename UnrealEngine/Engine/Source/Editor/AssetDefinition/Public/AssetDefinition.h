@@ -278,6 +278,7 @@ struct ASSETDEFINITION_API EAssetCategoryPaths
 	static FAssetCategoryPath Physics;
 	static FAssetCategoryPath Texture;
 	static FAssetCategoryPath UI;
+	static FAssetCategoryPath World;
 };
 
 struct FAssetOpenSupport

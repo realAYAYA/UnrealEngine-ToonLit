@@ -78,10 +78,25 @@ void UEditorUtilityTask::FinishExecutingTask()
 	OnFinished.Broadcast(this);
 }
 
+FText UEditorUtilityTask::GetTaskTitle() const
+{
+	return GetClass()->GetDisplayNameText();
+}
+
 void UEditorUtilityTask::CreateNotification()
 {
+	FText TaskTitle = GetTaskTitleOverride();
+	if (TaskTitle.IsEmpty())
+	{
+		TaskTitle = GetTaskTitle();
+	}
+	if (TaskTitle.IsEmpty())
+	{
+		TaskTitle = GetClass()->GetDisplayNameText();
+	}
+
 	FAsyncTaskNotificationConfig NotificationConfig;
-	NotificationConfig.TitleText = FText::Format(LOCTEXT("NotificationEditorUtilityTaskTitle", "Task {0}"), GetClass()->GetDisplayNameText());
+	NotificationConfig.TitleText = FText::Format(LOCTEXT("NotificationEditorUtilityTaskTitle", "Task {0}"), TaskTitle);
 	NotificationConfig.ProgressText = LOCTEXT("Running", "Running");
 	NotificationConfig.bCanCancel = true;
 	TaskNotification = MakeUnique<FAsyncTaskNotification>(NotificationConfig);

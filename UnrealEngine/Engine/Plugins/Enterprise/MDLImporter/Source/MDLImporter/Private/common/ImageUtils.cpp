@@ -16,6 +16,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogImageUtils, Log, All);
 namespace ImageUtilsImpl
 {
 
+	// TODO: get rid of all this, use FImage instead.
+
 	bool GetRawData(UTextureRenderTarget2D* TexRT, TArray<uint8>& RawData)
 	{
 		FRenderTarget* RenderTarget = TexRT->GameThread_GetRenderTargetResource();
@@ -95,6 +97,8 @@ namespace ImageUtilsImpl
 	                     bool bLinearSpace)
 	{
 		check(SrcChannels > 0 && SrcChannels <= 4);
+
+		// TODO: do not use this, use FImageCore::ResizeImage instead
 
 		for (int32 Index = 0; Index < DstWidth * DstHeight * SrcChannels; ++Index)
 		{
@@ -179,6 +183,8 @@ namespace Common{
 
 /**
  * Resizes the given image using a simple average filter and stores it in the destination array.
+ *
+ * TODO: do not use this, use FImageCore::ResizeImage instead
  *
  * @param SrcWidth		Source image width.
  * @param SrcHeight		Source image height.

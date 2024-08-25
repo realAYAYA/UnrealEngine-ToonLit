@@ -54,6 +54,7 @@ _Pragma("clang diagnostic ignored \"-Wdefaulted-function-deleted\"")
 #include "ConvexPolygon.hpp"
 
 #include "Transformation.hpp"
+#include "TranMatToTransformationConverter.hpp"
 #include "Parameter.hpp"
 #include "Light.hpp"
 
@@ -70,6 +71,43 @@ _Pragma("clang diagnostic ignored \"-Wdefaulted-function-deleted\"")
 #include "Line3D.hpp"
 
 #include "DGFileDlg.hpp"
+
+#if AC_VERSION > 26
+// Declarations of methods used by the AddOn and defined in ACAPI_MigrationHeader.h
+GSErrCode ACAPI_3D_CreateSight (void** newSightPtr);
+GSErrCode ACAPI_3D_GetComponent (API_Component3D* component);
+GSErrCode ACAPI_3D_GetCurrentWindowSight (void** sightPtr);
+GSErrCode ACAPI_3D_SelectSight (void* sight, void** oldSightPtr);
+GSErrCode ACAPI_Command_CallFromEventLoop (const API_ModulID* mdid, GSType cmdID, Int32 cmdVersion, GSHandle paramsHandle, bool silentMode, APICommandCallBackProc* callbackProc);
+GSErrCode ACAPI_Database (API_DatabaseID code, void* par1 = nullptr, void* par2 = nullptr, void* par3 = nullptr);
+GSErrCode ACAPI_Database_GetLast3DDefLevels (const GS::Array<API_ElemType>& elemTypes, GS::Array<double>& levels);
+GSErrCode ACAPI_ElemComponent_GetPropertyDefinitions (const API_ElemComponentID& elemComponent, API_PropertyDefinitionFilter filter, GS::Array<API_PropertyDefinition>& propertyDefinitions);
+GSErrCode ACAPI_ElemComponent_GetPropertyValues (const API_ElemComponentID& elemComponent, const GS::Array<API_PropertyDefinition>& propertyDefinitions, GS::Array<API_Property>& properties);
+GSErrCode ACAPI_ElementGroup_GetGroup (const API_Guid& elemGuid, API_Guid* groupGuid);
+GSErrCode ACAPI_Element_Get3DInfo (const API_Elem_Head& elemHead, API_ElemInfo3D* info3D);
+GSErrCode ACAPI_Element_GetCategoryValue (const API_Guid& elemGuid, const API_ElemCategory& elemCategory, API_ElemCategoryValue* elemCategoryValue);
+GSErrCode ACAPI_Element_GetConnectedElements (const API_Guid& guid, const API_ElemType& connectedElemType, GS::Array<API_Guid>* connectedElements, API_ElemFilterFlags filterBits = APIFilt_None, const API_Guid& renovationFilterGuid = APINULLGuid);
+GSErrCode ACAPI_Environment (API_EnvironmentID code, void* par1 = nullptr, void* par2 = nullptr, void* par3 = nullptr);
+GSErrCode ACAPI_Goodies (API_GoodiesID code, void* par1 = nullptr, void* par2 = nullptr, void* par3 = nullptr, void* par4 = nullptr);
+GSErrCode ACAPI_Install_FileTypeHandler3D (GSType cmdID, APIIO3DCommandProc* handlerProc);
+GSErrCode ACAPI_Install_MenuHandler (short menuStrResID, APIMenuCommandProc* handlerProc);
+GSErrCode ACAPI_Install_ModulCommandHandler (GSType cmdID, Int32 cmdVersion, APIModulCommandProc* handlerProc);
+GSErrCode ACAPI_Interface (API_InterfaceID code, void* par1 = nullptr, void* par2 = nullptr, void* par3 = nullptr, void* par4 = nullptr, void* par5 = nullptr);
+GSErrCode ACAPI_LibPart_Get (API_LibPart* libPart);
+GSErrCode ACAPI_LibPart_GetNum (Int32* count);
+GSErrCode ACAPI_LibPart_GetSection (Int32 libInd, API_LibPartSection* section, GSHandle* sectionHdl, GS::UniString* sectionStr, GS::UniString* password = nullptr);
+GSErrCode ACAPI_LibPart_GetSectionList (Int32 libInd, Int32* nSection, API_LibPartSection*** sections);
+GSErrCode ACAPI_LibPart_Search (API_LibPart* ancestor, bool createIfMissing, bool onlyPlaceable = false);
+GSErrCode ACAPI_ListData_Get (API_ListData* listdata);
+GSErrCode ACAPI_ListData_GetLocal (Int32 libIndex, const API_Elem_Head* elemHead, API_ListData* listdata);
+GSErrCode ACAPI_Notify_CatchNewElement (const API_ToolBoxItem* elemType, APIElementEventHandlerProc* handlerProc);
+GSErrCode ACAPI_Notify_CatchProjectEvent (GSFlags eventTypes, APIProjectEventHandlerProc* handlerProc);
+GSErrCode ACAPI_Notify_CatchViewEvent (GSFlags eventTypes, API_NavigatorMapID mapId, APIViewEventHandlerProc* handlerProc);
+GSErrCode ACAPI_Notify_InstallElementObserver (APIElementEventHandlerProc* handlerProc);
+GSErrCode ACAPI_Register_FileType (Int32 refCon, GSType ftype, GSType fcreator, const char* extname, short iconResID, short descStrResID, short descStrResItemID, API_IOMethod methodFlags);
+GSErrCode ACAPI_Register_Menu (short menuStrResID, short promptStrResID, APIMenuCodeID menuPosCode, GSFlags menuFlags);
+GSErrCode ACAPI_Register_SupportedService (GSType cmdID, Int32 cmdVersion);
+#endif
 
 // clang-format off
 #ifdef __clang__

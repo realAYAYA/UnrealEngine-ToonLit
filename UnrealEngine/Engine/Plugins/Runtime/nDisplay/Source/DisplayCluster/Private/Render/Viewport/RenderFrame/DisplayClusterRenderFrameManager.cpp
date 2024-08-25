@@ -1,33 +1,27 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Render/Viewport/RenderFrame/DisplayClusterRenderFrameManager.h"
-
-#include "Render/Viewport/DisplayClusterViewport.h"
-
 #include "Render/Viewport/RenderFrame/DisplayClusterRenderFrame.h"
 #include "Render/Viewport/RenderFrame/DisplayClusterRenderFrameSettings.h"
+#include "Render/Viewport/Configuration/DisplayClusterViewportConfiguration.h"
+#include "Render/Viewport/DisplayClusterViewport.h"
 
 #include "Misc/Parse.h"
-
 
 ///////////////////////////////////////////////////////////////
 // FDisplayClusterRenderTargetFrame
 ///////////////////////////////////////////////////////////////
-bool FDisplayClusterRenderFrameManager::BuildRenderFrame(FViewport* InViewport, const FDisplayClusterRenderFrameSettings& InRenderFrameSettings, const TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>>& InViewports, FDisplayClusterRenderFrame& OutRenderFrame)
+bool FDisplayClusterRenderFrameManager::BuildRenderFrame(FViewport* InViewport, const TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>>& InViewports, FDisplayClusterRenderFrame& OutRenderFrame)
 {
+	const FDisplayClusterRenderFrameSettings& InRenderFrameSettings = Configuration->GetRenderFrameSettings();
 
-	switch (InRenderFrameSettings.RenderMode)
+	// Dont use render frame for preview
+	if (!InRenderFrameSettings.IsPreviewRendering())
 	{
-	case EDisplayClusterRenderFrameMode::PreviewInScene:
-		// Dont use render frame for preview
-		break;
-
-	default:
-		if (!FindFrameTargetRect(InViewport, InViewports, InRenderFrameSettings, OutRenderFrame.FrameRect))
+		if (!FindFrameTargetRect(InViewport, InViewports, OutRenderFrame.FrameRect))
 		{
 			return false;
 		}
-		break;
 	}
 
 	// @todo add atlasing, merge multiple viewports in single viewfamily, etc
@@ -43,7 +37,7 @@ bool FDisplayClusterRenderFrameManager::BuildRenderFrame(FViewport* InViewport, 
 	{
 		if (Viewport.IsValid())
 		{
-			if (Viewport->RenderSettings.GetParentViewportId().IsEmpty())
+			if (Viewport->GetRenderSettings().GetParentViewportId().IsEmpty())
 			{
 				SortedViewports.Add(Viewport);
 			}
@@ -65,7 +59,7 @@ bool FDisplayClusterRenderFrameManager::BuildRenderFrame(FViewport* InViewport, 
 		// Find all viewports being captured
 		TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>> ViewportsBeingCaptured = SortedViewports.FilterByPredicate([](const TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>& Viewport)
 		{
-			return Viewport.IsValid() && Viewport->GetRenderSettings().bIsBeingCaptured;
+			return Viewport.IsValid() && Viewport->GetRenderSettings().HasAnyMediaStates(EDisplayClusterViewportMediaState::Capture);
 		});
 
 		// Put them all in the beginning of the list
@@ -80,44 +74,13 @@ bool FDisplayClusterRenderFrameManager::BuildRenderFrame(FViewport* InViewport, 
 		}
 	}
 
-	bool bResult = false;
-
-	if (InRenderFrameSettings.bAllowRenderTargetAtlasing)
-	{
-// Not implemented yet
-#if 0
-		switch (InRenderFrameSettings.ViewFamilyMode)
-		{
-		case EDisplayClusterRenderFamilyMode::AllowMergeForGroups:
-			bResult = false;
-			break;
-
-		case EDisplayClusterRenderFamilyMode::AllowMergeForGroupsAndStereo:
-			//NOT_IMPLEMENTED
-			bResult = false;
-			break;
-
-		case EDisplayClusterRenderFamilyMode::MergeAnyPossible:
-			//NOT_IMPLEMENTED
-			bResult = false;
-			break;
-
-		default:
-			bResult = false;
-			break;
-		}
-#endif
-	}
-	else
-	{
-		bResult = BuildSimpleFrame(InViewport, InRenderFrameSettings, SortedViewports, OutRenderFrame);
-	}
-
-	return bResult;
+	return BuildSimpleFrame(InViewport, SortedViewports, OutRenderFrame);
 }
 
-bool FDisplayClusterRenderFrameManager::BuildSimpleFrame(FViewport* InViewport, const FDisplayClusterRenderFrameSettings& InRenderFrameSettings, const TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>>& InViewports, FDisplayClusterRenderFrame& OutRenderFrame)
+bool FDisplayClusterRenderFrameManager::BuildSimpleFrame(FViewport* InViewport, const TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>>& InViewports, FDisplayClusterRenderFrame& OutRenderFrame)
 {
+	const FDisplayClusterRenderFrameSettings& InRenderFrameSettings = Configuration->GetRenderFrameSettings();
+
 	for (const TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InViewports)
 	{
 		if (ViewportIt.IsValid())
@@ -128,8 +91,8 @@ bool FDisplayClusterRenderFrameManager::BuildSimpleFrame(FViewport* InViewport, 
 				{
 					FrameView.ContextNum = ContextIt.ContextNum;
 					FrameView.Viewport = ViewportIt.ToSharedRef();
-					FrameView.bDisableRender = ContextIt.bDisableRender || ViewportIt->RenderSettings.bSkipSceneRenderingButLeaveResourcesAvailable;
-					FrameView.bFreezeRendering = ViewportIt->RenderSettings.bFreezeRendering;
+					FrameView.bDisableRender = ContextIt.bDisableRender;
+					FrameView.bFreezeRendering = ViewportIt->GetRenderSettings().bFreezeRendering;
 				}
 
 				FDisplayClusterRenderFrameTargetViewFamily FrameViewFamily;
@@ -142,12 +105,12 @@ bool FDisplayClusterRenderFrameManager::BuildSimpleFrame(FViewport* InViewport, 
 				FDisplayClusterRenderFrameTarget FrameRenderTarget;
 				{
 					// Simple frame use unique RTT  for each viewport, so disable RTT when viewport rendering disabled
-					FrameRenderTarget.bShouldUseRenderTarget = ViewportIt->RenderTargets.Num() > 0;
+					FrameRenderTarget.bShouldUseRenderTarget = ViewportIt->GetViewportResources(EDisplayClusterViewportResource::RenderTargets).Num() > 0;
 
 					FrameRenderTarget.ViewFamilies.Add(FrameViewFamily);
 
 					FrameRenderTarget.RenderTargetSize = ContextIt.RenderTargetRect.Max;
-					FrameRenderTarget.CaptureMode = ViewportIt->RenderSettings.CaptureMode;
+					FrameRenderTarget.CaptureMode = ViewportIt->GetRenderSettings().CaptureMode;
 				}
 
 				OutRenderFrame.RenderTargets.Add(FrameRenderTarget);
@@ -158,8 +121,10 @@ bool FDisplayClusterRenderFrameManager::BuildSimpleFrame(FViewport* InViewport, 
 	return true;
 }
 
-bool FDisplayClusterRenderFrameManager::FindFrameTargetRect(FViewport* InViewport, const TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>>& InOutViewports, const FDisplayClusterRenderFrameSettings& InRenderFrameSettings, FIntRect& OutFrameTargetRect) const
+bool FDisplayClusterRenderFrameManager::FindFrameTargetRect(FViewport* InViewport, const TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>>& InOutViewports, FIntRect& OutFrameTargetRect) const
 {
+	const FDisplayClusterRenderFrameSettings& InRenderFrameSettings = Configuration->GetRenderFrameSettings();
+
 	// Calculate Backbuffer frame
 	bool bIsUsed = false;
 
@@ -173,7 +138,7 @@ bool FDisplayClusterRenderFrameManager::FindFrameTargetRect(FViewport* InViewpor
 	// Optimize frame target RTT
 	for (const TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InOutViewports)
 	{
-		if (ViewportIt.IsValid() && ViewportIt->RenderSettings.bEnable && ViewportIt->RenderSettings.bVisible)
+		if (ViewportIt.IsValid() && ViewportIt->GetRenderSettings().bEnable && ViewportIt->GetRenderSettings().bVisible)
 		{
 			for (const auto& ContextIt : ViewportIt->GetContexts())
 			{

@@ -1997,7 +1997,7 @@ bool FDatasmithVREDImporter::SendSceneToDatasmith()
 		// clips to not really care if nodes were split or not
 		TArray<FCombinedAnimBlock> CombinedBlocks = CombineBlocks(IntermediateScene->AnimNodes);
 
-		for (FCombinedAnimBlock& CombinedBlock : CombinedBlocks)
+		for (FCombinedAnimBlock& CombinedBlock : CombinedBlocks) //-V1078
 		{
 			TSharedPtr<IDatasmithLevelSequenceElement> ConvertedBlock = ConvertAnimBlock(CombinedBlock);
 			if (ConvertedBlock.IsValid())

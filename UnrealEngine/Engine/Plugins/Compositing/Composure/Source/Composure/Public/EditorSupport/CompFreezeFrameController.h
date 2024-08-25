@@ -9,7 +9,7 @@
 enum class ETargetUsageFlags : uint8;
 typedef FGuid FFreezeFrameControlHandle;
 
-struct COMPOSURE_API FCompFreezeFrameController
+struct FCompFreezeFrameController
 {
 public:
 	FCompFreezeFrameController(int32& FreezeFlagsRef)
@@ -21,7 +21,7 @@ public:
 		return LockKey.IsValid(); 
 	}
 	
-	FORCEINLINE FFreezeFrameControlHandle Lock()
+	FFreezeFrameControlHandle Lock()
 	{ 
 		if (ensure(!IsLocked()))
 		{
@@ -42,15 +42,15 @@ public:
 
 	FORCEINLINE ETargetUsageFlags GetFreezeFlags() const { return (ETargetUsageFlags)FreezeFlags; }
 
-	bool SetFreezeFlags(ETargetUsageFlags InFreezeFlags, bool bClearOthers = false, const FFreezeFrameControlHandle& LockKey = FFreezeFrameControlHandle());
-	bool ClearFreezeFlags(ETargetUsageFlags InFreezeFlags, const FFreezeFrameControlHandle& LockKey = FFreezeFrameControlHandle());
-	bool ClearFreezeFlags(const FFreezeFrameControlHandle& LockKey = FFreezeFrameControlHandle());
+	COMPOSURE_API bool SetFreezeFlags(ETargetUsageFlags InFreezeFlags, bool bClearOthers = false, const FFreezeFrameControlHandle& LockKey = FFreezeFrameControlHandle());
+	COMPOSURE_API bool ClearFreezeFlags(ETargetUsageFlags InFreezeFlags, const FFreezeFrameControlHandle& LockKey = FFreezeFrameControlHandle());
+	COMPOSURE_API bool ClearFreezeFlags(const FFreezeFrameControlHandle& LockKey = FFreezeFrameControlHandle());
 
 	FORCEINLINE operator ETargetUsageFlags() const { return GetFreezeFlags(); }
 	FORCEINLINE operator int32()                   { return (int32)GetFreezeFlags(); }
 
-	bool HasAnyFlags(ETargetUsageFlags InFreezeFlags);
-	bool HasAllFlags(ETargetUsageFlags InFreezeFlags);
+	COMPOSURE_API bool HasAnyFlags(ETargetUsageFlags InFreezeFlags);
+	COMPOSURE_API bool HasAllFlags(ETargetUsageFlags InFreezeFlags);
 
 private: 
 	FFreezeFrameControlHandle LockKey;
@@ -59,6 +59,6 @@ private:
 public:
 
 	/** DO NOT USE - For UObject construction only */
-	FCompFreezeFrameController(EForceInit Default = ForceInit);
+	COMPOSURE_API FCompFreezeFrameController(EForceInit Default = ForceInit);
 };
 

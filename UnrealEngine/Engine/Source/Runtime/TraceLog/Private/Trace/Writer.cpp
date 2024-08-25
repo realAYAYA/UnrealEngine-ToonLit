@@ -20,7 +20,6 @@
 #	define TRACE_PRIVATE_STOMP 0 // 1=overflow, 2=underflow
 #	if TRACE_PRIVATE_STOMP
 #	include "Windows/AllowWindowsPlatformTypes.h"
-#		include "Windows/WindowsHWrapper.h"
 #	include "Windows/HideWindowsPlatformTypes.h"
 #	endif
 #else
@@ -470,7 +469,7 @@ static FTraceGuid GTraceGuid; // = {0, 0, 0, 0};
 ////////////////////////////////////////////////////////////////////////////////
 static void Writer_SendSync()
 {
-	if (GSyncPacketCountdown <= 0)
+	if (GSyncPacketCountdown <= 0 || !GDataHandle)
 	{
 		return;
 	}

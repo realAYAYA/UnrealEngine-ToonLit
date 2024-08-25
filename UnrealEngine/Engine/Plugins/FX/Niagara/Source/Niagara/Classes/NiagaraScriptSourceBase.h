@@ -12,7 +12,10 @@
 
 class INiagaraParameterDefinitionsSubscriber;
 class UNiagaraParameterDefinitionsBase;
+struct FNiagaraParameterStore;
+struct FNiagaraScriptHashCollector;
 class UNiagaraScriptSourceBase;
+struct FNiagaraVMExecutableDataId;
 
 struct EditorExposedVectorConstant
 {
@@ -24,6 +27,13 @@ struct EditorExposedVectorCurveConstant
 {
 	FName ConstName;
 	class UCurveVector *Value;
+};
+
+struct FNiagaraScriptSourceAnalytics
+{
+	int32 ActiveModules = 0;
+	int32 DisabledModules = 0;
+	TSet<FString> UsedNiagaraModules;
 };
 
 /** External reference to the compile request data generated.*/
@@ -62,6 +72,7 @@ public:
 	NIAGARA_API static const FString EventSpawnDefine;
 	NIAGARA_API static const FString EventSpawnInitialAttribWritesDefine;
 	NIAGARA_API static const FString ExperimentalVMDisabled;
+	NIAGARA_API static const FString AccurateQuatInterpolation;
 
 	FNiagaraCompileOptions() : TargetUsage(ENiagaraScriptUsage::Function), TargetUsageBitmask(0)
 	{
@@ -93,8 +104,6 @@ public:
 	TArray<FNiagaraVariableBase> AdditionalVariables;
 };
 
-struct FNiagaraParameterStore;
-
 /** Runtime data for a Niagara system */
 UCLASS(MinimalAPI)
 class UNiagaraScriptSourceBase : public UObject
@@ -118,12 +127,13 @@ class UNiagaraScriptSourceBase : public UObject
 
 	virtual FGuid GetChangeID() { return FGuid(); }
 
-	virtual void RegisterVMCompilationIdDependencies(struct FNiagaraVMExecutableDataId& Id, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const {};
-	virtual void ComputeVMCompilationId(struct FNiagaraVMExecutableDataId& Id, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const {};
+	virtual void RegisterVMCompilationIdDependencies(FNiagaraScriptHashCollector& Collector, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const {}
+	virtual void ComputeVMCompilationId(FNiagaraVMExecutableDataId& Id, FNiagaraScriptHashCollector& HashCollector, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const {};
 
 #if WITH_EDITORONLY_DATA
 	// Will conditionally refresh the graph's CompileId
 	virtual void RefreshGraphCompileId() {};
+	virtual void ReportAnalyticsData(FNiagaraScriptSourceAnalytics& InData) const {};
 #endif
 
 	virtual TMap<FName, UNiagaraDataInterface*> ComputeObjectNameMap(UNiagaraSystem& System, ENiagaraScriptUsage Usage, FGuid UsageId, FString EmitterUniqueName) const { return TMap<FName, UNiagaraDataInterface*>(); }

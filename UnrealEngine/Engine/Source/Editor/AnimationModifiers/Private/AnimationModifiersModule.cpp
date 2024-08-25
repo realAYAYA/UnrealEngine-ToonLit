@@ -2,6 +2,7 @@
 
 #include "AnimationModifiersModule.h"
 
+#include "Algo/Copy.h"
 #include "Animation/AnimSequence.h"
 #include "AnimationModifier.h"
 #include "AnimationModifierDetailCustomization.h"
@@ -28,6 +29,7 @@
 #include "Subsystems/ImportSubsystem.h"
 #include "Templates/Casts.h"
 #include "Templates/SubclassOf.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Object.h"
 #include "UObject/UObjectGlobals.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
@@ -42,6 +44,7 @@
 #include "ContentBrowserMenuContexts.h"
 #include "ToolMenuDelegates.h"
 #include "ToolMenus.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 
 class UFactory;
 
@@ -72,11 +75,14 @@ void FAnimationModifiersModule::StartupModule()
 			GEditor->GetEditorSubsystem<UImportSubsystem>()->OnAssetPostImport.AddRaw(this, &FAnimationModifiersModule::OnAssetPostImport);
 			GEditor->GetEditorSubsystem<UImportSubsystem>()->OnAssetReimport.AddRaw(this, &FAnimationModifiersModule::OnAssetPostReimport);
 			RegisterMenus();
+
+			const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+			AssetRegistryModule.Get().OnInMemoryAssetCreated().AddRaw(this, &FAnimationModifiersModule::OnInMemoryAssetCreated);
 		}
 	});
 
 	// Register extra asset registry tags for UAnimSequence
-	OnGetExtraObjectTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTags.AddStatic(&UAnimationModifier::GetAssetRegistryTagsForAppliedModifiersFromSkeleton);
+	OnGetExtraObjectTagsHandle = UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(&UAnimationModifier::GetAssetRegistryTagsForAppliedModifiersFromSkeleton);
 }
 
 void FAnimationModifiersModule::ShutdownModule()
@@ -91,6 +97,8 @@ void FAnimationModifiersModule::ShutdownModule()
 	UToolMenus::UnregisterOwner(this);
 	FCoreDelegates::OnPostEngineInit.Remove(DelegateHandle);
 
+	UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.Remove(OnGetExtraObjectTagsHandle);
+	
 	// Remove extender delegate
 	FWorkflowCentricApplication::GetModeExtenderList().RemoveAll([this](FWorkflowApplicationModeExtender& StoredExtender) { return StoredExtender.GetHandle() == Extender.GetHandle(); });
 
@@ -110,6 +118,12 @@ void FAnimationModifiersModule::ShutdownModule()
 		AssetTools.UnregisterAssetTypeActions(AssetAction.ToSharedRef());
 	}
 
+	if (FModuleManager::Get().IsModuleLoaded(TEXT("AssetRegistry")))
+	{
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		AssetRegistryModule.Get().OnInMemoryAssetCreated().RemoveAll(this);
+	}
+	
 	RegisteredApplicationModes.Empty();
 
 	if (GEditor)
@@ -153,20 +167,16 @@ void FAnimationModifiersModule::RegisterMenus()
 				return;
 			}
 
-			TArray<FString> AnimSequencePaths;
-			Algo::TransformIf(Context->SelectedAssets, AnimSequencePaths, [](const FAssetData& AssetData)
+			TArray<FAssetData> AnimSequenceAssets;
+			Algo::CopyIf(Context->SelectedAssets, AnimSequenceAssets, [](const FAssetData& AssetData)
 			{
 				return AssetData.AssetClassPath == UAnimSequence::StaticClass()->GetClassPathName();
-			},
-			[](const FAssetData& AssetData)
-			{
-				return AssetData.GetObjectPathString();
 			});
 			
-			auto GetAnimSequences = [AnimSequencePaths](TArray<UAnimSequence*>& OutSequences)
+			auto GetAnimSequences = [AnimSequenceAssets](TArray<UAnimSequence*>& OutSequences)
 			{
 				TArray<UObject*> Objects;
-				AssetViewUtils::LoadAssetsIfNeeded(AnimSequencePaths, Objects);
+				AssetViewUtils::LoadAssetsIfNeeded(AnimSequenceAssets, Objects, AssetViewUtils::FLoadAssetsSettings{});
 			
 				Algo::TransformIf(Objects, OutSequences, 
 				[](const UObject* Object)
@@ -219,6 +229,18 @@ void FAnimationModifiersModule::RegisterMenus()
 						ApplyAnimationModifiers(AnimSequences, false);
 					}))
 				);
+
+				MenuBuilder.AddMenuEntry(
+					LOCTEXT("AnimSequence_RemoveAnimationModifier", "Remove Modifiers"),
+					LOCTEXT("AnimSequence_RemoveAnimationModifierTooltip", "Remove animation modifier(s)"),
+					FSlateIcon(FAppStyle::GetAppStyleSetName(), "ClassIcon.AnimationModifier"),
+					FUIAction(FExecuteAction::CreateLambda([GetAnimSequences, this]()
+					{
+						TArray<UAnimSequence*> AnimSequences;
+						GetAnimSequences(AnimSequences);
+
+						ShowRemoveAnimationModifierWindow(AnimSequences);
+					})));
 			});
 
 			IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
@@ -277,6 +299,14 @@ void FAnimationModifiersModule::OnAssetPostReimport(UObject* ReimportedObject)
 	}
 }
 
+void FAnimationModifiersModule::OnInMemoryAssetCreated(UObject* Object)
+{
+	if (Object->GetClass() == UAnimSequence::StaticClass())
+	{
+		FAnimationModifierHelpers::RetrieveOrCreateModifierUserData(Cast<UAnimSequence>(Object));
+	}
+}
+
 void FAnimationModifiersModule::ShowAddAnimationModifierWindow(const TArray<UAnimSequence*>& InSequences)
 {
 	TSharedPtr<SAnimationModifierContentBrowserWindow> WindowContent;
@@ -302,7 +332,33 @@ void FAnimationModifiersModule::ShowAddAnimationModifierWindow(const TArray<UAni
 	}
 
 	FSlateApplication::Get().AddModalWindow(Window, ParentWindow, false);
-	UObject::FAssetRegistryTag::OnGetExtraObjectTags.Remove(OnGetExtraObjectTagsHandle);
+}
+
+void FAnimationModifiersModule::ShowRemoveAnimationModifierWindow(const TArray<UAnimSequence*>& InSequences)
+{
+	TSharedPtr<SRemoveAnimationModifierContentBrowserWindow> WindowContent;
+
+	TSharedRef<SWindow> Window = SNew(SWindow)
+		.Title(LOCTEXT("RemoveModifiersWindowTitle", "Remove Animation Modifier(s)"))
+		.SizingRule(ESizingRule::UserSized)
+		.ClientSize(FVector2D(500, 500));
+
+	Window->SetContent
+	(
+		SAssignNew(WindowContent, SRemoveAnimationModifierContentBrowserWindow)
+		.WidgetWindow(Window)
+		.AnimSequences(InSequences)
+	);
+
+	TSharedPtr<SWindow> ParentWindow;
+
+	if (FModuleManager::Get().IsModuleLoaded("MainFrame"))
+	{
+		IMainFrameModule& MainFrame = FModuleManager::LoadModuleChecked<IMainFrameModule>("MainFrame");
+		ParentWindow = MainFrame.GetParentWindow();
+	}
+
+	FSlateApplication::Get().AddModalWindow(Window, ParentWindow, false);
 }
 
 void FAnimationModifiersModule::ApplyAnimationModifiers(const TArray<UAnimSequence*>& InSequences, bool bForceApply /*= true*/)

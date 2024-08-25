@@ -13,7 +13,7 @@ namespace mu
 {
 	struct FProgram;
 
-	class ASTOpImageSwizzle : public ASTOp
+	class ASTOpImageSwizzle final : public ASTOp
 	{
 	public:
 

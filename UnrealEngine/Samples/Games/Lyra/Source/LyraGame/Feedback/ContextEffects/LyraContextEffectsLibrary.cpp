@@ -15,7 +15,7 @@ void ULyraContextEffectsLibrary::GetEffects(const FGameplayTag Effect, const FGa
 	if (Effect.IsValid() && Context.IsValid() && EffectsLoadState == EContextEffectsLibraryLoadState::Loaded)
 	{
 		// Loop through Context Effects
-		for (const auto ActiveContextEffect : ActiveContextEffects)
+		for (const auto& ActiveContextEffect : ActiveContextEffects)
 		{
 			// Make sure the Effect is an exact Tag Match and ensure the Context has all tags in the Effect (and neither or both are empty)
 			if (Effect.MatchesTagExact(ActiveContextEffect->EffectTag)

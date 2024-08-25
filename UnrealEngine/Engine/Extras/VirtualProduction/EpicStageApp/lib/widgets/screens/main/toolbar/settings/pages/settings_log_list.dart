@@ -2,12 +2,12 @@
 
 import 'dart:io';
 
+import 'package:epic_common/logging.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 import '../../../../../../utilities/guarded_refresh_state.dart';
-import '../../../../../../utilities/logging.dart';
-import '../settings_generic.dart';
 import 'settings_log_view.dart';
 
 /// Page showing the list of log files.
@@ -42,17 +42,8 @@ class _SettingsLogListState extends State<SettingsLogList> with GuardedRefreshSt
 
   /// Update the list of log files.
   void _updateLogFileList() async {
-    final Directory logDirectory = await Logging.instance.getLogDirectory();
-    final List<File> files =
-        await logDirectory.list(recursive: false).map((FileSystemEntity entity) => File(entity.path)).toList();
-
-    // Sort so the most recent files appear first. We assume that files are named identically aside from their dates,
-    // which are assumed to be in lexicographical order (YYYY_MM_DD)
-    files.sort((File fileA, File fileB) => -fileA.path.compareTo(fileB.path));
-
-    setState(() {
-      _logFiles = files;
-    });
+    _logFiles = await Logging.getAppLogFiles();
+    setState(() {});
   }
 
   @override
@@ -63,28 +54,30 @@ class _SettingsLogListState extends State<SettingsLogList> with GuardedRefreshSt
         height: 240,
         child: MediaQuery.removePadding(
           removeTop: true,
+          removeBottom: true,
           context: context,
-          child: Scrollbar(
-            controller: _scrollController,
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              controller: _scrollController,
-              itemCount: _logFiles.length,
-              itemBuilder: (context, index) {
-                final File file = _logFiles[index];
+          child: EpicListView(
+            itemCount: _logFiles.length,
+            itemBuilder: (context, index) {
+              final File file = _logFiles[index];
+              final bool bIsCurrent = index == 0;
 
-                return SettingsMenuItem(
-                  title: Logging.getNameForLog(file),
-                  iconPath: 'assets/images/icons/log.svg',
-                  onTap: () => Navigator.of(context).pushNamed(
-                    SettingsLogView.route,
-                    arguments: SettingsLogViewArguments(
-                      file: file,
-                    ),
+              return SettingsMenuItem(
+                title: Logging.makeNameForLog(
+                  context: context,
+                  logFile: file,
+                  bIsCurrent: bIsCurrent,
+                ),
+                iconPath: 'packages/epic_common/assets/icons/log.svg',
+                onTap: () => Navigator.of(context).pushNamed(
+                  SettingsLogView.route,
+                  arguments: SettingsLogViewArguments(
+                    file: file,
+                    bIsCurrent: bIsCurrent,
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),

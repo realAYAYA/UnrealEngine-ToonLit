@@ -21,6 +21,11 @@
 #include "Filters/FilterBase.h"
 #include "Widgets/Input/SComboBox.h"
 
+namespace UE::Anim
+{
+enum class ECurveElementFlags : uint8;
+}
+
 class FUICommandList;
 class IEditableSkeleton;
 class SAnimCurveViewer;
@@ -48,6 +53,9 @@ public:
 	{
 		return MakeShareable(new FDisplayedAnimCurveInfo(InCurveName));
 	}
+
+	// Get the active morph/material flag for this curve 
+	bool GetActiveFlag(const TSharedPtr<SAnimCurveViewer>& InAnimCurveViewer, bool bMorphTarget) const;
 
 protected:
 	/** Hidden constructor, always use Make above */
@@ -246,7 +254,9 @@ public:
 	 */
 	void PostUndoRedo();
 
-	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime);
+	/** SWidget interface */
+	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
+	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
 	void RefreshCurveList(bool bInFullRefresh);
 
@@ -274,6 +284,15 @@ private:
 	void HandlePoseWatchesChanged(UAnimBlueprint* /*InAnimBlueprint*/, UEdGraphNode* /*InNode*/);
 	void RebuildPoseWatches();
 
+	void BindCommands();
+	
+	/** Build context menu */
+	TSharedPtr<SWidget> OnGetContextMenuContent() const;
+	
+	void OnFindCurveUsesClicked();
+	bool CanFindCurveUses();
+	void FindReplaceCurves();
+	
 	/** Pointer to the preview scene we are bound to */
 	TWeakPtr<class IPersonaPreviewScene> PreviewScenePtr;
 
@@ -304,6 +323,7 @@ private:
 
 	friend class SAnimCurveListRow;
 	friend class SAnimCurveTypeList;
+	friend class FDisplayedAnimCurveInfo;
 
 	/** Delegate called to select objects */
 	FOnObjectsSelected OnObjectsSelected;

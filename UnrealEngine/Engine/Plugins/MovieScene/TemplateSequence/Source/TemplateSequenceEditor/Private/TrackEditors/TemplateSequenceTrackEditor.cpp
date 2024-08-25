@@ -11,13 +11,14 @@
 #include "LevelSequence.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/PackageName.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "MovieScenePossessable.h"
 #include "TemplateSequence.h"
 #include "MovieSceneSpawnable.h"
 #include "Tracks/MovieSceneFloatTrack.h"
 #include "ScopedTransaction.h"
 #include "Tracks/MovieScene3DTransformTrack.h"
+#include "Tracks/MovieSceneSubTrack.h"
 #include "Sections/TemplateSequenceSection.h"
 #include "Tracks/TemplateSequenceTrack.h"
 #include "Widgets/Input/SButton.h"
@@ -74,16 +75,10 @@ TSharedPtr<SWidget> FTemplateSequenceTrackEditor::BuildOutlinerEditWidget(const 
 
 	if (ObjectClass != nullptr)
 	{
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				FSequencerUtilities::MakeAddButton(
+		return UE::Sequencer::MakeAddButton(
 					LOCTEXT("TemplateSequenceAddButton", "Template Sequence"),
 					FOnGetContent::CreateSP(this, &FTemplateSequenceTrackEditor::BuildTemplateSequenceAssetSubMenu, ObjectBinding, ObjectClass),
-					Params.NodeIsHovered, GetSequencer())
-			];
+					Params.ViewModel);
 	}
 	else
 	{
@@ -443,6 +438,28 @@ UCameraComponent* FTemplateSequenceTrackEditor::AcquireCameraComponentFromObject
 	}
 
 	return nullptr;
+}
+
+bool FTemplateSequenceTrackEditor::IsResizable(UMovieSceneTrack* InTrack) const
+{
+	return true;
+}
+
+void FTemplateSequenceTrackEditor::Resize(float NewSize, UMovieSceneTrack* InTrack)
+{
+	UMovieSceneSubTrack* SubTrack = Cast<UMovieSceneSubTrack>(InTrack);
+	if (SubTrack)
+	{
+		SubTrack->Modify();
+
+		int32 MaxNumRows = 1;
+		for (UMovieSceneSection* Section : SubTrack->GetAllSections())
+		{
+			MaxNumRows = FMath::Max(MaxNumRows, Section->GetRowIndex() + 1);
+		}
+
+		SubTrack->SetRowHeight(FMath::RoundToInt(NewSize) / MaxNumRows);
+	}
 }
 
 FTemplateSequenceSection::FTemplateSequenceSection(TSharedPtr<ISequencer> InSequencer, UTemplateSequenceSection& InSection)

@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Collections.Generic;
 using System;
-using Horde.Server.Streams;
-using Horde.Server.Utilities;
+using System.Collections.Generic;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
 
 namespace Horde.Server.Jobs.TestData
 {
@@ -70,7 +70,6 @@ namespace Horde.Server.Jobs.TestData
 		/// The variation of the meta data, for example address sanitizing
 		/// </summary>
 		string Variation { get; }
-
 	}
 
 	/// <summary>
@@ -164,7 +163,6 @@ namespace Horde.Server.Jobs.TestData
 		/// The number of errors
 		/// </summary>
 		int? ErrorCount { get; }
-
 	}
 
 	/// <summary>
@@ -188,7 +186,7 @@ namespace Horde.Server.Jobs.TestData
 		/// <summary>
 		/// The associated job step
 		/// </summary>
-		SubResourceId? StepId { get; }
+		JobStepId? StepId { get; }
 
 		/// <summary>
 		/// How long the test ran
@@ -203,7 +201,7 @@ namespace Horde.Server.Jobs.TestData
 		/// <summary>
 		/// The environment the test ran in
 		/// </summary>
-		TestMetaId Metadata { get; }	
+		TestMetaId Metadata { get; }
 
 		/// <summary>
 		/// The ITest in stream
@@ -239,7 +237,6 @@ namespace Horde.Server.Jobs.TestData
 		/// Suite test successes
 		/// </summary>
 		int? SuiteSuccessCount { get; }
-
 	}
 
 	/// <summary>
@@ -258,9 +255,8 @@ namespace Horde.Server.Jobs.TestData
 		/// <summary>
 		/// Suite test data
 		/// </summary>		
-		IReadOnlyList<ISuiteTestData>? SuiteTests { get; } 
+		IReadOnlyList<ISuiteTestData>? SuiteTests { get; }
 	}
-
 
 	/// <summary>
 	/// The tests and suites running in a given stream
@@ -280,9 +276,8 @@ namespace Horde.Server.Jobs.TestData
 		/// <summary>
 		/// Test suite ids
 		/// </summary>
-		IReadOnlyList<TestSuiteId> TestSuites { get; } 
+		IReadOnlyList<TestSuiteId> TestSuites { get; }
 	}
-
 
 	/// <summary>
 	/// Stores information about the results of a test
@@ -312,7 +307,7 @@ namespace Horde.Server.Jobs.TestData
 		/// <summary>
 		/// The step that ran
 		/// </summary>
-		SubResourceId StepId { get; }
+		JobStepId StepId { get; }
 
 		/// <summary>
 		/// The changelist number that contained the data

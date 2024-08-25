@@ -477,6 +477,11 @@ void FAnimInstanceProxy::PreUpdate(UAnimInstance* InAnimInstance, float DeltaSec
 #if WITH_EDITORONLY_DATA
 	bIsGameWorld = World ? World->IsGameWorld() : false;
 
+	UpdatedNodesThisFrame.Reset();
+	NodeInputAttributesThisFrame.Reset();
+	NodeOutputAttributesThisFrame.Reset();
+	NodeSyncsThisFrame.Reset();
+
 	if (FAnimBlueprintDebugData* DebugData = GetAnimBlueprintDebugData())
 	{
 		DebugData->ResetNodeVisitSites();
@@ -557,7 +562,7 @@ void FAnimInstanceProxy::OnPreUpdateLODChanged(const int32 PreviousLODIndex, con
 				if (!AnimNodePtr->IsLODEnabled(this))
 				{
 					LODDisabledGameThreadPreUpdateNodes.Add(AnimNodePtr);
-					GameThreadPreUpdateNodes.RemoveAt(NodeIndex, 1, false);
+					GameThreadPreUpdateNodes.RemoveAt(NodeIndex, 1, EAllowShrinking::No);
 					NodeIndex--;
 				}
 			}
@@ -574,7 +579,7 @@ void FAnimInstanceProxy::OnPreUpdateLODChanged(const int32 PreviousLODIndex, con
 				if (AnimNodePtr->IsLODEnabled(this))
 				{
 					GameThreadPreUpdateNodes.Add(AnimNodePtr);
-					LODDisabledGameThreadPreUpdateNodes.RemoveAt(NodeIndex, 1, false);
+					LODDisabledGameThreadPreUpdateNodes.RemoveAt(NodeIndex, 1, EAllowShrinking::No);
 					NodeIndex--;
 				}
 			}
@@ -598,7 +603,6 @@ void FAnimInstanceProxy::PostUpdate(UAnimInstance* InAnimInstance) const
 	if (FAnimBlueprintDebugData* DebugData = GetAnimBlueprintDebugData())
 	{
 		DebugData->RecordNodeVisitArray(UpdatedNodesThisFrame);
-		DebugData->RecordNodeAttributeMaps(NodeInputAttributesThisFrame, NodeOutputAttributesThisFrame);
 		DebugData->RecordNodeSyncsArray(NodeSyncsThisFrame);
 	}
 #endif
@@ -654,30 +658,8 @@ void FAnimInstanceProxy::PostUpdate(UAnimInstance* InAnimInstance) const
 	InAnimInstance->NotifyQueue.Append(NotifyQueue);
 	InAnimInstance->NotifyQueue.ApplyMontageNotifies(*this);
 
-	// Send Queued DrawDebug Commands.
 #if ENABLE_ANIM_DRAW_DEBUG
-	for (const FQueuedDrawDebugItem& DebugItem : QueuedDrawDebugItems)
-	{
-		switch (DebugItem.ItemType)
-		{
-			case EDrawDebugItemType::OnScreenMessage: GEngine->AddOnScreenDebugMessage(INDEX_NONE, 0.f, DebugItem.Color, DebugItem.Message, false, DebugItem.TextScale); break;
-			case EDrawDebugItemType::InWorldMessage: DrawDebugString(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.StartLoc, DebugItem.Message, InAnimInstance->GetSkelMeshComponent()->GetOwner(), DebugItem.Color, DebugItem.LifeTime, false /*bDrawShadow*/, DebugItem.TextScale.X); break;
-			case EDrawDebugItemType::DirectionalArrow: DrawDebugDirectionalArrow(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.StartLoc, DebugItem.EndLoc.Value, DebugItem.Size, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
-			case EDrawDebugItemType::Sphere: DrawDebugSphere(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.Center, DebugItem.Radius, DebugItem.Segments, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
-			case EDrawDebugItemType::Line: DrawDebugLine(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.StartLoc, DebugItem.EndLoc.Value, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
-			case EDrawDebugItemType::CoordinateSystem: DrawDebugCoordinateSystem(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.StartLoc, DebugItem.Rotation, DebugItem.Size, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
-			case EDrawDebugItemType::Point: DrawDebugPoint(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.StartLoc, DebugItem.Size, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority); break;
-			case EDrawDebugItemType::Circle:
-			{
-				const FMatrix RotationMatrix = FRotationMatrix::MakeFromZ(DebugItem.Direction.Value);
-				const FVector ForwardVector = RotationMatrix.GetScaledAxis(EAxis::X);
-				const FVector RightVector = RotationMatrix.GetScaledAxis(EAxis::Y);
-				DrawDebugCircle(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.Center, DebugItem.Radius, DebugItem.Segments, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness, ForwardVector, RightVector, false);
-				break;
-			}
-			case EDrawDebugItemType::Cone: DrawDebugCone(InAnimInstance->GetSkelMeshComponent()->GetWorld(), DebugItem.Center, DebugItem.Direction.Value, DebugItem.Length, DebugItem.AngleWidth, DebugItem.AngleHeight, DebugItem.Segments, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
-		}
-	}
+	FlushQueuedDebugDrawItems(InAnimInstance->GetSkelMeshComponent()->GetOwner(), InAnimInstance->GetSkelMeshComponent()->GetWorld());
 #endif
 
 #if ENABLE_ANIM_LOGGING
@@ -693,11 +675,53 @@ void FAnimInstanceProxy::PostUpdate(UAnimInstance* InAnimInstance) const
 #endif
 }
 
+#if ENABLE_ANIM_DRAW_DEBUG
+void FAnimInstanceProxy::FlushQueuedDebugDrawItems(AActor* InActor, UWorld* InWorld) const
+{
+	for (const FQueuedDrawDebugItem& DebugItem : QueuedDrawDebugItems)
+	{
+		switch (DebugItem.ItemType)
+		{
+			case EDrawDebugItemType::OnScreenMessage: GEngine->AddOnScreenDebugMessage(INDEX_NONE, 0.f, DebugItem.Color, DebugItem.Message, false, DebugItem.TextScale); break;
+			case EDrawDebugItemType::InWorldMessage: DrawDebugString(InWorld, DebugItem.StartLoc, DebugItem.Message, InActor, DebugItem.Color, DebugItem.LifeTime, false /*bDrawShadow*/, DebugItem.TextScale.X); break;
+			case EDrawDebugItemType::DirectionalArrow: DrawDebugDirectionalArrow(InWorld, DebugItem.StartLoc, DebugItem.EndLoc.Value, DebugItem.Size, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
+			case EDrawDebugItemType::Sphere: DrawDebugSphere(InWorld, DebugItem.Center, DebugItem.Radius, DebugItem.Segments, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
+			case EDrawDebugItemType::Line: DrawDebugLine(InWorld, DebugItem.StartLoc, DebugItem.EndLoc.Value, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
+			case EDrawDebugItemType::CoordinateSystem: DrawDebugCoordinateSystem(InWorld, DebugItem.StartLoc, DebugItem.Rotation, DebugItem.Size, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
+			case EDrawDebugItemType::Point: DrawDebugPoint(InWorld, DebugItem.StartLoc, DebugItem.Size, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority); break;
+			case EDrawDebugItemType::Circle:
+			{
+				const FMatrix RotationMatrix = FRotationMatrix::MakeFromZ(DebugItem.Direction.Value);
+				const FVector ForwardVector = RotationMatrix.GetScaledAxis(EAxis::X);
+				const FVector RightVector = RotationMatrix.GetScaledAxis(EAxis::Y);
+				DrawDebugCircle(InWorld, DebugItem.Center, DebugItem.Radius, DebugItem.Segments, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness, ForwardVector, RightVector, false);
+				break;
+			}
+			case EDrawDebugItemType::Cone: DrawDebugCone(InWorld, DebugItem.Center, DebugItem.Direction.Value, DebugItem.Length, DebugItem.AngleWidth, DebugItem.AngleHeight, DebugItem.Segments, DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, DebugItem.DepthPriority, DebugItem.Thickness); break;
+			case EDrawDebugItemType::Capsule: DrawDebugCapsule(InWorld, DebugItem.Center, DebugItem.Size, DebugItem.Radius, DebugItem.Rotation.Quaternion(), DebugItem.Color, DebugItem.bPersistentLines, DebugItem.LifeTime, 0, DebugItem.Thickness); break;
+		}
+	}
+
+	QueuedDrawDebugItems.Reset();
+}
+#endif
+
 void FAnimInstanceProxy::PostEvaluate(UAnimInstance* InAnimInstance)
 {
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
 
+#if WITH_EDITORONLY_DATA
+	if (FAnimBlueprintDebugData* DebugData = GetAnimBlueprintDebugData())
+	{
+		DebugData->RecordNodeAttributeMaps(NodeInputAttributesThisFrame, NodeOutputAttributesThisFrame);
+	}
+#endif
+	
 	ClearObjects();
+
+#if ENABLE_ANIM_DRAW_DEBUG
+	FlushQueuedDebugDrawItems(InAnimInstance->GetSkelMeshComponent()->GetOwner(), InAnimInstance->GetSkelMeshComponent()->GetWorld());
+#endif
 
 #if ENABLE_ANIM_LOGGING
 	FMessageLog MessageLog(GetTargetLogNameForCurrentWorldType());
@@ -1210,12 +1234,6 @@ void FAnimInstanceProxy::UpdateAnimation_WithRoot(const FAnimationUpdateContext&
 
 	if(InRootNode == RootNode)
 	{
-#if WITH_EDITORONLY_DATA
-	    UpdatedNodesThisFrame.Reset();
-	    NodeInputAttributesThisFrame.Reset();
-	    NodeOutputAttributesThisFrame.Reset();
-	    NodeSyncsThisFrame.Reset();
-#endif
 		if(bInitializeSubsystems && AnimClassInterface)
 		{
 			AnimClassInterface->ForEachSubsystem(GetAnimInstanceObject(), [this](const FAnimSubsystemInstanceContext& InContext)
@@ -1811,12 +1829,12 @@ void FAnimInstanceProxy::SlotEvaluatePoseWithBlendProfiles(const FName& SlotNode
 	}
 
 	// Additives.
-	for (int32 PoseIndex = 0; PoseIndex < Poses.Num(); ++PoseIndex)
+	for (int32 PoseIndex = 0; PoseIndex < AdditivePoses.Num(); ++PoseIndex)
 	{
-		FSlotEvaluationPose& AdditivePose = Poses[PoseIndex];
+		FSlotEvaluationPose& AdditivePose = AdditivePoses[PoseIndex];
 		const FAnimationPoseData AdditiveAnimationPoseData(AdditivePose);
 		OutBlendedAnimationPoseData.GetCurve().Accumulate(AdditiveAnimationPoseData.GetCurve(), AdditivePose.Weight);
-		UE::Anim::Attributes::AccumulateAttributes(AdditiveAnimationPoseData.GetAttributes(), OutBlendedAnimationPoseData.GetAttributes(), AdditivePose.Weight, Poses[PoseIndex].AdditiveType);
+		UE::Anim::Attributes::AccumulateAttributes(AdditiveAnimationPoseData.GetAttributes(), OutBlendedAnimationPoseData.GetAttributes(), AdditivePose.Weight, AdditivePose.AdditiveType);
 	}
 }
 
@@ -2307,6 +2325,22 @@ void FAnimInstanceProxy::AnimDrawDebugCone(const FVector& Center, float Length, 
 	QueuedDrawDebugItems.Add(DrawDebugItem);
 }
 
+void FAnimInstanceProxy::AnimDrawDebugCapsule(const FVector& Center, float HalfHeight, float Radius, const FRotator& Rotation, const FColor& Color, bool bPersistentLines /*= false*/, float LifeTime /*= -1.f*/, float Thickness /*= 0.f*/)
+{
+	FQueuedDrawDebugItem DrawDebugItem;
+
+	DrawDebugItem.ItemType = EDrawDebugItemType::Capsule;
+	DrawDebugItem.Center = Center;
+	DrawDebugItem.Size = HalfHeight;
+	DrawDebugItem.Radius = Radius;
+	DrawDebugItem.Rotation = Rotation;
+	DrawDebugItem.Color = Color;
+	DrawDebugItem.bPersistentLines = bPersistentLines;
+	DrawDebugItem.LifeTime = LifeTime;
+	DrawDebugItem.Thickness = Thickness;
+
+	QueuedDrawDebugItems.Add(DrawDebugItem);
+}
 
 #endif // ENABLE_ANIM_DRAW_DEBUG
 
@@ -3486,8 +3520,9 @@ void FAnimInstanceProxy::UpdateCurvesToEvaluationContext(const FAnimationEvaluat
 
 			if(EnumHasAnyFlags(InCurveFlagsElement.Flags | InCurveElement.Flags, UE::Anim::ECurveElementFlags::Material))
 			{
-				MaterialParametersToClear.Remove(InCurveElement.Name);
-				AnimationCurves[(uint8)EAnimCurveType::MaterialCurve].Add(InCurveElement.Name, InCurveElement.Value);
+				const uint32 HashedName = GetTypeHash(InCurveElement.Name);
+				MaterialParametersToClear.RemoveByHash(HashedName, InCurveElement.Name);
+				AnimationCurves[(uint8)EAnimCurveType::MaterialCurve].AddByHash(HashedName, InCurveElement.Name, InCurveElement.Value);
 			}
 		});
 }
@@ -3561,7 +3596,7 @@ void FAnimInstanceProxy::AddCurveValue(const FName& CurveName, float Value, bool
 	}
 	if (bMaterial)
 	{
-		MaterialParametersToClear.RemoveSwap(CurveName);
+		MaterialParametersToClear.Remove(CurveName);
 		CurveValPtr = AnimationCurves[(uint8)EAnimCurveType::MaterialCurve].Find(CurveName);
 		if (CurveValPtr)
 		{

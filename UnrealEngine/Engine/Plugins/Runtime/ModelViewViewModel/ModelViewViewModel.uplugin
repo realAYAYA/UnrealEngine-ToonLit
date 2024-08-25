@@ -41,5 +41,13 @@
 			"Type": "Editor",
 			"LoadingPhase": "Default"
 		}
+	],
+
+	"Plugins": [
+		{
+			"Name": "StructUtils",
+			"Enabled": true
+		}
 	]
 }
+

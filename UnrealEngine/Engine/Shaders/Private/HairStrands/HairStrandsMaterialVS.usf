@@ -15,9 +15,8 @@ void Main(
 	nointerpolation out uint  OutTotalNodeCount : DISPATCH_NODE_COUNT,
 	nointerpolation out uint  OutPrimitiveId : PRIMITIVE_ID)
 {
-	OutTotalNodeCount = MaterialPassParameters.TotalNodeCounter.Load(uint3(0,0,0));
-	OutResolution.x = ceil(sqrt(OutTotalNodeCount));
-	OutResolution.y = OutResolution.x;
+	OutTotalNodeCount = MaterialPassParameters.TotalNodeCounter[0];
+	OutResolution = GetHairSampleResolution(OutTotalNodeCount);
 
 	const float2 ClipCoord = ((OutResolution +0.5f) / float2(MaterialPassParameters.MaxResolution)) * 2;
 

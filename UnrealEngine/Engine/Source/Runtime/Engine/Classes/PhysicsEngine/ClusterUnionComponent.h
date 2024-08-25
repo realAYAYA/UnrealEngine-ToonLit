@@ -10,6 +10,7 @@
 #include "Engine/EngineTypes.h"
 #include "Logging/LogMacros.h"
 #include "PhysicsEngine/ExternalSpatialAccelerationPayload.h"
+#include "PhysicsEngine/SafePhysicsObjectHandle.h"
 #include "PhysicsInterfaceTypesCore.h"
 #include "PhysicsProxy/ClusterUnionPhysicsProxy.h"
 #include "UObject/ObjectKey.h"
@@ -32,26 +33,72 @@ namespace Chaos
 }
 
 USTRUCT()
-struct FClusteredComponentData
+struct FClusterUnionBoneData
 {
 	GENERATED_BODY()
 
-	// Set of physics objects that we actually added into the cluster union.
-	TSet<Chaos::FPhysicsObjectHandle> PhysicsObjects;
+	FClusterUnionBoneData() = default;
+	FClusterUnionBoneData(int32 InBoneId) : ID(InBoneId)
+	{	
+	}
+	
+	FClusterUnionBoneData(int32 InBoneId, Chaos::FUniqueIdx InParticleID) : ID(InBoneId), ParticleID(InParticleID)
+	{	
+	}
 
+	int32 ID = INDEX_NONE;
+	Chaos::FUniqueIdx ParticleID;
+
+	bool operator==(const FClusterUnionBoneData& Other) const
+	{
+		return ID == Other.ID;
+	}
+
+	bool operator!=(const FClusterUnionBoneData& Other) const
+	{
+		return !(*this == Other);
+	}
+
+	friend uint32 GetTypeHash(const FClusterUnionBoneData& Data)
+	{
+		return GetTypeHash(Data.ID);
+	}
+};
+
+USTRUCT()
+struct FClusteredComponentData
+{
+	GENERATED_BODY()
+	
+	FClusteredComponentData() = default;
+
+#if WITH_EDITORONLY_DATA
+	UE_DEPRECATED(5.4, "This property is deprecated. Please use BonesData instead.")
 	// Set of bone Ids that we actually added into the cluster union.
 	TSet<int32> BoneIds;
 
-	// Every physics object associated with this particular component.
-	TArray<Chaos::FPhysicsObjectHandle> AllPhysicsObjects;
-
+	UE_DEPRECATED(5.4, "This property is deprecated and no longer used. It will be removed in future versions.")
 	// Cached acceleration structure handles - needed to properly cleanup the component from the accel structure.
 	TSet<FExternalSpatialAccelerationPayload> CachedAccelerationPayloads;
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FClusteredComponentData(const FClusteredComponentData& Other) = default;
+	FClusteredComponentData(FClusteredComponentData&& Other) = default;
+	FClusteredComponentData& operator=(const FClusteredComponentData& Other) = default;
+	FClusteredComponentData& operator=(FClusteredComponentData&& Other) = default;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+#endif // WITH_EDITORONLY_DATA
+
+	// Array of bone Ids that we actually added into the cluster union.
+	TArray<FClusterUnionBoneData> BonesData;
 
 	// Using a TWeakObjectPtr here because the UClusterUnionReplicatedProxyComponent will have a pointer back
 	// and we don't want to get into a situation where a circular reference occurs.
 	UPROPERTY()
 	TWeakObjectPtr<UClusterUnionReplicatedProxyComponent> ReplicatedProxyComponent;
+
+	UPROPERTY()
+	TWeakObjectPtr<AActor> Owner;
 
 	UPROPERTY()
 	bool bWasReplicating = true;
@@ -65,8 +112,7 @@ struct FClusteredActorData
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
-	TSet<TWeakObjectPtr<UPrimitiveComponent>> Components;
+	TSet<TObjectKey<UPrimitiveComponent>> Components;
 
 	UPROPERTY()
 	bool bWasReplicatingMovement = true;
@@ -81,7 +127,11 @@ struct FClusterUnionReplicatedData
 	uint8 ObjectState = 0;
 
 	UPROPERTY()
-	bool bIsAnchored = false;
+	bool bIsAnchored = true;
+
+	FClusterUnionReplicatedData& operator=(const FClusterUnionReplicatedData&) = default;
+	bool operator==(const FClusterUnionReplicatedData&) const = default;
+	bool operator!=(const FClusterUnionReplicatedData&) const = default;
 };
 
 USTRUCT()
@@ -89,32 +139,49 @@ struct FClusterUnionPendingAddData
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
-	TArray<int32> BoneIds;
+	FClusterUnionPendingAddData() = default;
 	
+#if WITH_EDITORONLY_DATA
+	UE_DEPRECATED(5.4, "This property is deprecated. Please use BonesData instead.")
+	TArray<int32> BoneIds;
+
+	UE_DEPRECATED(5.4, "This property is deprecated and no longer used. It will be removed in future versions.")
 	UPROPERTY()
 	TArray<FExternalSpatialAccelerationPayload> AccelerationPayloads;
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FClusterUnionPendingAddData(const FClusterUnionPendingAddData& Other) = default;
+	FClusterUnionPendingAddData(FClusterUnionPendingAddData&& Other) = default;
+	FClusterUnionPendingAddData& operator=(const FClusterUnionPendingAddData& Other) = default;
+	FClusterUnionPendingAddData& operator=(FClusterUnionPendingAddData&& Other) = default;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+#endif // WITH_EDITORONLY_DATA
+
+	UPROPERTY()
+	TSet<FClusterUnionBoneData> BonesData;
 };
 
-/**
- * For every possible particle that could ever possibly be added into the cluster union,
- * keep track of its component and its bone id.
- */
 USTRUCT()
-struct FClusterUnionParticleCandidateData
+struct FClusterUnionInitializationData
 {
 	GENERATED_BODY()
 
 	UPROPERTY()
-	TWeakObjectPtr<UPrimitiveComponent> Component;
+	TObjectPtr<UClusterUnionComponent> ClusterUnionComponent;
 
 	UPROPERTY()
-	int32 BoneId = INDEX_NONE;
+	TArray<TObjectPtr<UPrimitiveComponent>> ProcessedComponents;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnClusterUnionAddedComponent, UPrimitiveComponent*, Component, const TSet<int32>&, BoneIds, bool, bIsNew);
+DECLARE_MULTICAST_DELEGATE_FourParams(FOnClusterUnionAddedComponentNative, UPrimitiveComponent*, const TArray<FClusterUnionBoneData>& /*BoneIds*/, const TArray<FClusterUnionBoneData>& /*RemovedBoneIds*/, bool /*bIsNew*/);
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnClusterUnionRemovedComponent, UPrimitiveComponent*, Component);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnClusterUnionRemovedComponentNative, UPrimitiveComponent*, const TArray<FClusterUnionBoneData>& /*RemovedBonesData*/);
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnClusterUnionBoundsChanged, UClusterUnionComponent*, Component, const FBoxSphereBounds&, Bounds);
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnClusterUnionPostSyncBodies, const FClusterUnionInitializationData&);
 
 /**
  * This does the bulk of the work exposing a physics cluster union to the game thread.
@@ -144,13 +211,19 @@ class UClusterUnionComponent : public UPrimitiveComponent
 {
 	GENERATED_BODY()
 public:
+
+	using FSpatialAcceleration = Chaos::ISpatialAcceleration<FExternalSpatialAccelerationPayload, Chaos::FReal, 3>;
+
 	ENGINE_API UClusterUnionComponent(const FObjectInitializer& ObjectInitializer);
 
 	UFUNCTION(BlueprintCallable, Category="Cluster Union")
-	ENGINE_API void AddComponentToCluster(UPrimitiveComponent* InComponent, const TArray<int32>& BoneIds);
+	ENGINE_API void AddComponentToCluster(UPrimitiveComponent* InComponent, const TArray<int32>& BoneIds, bool bRebuildGeometry = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Cluster Union")
 	ENGINE_API void RemoveComponentFromCluster(UPrimitiveComponent* InComponent);
+
+	UFUNCTION(BlueprintCallable, Category = "Cluster Union")
+	ENGINE_API void RemoveComponentBonesFromCluster(UPrimitiveComponent* InComponent, const TArray<int32>& BoneIds);
 
 	UFUNCTION(BlueprintCallable, Category = "Cluster Union")
 	ENGINE_API TArray<UPrimitiveComponent*> GetPrimitiveComponents();
@@ -159,15 +232,90 @@ public:
 	ENGINE_API TArray<AActor*> GetActors();
 
 	UFUNCTION(BlueprintCallable, Category = "Cluster Union")
-	ENGINE_API void SetIsAnchored(bool bIsAnchored);
+	ENGINE_API virtual void SetIsAnchored(bool bIsAnchored);
+
+	ENGINE_API bool IsAnchored() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Cluster Union")
+	ENGINE_API void SetEnableDamageFromCollision(bool bValue);
+
+	/** Whether or not collisions against this geometry collection will apply strain which could cause the geometry collection to fracture. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetEnableDamageFromCollision, Category = "Cluster Union")
+	bool bEnableDamageFromCollision;
+
+	/** Structure that stores an object key and its raw ptr, so it can be accessed without going trough
+	* the global uobjects array (so it could be garbage, therefore it has to be used withing the same frame)
+	*/
+	struct FMappedComponentKey
+	{
+		FMappedComponentKey() : ComponentPtr(nullptr)
+		{
+		}
+
+		FMappedComponentKey(TObjectKey<UPrimitiveComponent> InComponentKey, UPrimitiveComponent* InComponent)
+		{
+			ComponentKey = InComponentKey;
+			ComponentPtr = InComponent;
+		}
+		
+		FMappedComponentKey(UPrimitiveComponent* InComponent)
+		{
+			ComponentKey = InComponent;
+			ComponentPtr = InComponent;
+		}
+		
+		bool operator<(const FMappedComponentKey& Other) const
+		{
+			return ComponentKey < Other.ComponentKey;
+		}
+
+		bool operator==(const FMappedComponentKey& Other) const
+		{
+			return ComponentKey == Other.ComponentKey;
+		}
+
+		friend uint32 GetTypeHash(const FMappedComponentKey& InMappedComponentKey)
+		{
+			return GetTypeHash(InMappedComponentKey.ComponentKey);
+		}
+
+		TObjectKey<UPrimitiveComponent> ComponentKey;
+		UPrimitiveComponent* ComponentPtr;
+	};
+
+	struct FMappedBoneData
+	{
+		FMappedBoneData() = default;
+		
+		FMappedBoneData(Chaos::FPhysicsObjectHandle PhysicsObjectHande, Chaos::FPBDRigidParticle* RigidParticle, const Chaos::FUniqueIdx& ParticleID, const FTransform& ChildToParentTransform)
+			: PhysicsObjectHandle(PhysicsObjectHande)
+			, RigidParticle(RigidParticle)
+			, ParticleID(ParticleID)
+			, ChildToParentTransform(ChildToParentTransform)
+		{
+		}
+
+		Chaos::FPhysicsObjectHandle PhysicsObjectHandle = nullptr;
+		Chaos::FPBDRigidParticle* RigidParticle = nullptr;
+		Chaos::FUniqueIdx ParticleID;
+		FTransform ChildToParentTransform;
+	};
+
+	// There are several instances where we have 1 single elements. The inline allocator should help in these cases without a huge impact when we go over
+	using FLocalBonesToTransformMap = TSortedMap<int32, FMappedBoneData, TInlineAllocator<1>>;
 
 	// SyncClusterUnionFromProxy will examine the make up of the cluster union (particles, child to parent, etc.) and do whatever is needed on the GT in terms of bookkeeping.
-	ENGINE_API void SyncClusterUnionFromProxy();
+	ENGINE_API void SyncClusterUnionFromProxy(const FTransform& NewTransform, TArray<TTuple<UPrimitiveComponent*, FTransform>>* OutNewComponents);
 
 	UFUNCTION()
-	bool IsComponentAdded(UPrimitiveComponent* Component) { return ComponentToPhysicsObjects.Contains(Component) || PendingComponentSync.Contains(Component); }
+	bool IsComponentAdded(UPrimitiveComponent* Component) { return PerComponentData.Contains(Component) || PendingComponentSync.Contains(Component); }
 
-	bool HasReceivedTransform() const { return bHasReceivedTransform; }
+	ENGINE_API virtual void WakeAllRigidBodies() override;
+	ENGINE_API virtual bool IsAnyRigidBodyAwake() override;
+
+	// Set the cluster union total mass. NOTE: if the cluster breaks the mass will be recalculated from the
+	// remaining components. Use OnComponentAddedEvent and OnComponentRemovedEvent to trap this and re-apply custom masses.
+	ENGINE_API virtual void SetMassOverrideInKg(FName BoneName, float MassInKg, bool bOverrideMass) override;
 
 	// Multi-trace/sweep functions that only make sense in the context of a cluster union.
 	ENGINE_API bool LineTraceComponent(TArray<FHitResult>& OutHit, const FVector Start, const FVector End, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams);
@@ -182,32 +330,74 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnClusterUnionBoundsChanged OnComponentBoundsChangedEvent;
 
+	// native (fast, low overhead) versions 
+	FOnClusterUnionAddedComponentNative OnComponentAddedNativeEvent;
+	FOnClusterUnionRemovedComponentNative OnComponentRemovedNativeEvent;
+	FOnClusterUnionPostSyncBodies OnClusterUnionPostSyncBodiesEvent;
+
 	// Lambda returns whether or not iteration should continue;
 	ENGINE_API void VisitAllCurrentChildComponents(const TFunction<bool(UPrimitiveComponent*)>& Lambda) const;
 	ENGINE_API void VisitAllCurrentActors(const TFunction<bool(AActor*)>& Lambda) const;
 
 	ENGINE_API int32 NumChildClusterComponents() const;
 
+	// Force a rebuild of the GT geometry. This needs to happen immediately when we add/remove on the GT so that the SQ is up to date
+	// and doesn't need to wait for the next OnSyncBodies.
+	UE_DEPRECATED(5.4, "Cluster unions now incrementally update their geometry. A force rebuild should never be needed - this function will no longer book-keep properly either.")
+	ENGINE_API void ForceRebuildGTParticleGeometry();
+
+	ENGINE_API const FSpatialAcceleration* GetSpatialAcceleration() const;
+
+	ENGINE_API TArray<int32> GetAddedBoneIdsForComponent(UPrimitiveComponent* Component) const;
+	ENGINE_API void ChangeIfComponentBonesAreMainParticle(UPrimitiveComponent* Component, const TArray<int32>& BoneIds, bool bIsMain);
+
+	// This function will return information from the latest physics sync. Thus adding a new bones
+	// to a cluster union will not allow those indices to be valid for use in this function
+	// until the next time we sync from the PT.
+	ENGINE_API Chaos::FPhysicsObjectHandle FindChildPhysicsObjectByShapeIndex(int32 Index) const;
+
 	friend class UClusterUnionReplicatedProxyComponent;
-protected:
+	friend class UModularVehicleBaseComponent;
 
 	// This should only be called on the client when replication happens.
 	UFUNCTION()
 	ENGINE_API void ForceSetChildToParent(UPrimitiveComponent* InComponent, const TArray<int32>& BoneIds, const TArray<FTransform>& ChildToParent);
 
-	ENGINE_API TArray<int32> GetAddedBoneIdsForComponent(UPrimitiveComponent* Component) const;
+	ENGINE_API virtual void OnChildToParentUpdated(UPrimitiveComponent* ChangedComponent, const FLocalBonesToTransformMap& PerBoneChildToParent, const FTransform& NewTransform, TArray<TTuple<UPrimitiveComponent*, FTransform>>* OutNewComponents) {}
+
+protected:
+
+	ENGINE_API void BroadcastComponentAddedEvents(UPrimitiveComponent* ChangedComponent, const TArray<FClusterUnionBoneData>& BoneIds, bool bIsNew, const TArray<FClusterUnionBoneData>& RemovedBoneIDs);
+	ENGINE_API void BroadcastComponentRemovedEvents(UPrimitiveComponent* ChangedComponent, const TArray<FClusterUnionBoneData>& InRemovedBonesData);
+
+	Chaos::FClusterUnionPhysicsProxy* GetPhysicsProxy() const { return PhysicsProxy; }
+	Chaos::FClusterUnionPhysicsProxy* GetPhysicsProxy() { return PhysicsProxy; }
+
+	ENGINE_API virtual void SetRigidState(Chaos::EObjectStateType ObjectState);
+
+	// We need to keep track of the mapping of primitive components to physics objects.
+	// This way we know the right physics objects to pass when removing the component (because
+	// it's possible to get a different list of physics objects when we get to removal). A
+	// side benefit here is being able to track which components are clustered.
+	TMap<TObjectKey<UPrimitiveComponent>, FClusteredComponentData> PerComponentData;
+
+
+	// Whether or not this code is running on the server.
+	UFUNCTION()
+	ENGINE_API bool IsAuthority() const;
+
+	const FClusterUnionReplicatedData& GetReplicatedRigidState() const { return ReplicatedRigidState; }
 
 private:
 	// These are the statically clustered components. These should
 	// be specified in the editor and never change.
 	UPROPERTY(EditAnywhere, Category = "Cluster Union")
 	TArray<FComponentReference> ClusteredComponentsReferences;
-	
-	// We need to keep track of the mapping of primitive components to physics objects.
-	// This way we know the right physics objects to pass when removing the component (because
-	// it's possible to get a different list of physics objects when we get to removal). A
-	// side benefit here is being able to track which components are clustered.
-	TMap<TObjectKey<UPrimitiveComponent>, FClusteredComponentData> ComponentToPhysicsObjects;
+
+	// If set to a value not equal to -1, will manually set the cluster union's gravity group
+	// instead of automatically inheriting it from its children particles.
+	UPROPERTY(EditAnywhere, Category = "Cluster Union")
+	int32 GravityGroupIndexOverride;
 
 	// Also keep track of which actors we are clustering and their components. We make modifications on
 	// actors that get clustered so we need to make sure we undo those changes only once all its clustered
@@ -224,11 +414,8 @@ private:
 	// where the component hasn't been added to the cluster union on the GT causing a mismatch in behavior.
 	TMap<TObjectKey<UPrimitiveComponent>, FClusterUnionPendingAddData> PendingComponentSync;
 
-	// Given a unique index of a particle that we're adding to the cluster union - map it back to the component that owns it.
-	// This works decently because we assume that when we're using a cluster union component, we will only try to add to the
-	// cluster union via the GT so we can guarantee to have a decent mapping here.
-	UPROPERTY()
-	TMap<int32, FClusterUnionParticleCandidateData> UniqueIdxToComponent;
+	// At every physics sync, we keep track of which shape index matches which child primitive component and bone.
+	TArray<FSafePhysicsObjectHandle> PerShapeComponentBone;
 
 	// Data that can be changed at runtime to keep state about the cluster union consistent between the server and client.
 	UPROPERTY(ReplicatedUsing=OnRep_RigidState)
@@ -238,21 +425,35 @@ private:
 	mutable bool bHasCachedLocalBounds;
 	mutable FBoxSphereBounds CachedLocalBounds;
 
+protected:
 	// Handles changes to ReplicatedRigidState. Note that this function does not handle replication of X/R since we make use
 	// of the scene component's default replication for that.
 	UFUNCTION()
-	ENGINE_API void OnRep_RigidState();
+	ENGINE_API virtual void OnRep_RigidState();
+
+private:
 
 	ENGINE_API FPhysScene_Chaos* GetChaosScene() const;
 
 	Chaos::FClusterUnionPhysicsProxy* PhysicsProxy;
-	bool bHasReceivedTransform;
 
 	// User data to be able to tie the cluster particle back to this component.
 	FChaosUserData PhysicsUserData;
 
 	// An acceleration structure of all children components managed by the cluster union itself.
-	TUniquePtr<Chaos::ISpatialAcceleration<FExternalSpatialAccelerationPayload, Chaos::FReal, 3>> AccelerationStructure;
+	TUniquePtr<FSpatialAcceleration> AccelerationStructure;
+
+	/** Takes a source bone data type and extracts Bone IDs from it*/
+	template<typename TContainer, typename TSourceData>
+	void GetBoneIDsFromComponentData(TContainer& OutBoneIDs, const TSourceData& InSourceData) const
+	{
+		static_assert(std::is_same_v<TSourceData, FClusterUnionPendingAddData> || std::is_same_v<TSourceData, FClusteredComponentData>, "Only FClusterUnionPendingAddData and FClusteredComponentData are supported");
+
+		OutBoneIDs.Reset();
+		OutBoneIDs.Reserve(InSourceData.BonesData.Num());
+
+		Algo::Transform(InSourceData.BonesData, OutBoneIDs, &FClusterUnionBoneData::ID);
+	}
 
 	// Need to handle the fact that this component may or may not be initialized prior to the components referenced in
 	// ClusteredComponentsReferences. This function lets us listen to OnComponentPhysicsStateChanged on the incoming
@@ -266,20 +467,18 @@ private:
 
 	// These functions only get called when the physics thread syncs to the game thread thereby enforcing a physics thread authoritative view of
 	// what particles are currently contained within the cluster union.
-	ENGINE_API void HandleAddOrModifiedClusteredComponent(UPrimitiveComponent* ChangedComponent, const TMap<int32, FTransform>& PerBoneChildToParent);
-	ENGINE_API void HandleRemovedClusteredComponent(UPrimitiveComponent* ChangedComponent, bool bDestroyReplicatedProxy);
+	ENGINE_API void HandleAddOrModifiedClusteredComponent(const FMappedComponentKey& ChangedComponentData, const FLocalBonesToTransformMap& PerBoneChildToParent, const FTransform& NewTransform, TArray<TTuple<UPrimitiveComponent*, FTransform>>* OutNewComponents);
+	ENGINE_API void HandleRemovedClusteredComponent(TObjectKey<UPrimitiveComponent> RemovedComponent, const FClusteredComponentData& ComponentData);
 
 	ENGINE_API TArray<UPrimitiveComponent*> GetAllCurrentChildComponents() const;
 	ENGINE_API TArray<AActor*> GetAllCurrentActors() const;
 	ENGINE_API void VisitAllCurrentChildComponentsForCollision(ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, const TFunction<bool(UPrimitiveComponent*)>& Lambda) const;
 
-	// Whether or not this code is running on the server.
-	UFUNCTION()
-	ENGINE_API bool IsAuthority() const;
+	// Merge all the physics objects geometries into the cluster union
+	ENGINE_API void AddGTParticleGeometry(const TArray<Chaos::FPhysicsObjectHandle>& PhysicsObjects);
 
-	// Force a rebuild of the GT geometry. This needs to happen immediately when we add/remove on the GT so that the SQ is up to date
-	// and doesn't need to wait for the next OnSyncBodies.
-	ENGINE_API void ForceRebuildGTParticleGeometry();
+	// Remove all the physics objects geometries from the cluster union
+	ENGINE_API void RemoveGTParticleGeometry(const TSet<Chaos::FPhysicsObjectHandle>& PhysicsObjects);
 
 	//~ Begin UActorComponent Interface
 public:
@@ -304,12 +503,15 @@ public:
 	ENGINE_API virtual bool OverlapComponentWithResult(const FVector& Pos, const FQuat& Rot, const FPhysicsGeometry& Geometry, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, TArray<FOverlapResult>& OutOverlap) const override;
 	ENGINE_API virtual bool ComponentOverlapComponentWithResultImpl(const class UPrimitiveComponent* const PrimComp, const FVector& Pos, const FQuat& Rot, const FCollisionQueryParams& Params, TArray<FOverlapResult>& OutOverlap) const override;
 	virtual bool ShouldDispatchWakeEvents(FName BoneName) const override { return true; }
+	ENGINE_API virtual bool DoCustomNavigableGeometryExport(FNavigableGeometryExport& GeomExport) const override;
 	//~ End UPrimitiveComponent Interface
 
 	//~ Begin USceneComponent Interface
 public:
+	ENGINE_API virtual void OnReceiveReplicatedState(const FVector X, const FQuat R, const FVector V, const FVector W) override;
 	ENGINE_API virtual void OnUpdateTransform(EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport) override;
 	ENGINE_API virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
+	ENGINE_API virtual FVector GetComponentVelocity() const override;
 	//~ End USceneComponent Interface
 
 	//~ Begin IPhysicsComponent Interface.

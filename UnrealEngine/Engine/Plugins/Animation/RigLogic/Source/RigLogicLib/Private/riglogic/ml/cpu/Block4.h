@@ -202,13 +202,15 @@ static FORCE_INLINE void calculateBlock4(const NeuralNetLayer<T>& layer, ConstAr
     }
 
     for (; outputVector < outputVectorEnd; outputVector += block4Height, biases += block4Height) {
+        alignas(TF128::alignment()) float outbuf[block4Height];
         processBlocks4x8<TF128, TActivationFunction<TF128> >(inputVector,
                                                              inputVectorEndAlignedTo8,
                                                              inputVectorEnd,
                                                              weights,
                                                              biases,
                                                              activationParams,
-                                                             outputVector);
+                                                             outbuf);
+        std::memcpy(outputVector, outbuf, sizeof(outbuf));
     }
 }
 

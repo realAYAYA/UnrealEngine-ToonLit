@@ -10,6 +10,18 @@
 #include <cstdarg>
 #include <time.h>
 
+#if AC_VERSION > 26
+class API_PenType;
+GSErrCode ACAPI_ProjectOperation_Quit() { return ACAPI_ProjectOperation_Quit(0); }
+GSErrCode ACAPI_GraphicalOverride_GetOverrideRule (API_OverrideRule& rule) { return GS::NoError; }
+GSErrCode ACAPI_GraphicalOverride_CreateOverrideRule (API_OverrideRule& rule) { const API_Guid _Guid{};  return ACAPI_GraphicalOverride_CreateOverrideRule(rule, _Guid); }
+GSErrCode ACAPI_Preferences_SetOldVersion (Int32 version, GSSize nByte, const void* data, unsigned short platformSign, API_FTypeID oldPlanFileID) { return GS::NoError; }
+
+// Definition of most of the methods from previous versions of the ArchiCAD SDK
+// Include once to avoid linkage errors for multiple implementations.
+#include "ACAPI_MigrationHeader.hpp"
+#endif
+
 #if PLATFORM_WINDOWS && (__cplusplus < 201103L)
 	#define va_copy(destination, source) ((destination) = (source))
 #endif
@@ -184,7 +196,7 @@ GS::UniString GetLayerName(API_AttributeIndex InLayer)
 	API_Attribute attribute;
 	Zap(&attribute);
 	attribute.header.typeID = API_LayerID;
-	attribute.header.index = short(InLayer);
+	attribute.header.index = static_cast<decltype(attribute.header.index)>(InLayer);
 	attribute.header.uniStringNamePtr = &LayerName;
 	GSErrCode error = ACAPI_Attribute_Get(&attribute);
 	if (error != NoError)

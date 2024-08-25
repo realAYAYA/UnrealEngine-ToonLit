@@ -64,14 +64,14 @@ public class ApplicationCore : ModuleRules
 			);
 
 			// We need FreeType2 and GL for the Splash, but only in the Editor
-			if (Target.Type == TargetType.Editor)
+			if (Target.bCompileAgainstEditor)
 			{
 				AddEngineThirdPartyPrivateStaticDependencies(Target, "FreeType2");
 				AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenGL");
 				PrivateIncludePathModuleNames.Add("ImageWrapper");
 			}
 		}
-		else if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			PublicIncludePaths.AddRange(new string[] {"Runtime/ApplicationCore/Public/IOS"});
 			PublicIncludePaths.AddRange(new string[] {"Runtime/ApplicationCore/Private/Apple"});

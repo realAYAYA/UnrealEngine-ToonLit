@@ -5,6 +5,8 @@
 
 #if WITH_EDITOR
 
+#include "AsyncCompilationHelpers.h"
+#include "AssetCompilingManager.h"
 #include "Editor.h"
 #include "ObjectCacheContext.h"
 #include "EngineLogs.h"
@@ -74,7 +76,7 @@ namespace TextureCompilingManagerImpl
 }
 
 FTextureCompilingManager::FTextureCompilingManager()
-	: Notification(GetAssetNameFormat())
+	: Notification(MakeUnique<FAsyncCompilationNotification>(GetAssetNameFormat()))
 {
 	TextureCompilingManagerImpl::EnsureInitializedCVars();
 }
@@ -190,7 +192,7 @@ TRACE_DECLARE_INT_COUNTER(QueuedTextureCompilation, TEXT("AsyncCompilation/Queue
 void FTextureCompilingManager::UpdateCompilationNotification()
 {
 	TRACE_COUNTER_SET(QueuedTextureCompilation, GetNumRemainingTextures());
-	Notification.Update(GetNumRemainingTextures());
+	Notification->Update(GetNumRemainingTextures());
 }
 
 void FTextureCompilingManager::PostCompilation(UTexture* Texture)
@@ -241,6 +243,18 @@ int32 FTextureCompilingManager::GetNumRemainingAssets() const
 void FTextureCompilingManager::AddTextures(TArrayView<UTexture* const> InTextures)
 {
 	check(IsInGameThread());
+
+	// If you hit this, it's because above this in the stack you'll see PostCompilation(). In that function you'll see:
+	// 	Texture->FinishCachePlatformData();
+	//	Texture->UpdateResource();
+	// UpdateResource ends up doing another CachePlatformData() - so what's happened is you finished pulling in the derived data
+	// and then immediately tried again - and then tried to launch another build because the ddc keys changed. This means that
+	// during the async build, a property or otherwise that is an input to the ddc key changed. This shouldn't happen because
+	// PreEditChange completes the async build before allowing the change.
+	// Debugging this can be a huge pain. If you have a repro, IMO the best way is to hack GetTextureDerivedDataKeySuffix
+	// to strcmp on the name of the repro texture and just log the full key suffix. Then you should immediately see the changed
+	// keys right before the crash and you can backsolve what value changed. Once you have that, you can set a data breakpoint on
+	// the property and see who is poking it.
 	checkf(bIsRoutingPostCompilation == false,
 		TEXT("Registering a texture to the compile manager from inside a texture postcompilation is not supported and usually indicate that the previous async operation wasn't completed (i.e. missing call to PreEditChange) before modifying a texture property."));
 
@@ -273,6 +287,16 @@ void FTextureCompilingManager::AddTextures(TArrayView<UTexture* const> InTexture
 	}
 
 	TRACE_COUNTER_SET(QueuedTextureCompilation, GetNumRemainingTextures());
+}
+
+void FTextureCompilingManager::ForceDeferredTextureRebuildAnyThread(TArrayView<const TWeakObjectPtr<UTexture>> InTextures)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(FTextureCompilingManager::AddTexturesDeferredAnyThread)
+
+	for (const TWeakObjectPtr<UTexture>& Texture : InTextures)
+	{
+		DeferredRebuildRequestQueue.ProduceItem(Texture);
+	}
 }
 
 void FTextureCompilingManager::FinishCompilationForObjects(TArrayView<UObject* const> InObjects)
@@ -416,7 +440,7 @@ void FTextureCompilingManager::PostCompilation(TArrayView<UTexture* const> InCom
 							ENQUEUE_RENDER_COMMAND(TextureCompiler_RecacheUniformExpressions)(
 								[RenderProxy](FRHICommandListImmediate& RHICmdList)
 								{
-									RenderProxy->CacheUniformExpressions(false);
+									RenderProxy->CacheUniformExpressions(RHICmdList, false);
 								});
 						}
 					}
@@ -425,16 +449,16 @@ void FTextureCompilingManager::PostCompilation(TArrayView<UTexture* const> InCom
 				{
 					TRACE_CPUPROFILER_EVENT_SCOPE(UpdatePrimitives);
 
-					TSet<UPrimitiveComponent*> AffectedPrimitives;
+					TSet<IPrimitiveComponent*> AffectedPrimitives;
 					for (UMaterialInterface* MaterialInterface : AffectedMaterials)
 					{
-						for (UPrimitiveComponent* Component : ObjectCacheScope.GetContext().GetPrimitivesAffectedByMaterial(MaterialInterface))
+						for (IPrimitiveComponent* Component : ObjectCacheScope.GetContext().GetPrimitivesAffectedByMaterial(MaterialInterface))
 						{
 							AffectedPrimitives.Add(Component);
 						}
 					}
 
-					for (UPrimitiveComponent* AffectedPrimitive : AffectedPrimitives)
+					for (IPrimitiveComponent* AffectedPrimitive : AffectedPrimitives)
 					{
 						AffectedPrimitive->MarkRenderStateDirty();
 					}
@@ -628,7 +652,7 @@ void FTextureCompilingManager::ProcessTextures(bool bLimitExecutionTime, int32 M
 				{
 					for (UMaterialInterface* MaterialInterface : ObjectCacheScope.GetContext().GetMaterialsAffectedByTexture(Texture))
 					{
-						for (UPrimitiveComponent* Component : ObjectCacheScope.GetContext().GetPrimitivesAffectedByMaterial(MaterialInterface))
+						for (IPrimitiveComponent* Component : ObjectCacheScope.GetContext().GetPrimitivesAffectedByMaterial(MaterialInterface))
 						{
 							if (Component->IsRegistered() && Component->IsRenderStateCreated() && Component->GetLastRenderTimeOnScreen() > 0.0f)
 							{
@@ -708,6 +732,7 @@ void FTextureCompilingManager::ProcessAsyncTasks(bool bLimitExecutionTime)
 void FTextureCompilingManager::ProcessAsyncTasks(const AssetCompilation::FProcessAsyncTaskParams& Params)
 {
 	FObjectCacheContextScope ObjectCacheScope;
+	ProcessDeferredRequests();
 	FinishCompilationsForGame();
 
 	if (!Params.bPlayInEditorAssetsOnly)
@@ -717,6 +742,30 @@ void FTextureCompilingManager::ProcessAsyncTasks(const AssetCompilation::FProces
 
 	UpdateCompilationNotification();
 }
+
+void FTextureCompilingManager::ProcessDeferredRequests()
+{
+	TSet<UTexture*> DeferredTextures;
+	DeferredRebuildRequestQueue.ConsumeAllFifo([this, &DeferredTextures](TWeakObjectPtr<UTexture> WeakTexture)
+	{
+		if (UTexture* Texture = WeakTexture.Get())
+		{
+			if (Texture->IsAsyncCacheComplete() && IsAsyncCompilationAllowed(Texture) && !IsCompilingTexture(Texture))
+			{
+				DeferredTextures.Add(Texture);
+			}
+		}
+	});
+
+	if (!DeferredTextures.IsEmpty())
+	{
+		for (UTexture* DeferredTexture : DeferredTextures)
+		{
+			DeferredTexture->ForceRebuildPlatformData();
+		}
+	}
+}
+
 
 #undef LOCTEXT_NAMESPACE
 

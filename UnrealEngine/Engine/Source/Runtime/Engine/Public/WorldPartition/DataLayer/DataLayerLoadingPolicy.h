@@ -9,7 +9,7 @@
 class UDataLayerInstance;
 
 UCLASS()
-class UDataLayerLoadingPolicy : public UObject
+class ENGINE_API UDataLayerLoadingPolicy : public UObject
 {
 	GENERATED_BODY()
 public:

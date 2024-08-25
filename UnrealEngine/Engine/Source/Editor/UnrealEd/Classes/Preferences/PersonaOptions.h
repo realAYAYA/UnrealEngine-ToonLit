@@ -131,9 +131,6 @@ class UPersonaOptions : public UObject
 	UPROPERTY(EditAnywhere, config, Category = "Audio")
 	uint32 bMuteAudio:1;
 
-	UPROPERTY(EditAnywhere, config, Category = "Audio")
-	uint32 bUseAudioAttenuation:1;
-
 	/** Currently Stats can have None, Basic and Detailed. Please refer to EDisplayInfoMode. */
 	UPROPERTY(EditAnywhere, config, Category = "Viewport", meta=(ClampMin ="0", ClampMax = "3", UIMin = "0", UIMax = "3"))
 	int32 ShowMeshStats;
@@ -255,7 +252,6 @@ public:
 	UNREALED_API void SetHighlightOrigin( bool bInHighlightOrigin );
 	UNREALED_API void SetAutoAlignFloorToMesh(bool bInAutoAlignFloorToMesh);
 	UNREALED_API void SetMuteAudio( bool bInMuteAudio );
-	UNREALED_API void SetUseAudioAttenuation( bool bInUseAudioAttenuation );
 	UNREALED_API void SetViewModeIndex( FName InContext, EViewModeIndex InViewModeIndex, int32 InViewportIndex );
 	UNREALED_API void SetViewFOV( FName InContext, float InViewFOV, int32 InViewportIndex );
 	UNREALED_API void SetCameraSpeed(FName InContext, int32 InCameraSpeed, int32 InViewportIndex);

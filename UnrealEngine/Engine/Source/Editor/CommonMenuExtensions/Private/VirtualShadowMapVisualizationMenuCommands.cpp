@@ -21,7 +21,7 @@ int32 GVirtualShadowMapVisualizeAdvanced = 0;
 static FAutoConsoleVariableRef CVarVirtualShadowMapVisualizeAdvanced(
 	TEXT("r.Shadow.Virtual.Visualize.Advanced"),
 	GVirtualShadowMapVisualizeAdvanced,
-	TEXT("")
+	TEXT("Enable to show advanced VSM debug modes in the visualization UI menu.")
 );
 
 #define LOCTEXT_NAMESPACE "VirtualShadowMapVisualizationMenuCommands"

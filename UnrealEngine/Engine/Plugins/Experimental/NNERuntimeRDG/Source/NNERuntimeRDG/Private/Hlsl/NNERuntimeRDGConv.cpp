@@ -46,7 +46,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() >= 2 && InputTensors.Num() <= 3);
 			check(OutputTensors.Num() == 1);
@@ -98,13 +98,13 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 			TArray<int32> DilationsOrStridesDefault;
 			DilationsOrStridesDefault.Init(1, NumDimensions);
 
-			FConvCS::LexFromString(AutoPad, *Attributes.GetValue<FString>(TEXT("auto_pad")));
+			FConvCS::LexFromString(AutoPad, *Attributes.GetValueOrDefault<FString>(TEXT("auto_pad"), TEXT("NOTSET")));
 			Dilations = Attributes.GetValueOrDefault<TArray<int32>>(TEXT("dilations"), DilationsOrStridesDefault);
 			Group = Attributes.GetValueOrDefault<int32>(TEXT("group"), 1);
 			if (AutoPad == EConvAutoPad::NOTSET)
 			{
 				TArray<int32> PadsDefault;
-				PadsDefault.Init(1, 2 * NumDimensions);
+				PadsDefault.Init(0, 2 * NumDimensions);
 
 				Pads = Attributes.GetValueOrDefault<TArray<int32>>(TEXT("pads"), PadsDefault);
 			}
@@ -324,8 +324,9 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterConvOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Conv"), FConv::Create, ValidateConvOperator);
-
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Conv"), TEXT("Onnx")}, 1}, FConv::Create, ValidateConvOperator);
+		Registry.OpAdd({{TEXT("Conv"), TEXT("Onnx")}, 11}, FConv::Create, ValidateConvOperator);
 		return true;
 	}
 

@@ -1,0 +1,15 @@
+Dart files in this directory are not directly included in the app's source -- instead, they will be
+processed by Pigeon to generate code that facilitates communication between Flutter and each of
+the platform languages.
+
+You can modify the files in this directory to change the cross-platform API. Each file has an
+"@ConfigurePigeon" annotation which specifies where the resulting generated files will be stored
+for each target language. These generated files *should* be checked into Perforce, as they are not
+automatically generated each time the app is run.
+
+To re-generate Pigeon output, run this in your terminal from the app's root directory:
+
+  dart run pigeon --input pigeons/<filename>.dart
+
+For more information about Pigeon, see:
+https://pub.dev/packages/pigeon

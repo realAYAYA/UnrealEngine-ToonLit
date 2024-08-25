@@ -7,6 +7,7 @@
 #include "MuT/ASTOpImageLayerColor.h"
 #include "MuT/ASTOpImageSwizzle.h"
 #include "MuT/ASTOpImageRasterMesh.h"
+#include "MuT/ASTOpImageCrop.h"
 #include "MuT/ASTOpSwitch.h"
 #include "MuR/ModelPrivate.h"
 #include "MuR/RefCounted.h"
@@ -39,8 +40,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpImageLayer::IsEqual(const ASTOp& InOtherUntyped) const
 	{
-		if (const ASTOpImageLayer* Other = dynamic_cast<const ASTOpImageLayer*>(&InOtherUntyped))
+		if (InOtherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpImageLayer* Other = static_cast<const ASTOpImageLayer*>(&InOtherUntyped);
 			return base == Other->base &&
 				blend == Other->blend &&
 				mask == Other->mask &&
@@ -187,10 +189,10 @@ namespace mu
 		// Convert to image layer color if blend is plain
 		if (!at && blendAt && blendAt->GetOpType() == OP_TYPE::IM_PLAINCOLOUR)
 		{
-			// TODO: May some blags be supported?
+			// TODO: May some flags be supported?
 			if (Flags == 0)
 			{
-				const ASTOpFixed* BlendPlainColor = dynamic_cast<const ASTOpFixed*>(blendAt.get());
+				const ASTOpFixed* BlendPlainColor = static_cast<const ASTOpFixed*>(blendAt.get());
 
 				Ptr<ASTOpImageLayerColor> NewLayerColor = new ASTOpImageLayerColor;
 				NewLayerColor->base = baseAt;
@@ -209,17 +211,18 @@ namespace mu
 			FVector4f colour;
 			if (maskAt->IsImagePlainConstant(colour))
 			{
-				if (colour.IsNearlyZero3(UE_SMALL_NUMBER))
+				// For masks we only use one channel
+				if (FMath::IsNearlyZero(colour[0]))
 				{
 					// If the mask is black, we can skip the entire operation
 					at = base.child();
 				}
-				else if (colour.Equals(FVector4f(1, 1, 1, 1), UE_SMALL_NUMBER))
+				else if (FMath::IsNearlyEqual(colour[0], 1, UE_SMALL_NUMBER))
 				{
 					// If the mask is white, we can remove it
-					Ptr<ASTOpImageLayer> nop = mu::Clone<ASTOpImageLayer>(this);
-					nop->mask = nullptr;
-					at = nop;
+					Ptr<ASTOpImageLayer> NewOp = mu::Clone<ASTOpImageLayer>(this);
+					NewOp->mask = nullptr;
+					at = NewOp;
 				}
 			}
 		}
@@ -255,7 +258,7 @@ namespace mu
 					{
 					case OP_TYPE::IM_LAYERCOLOUR:
 					{
-						const ASTOpImageLayerColor* BlendLayer = dynamic_cast<const ASTOpImageLayerColor*>(CurrentBlend.get());
+						const ASTOpImageLayerColor* BlendLayer = static_cast<const ASTOpImageLayerColor*>(CurrentBlend.get());
 						if (BlendLayer->blendTypeAlpha == EBlendType::BT_NONE)
 						{
 							CurrentBlend = BlendLayer->base.child();
@@ -266,7 +269,7 @@ namespace mu
 
 					case OP_TYPE::IM_LAYER:
 					{
-						const ASTOpImageLayer* BlendLayer = dynamic_cast<const ASTOpImageLayer*>(CurrentBlend.get());
+						const ASTOpImageLayer* BlendLayer = static_cast<const ASTOpImageLayer*>(CurrentBlend.get());
 						if (BlendLayer->blendTypeAlpha == EBlendType::BT_NONE)
 						{
 							CurrentBlend = BlendLayer->base.child();
@@ -291,8 +294,8 @@ namespace mu
 
 				case OP_TYPE::IM_DISPLACE:
 				{
-					const ASTOpFixed* MaskDisplace = dynamic_cast<const ASTOpFixed*>(CurrentMask.get());
-					const ASTOpFixed* BlendDisplace = dynamic_cast<const ASTOpFixed*>(CurrentBlend.get());
+					const ASTOpFixed* MaskDisplace = static_cast<const ASTOpFixed*>(CurrentMask.get());
+					const ASTOpFixed* BlendDisplace = static_cast<const ASTOpFixed*>(CurrentBlend.get());
 					if (MaskDisplace && BlendDisplace 
 						&&
 						MaskDisplace->children[MaskDisplace->op.args.ImageDisplace.displacementMap].child()
@@ -308,8 +311,8 @@ namespace mu
 
 				case OP_TYPE::IM_RASTERMESH:
 				{
-					const ASTOpImageRasterMesh* MaskRaster = dynamic_cast<const ASTOpImageRasterMesh*>(CurrentMask.get());
-					const ASTOpImageRasterMesh* BlendRaster = dynamic_cast<const ASTOpImageRasterMesh*>(CurrentBlend.get());
+					const ASTOpImageRasterMesh* MaskRaster = static_cast<const ASTOpImageRasterMesh*>(CurrentMask.get());
+					const ASTOpImageRasterMesh* BlendRaster = static_cast<const ASTOpImageRasterMesh*>(CurrentBlend.get());
 					if (MaskRaster && BlendRaster
 						&&
 						MaskRaster->mesh.child() == BlendRaster->mesh.child()
@@ -334,8 +337,8 @@ namespace mu
 
 				case OP_TYPE::IM_RESIZE:
 				{
-					const ASTOpFixed* MaskResize = dynamic_cast<const ASTOpFixed*>(CurrentMask.get());
-					const ASTOpFixed* BlendResize = dynamic_cast<const ASTOpFixed*>(CurrentBlend.get());
+					const ASTOpFixed* MaskResize = static_cast<const ASTOpFixed*>(CurrentMask.get());
+					const ASTOpFixed* BlendResize = static_cast<const ASTOpFixed*>(CurrentBlend.get());
 					if (MaskResize && BlendResize 
 						&&
 						MaskResize->op.args.ImageResize.size[0] == BlendResize->op.args.ImageResize.size[0]
@@ -358,7 +361,7 @@ namespace mu
 			if (CurrentMask && CurrentMask->GetOpType() == OP_TYPE::IM_SWIZZLE)
 			{
 				// End of the possible mask expression chain match should have a swizzle selecting the alpha.
-				const ASTOpImageSwizzle* MaskSwizzle = dynamic_cast<const ASTOpImageSwizzle*>(CurrentMask.get());
+				const ASTOpImageSwizzle* MaskSwizzle = static_cast<const ASTOpImageSwizzle*>(CurrentMask.get());
 				if (MaskSwizzle->SourceChannels[0] == 3
 					&&
 					!MaskSwizzle->SourceChannels[1]
@@ -385,7 +388,7 @@ namespace mu
 			// Is the base a swizzle expanding alpha from a texture?
 			if (baseAt->GetOpType() == OP_TYPE::IM_SWIZZLE)
 			{
-				const ASTOpImageSwizzle* TypedBase = dynamic_cast<const ASTOpImageSwizzle*>(baseAt.get());
+				const ASTOpImageSwizzle* TypedBase = static_cast<const ASTOpImageSwizzle*>(baseAt.get());
 				bool bAreAllAlpha = true;
 				for (int32 c=0; c<MUTABLE_OP_MAX_SWIZZLE_CHANNELS; ++c)
 				{
@@ -405,7 +408,7 @@ namespace mu
 			// Is the mask a swizzle expanding alpha from a texture?
 			if (!at && maskAt && maskAt->GetOpType() == OP_TYPE::IM_SWIZZLE)
 			{
-				const ASTOpImageSwizzle* TypedBase = dynamic_cast<const ASTOpImageSwizzle*>(maskAt.get());
+				const ASTOpImageSwizzle* TypedBase = static_cast<const ASTOpImageSwizzle*>(maskAt.get());
 				bool bAreAllAlpha = true;
 				for (int32 c = 0; c < MUTABLE_OP_MAX_SWIZZLE_CHANNELS; ++c)
 				{
@@ -425,7 +428,7 @@ namespace mu
 			// Is the blend a swizzle selecting alpha?
 			if (Pass>0 && !at && blendAt && blendAt->GetOpType() == OP_TYPE::IM_SWIZZLE && Flags==0)
 			{
-				const ASTOpImageSwizzle* TypedBlend = dynamic_cast<const ASTOpImageSwizzle*>(blendAt.get());
+				const ASTOpImageSwizzle* TypedBlend = static_cast<const ASTOpImageSwizzle*>(blendAt.get());
 				if (TypedBlend->Format==EImageFormat::IF_L_UBYTE
 					&&
 					TypedBlend->SourceChannels[0]==3)
@@ -464,12 +467,13 @@ namespace mu
 			if (validUsageRect)
 			{
 				// Adjust for compressed blocks (4), and some extra mips (2 more mips, which is 4)
+				// \TODO: block size may be different in ASTC
 				constexpr int blockSize = 4 * 4;
 
 				FImageRect maskUsage;
 				maskUsage.min[0] = (sourceMaskUsage.min[0] / blockSize) * blockSize;
 				maskUsage.min[1] = (sourceMaskUsage.min[1] / blockSize) * blockSize;
-				vec2<uint16> minOffset = sourceMaskUsage.min - maskUsage.min;
+				FImageSize minOffset = sourceMaskUsage.min - maskUsage.min;
 				maskUsage.size[0] = ((sourceMaskUsage.size[0] + minOffset[0] + blockSize - 1) / blockSize) * blockSize;
 				maskUsage.size[1] = ((sourceMaskUsage.size[1] + minOffset[1] + blockSize - 1) / blockSize) * blockSize;
 
@@ -482,29 +486,26 @@ namespace mu
 					check(maskUsage.size[0] > 0);
 					check(maskUsage.size[1] > 0);
 
-					Ptr<ASTOpFixed> cropMask = new ASTOpFixed();
-					cropMask->op.type = OP_TYPE::IM_CROP;
-					cropMask->SetChild(cropMask->op.args.ImageCrop.source, mask.child());
-					cropMask->op.args.ImageCrop.minX = maskUsage.min[0];
-					cropMask->op.args.ImageCrop.minY = maskUsage.min[1];
-					cropMask->op.args.ImageCrop.sizeX = maskUsage.size[0];
-					cropMask->op.args.ImageCrop.sizeY = maskUsage.size[1];
+					Ptr<ASTOpImageCrop> cropMask = new ASTOpImageCrop();
+					cropMask->Source = mask.child();
+					cropMask->Min[0] = maskUsage.min[0];
+					cropMask->Min[1] = maskUsage.min[1];
+					cropMask->Size[0] = maskUsage.size[0];
+					cropMask->Size[1] = maskUsage.size[1];
 
-					Ptr<ASTOpFixed> cropBlended = new ASTOpFixed();
-					cropBlended->op.type = OP_TYPE::IM_CROP;
-					cropBlended->SetChild(cropBlended->op.args.ImageCrop.source, blend.child());
-					cropBlended->op.args.ImageCrop.minX = maskUsage.min[0];
-					cropBlended->op.args.ImageCrop.minY = maskUsage.min[1];
-					cropBlended->op.args.ImageCrop.sizeX = maskUsage.size[0];
-					cropBlended->op.args.ImageCrop.sizeY = maskUsage.size[1];
+					Ptr<ASTOpImageCrop> cropBlended = new ASTOpImageCrop();
+					cropBlended->Source = blend.child();
+					cropBlended->Min[0] = maskUsage.min[0];
+					cropBlended->Min[1] = maskUsage.min[1];
+					cropBlended->Size[0] = maskUsage.size[0];
+					cropBlended->Size[1] = maskUsage.size[1];
 
-					Ptr<ASTOpFixed> cropBase = new ASTOpFixed();
-					cropBase->op.type = OP_TYPE::IM_CROP;
-					cropBase->SetChild(cropBase->op.args.ImageCrop.source, base.child());
-					cropBase->op.args.ImageCrop.minX = maskUsage.min[0];
-					cropBase->op.args.ImageCrop.minY = maskUsage.min[1];
-					cropBase->op.args.ImageCrop.sizeX = maskUsage.size[0];
-					cropBase->op.args.ImageCrop.sizeY = maskUsage.size[1];
+					Ptr<ASTOpImageCrop> cropBase = new ASTOpImageCrop();
+					cropBase->Source = base.child();
+					cropBase->Min[0] = maskUsage.min[0];
+					cropBase->Min[1] = maskUsage.min[1];
+					cropBase->Size[0] = maskUsage.size[0];
+					cropBase->Size[1] = maskUsage.size[1];
 
 					Ptr<ASTOpImageLayer> newLayer = mu::Clone<ASTOpImageLayer>(this);
 					newLayer->base = cropBase;
@@ -654,7 +655,7 @@ namespace mu
 
 			case OP_TYPE::IM_SWITCH:
 			{
-				const ASTOpSwitch* BlendSwitch = dynamic_cast<const ASTOpSwitch*>(blendAt.get());
+				const ASTOpSwitch* BlendSwitch = static_cast<const ASTOpSwitch*>(blendAt.get());
 
 				// If at least a switch option is a plain colour, sink the layer into the switch
 				bool bWorthSinking = false;
@@ -674,9 +675,10 @@ namespace mu
 				if (bWorthSinking)
 				{
 					bool bMaskIsCompatibleSwitch = false;
-					const ASTOpSwitch* MaskSwitch = dynamic_cast<const ASTOpSwitch*>(maskAt.get());
+					const ASTOpSwitch* MaskSwitch = nullptr;
 					if (maskAt && maskAt->GetOpType()== OP_TYPE::IM_SWITCH)
 					{
+						MaskSwitch = static_cast<const ASTOpSwitch*>(maskAt.get());
 						bMaskIsCompatibleSwitch = MaskSwitch->IsCompatibleWith(BlendSwitch);
 					}
 
@@ -728,7 +730,7 @@ namespace mu
 
 			case OP_TYPE::IM_SWITCH:
 			{
-				const ASTOpSwitch* MaskSwitch = dynamic_cast<const ASTOpSwitch*>(maskAt.get());
+				const ASTOpSwitch* MaskSwitch = static_cast<const ASTOpSwitch*>(maskAt.get());
 
 				// If at least a switch option is a plain colour, sink the layer into the switch
 				bool bWorthSinking = false;

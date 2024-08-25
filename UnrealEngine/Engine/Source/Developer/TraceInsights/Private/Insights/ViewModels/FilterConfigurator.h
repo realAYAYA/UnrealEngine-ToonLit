@@ -27,6 +27,9 @@ public:
 
 	bool IsEmpty() const { return RootNode->GetChildrenCount() == 0; }
 
+	/** Called to update the internal state of some filters */
+	void Update() { RootNode->Update(); }
+
 	virtual bool ApplyFilters(const FFilterContext& Context) const override;
 
 	bool IsKeyUsed(int32 Key) const;

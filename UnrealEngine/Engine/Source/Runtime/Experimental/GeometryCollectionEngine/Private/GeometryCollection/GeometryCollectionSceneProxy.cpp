@@ -68,18 +68,6 @@ FAutoConsoleVariableRef CVarGeometryCollectionTripleBufferUploads(
 	ECVF_Default
 );
 
-static int32 GGeometryCollectionOptimizedTransforms = 1;
-FAutoConsoleVariableRef CVarGeometryCollectionOptimizedTransforms(
-	TEXT("r.GeometryCollectionOptimizedTransforms"),
-	GGeometryCollectionOptimizedTransforms,
-	TEXT("Whether to optimize transform update by skipping automatic updates in GPUScene."),
-	FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* InVariable)
-	{
-		FGlobalComponentRecreateRenderStateContext Context;
-	}),
-	ECVF_Scalability | ECVF_RenderThreadSafe
-);
-
 static int32 GRayTracingGeometryCollectionProxyMeshes = 0;
 FAutoConsoleVariableRef CVarRayTracingGeometryCollectionProxyMeshes(
 	TEXT("r.RayTracing.Geometry.GeometryCollection"),
@@ -285,7 +273,7 @@ void FGeometryCollectionSceneProxy::SetupVertexFactory(FRHICommandListBase& RHIC
 		Data.BonePrevTransformSRV = GNullColorVertexBuffer.VertexBufferSRV;
 	}
 
-	GeometryCollectionVertexFactory.SetData(Data);
+	GeometryCollectionVertexFactory.SetData(RHICmdList, Data);
 
 	if (!GeometryCollectionVertexFactory.IsInitialized())
 	{
@@ -297,10 +285,8 @@ void FGeometryCollectionSceneProxy::SetupVertexFactory(FRHICommandListBase& RHIC
 	}
 }
 
-void FGeometryCollectionSceneProxy::CreateRenderThreadResources()
+void FGeometryCollectionSceneProxy::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
-	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
-
 	if (bSupportsManualVertexFetch)
 	{
 		// Initialize transform buffers and upload rest transforms.
@@ -379,6 +365,9 @@ void FGeometryCollectionSceneProxy::CreateRenderThreadResources()
 		bGeometryResourceUpdated = true;
 	}
 #endif
+
+	bRenderResourcesCreated = true;
+	SetDynamicData_RenderThread(RHICmdList, DynamicData);
 }
 
 void FGeometryCollectionSceneProxy::DestroyRenderThreadResources()
@@ -417,18 +406,19 @@ void FGeometryCollectionSceneProxy::DestroyRenderThreadResources()
 #endif
 }
 
-void FGeometryCollectionSceneProxy::SetDynamicData_RenderThread(FGeometryCollectionDynamicData* NewDynamicData)
+void FGeometryCollectionSceneProxy::SetDynamicData_RenderThread(FRHICommandListBase& RHICmdList, FGeometryCollectionDynamicData* NewDynamicData)
 {
-	check(IsInRenderingThread());
-	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
-	if (DynamicData)
+	if (NewDynamicData != DynamicData)
 	{
-		GDynamicDataPool.Release(DynamicData);
-		DynamicData = nullptr;
+		if (DynamicData)
+		{
+			GDynamicDataPool.Release(DynamicData);
+			DynamicData = nullptr;
+		}
+		DynamicData = NewDynamicData;
 	}
-	DynamicData = NewDynamicData;
 
-	if (MeshDescription.NumVertices == 0)
+	if (MeshDescription.NumVertices == 0 || !DynamicData || !bRenderResourcesCreated)
 	{
 		return;
 	}
@@ -906,7 +896,7 @@ void FGeometryCollectionSceneProxy::GetDynamicRayTracingInstances(FRayTracingMat
 
 void FGeometryCollectionSceneProxy::UpdatingRayTracingGeometry_RenderingThread(TArray<FGeometryCollectionMeshElement> const& InSectionArray)
 {
-	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
+	FRHICommandList& RHICmdList = FRHICommandListImmediate::Get();
 
 	if (bGeometryResourceUpdated)
 	{
@@ -1003,19 +993,22 @@ FNaniteGeometryCollectionSceneProxy::FNaniteGeometryCollectionSceneProxy(UGeomet
 	// Nanite requires GPUScene
 	checkSlow(UseGPUScene(GMaxRHIShaderPlatform, GetScene().GetFeatureLevel()));
 	checkSlow(DoesPlatformSupportNanite(GMaxRHIShaderPlatform));
-
-	// Should have valid Nanite data at this point.
-	check(GeometryCollection->HasNaniteData());
-	NaniteResourceID = GeometryCollection->GetNaniteResourceID();
-	NaniteHierarchyOffset = GeometryCollection->GetNaniteHierarchyOffset();
+	checkSlow(GeometryCollection->HasNaniteData());
 
 	MaterialRelevance = Component->GetMaterialRelevance(Component->GetScene()->GetFeatureLevel());
 
-	// Nanite supports the GPUScene instance data buffer.
-	bSupportsInstanceDataBuffer = true;
+	FInstanceSceneDataBuffers::FAccessTag AccessTag(PointerHash(this));
+	FInstanceSceneDataBuffers::FWriteView ProxyData = InstanceSceneDataBuffersImpl.BeginWriteAccess(AccessTag);
+	ProxyData.Flags.bHasPerInstanceHierarchyOffset = true;
+	ProxyData.Flags.bHasPerInstanceLocalBounds = true;
+	ProxyData.Flags.bHasPerInstanceDynamicData = true;
+	InstanceSceneDataBuffersImpl.EndWriteAccess(AccessTag);
 
-	// We always have correct instance transforms, skip GPUScene updates if allowed.
-	bShouldUpdateGPUSceneTransforms = (GGeometryCollectionOptimizedTransforms == 0);
+	// Note: ideally this would be picked up from the Flags.bHasPerInstanceDynamicData above, but that path is not great at the moment.
+	bAlwaysHasVelocity = true;
+
+	// Nanite supports the GPUScene instance data buffer.
+	SetupInstanceSceneDataBuffers(&InstanceSceneDataBuffersImpl);
 
 	bSupportsDistanceFieldRepresentation = false;
 
@@ -1031,10 +1024,6 @@ FNaniteGeometryCollectionSceneProxy::FNaniteGeometryCollectionSceneProxy(UGeomet
 	// Indicates if 1 or more materials contain settings not supported by Nanite.
 	bHasMaterialErrors = false;
 
-	bHasPerInstanceHierarchyOffset = true;
-	bHasPerInstanceLocalBounds = true;
-	bHasPerInstanceDynamicData = true;
-
 	// Check if the assigned material can be rendered in Nanite. If not, default.
 	// TODO: Handle cases like geometry collections adding a "selected geometry" material with translucency.
 	const bool IsRenderable = true;// Nanite::FSceneProxy::IsNaniteRenderable(MaterialRelevance);
@@ -1047,7 +1036,7 @@ FNaniteGeometryCollectionSceneProxy::FNaniteGeometryCollectionSceneProxy(UGeomet
 	const TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe> Collection = GeometryCollection->GetGeometryCollection();
 	const TManagedArray<int32>& TransformToGeometryIndices = Collection->TransformToGeometryIndex;
 	const TManagedArray<int32>& SimulationType = Collection->SimulationType;
-	const TManagedArray<FGeometryCollectionSection>& SectionsArray = Component->GetSectionsArray();
+	const TManagedArray<FGeometryCollectionSection>& SectionsArray = Collection->Sections;
 
 	MaterialSections.SetNumZeroed(SectionsArray.Num());
 
@@ -1062,7 +1051,7 @@ FNaniteGeometryCollectionSceneProxy::FNaniteGeometryCollectionSceneProxy(UGeomet
 		UMaterialInterface* MaterialInterface = bValidMeshSection ? Component->GetMaterial(MeshSection.MaterialID) : nullptr;
 
 		// TODO: PROG_RASTER (Implement programmable raster support)
-		const bool bInvalidMaterial = !MaterialInterface || !IsOpaqueBlendMode(*MaterialInterface) || MaterialInterface->GetShadingModels().HasShadingModel(MSM_SingleLayerWater);
+		const bool bInvalidMaterial = !MaterialInterface || !IsOpaqueOrMaskedBlendMode(*MaterialInterface) || MaterialInterface->GetShadingModels().HasShadingModel(MSM_SingleLayerWater);
 		if (bInvalidMaterial)
 		{
 			bHasMaterialErrors = true;
@@ -1090,7 +1079,7 @@ FNaniteGeometryCollectionSceneProxy::FNaniteGeometryCollectionSceneProxy(UGeomet
 		check(MaterialInterface != nullptr);
 
 		// Should always be opaque blend mode here.
-		check(IsOpaqueBlendMode(*MaterialInterface));
+		check(IsOpaqueOrMaskedBlendMode(*MaterialInterface));
 
 		MaterialSections[SectionIndex].ShadingMaterialProxy = MaterialInterface->GetRenderProxy();
 		MaterialSections[SectionIndex].RasterMaterialProxy  = MaterialInterface->GetRenderProxy(); // TODO: PROG_RASTER (Implement programmable raster support)
@@ -1148,7 +1137,15 @@ FNaniteGeometryCollectionSceneProxy::FNaniteGeometryCollectionSceneProxy(UGeomet
 	DynamicData->IsDynamic = true;
 	DynamicData->Transforms = RestTransforms;
 	DynamicData->PrevTransforms = RestTransforms;
-	SetDynamicData_RenderThread(DynamicData);
+	SetDynamicData_RenderThread(DynamicData, Component->GetRenderMatrix());
+}
+
+void FNaniteGeometryCollectionSceneProxy::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
+{
+	// Should have valid Nanite data at this point.
+	NaniteResourceID = GeometryCollection->GetNaniteResourceID();
+	NaniteHierarchyOffset = GeometryCollection->GetNaniteHierarchyOffset();
+	check(NaniteResourceID != INDEX_NONE && NaniteHierarchyOffset != INDEX_NONE);
 }
 
 SIZE_T FNaniteGeometryCollectionSceneProxy::GetTypeHash() const
@@ -1164,6 +1161,7 @@ FPrimitiveViewRelevance FNaniteGeometryCollectionSceneProxy::GetViewRelevance(co
 	FPrimitiveViewRelevance Result;
 	Result.bDrawRelevance = IsShown(View) && View->Family->EngineShowFlags.NaniteMeshes;
 	Result.bShadowRelevance = IsShadowCast(View);
+	Result.bRenderCustomDepth = Nanite::GetSupportsCustomDepthRendering() && ShouldRenderCustomDepth();
 	Result.bUsesLightingChannels = GetLightingChannelMask() != GetDefaultLightingChannelMask();
 
 	// Always render the Nanite mesh data with static relevance.
@@ -1221,7 +1219,7 @@ uint32 FNaniteGeometryCollectionSceneProxy::GetMemoryFootprint() const
 	return sizeof(*this) + GetAllocatedSize();
 }
 
-void FNaniteGeometryCollectionSceneProxy::OnTransformChanged()
+void FNaniteGeometryCollectionSceneProxy::OnTransformChanged(FRHICommandListBase& RHICmdList)
 {
 }
 
@@ -1259,11 +1257,15 @@ Nanite::FResourceMeshInfo FNaniteGeometryCollectionSceneProxy::GetResourceMeshIn
 	return MoveTemp(OutInfo);
 }
 
-void FNaniteGeometryCollectionSceneProxy::SetDynamicData_RenderThread(FGeometryCollectionDynamicData* NewDynamicData)
+void FNaniteGeometryCollectionSceneProxy::SetDynamicData_RenderThread(FGeometryCollectionDynamicData* NewDynamicData, const FMatrix &PrimitiveLocalToWorld)
 {
 	// Are we currently simulating?
 	if (NewDynamicData->IsDynamic)
 	{
+		FInstanceSceneDataBuffers::FAccessTag AccessTag(PointerHash(this));
+		FInstanceSceneDataBuffers::FWriteView ProxyData = InstanceSceneDataBuffersImpl.BeginWriteAccess(AccessTag);
+		InstanceSceneDataBuffersImpl.SetPrimitiveLocalToWorld(PrimitiveLocalToWorld, AccessTag);
+
 		const TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe> Collection = GeometryCollection->GetGeometryCollection();
 		const TManagedArray<int32>& TransformToGeometryIndices	 = Collection->TransformToGeometryIndex;
 		const TManagedArray<TSet<int32>>& TransformChildren		 = Collection->Children;
@@ -1273,10 +1275,16 @@ void FNaniteGeometryCollectionSceneProxy::SetDynamicData_RenderThread(FGeometryC
 		check(TransformCount == TransformToGeometryIndices.Num());
 		check(TransformCount == TransformChildren.Num());
 		check(TransformCount == NewDynamicData->PrevTransforms.Num());
-		InstanceSceneData.Reset(TransformCount);
-		InstanceDynamicData.Reset(TransformCount);
-		InstanceLocalBounds.Reset(TransformCount);
-		InstanceHierarchyOffset.Reset(TransformCount);
+
+
+		ProxyData.InstanceToPrimitiveRelative.Reset(TransformCount);
+		ProxyData.PrevInstanceToPrimitiveRelative.Reset(TransformCount);
+		ProxyData.InstanceLocalBounds.Reset(TransformCount);
+		ProxyData.InstanceHierarchyOffset.Reset(TransformCount);
+
+		ProxyData.Flags.bHasPerInstanceDynamicData = true;
+		ProxyData.Flags.bHasPerInstanceLocalBounds = true;
+		ProxyData.Flags.bHasPerInstanceHierarchyOffset = true;
 
 		for (int32 TransformIndex = 0; TransformIndex < TransformCount; ++TransformIndex)
 		{
@@ -1288,26 +1296,23 @@ void FNaniteGeometryCollectionSceneProxy::SetDynamicData_RenderThread(FGeometryC
 
 			const FGeometryNaniteData& NaniteData = GeometryNaniteData[TransformToGeometryIndex];
 
-			FInstanceSceneData& Instance = InstanceSceneData.Emplace_GetRef();
-			Instance.LocalToPrimitive = NewDynamicData->Transforms[TransformIndex];
+			const FRenderTransform& InstanceToPrimitiveRelative = ProxyData.InstanceToPrimitiveRelative.Emplace_GetRef(InstanceSceneDataBuffersImpl.ComputeInstanceToPrimitiveRelative(NewDynamicData->Transforms[TransformIndex], AccessTag));
 
-			FInstanceDynamicData& DynamicData = InstanceDynamicData.Emplace_GetRef();
+			FRenderTransform& PrevInstanceToPrimitiveRelative = ProxyData.PrevInstanceToPrimitiveRelative.Emplace_GetRef();
 
 			if (bCurrentlyInMotion)
 			{
-				DynamicData.PrevLocalToPrimitive = NewDynamicData->PrevTransforms[TransformIndex];
+				PrevInstanceToPrimitiveRelative = InstanceSceneDataBuffersImpl.ComputeInstanceToPrimitiveRelative(NewDynamicData->PrevTransforms[TransformIndex], AccessTag);
 			}
 			else
 			{
-				DynamicData.PrevLocalToPrimitive = Instance.LocalToPrimitive;
+				PrevInstanceToPrimitiveRelative = InstanceToPrimitiveRelative;
 			}
 
-			int32 InstanceIndex = InstanceLocalBounds.Num();
-			InstanceLocalBounds.SetNumUninitialized(InstanceIndex + 1);
-			SetInstanceLocalBounds(InstanceIndex, NaniteData.LocalBounds);
-			
-			InstanceHierarchyOffset.Emplace(NaniteData.HierarchyOffset);
+			ProxyData.InstanceLocalBounds.Emplace(PadInstanceLocalBounds(NaniteData.LocalBounds));
+			ProxyData.InstanceHierarchyOffset.Emplace(NaniteData.HierarchyOffset);
 		}
+		InstanceSceneDataBuffersImpl.EndWriteAccess(AccessTag);
 	}
 	else
 	{
@@ -1320,12 +1325,16 @@ void FNaniteGeometryCollectionSceneProxy::SetDynamicData_RenderThread(FGeometryC
 
 void FNaniteGeometryCollectionSceneProxy::ResetPreviousTransforms_RenderThread()
 {
+	FInstanceSceneDataBuffers::FAccessTag AccessTag(PointerHash(this));
+	FInstanceSceneDataBuffers::FWriteView ProxyData = InstanceSceneDataBuffersImpl.BeginWriteAccess(AccessTag);
 	// Reset previous transforms to avoid locked motion vectors
-	check(InstanceSceneData.Num() == InstanceDynamicData.Num()); // Sanity check, should always have matching associated arrays
-	for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData.Num(); ++InstanceIndex)
+	// TODO: we should be able to just turn off & delete the prev transforms instead.
+	check(ProxyData.InstanceToPrimitiveRelative.Num() == ProxyData.PrevInstanceToPrimitiveRelative.Num()); // Sanity check, should always have matching associated arrays
+	for (int32 InstanceIndex = 0; InstanceIndex < ProxyData.InstanceToPrimitiveRelative.Num(); ++InstanceIndex)
 	{
-		InstanceDynamicData[InstanceIndex].PrevLocalToPrimitive = InstanceSceneData[InstanceIndex].LocalToPrimitive;
+		ProxyData.PrevInstanceToPrimitiveRelative[InstanceIndex] = ProxyData.InstanceToPrimitiveRelative[InstanceIndex];
 	}
+	InstanceSceneDataBuffersImpl.EndWriteAccess(AccessTag);
 }
 
 void FNaniteGeometryCollectionSceneProxy::FlushGPUSceneUpdate_GameThread()
@@ -1392,7 +1401,7 @@ FGeometryCollectionDynamicData* FGeometryCollectionDynamicDataPool::Allocate()
 	FGeometryCollectionDynamicData* NewEntry = nullptr;
 	if (FreeList.Num() > 0)
 	{
-		NewEntry = FreeList.Pop(false /* no shrinking */);
+		NewEntry = FreeList.Pop(EAllowShrinking::No);
 	}
 
 	if (NewEntry == nullptr)
@@ -1413,7 +1422,7 @@ void FGeometryCollectionDynamicDataPool::Release(FGeometryCollectionDynamicData*
 	int32 UsedIndex = UsedList.Find(DynamicData);
 	if (ensure(UsedIndex != INDEX_NONE))
 	{
-		UsedList.RemoveAt(UsedIndex, 1, false /* no shrinking */);
+		UsedList.RemoveAt(UsedIndex, 1, EAllowShrinking::No);
 		FreeList.Push(DynamicData);
 	}
 }

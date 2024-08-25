@@ -2,12 +2,9 @@
 
 import 'dart:ui';
 
+import 'package:epic_common/preferences.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 import 'package:vector_math/vector_math_64.dart' as vec;
-
-import '../../utilities/preferences_bundle.dart';
-import '../../utilities/streaming_preferences_extensions.dart';
-import '../../utilities/transient_preference.dart';
 
 enum ProjectionMode {
   azimuthal,

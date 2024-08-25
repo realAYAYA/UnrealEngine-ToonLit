@@ -3,7 +3,7 @@
 #include "AnalyticsFlowTracker.h"
 #include "ProfilingDebugging/MiscTrace.h"
 
-void FAnalyticsFlowTracker::SetProvider(TSharedPtr<IAnalyticsProviderET>& InProvider)
+void FAnalyticsFlowTracker::SetProvider(TSharedPtr<IAnalyticsProvider> InProvider)
 {
 	AnalyticsProvider = InProvider;
 }
@@ -286,9 +286,7 @@ bool FAnalyticsFlowTracker::EndFlowInternal(const FGuid& FlowGuid, bool bSuccess
 		{
 			// Aggregate the additional attributes from the sub flows
 			AggregateAttributes(EventAttributes, SubFlowData->AdditionalEventAttributes);
-
 			TotalTimeInSeconds += SubFlowData->TimeInSeconds;
-			EventAttributes.Add(FAnalyticsEventAttribute(SubFlowData->SubFlowName.ToString(), SubFlowData->TimeInSeconds));
 		}
 	}
 

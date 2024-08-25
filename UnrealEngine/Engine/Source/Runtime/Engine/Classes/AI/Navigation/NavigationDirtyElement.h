@@ -9,6 +9,13 @@ class INavRelevantInterface;
 
 struct FNavigationDirtyElement
 {
+	/**
+	 * If not empty and the associated navigation relevant object controls the dirty areas explicitly (i.e. ShouldSkipDirtyAreaOnAddOrRemove returns true),
+	 * the list will be used to indicate the areas that need rebuilding.
+	 * Otherwise, the default behavior, NavRelevant object's bounds will be used.
+	 */
+	TArray<FBox> ExplicitAreasToDirty;
+
 	/** object owning this element */
 	FWeakObjectPtr Owner;
 	

@@ -173,9 +173,7 @@ void FProxyGenerationProcessor::ProcessJob(const FGuid& JobGuid, FProxyGeneratio
 		}
 
 		// Set material static lighting usage flag if project has static lighting enabled
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
-		if (bAllowStaticLighting)
+		if (IsStaticLightingAllowed())
 		{
 			ProxyMaterial->CheckMaterialUsage(MATUSAGE_StaticLighting);
 		}
@@ -364,7 +362,7 @@ void FProxyGenerationProcessor::ProcessJob(const FGuid& JobGuid, FProxyGeneratio
 	{
 		Algo::ForEach(RecreateRenderStateContext.GetComponentsUsingMesh(OldStaticMesh), [](UStaticMeshComponent* Component)
 		{
-			FObjectCacheEventSink::NotifyStaticMeshChanged_Concurrent(Component);
+			FObjectCacheEventSink::NotifyStaticMeshChanged_Concurrent(Component->GetStaticMeshComponentInterface());
 		});
 	}
 

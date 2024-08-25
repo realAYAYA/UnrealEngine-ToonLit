@@ -360,6 +360,7 @@ namespace Gauntlet
 
 							foreach (IBuild Build in Builds)
 							{
+								Log.Info("Adding build {0} with flags {1} priority {2}", BS.BuildName, Build.Flags, Build.PreferenceOrder);
 								AddBuild(Build);
 							}
 						}
@@ -511,7 +512,7 @@ namespace Gauntlet
             Config.FilesToCopy = new List<UnrealFileToCopy>();
 
 			// new system of retrieving and encapsulating the info needed to install/launch. Android & Mac
-			Config.Build = GetMatchingBuilds(Role.RoleType, Role.Platform, Role.Configuration, Role.RequiredBuildFlags, Role.RequiredFlavor).FirstOrDefault();
+			Config.Build = GetMatchingBuilds(Role.RoleType, Role.Platform, Role.Configuration, Role.RequiredBuildFlags, Role.RequiredFlavor).OrderBy(B => B.PreferenceOrder).FirstOrDefault();
 
 			if (Config.Build == null && Role.IsNullRole() == false)
 			{
@@ -520,6 +521,8 @@ namespace Gauntlet
 				Log.Info("Available builds:\n{0}", SupportedBuilds);
 				throw new AutomationException("No build found that can support a role of {0}.", Role);
 			}
+
+			Log.Info("Selected build {Build} for test run.", Config.Build.ToString());
 
 			if (Role.Options != null)
 			{
@@ -647,27 +650,46 @@ namespace Gauntlet
 
 			if (TargetRole.UsesEditor() || TargetRole.IsEditor())
 			{
+				bool HasCustomTarget = UnrealHelpers.CustomModuleToRoles.ContainsValue(UnrealTargetRole.Editor);
+				string EditorTarget = HasCustomTarget ? UnrealHelpers.CustomModuleToRoles.FirstOrDefault(M => M.Value == UnrealTargetRole.Editor).Key : string.Empty;
 				FileSystemReference EditorExe = null;
 
-				if (BuildName == "Editor" && string.IsNullOrEmpty(Globals.Params.ParseValue("EditorDir", null)))
+				if (!HasCustomTarget)
 				{
 					try
 					{
 						EditorExe = ProjectUtils.GetProjectTarget(ProjectPath, UnrealBuildTool.TargetType.Editor, TargetPlatform, TargetConfiguration);
 					}
-					catch(Exception Ex)
+					catch (Exception Ex)
 					{
-						throw new AutomationException("No suitable editor build for {0} configuration.\n{1}", TargetConfiguration, Ex.ToString());
+						string Message = string.Format("The project config is overriding build targets.\n"
+								+ "But no suitable editor build for {0} configuration found from target file.\n"
+								+ "{1}", TargetConfiguration, Ex.Message); 
+
+						if (BuildName.Equals("Editor", StringComparison.OrdinalIgnoreCase))
+						{
+							// An editor is being explicitly requested but no executable could be found from target file
+							// Hightlight the issue in the log and return an empty string to avoid taking an inappropriate editor
+							Log.Warning(Message);
+							return string.Empty;
+						}
+						Log.Info(Message);
 					}
 				}
 
 				if (EditorExe != null)
 				{
 					ExePath = EditorExe.FullName;
+					if (!string.IsNullOrEmpty(Globals.Params.ParseValue("EditorDir", null)))
+					{
+						/// Trim the Editor absolute path from what the target file provided as the editor dir is being overriden
+						/// https://regex101.com/r/7BttxH/1
+						ExePath = Regex.Replace(ExePath, @"(.+?)[/\\]((Engine[/\\])?Binaries[/\\].+)", "$2");
+					}
 				}
 				else
 				{
-					string ExeFileName = "UnrealEditor";
+					string ExeFileName = HasCustomTarget ? EditorTarget : "UnrealEditor";
 					if (TargetConfiguration != UnrealTargetConfiguration.Development)
 					{
 						ExeFileName += string.Format("-{0}-{1}", TargetPlatform.ToString(), TargetConfiguration.ToString());
@@ -675,7 +697,8 @@ namespace Gauntlet
 
 					ExeFileName += Platform.GetExeExtension(TargetPlatform);
 
-					ExePath = string.Format("Engine/Binaries/{0}/{1}", BuildHostPlatform.Current.Platform, ExeFileName);
+					string BasePath = HasCustomTarget ? Globals.Params.ParseValue("EditorDir", ProjectPath.Directory.FullName) : "Engine";
+					ExePath = string.Format("{0}/Binaries/{1}/{2}", BasePath, BuildHostPlatform.Current.Platform, ExeFileName);
 				}
 			}
 			else

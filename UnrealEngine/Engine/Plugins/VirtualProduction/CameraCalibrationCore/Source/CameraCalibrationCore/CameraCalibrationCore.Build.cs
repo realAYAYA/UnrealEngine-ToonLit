@@ -14,7 +14,6 @@ namespace UnrealBuildTool.Rules
 					"CoreUObject",
 					"DeveloperSettings",
 					"Engine",
-					"LiveLinkComponents",
 					"RenderCore",
 					"RHI",
 					"Slate",

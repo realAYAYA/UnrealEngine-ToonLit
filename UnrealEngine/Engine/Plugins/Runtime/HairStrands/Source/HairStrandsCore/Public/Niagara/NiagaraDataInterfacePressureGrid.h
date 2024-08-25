@@ -17,7 +17,6 @@ class HAIRSTRANDSCORE_API UNiagaraDataInterfacePressureGrid : public UNiagaraDat
 
 public:
 	/** UNiagaraDataInterface Interface */
-	virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	virtual bool HasPreSimulateTick() const override { return true; }
 
@@ -56,6 +55,10 @@ public:
 	/** Update the deformation gradient */
 	void UpdateDeformationGradient(FVectorVMExternalFunctionContext& Context);
 
+protected:
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 };
 
 /** Proxy to send data to gpu */

@@ -46,6 +46,20 @@ public:
 	/** Output swept-polygon convex hull */
 	FDynamicMesh3 ConvexHull3D;
 
+	enum class EKeep3DHullSide : uint8
+	{
+		// Both sides of the projection hull will be flat
+		None,
+		// The front of the projection hull will follow the 3D convex hull, and the back will be flat
+		Front,
+		// The back of the projection hull will follow the 3D convex hull, and the front will be flat
+		Back
+		// Note: If both the front and back follow the 3D hull, that is just a regular convex hull; see MeshConvexHull.h
+	};
+
+	/** Whether to conform to the 3D convex hull surface on the front or back side of the sweep, or to use a flat surface on both sides of the swept hull */
+	EKeep3DHullSide Keep3DHullSide = EKeep3DHullSide::None;
+
 public:
 	FMeshProjectionHull(const FDynamicMesh3* MeshIn)
 	{
@@ -57,6 +71,11 @@ public:
 	 * @return true on success
 	 */
 	bool Compute();
+
+private:
+
+	// Helper to compute the 3D hull when Keep3DHullSide is not None; called by Compute after the 2D projection hull is computed
+	bool ComputeWith3DHullSide(FFrame3d CenterFrame, double ExtrudeLength);
 
 };
 

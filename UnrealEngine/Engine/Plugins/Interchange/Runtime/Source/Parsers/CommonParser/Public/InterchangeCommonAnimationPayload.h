@@ -22,6 +22,10 @@ namespace UE::Interchange
 #if WITH_ENGINE
 		//CURVE
 		TArray<FRichCurve> Curves;
+
+		//In-between blend shape data
+		TArray<FString> InbetweenCurveNames;
+		TArray<float> InbetweenFullWeights;
 #endif
 		//STEP CURVE
 		TArray<FInterchangeStepCurve> StepCurves;
@@ -191,6 +195,7 @@ struct INTERCHANGECOMMONPARSER_API FInterchangeStepCurve
 	TArray<float> KeyTimes;
 	TOptional<TArray<float>> FloatKeyValues;
 	TOptional<TArray<bool>> BooleanKeyValues;
+	TOptional<TArray<uint8>> ByteKeyValues;
 	TOptional<TArray<int32>> IntegerKeyValues;
 	TOptional<TArray<FString>> StringKeyValues;
 

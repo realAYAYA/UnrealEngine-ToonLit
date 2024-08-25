@@ -4,6 +4,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Mac/CocoaThread.h"
 #include "Mac/MacApplication.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Misc/ScopeLock.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "Framework/Commands/Commands.h"
@@ -280,7 +281,19 @@ namespace MacMenuHelper
 	
 	NSString* ComputeAppName()
 	{
-		return GIsEditor ? NSLOCTEXT("UnrealEditor", "ApplicationTitle", "Unreal Editor").ToString().GetNSString() : FString(FApp::GetProjectName()).GetNSString();
+        if (GIsEditor)
+        {
+            return NSLOCTEXT("UnrealEditor", "ApplicationTitle", "Unreal Editor").ToString().GetNSString();
+        }
+        
+        FText ProjectTitle;
+        GConfig->GetText(TEXT("/Script/EngineSettings.GeneralProjectSettings"), TEXT("ProjectDisplayedTitle"), ProjectTitle, GGameIni);
+        if (!ProjectTitle.IsEmpty())
+        {
+            return ProjectTitle.ToString().GetNSString();
+        }
+        
+        return FString(FApp::GetProjectName()).GetNSString();
 	}
 	
 	bool GMacPostInitStartupRequested = false;
@@ -430,6 +443,12 @@ void FSlateMacMenu::PostInitStartup()
 
 void FSlateMacMenu::LanguageChanged()
 {
+    if (!MacMenuHelper::GMacPostInitStartupRequested)
+    {
+        // if MacMenu not even done init setup yet, ignore LanguageChanged call
+        return;
+    }
+    
 	NSMenu* MainMenu = [NSApp mainMenu];
 	NSMenuItem* AppMenuItem = [MainMenu itemWithTitle:@"AppMenuItem"];
 	NSMenu* AppMenu = [AppMenuItem submenu];

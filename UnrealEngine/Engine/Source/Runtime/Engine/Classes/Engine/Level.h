@@ -15,6 +15,7 @@
 #include "Misc/WorldCompositionUtility.h"
 #include "Engine/MaterialMerging.h"
 #include "Engine/TextureStreamingTypes.h"
+#include "Misc/EditorPathObjectInterface.h"
 #include <atomic>
 
 #include "Level.generated.h"
@@ -397,7 +398,7 @@ enum class EActorPackagingScheme : uint8
  * @see UActor
  */
 UCLASS(MinimalAPI)
-class ULevel : public UObject, public IInterface_AssetUserData, public ITextureStreamingContainer
+class ULevel : public UObject, public IInterface_AssetUserData, public ITextureStreamingContainer, public IEditorPathObjectInterface
 {
 	GENERATED_BODY()
 
@@ -583,8 +584,13 @@ public:
 
 	/** Whether the level should call FixupActorFolders on its actors when loading the level/actors (only used when level is using actor folder objects) */
 	uint8										bFixupActorFoldersAtLoad:1;
+
+private:
+	/** Whether the level is set not to be reusable after unload (editor-only) */
+	uint8										bForceCantReuseUnloadedButStillAround:1;
 #endif
 	
+public:
 	/** The below variables are used temporarily while making a level visible.				*/
 
 	/** Whether we already moved actors.													*/
@@ -701,8 +707,8 @@ public:
 	ENGINE_API static bool GetLevelBoundsFromAsset(const FAssetData& Asset, FBox& OutLevelBounds);
 	ENGINE_API static bool GetLevelBoundsFromPackage(FName LevelPackage, FBox& OutLevelBounds);
 
-	ENGINE_API static bool GetLevelScriptExternalActorsReferencesFromAsset(const FAssetData& Asset, TArray<FGuid>& OutLevelScriptExternalActorsReferences);
-	ENGINE_API static bool GetLevelScriptExternalActorsReferencesFromPackage(FName LevelPackage, TArray<FGuid>& OutLevelScriptExternalActorsReferences);
+	ENGINE_API static bool GetWorldExternalActorsReferencesFromAsset(const FAssetData& Asset, TArray<FGuid>& OutWorldExternalActorsReferences);
+	ENGINE_API static bool GetWorldExternalActorsReferencesFromPackage(FName LevelPackage, TArray<FGuid>& OutWorldExternalActorsReferences);
 
 	ENGINE_API static bool GetIsLevelPartitionedFromAsset(const FAssetData& Asset);
 	ENGINE_API static bool GetIsLevelPartitionedFromPackage(FName LevelPackage);
@@ -720,15 +726,26 @@ public:
 	static bool GetPartitionedLevelCanBeUsedByLevelInstanceFromAsset(const FAssetData& Asset) { return true; }
 	UE_DEPRECATED(5.3, "GetPartitionedLevelCanBeUsedByLevelInstanceFromPackage is deprecated.")
 	static bool GetPartitionedLevelCanBeUsedByLevelInstanceFromPackage(FName LevelPackage) { return true; }
+	UE_DEPRECATED(5.4, "GetLevelScriptExternalActorsReferencesFromAsset is deprecated.")
+	ENGINE_API static bool GetLevelScriptExternalActorsReferencesFromAsset(const FAssetData& Asset, TArray<FGuid>& OutLevelScriptExternalActorsReferences) { return false;}
+	UE_DEPRECATED(5.4, "GetLevelScriptExternalActorsReferencesFromPackageis deprecated.")
+	ENGINE_API static bool GetLevelScriptExternalActorsReferencesFromPackage(FName LevelPackage, TArray<FGuid>& OutLevelScriptExternalActorsReferences) { return false; }
 
 	ENGINE_API static FVector GetLevelInstancePivotOffsetFromAsset(const FAssetData& Asset);
 	ENGINE_API static FVector GetLevelInstancePivotOffsetFromPackage(FName LevelPackage);
 
 	ENGINE_API static const FName LoadAllExternalObjectsTag;
 	ENGINE_API static const FName DontLoadExternalObjectsTag;
+	ENGINE_API static const FName DontLoadExternalFoldersTag;
 
 	ENGINE_API bool GetPromptWhenAddingToLevelOutsideBounds() const;
 	ENGINE_API bool GetPromptWhenAddingToLevelBeforeCheckout() const;
+
+	ENGINE_API void SetEditorPathOwner(UObject* InEditorPathOwner) { EditorPathOwner = InEditorPathOwner; }
+	ENGINE_API virtual UObject* GetEditorPathOwner() const override { return EditorPathOwner.Get(); }
+
+	ENGINE_API bool GetForceCantReuseUnloadedButStillAround() const { return bForceCantReuseUnloadedButStillAround; }
+	ENGINE_API void SetForceCantReuseUnloadedButStillAround(bool bNewValue) { bForceCantReuseUnloadedButStillAround = bNewValue; }
 #endif
 
 private:
@@ -776,6 +793,13 @@ private:
 	/** Temporary array containing actor folder objects manually loaded from their external packages (only used while loading the level). */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UActorFolder>> LoadedExternalActorFolders;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UObject> EditorPathOwner;
+
+	/** Temporary map of objects to their associated external packages. Used when detaching/attaching external actors packages during cook. */
+	UPROPERTY(Transient)
+	TMap<TObjectPtr<UObject>, TObjectPtr<UPackage>> ObjectsToExternalPackages;
 #endif // #if WITH_EDITORONLY_DATA
 
 	enum class ERouteActorInitializationState : uint8
@@ -1095,17 +1119,29 @@ public:
 #if WITH_EDITOR
 	/**
 	 * Get the package name for this actor
+	 * @param InLevelPackage the package to get the external actors package name of
+	 * @param InActorPackagingScheme the packaging scheme to use
 	 * @param InActorPath the fully qualified actor path, in the format: 'Outermost.Outer.Name'
+	 * @param InLevelMountPointContext an optional context object used to determine the mount point of the package
 	 * @return the package name
 	 */
-	static ENGINE_API FString GetActorPackageName(UPackage* InLevelPackage, EActorPackagingScheme ActorPackagingScheme, const FString& InActorPath);
+	static ENGINE_API FString GetActorPackageName(UPackage* InLevelPackage, EActorPackagingScheme InActorPackagingScheme, const FString& InActorPath, const UObject* InLevelMountPointContext = nullptr);
+
+	/**
+	 * Returns a resolved level path using the level mount point context
+	 * @param InLevelPackage the level package name
+	 * @param InLevelMountPointContext an optional context object used to determine the mount point of the package
+	 */
+	static ENGINE_API FString ResolveRootPath(const FString& LevelPackageName, const UObject* InLevelMountPointContext = nullptr);
 
 	/**
 	 * Get the package name for this actor
+	 * @param InBaseDir the base directory used when building the actor package name
+	 * @param InActorPackagingScheme the packaging scheme to use
 	 * @param InActorPath the fully qualified actor path, in the format: 'Outermost.Outer.Name'
 	 * @return the package name
 	 */
-	static ENGINE_API FString GetActorPackageName(const FString& InBaseDir, EActorPackagingScheme ActorPackagingScheme, const FString& InActorPath);
+	static ENGINE_API FString GetActorPackageName(const FString& InBaseDir, EActorPackagingScheme InActorPackagingScheme, const FString& InActorPath);
 
 	/**
 	 * Get the folder containing the external actors for this level path
@@ -1114,6 +1150,14 @@ public:
 	 * @return the folder
 	 */
 	static ENGINE_API FString GetExternalActorsPath(const FString& InLevelPackageName, const FString& InPackageShortName = FString());
+
+	/**
+	 * Get the folders containing the external actors for this level path, including actor folders of registered plugins for this level 
+	 * @param InLevelPackageName The package name to get the external actors path of
+	 * @param InPackageShortName Optional short name to use instead of the package short name
+	 * @return the folder
+	 */
+	static ENGINE_API TArray<FString> GetExternalActorsPaths(const FString& InLevelPackageName, const FString& InPackageShortName = FString());
 
 	/**
 	 * Get the folder containing the external actors for this level
@@ -1217,10 +1261,13 @@ public:
 
 	/**
 	 * Create an package for this actor
+	 * @param InLevelPackage the level package used when building the actor package name
+	 * @param InActorPackagingScheme the packaging scheme to use
 	 * @param InActorPath the fully qualified actor path, in the format: 'Outermost.Outer.Name'
+	 * @param InMountPointContext an optional context object used to determine the mount point of the package
 	 * @return the created package
 	 */
-	static ENGINE_API UPackage* CreateActorPackage(UPackage* InLevelPackage, EActorPackagingScheme ActorPackagingScheme, const FString& InActorPath);
+	static ENGINE_API UPackage* CreateActorPackage(UPackage* InLevelPackage, EActorPackagingScheme InActorPackagingScheme, const FString& InActorPath, const UObject* InMountPointContext = nullptr);
 
 	/**
 	 * Detach or reattach all level actors to from/to their external package
@@ -1317,6 +1364,17 @@ public:
 	/** meant to be called only from editor, calculating and storing static geometry to be used with off-line and/or on-line navigation building */
 	ENGINE_API void RebuildStaticNavigableGeometry();
 
+	DECLARE_DELEGATE_ThreeParams(FLevelExternalActorsPathsProviderDelegate, const FString&, const FString&, TArray<FString>&);
+	/** Registers a level external actor paths provider */
+	static ENGINE_API FDelegateHandle RegisterLevelExternalActorsPathsProvider(const FLevelExternalActorsPathsProviderDelegate& Provider);
+	/** Unregisters a level external actor paths provider */
+	static ENGINE_API void UnregisterLevelExternalActorsPathsProvider(const FDelegateHandle& ProviderDelegateHandle);
+
+	DECLARE_DELEGATE_RetVal_ThreeParams(bool, FLevelMountPointResolverDelegate, const FString&, const UObject*, FString&);
+	/** Registers a level mount point resolver */
+	static ENGINE_API FDelegateHandle RegisterLevelMountPointResolver(const FLevelMountPointResolverDelegate& Resolver);
+	/** Unregisters a level mount point resolver */
+	static ENGINE_API void UnregisterLevelMountPointResolver(const FDelegateHandle& ResolverDelegateHandle);
 #endif
 
 private:
@@ -1324,6 +1382,12 @@ private:
 #if WITH_EDITOR
 	bool IncrementalRunConstructionScripts(bool bProcessAllActors);
 	TOptional<bool> bCachedHasStaticMeshCompilationPending;
+
+	/** Array of registered delegates used by GetExternalActorsPaths. */
+	static TArray<FLevelExternalActorsPathsProviderDelegate> LevelExternalActorsPathsProviders;
+
+	/** Array of registered delegates used by GetExternalActorsPaths. */
+	static TArray<FLevelMountPointResolverDelegate> LevelMountPointResolvers;
 private:
 	/**
 	 * Potentially defer the running of an actor's construction script on load
@@ -1352,8 +1416,10 @@ private:
 	TSet<FGuid> GetDeletedAndUnreferencedActorFolders() const;
 
 	friend struct FLevelActorFoldersHelper;
+	friend struct FSetWorldPartitionRuntimeCell;
 	friend class FWorldPartitionLevelHelper;
 	friend class UActorFolder;
+	friend class AWorldDataLayers;
 
 	/** Replace the existing LSA (if set) by spawning a new one based on this level's script blueprint */
 	void RegenerateLevelScriptActor();
@@ -1369,6 +1435,18 @@ private:
 #endif // WITH_EDITOR
 };
 
+#if WITH_EDITOR
+struct FSetWorldPartitionRuntimeCell
+{
+private:
+	FSetWorldPartitionRuntimeCell(ULevel* InLevel, const FSoftObjectPath& InWorldPartitionRuntimeCell)
+	{
+		InLevel->WorldPartitionRuntimeCell = InWorldPartitionRuntimeCell;
+	}
+	friend class FWorldPartitionLevelHelper;
+	friend class UWorldPartition;
+};
+#endif 
 
 /**
  * Macro for wrapping Delegates in TScopedCallback

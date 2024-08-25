@@ -277,7 +277,7 @@ public:
 		return &CS;
 	}
 
-	void FreeUnusedCmdBuffers(FVulkanQueue* Queue);
+	void FreeUnusedCmdBuffers(FVulkanQueue* Queue, bool bTrimMemory);
 
 	inline FVulkanCommandBufferManager& GetMgr()
 	{
@@ -376,7 +376,7 @@ public:
 
 	uint32 CalculateGPUTime();
 
-	void FreeUnusedCmdBuffers();
+	void FreeUnusedCmdBuffers(bool bTrimMemory);
 
 	inline FVulkanCommandListContext* GetCommandListContext()
 	{

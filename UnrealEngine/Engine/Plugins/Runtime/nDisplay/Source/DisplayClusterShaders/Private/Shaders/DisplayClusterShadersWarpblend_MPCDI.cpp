@@ -19,7 +19,8 @@
 #include "ShaderParameterStruct.h"
 
 #include "Render/Containers/IDisplayClusterRender_MeshComponentProxy.h"
-#include "WarpBlend/IDisplayClusterWarpBlend.h"
+#include "Render/Containers/IDisplayClusterRender_Texture.h"
+#include "IDisplayClusterWarpBlend.h"
 
 #include "ShaderParameters/DisplayClusterShaderParameters_WarpBlend.h"
 
@@ -76,11 +77,6 @@ namespace MpcdiShaderPermutation
 
 	bool ShouldCompileCommonPSPermutation(const FGlobalShaderPermutationParameters& Parameters, const FCommonPSDomain& PermutationVector)
 	{
-		if (!PermutationVector.Get<FMpcdiShaderAlphaMapBlending>() && PermutationVector.Get<FMpcdiShaderBetaMapBlending>())
-		{
-			return false;
-		}
-
 		return true;
 	}
 
@@ -111,7 +107,10 @@ BEGIN_SHADER_PARAMETER_STRUCT(FMpcdiPixelShaderParameters, )
 
 	SHADER_PARAMETER(FMatrix44f, ViewportTextureProjectionMatrix)
 
-	SHADER_PARAMETER(float, AlphaEmbeddedGamma)
+	SHADER_PARAMETER(float, AlphaMapGammaEmbedded)
+
+	SHADER_PARAMETER(int, AlphaMapComponentDepth)
+	SHADER_PARAMETER(int, BetaMapComponentDepth)
 END_SHADER_PARAMETER_STRUCT()
 
 class FMpcdiWarpVS : public FGlobalShader
@@ -306,21 +305,28 @@ public:
 	{
 		if (WarpBlendParameters.WarpInterface.IsValid())
 		{
-			FRHITexture* AlphaMap = WarpBlendParameters.WarpInterface->GetTexture(EDisplayClusterWarpBlendTextureType::AlphaMap);
-			if (AlphaMap)
+			TSharedPtr<IDisplayClusterRender_Texture, ESPMode::ThreadSafe> AlphaMap = WarpBlendParameters.WarpInterface->GetTextureInterface(EDisplayClusterWarpBlendTextureType::AlphaMap);
+			if (FRHITexture* AlphaMapTexture = AlphaMap.IsValid() ? AlphaMap->GetRHITexture() : nullptr)
 			{
-				RenderPassData.PSParameters.AlphaMapTexture = AlphaMap;
+				RenderPassData.PSParameters.AlphaMapTexture = AlphaMapTexture;
 				RenderPassData.PSParameters.AlphaMapSampler = TStaticSamplerState<SF_Trilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-				RenderPassData.PSParameters.AlphaEmbeddedGamma = WarpBlendParameters.WarpInterface->GetAlphaMapEmbeddedGamma();
+				RenderPassData.PSParameters.AlphaMapComponentDepth = AlphaMap->GetComponentDepth();
+				RenderPassData.PSParameters.AlphaMapGammaEmbedded = WarpBlendParameters.WarpInterface->GetAlphaMapEmbeddedGamma();
 
 				RenderPassData.PSPermutationVector.Set<MpcdiShaderPermutation::FMpcdiShaderAlphaMapBlending>(true);
 			}
 
-			FRHITexture* BetaMap = WarpBlendParameters.WarpInterface->GetTexture(EDisplayClusterWarpBlendTextureType::BetaMap);
-			if (BetaMap)
+			TSharedPtr<IDisplayClusterRender_Texture, ESPMode::ThreadSafe> BetaMap = WarpBlendParameters.WarpInterface->GetTextureInterface(EDisplayClusterWarpBlendTextureType::BetaMap);
+			if (FRHITexture* BetaMapTexture = BetaMap.IsValid() ? BetaMap->GetRHITexture() : nullptr)
 			{
-				RenderPassData.PSParameters.BetaMapTexture = BetaMap;
+				RenderPassData.PSParameters.BetaMapTexture = BetaMapTexture;
 				RenderPassData.PSParameters.BetaMapSampler = TStaticSamplerState<SF_Trilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+				RenderPassData.PSParameters.BetaMapComponentDepth = BetaMap->GetComponentDepth();
+
+				// Note: The MPCDI 2.0 standard does not define an 'EmbeddedGamma' tag value for the BetaMap tag.
+				// However, it does require gamma correction for BetaMap.
+				// Therefore, this parameter is also used for the BetaMap texture.
+				RenderPassData.PSParameters.AlphaMapGammaEmbedded = WarpBlendParameters.WarpInterface->GetAlphaMapEmbeddedGamma();
 
 				RenderPassData.PSPermutationVector.Set<MpcdiShaderPermutation::FMpcdiShaderBetaMapBlending>(true);
 			}
@@ -417,6 +423,11 @@ public:
 		FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 		TShaderMapRef<FMpcdiWarpVS> VertexShader(ShaderMap, RenderPassData.VSPermutationVector);
 		TShaderMapRef<FMpcdiPassthroughPS> PixelShader(ShaderMap);
+		if (!VertexShader.IsValid() || !PixelShader.IsValid())
+		{
+			// Always check if shaders are available on the current platform and hardware
+			return false;
+		}
 
 		FGraphicsPipelineStateInitializer GraphicsPSOInit;
 		// Set the graphic pipeline state.
@@ -426,7 +437,7 @@ public:
 		{
 
 			// Setup graphics pipeline
-			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Never>::GetRHI();
+			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
 			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<>::GetRHI();
 
 			GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
@@ -459,6 +470,11 @@ public:
 		FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 		TShaderMapRef<FMpcdiWarpVS> VertexShader(ShaderMap, RenderPassData.VSPermutationVector);
 		TShaderMapRef<FMpcdiWarpPS> PixelShader(ShaderMap, RenderPassData.PSPermutationVector);
+		if (!VertexShader.IsValid() || !PixelShader.IsValid())
+		{
+			// Always check if shaders are available on the current platform and hardware
+			return false;
+		}
 
 		FGraphicsPipelineStateInitializer GraphicsPSOInit;
 		// Set the graphic pipeline state.
@@ -468,7 +484,7 @@ public:
 		{
 
 			// Setup graphics pipeline
-			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Never>::GetRHI();
+			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
 			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<>::GetRHI();
 
 			GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();

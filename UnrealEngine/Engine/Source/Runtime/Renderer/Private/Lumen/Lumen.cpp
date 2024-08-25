@@ -7,6 +7,7 @@
 #include "ScenePrivate.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "LumenSceneData.h"
+#include "RenderUtils.h"
 
 int32 GLumenSupported = 1;
 FAutoConsoleVariableRef CVarLumenSupported(
@@ -29,13 +30,6 @@ static TAutoConsoleVariable<int32> CVarLumenThreadGroupSize32(
 	TEXT("Whether to prefer dispatches in groups of 32 threads on HW which supports it (instead of standard 64)."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
-
-bool DoesPlatformSupportLumenGI(EShaderPlatform Platform, bool bSkipProjectCheck)
-{
-	return (bSkipProjectCheck || GLumenSupported)
-		&& FDataDrivenShaderPlatformInfo::GetSupportsLumenGI(Platform)
-		&& !IsForwardShadingEnabled(Platform);
-}
 
 bool DoesRuntimePlatformSupportLumen()
 {
@@ -71,7 +65,10 @@ namespace Lumen
 		const bool bLumenReflections = ShouldRenderLumenReflections(View);
 
 		if (bLumenGI
-			&& (UseHardwareRayTracedScreenProbeGather(*View.Family) || UseHardwareRayTracedRadianceCache(*View.Family) || UseHardwareRayTracedDirectLighting(*View.Family)))
+			&& (UseHardwareRayTracedScreenProbeGather(*View.Family) 
+				|| UseHardwareRayTracedRadianceCache(*View.Family) 
+				|| UseHardwareRayTracedDirectLighting(*View.Family)
+				|| UseHardwareRayTracedTranslucencyVolume(*View.Family)))
 		{
 			return true;
 		}
@@ -120,7 +117,7 @@ bool ShouldRenderLumenForViewFamily(const FScene* Scene, const FSceneViewFamily&
 {
 	return Scene
 		&& Scene->GetLumenSceneData(*ViewFamily.Views[0])
-		&& ViewFamily.Views.Num() <= Lumen::MaxViews
+		&& ViewFamily.Views.Num() <= LUMEN_MAX_VIEWS
 		&& DoesPlatformSupportLumenGI(Scene->GetShaderPlatform(), bSkipProjectCheck);
 }
 
@@ -161,4 +158,11 @@ bool Lumen::UseGlobalSDFObjectGrid(const FSceneViewFamily& ViewFamily)
 	}
 
 	return true;
+}
+
+uint32 Lumen::GetMeshCardDistanceBin(float Distance)
+{
+	uint32 OffsetDistance = FMath::Max(1, (int32)(Distance - 1000));
+	uint32 Bin = FMath::Min(FMath::FloorLog2(OffsetDistance), Lumen::NumDistanceBuckets - 1);
+	return Bin;
 }

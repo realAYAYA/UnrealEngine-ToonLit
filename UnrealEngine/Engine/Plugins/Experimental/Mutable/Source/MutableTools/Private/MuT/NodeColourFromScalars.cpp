@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeColourFromScalars::Private::s_type =
-			NODE_TYPE( "ColourFromScalars", NodeColour::GetStaticType() );
+	FNodeType NodeColourFromScalars::Private::s_type =
+			FNodeType( "ColourFromScalars", NodeColour::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,49 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeColourFromScalars, EType::FromScalars, Node, Node::EType::Colour)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeColourFromScalars::GetInputCount() const
-	{
-		return 4;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeColourFromScalars::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0: pResult = m_pD->m_pX.get(); break;
-		case 1: pResult = m_pD->m_pY.get(); break;
-		case 2: pResult = m_pD->m_pZ.get(); break;
-		case 3: pResult = m_pD->m_pW.get(); break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeColourFromScalars::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-
-		switch (i)
-		{
-		case 0: m_pD->m_pX = dynamic_cast<NodeScalar*>(pNode.get()); break;
-		case 1: m_pD->m_pY = dynamic_cast<NodeScalar*>(pNode.get()); break;
-		case 2: m_pD->m_pZ = dynamic_cast<NodeScalar*>(pNode.get()); break;
-		case 3: m_pD->m_pW = dynamic_cast<NodeScalar*>(pNode.get()); break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

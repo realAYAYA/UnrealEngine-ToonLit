@@ -249,6 +249,7 @@ void FRectLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Ligh
 	LightParameters.RectLightAtlasMaxLevel = FLightRenderParameters::GetRectLightAtlasInvalidMIPLevel();
 	LightParameters.IESAtlasIndex = INDEX_NONE;
 	LightParameters.InverseExposureBlend = InverseExposureBlend;
+	LightParameters.LightFunctionAtlasLightIndex = GetLightFunctionAtlasLightIndex();
 
 	if (IESAtlasId != ~0)
 	{

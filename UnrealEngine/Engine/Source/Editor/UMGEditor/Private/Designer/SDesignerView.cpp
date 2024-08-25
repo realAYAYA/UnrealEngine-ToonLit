@@ -989,7 +989,7 @@ FOptionalSize SDesignerView::GetPreviewAreaWidth() const
 	TTuple<FVector2D, FVector2D> AreaAndSize = FWidgetBlueprintEditorUtils::GetWidgetPreviewAreaAndSize(GetDefaultWidget(), CachedPreviewDesiredSize, FVector2D(PreviewWidth, PreviewHeight), GetDefaultWidget()->DesignSizeMode, TOptional<FVector2D>());
 	FVector2D Area = AreaAndSize.Get<0>();
 
-	return Area.X;
+	return static_cast<float>(Area.X);
 }
 
 FOptionalSize SDesignerView::GetPreviewAreaHeight() const
@@ -997,7 +997,7 @@ FOptionalSize SDesignerView::GetPreviewAreaHeight() const
 	TTuple<FVector2D, FVector2D> AreaAndSize = FWidgetBlueprintEditorUtils::GetWidgetPreviewAreaAndSize(GetDefaultWidget(), CachedPreviewDesiredSize, FVector2D(PreviewWidth, PreviewHeight), GetDefaultWidget()->DesignSizeMode, TOptional<FVector2D>());
 	FVector2D Area = AreaAndSize.Get<0>();;
 
-	return Area.Y;
+	return static_cast<float>(Area.Y);
 }
 
 FOptionalSize SDesignerView::GetPreviewSizeWidth() const
@@ -1005,7 +1005,7 @@ FOptionalSize SDesignerView::GetPreviewSizeWidth() const
 	TTuple<FVector2D, FVector2D> AreaAndSize = FWidgetBlueprintEditorUtils::GetWidgetPreviewAreaAndSize(GetDefaultWidget(), CachedPreviewDesiredSize, FVector2D(PreviewWidth, PreviewHeight), GetDefaultWidget()->DesignSizeMode, TOptional<FVector2D>());
 	FVector2D Size = AreaAndSize.Get<1>();
 
-	return Size.X;
+	return static_cast<float>(Size.X);
 }
 
 FOptionalSize SDesignerView::GetPreviewSizeHeight() const
@@ -1013,7 +1013,7 @@ FOptionalSize SDesignerView::GetPreviewSizeHeight() const
 	TTuple<FVector2D, FVector2D> AreaAndSize = FWidgetBlueprintEditorUtils::GetWidgetPreviewAreaAndSize(GetDefaultWidget(), CachedPreviewDesiredSize, FVector2D(PreviewWidth, PreviewHeight), GetDefaultWidget()->DesignSizeMode, TOptional<FVector2D>());
 	FVector2D Size = AreaAndSize.Get<1>();
 
-	return Size.Y;
+	return static_cast<float>(Size.Y);
 }
 
 void SDesignerView::BeginResizingArea()
@@ -2165,19 +2165,19 @@ void SDesignerView::DrawSafeZone(const FOnPaintHandlerParams& PaintArgs)
 		FGeometry PreviewGeometry = PreviewAreaConstraint->GetTickSpaceGeometry();
 		PreviewGeometry.AppendTransform(FSlateLayoutTransform(Inverse(PaintArgs.Args.GetWindowToDesktopTransform())));
 		
-		const float Width = PreviewWidth;
-		const float Height = PreviewHeight;
+		const float Width = static_cast<float>(PreviewWidth);
+		const float Height = static_cast<float>(PreviewHeight);
 		if (PreviewOverrideName.IsEmpty())
 		{
 			FMargin SafeMargin;
 			FSlateApplication::Get().ResetCustomSafeZone();
-			FSlateApplication::Get().GetSafeZoneSize(SafeMargin, FVector2D(Width, Height));
+			FSlateApplication::Get().GetSafeZoneSize(SafeMargin, FVector2f(Width, Height));
 			const float HeightOfSides = Height - SafeMargin.GetTotalSpaceAlong<Orient_Vertical>();
 			// Top bar
 			FSlateDrawElement::MakeBox(
 				PaintArgs.OutDrawElements,
 				PaintArgs.Layer,
-				PreviewGeometry.ToPaintGeometry(FVector2D(Width, SafeMargin.Top), FSlateLayoutTransform()),
+				PreviewGeometry.ToPaintGeometry(FVector2f(Width, SafeMargin.Top), FSlateLayoutTransform()),
 				WhiteBrush,
 				ESlateDrawEffect::None,
 				UnsafeZoneColor
@@ -2517,6 +2517,25 @@ FReply SDesignerView::OnDragDetected(const FGeometry& MyGeometry, const FPointer
 		ClearExtensionWidgets();
 
 		TSharedRef<FSelectedWidgetDragDropOp> DragOp = FSelectedWidgetDragDropOp::New(BlueprintEditor.Pin(), this, DraggingWidgets);
+		TWeakPtr<SDesignerView> WeakDesignerView = SharedThis(this);
+		DragOp->OnDragDropEnded.AddLambda([WeakDesignerView, WeakDragOp = DragOp.ToWeakPtr()]()
+			{
+				if (TSharedPtr<SDesignerView> DesignerViewPtr = WeakDesignerView.Pin())
+				{
+					if (TSharedPtr<FWidgetBlueprintEditor> BlueprintEditorPtr = DesignerViewPtr->BlueprintEditor.Pin())
+					{
+						if (DesignerViewPtr->DropPreviews.Num() == 0)
+						{
+							DesignerViewPtr->bMovingExistingWidget = false;
+							if (WeakDragOp.IsValid() && WeakDragOp.Pin()->DraggedWidgets.Num() > 0)
+							{
+								BlueprintEditorPtr->RefreshPreview();
+							}
+						}
+					}
+				}
+			});
+
 		return FReply::Handled().BeginDragDrop(DragOp);
 	}
 
@@ -3499,7 +3518,7 @@ TOptional<int32> SDesignerView::GetCustomResolutionWidth() const
 {
 	if ( UUserWidget* DefaultWidget = GetDefaultWidget() )
 	{
-		return DefaultWidget->DesignTimeSize.X;
+		return FMath::TruncToInt32(DefaultWidget->DesignTimeSize.X);
 	}
 
 	return 1;
@@ -3509,7 +3528,7 @@ TOptional<int32> SDesignerView::GetCustomResolutionHeight() const
 {
 	if ( UUserWidget* DefaultWidget = GetDefaultWidget() )
 	{
-		return DefaultWidget->DesignTimeSize.Y;
+		return  FMath::TruncToInt32(DefaultWidget->DesignTimeSize.Y);
 	}
 
 	return 1;

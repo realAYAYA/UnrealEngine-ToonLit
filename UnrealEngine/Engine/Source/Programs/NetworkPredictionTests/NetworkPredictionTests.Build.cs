@@ -16,6 +16,10 @@ public class NetworkPredictionTests : TestModuleRules
 			}
 		);
 
-		UpdateBuildGraphPropertiesFile(new Metadata() { TestName = "NetworkPredictionPlugin", TestShortName = "Net Prediction" });
+		UpdateBuildGraphPropertiesFile(new Metadata() {
+			TestName = "NetworkPredictionPlugin",
+			TestShortName = "Net Prediction",
+			SupportedPlatforms = { UnrealTargetPlatform.Win64, UnrealTargetPlatform.Linux }
+		});
 	}
 }

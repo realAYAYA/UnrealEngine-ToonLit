@@ -23,6 +23,8 @@ private:
 
 	void CustomizeCurveDetails(IDetailLayoutBuilder& DetailBuilder);
 
+	void CustomizeCloudStreamingPlatformDetails(IDetailLayoutBuilder& DetailBuilder);
+
 	EVisibility GetMakeInternalCurvesVisibility(USoundWave* SoundWave, TSharedRef<IPropertyHandle> CurvePropertyHandle) const;
 
 	EVisibility GetUseInternalCurvesVisibility(USoundWave* SoundWave, TSharedRef<IPropertyHandle> CurvePropertyHandle) const;

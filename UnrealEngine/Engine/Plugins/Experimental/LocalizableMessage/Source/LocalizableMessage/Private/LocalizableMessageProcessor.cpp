@@ -2,11 +2,28 @@
 
 #include "LocalizableMessageProcessor.h"
 
+#include "HAL/IConsoleManager.h"
 #include "Internationalization/Text.h"
 #include "LocalizableMessage.h"
 #include "LocalizationContext.h"
 
 DEFINE_LOG_CATEGORY(LogLocalizableMessageProcessor);
+
+namespace LocalizableMessageProcessor
+{
+
+// Disable argument modifier evaluation for text created from a message
+bool bAllowTextArgumentModifiers = false;
+FAutoConsoleVariableRef CVarAllowTextArgumentModifiers(TEXT("Localization.Message.AllowTextArgumentModifiers"), bAllowTextArgumentModifiers, TEXT("Whether to allow message -> text conversion to use text-style argument modifiers (default: false)"));
+
+ETextFormatFlags GetTextFormatFlags()
+{
+	return bAllowTextArgumentModifiers
+		? ETextFormatFlags::Default
+		: (ETextFormatFlags::Default & ~ETextFormatFlags::EvaluateArgumentModifiers);
+}
+
+}
 
 FLocalizableMessageProcessor::FLocalizableMessageProcessor()
 {
@@ -42,14 +59,23 @@ FText FLocalizableMessageProcessor::Localize(const FLocalizableMessage& Message,
 	}
 
 	// an unfortunate number of allocations and copies here
-	FText DefaultFText = FInternationalization::ForUseOnlyByLocMacroAndGraphNodeTextLiterals_CreateText(*Message.DefaultText, TEXT(""), *Message.Key);
-	FText RetFText = FormatArguments.Num() > 0
-		? FText::Format(DefaultFText, FormatArguments)
-		: DefaultFText;
+	FText LocalizedText;
+	if (!Message.IsEmpty())
+	{
+		UE_AUTORTFM_OPEN({
+			LocalizedText = FInternationalization::ForUseOnlyByLocMacroAndGraphNodeTextLiterals_CreateText(*Message.DefaultText, TEXT(""), *Message.Key);
+		});
+	}
+	if (FormatArguments.Num() > 0)
+	{
+		const bool bIsLocalized = !LocalizedText.ToString().Equals(Message.DefaultText);
+		FTextFormat LocalizedTextFormat(LocalizedText, LocalizableMessageProcessor::GetTextFormatFlags() | (bIsLocalized ? ETextFormatFlags::EvaluateArgumentModifiers : ETextFormatFlags::None));
+		LocalizedText = FText::Format(LocalizedTextFormat, FormatArguments);
+	}
 
-	UE_LOG(LogLocalizableMessageProcessor, VeryVerbose, TEXT("Localized Text: [%s]"),*RetFText.ToString());
+	UE_LOG(LogLocalizableMessageProcessor, VeryVerbose, TEXT("Localized Text: [%s]"), *LocalizedText.ToString());
 
-	return RetFText;
+	return LocalizedText;
 }
 
 void FLocalizableMessageProcessor::UnregisterLocalizableTypes(FScopedRegistrations& ScopedRegistrations)

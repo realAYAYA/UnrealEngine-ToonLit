@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -8,9 +9,6 @@ import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 import '../../../../models/settings/outliner_panel_settings.dart';
 import '../../../../models/unreal_object_filters.dart';
 import '../../../elements/dropdown_button.dart';
-import '../../../elements/dropdown_list_menu.dart';
-import '../../../elements/layout/card.dart';
-import '../../../elements/list_menu.dart';
 
 /// Modal dropdown button that displays outliner filter settings.
 class OutlinerFilterButton extends StatelessWidget {
@@ -26,7 +24,9 @@ class OutlinerFilterButton extends StatelessWidget {
         child: PreferenceBuilder(
           preference: settings.selectedFilters,
           builder: (context, Set<UnrealObjectFilter> filters) => CardSubHeaderButton(
-            iconPath: filters.isEmpty ? 'assets/images/icons/filter.svg' : 'assets/images/icons/filter_on.svg',
+            iconPath: filters.isEmpty
+                ? 'packages/epic_common/assets/icons/filter.svg'
+                : 'packages/epic_common/assets/icons/filter_on.svg',
             tooltipMessage: AppLocalizations.of(context)!.outlinerFiltersButtonTooltip,
             bIsToggledOn: state != ModalDropdownButtonState.closed,
             bIsVisualOnly: true,

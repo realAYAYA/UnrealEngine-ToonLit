@@ -49,6 +49,9 @@ public:
 	/** The maximum number of items to show in the Search History */
 	SLATE_ARGUMENT(int32, MaxSearchHistory)
 
+	/** The Search History to restore */
+	SLATE_ARGUMENT(TArrayView<FText>, SearchHistory)
+
 	/** Whether the SearchBox should delay notifying listeners of text changed events until the user is done typing */
 	SLATE_ATTRIBUTE( bool, DelayChangeNotificationsWhileTyping )
 
@@ -68,6 +71,9 @@ public:
 
 	/** Get the text string currently being edited */
 	FText GetText() const;
+
+	/** Get the current Search History excluding the placeholder empty search text */
+	TArray<FText> GetSearchHistory() const;
 
 	/** Set or clear the current error reporting information for this search box */
 	void SetError( const FText& InError );

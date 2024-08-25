@@ -2,7 +2,7 @@
 
 from typing import Dict, List
 
-from PySide2 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from switchboard.devices.device_base import Device, DeviceStatus, \
     PluginHeaderWidgets

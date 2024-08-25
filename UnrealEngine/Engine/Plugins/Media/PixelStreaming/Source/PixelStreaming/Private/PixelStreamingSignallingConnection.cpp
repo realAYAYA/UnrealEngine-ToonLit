@@ -12,13 +12,21 @@
 #include "Utils.h"
 #include "ToStringExtensions.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
+#include "PixelStreamingModule.h"
+#include "Engine/GameEngine.h"
+#include "Engine/GameInstance.h"
+
+#if WITH_EDITOR
+#include "Editor.h"
+#endif
 
 DECLARE_LOG_CATEGORY_EXTERN(LogPixelStreamingSS, Log, VeryVerbose);
 DEFINE_LOG_CATEGORY(LogPixelStreamingSS);
 
-FPixelStreamingSignallingConnection::FPixelStreamingSignallingConnection(TSharedPtr<IPixelStreamingSignallingConnectionObserver> InObserver, FString InStreamerId)
+FPixelStreamingSignallingConnection::FPixelStreamingSignallingConnection(TSharedPtr<IPixelStreamingSignallingConnectionObserver> InObserver, FString InStreamerId, TSharedPtr<IWebSocket> InWebSocket)
 	: Observer(InObserver)
 	, StreamerId(InStreamerId)
+	, WebSocket(InWebSocket)
 {
 	RegisterHandler("identify", [this](FJsonObjectPtr JsonMsg) { OnIdRequested(); });
 	RegisterHandler("config", [this](FJsonObjectPtr JsonMsg) { OnConfig(JsonMsg); });
@@ -37,7 +45,10 @@ FPixelStreamingSignallingConnection::FPixelStreamingSignallingConnection(TShared
 
 FPixelStreamingSignallingConnection::~FPixelStreamingSignallingConnection()
 {
-	Disconnect();
+	Disconnect(TEXT("Streamer destroying websocket connection"));
+
+	WebSocket.Reset();
+	Observer.Reset();
 }
 
 void FPixelStreamingSignallingConnection::Connect(FString InUrl, bool bIsReconnect)
@@ -55,7 +66,7 @@ void FPixelStreamingSignallingConnection::Connect(FString InUrl, bool bIsReconne
 
 	// Reconnecting on an existing websocket can be problematic depending what state it was
 	// left in. Easier and safer to disconnect any existing socket/delegates and start fresh.
-	Disconnect();
+	Disconnect(TEXT("Streamer cleaning up old connection"));
 
 	Url = InUrl;
 
@@ -71,8 +82,11 @@ void FPixelStreamingSignallingConnection::Connect(FString InUrl, bool bIsReconne
 		Url = Final;
 	}
 
-	WebSocket = FWebSocketsModule::Get().CreateWebSocket(Url, TEXT(""));
-	verifyf(WebSocket, TEXT("Web Socket Factory failed to return a valid Web Socket."));
+	if(!WebSocket.IsValid())
+	{	
+		WebSocket = FWebSocketsModule::Get().CreateWebSocket(Url, TEXT(""));
+		verifyf(WebSocket, TEXT("Web Socket Factory failed to return a valid Web Socket."));
+	}
 
 	OnConnectedHandle = WebSocket->OnConnected().AddLambda([this]() { OnConnected(); });
 	OnConnectionErrorHandle = WebSocket->OnConnectionError().AddLambda([this](const FString& Error) { OnConnectionError(Error); });
@@ -90,6 +104,7 @@ void FPixelStreamingSignallingConnection::Connect(FString InUrl, bool bIsReconne
 	}
 
 	WebSocket->Connect();
+	bIsConnected = true;
 }
 
 void FPixelStreamingSignallingConnection::TryConnect(FString InUrl)
@@ -99,13 +114,23 @@ void FPixelStreamingSignallingConnection::TryConnect(FString InUrl)
 
 void FPixelStreamingSignallingConnection::Disconnect()
 {
+	// Do not call this deprecated method, please call FPixelStreamingSignallingConnection::Disconnect(FString Reason)
+	Disconnect(TEXT("Unknown reason"));
+}
+
+void FPixelStreamingSignallingConnection::Disconnect(FString Reason)
+{
 	if (!IsEngineExitRequested())
 	{
 		StopKeepAliveTimer();
 		StopReconnectTimer();
 	}
+	else
+	{
+		Reason = TEXT("Streamed application is shutting down");
+	}
 
-	if (!WebSocket)
+	if (!WebSocket || !bIsConnected)
 	{
 		return;
 	}
@@ -116,9 +141,10 @@ void FPixelStreamingSignallingConnection::Disconnect()
 	WebSocket->OnMessage().Remove(OnMessageHandle);
 	WebSocket->OnBinaryMessage().Remove(OnBinaryMessageHandle);
 
-	WebSocket->Close();
-	WebSocket = nullptr;
+	WebSocket->Close(1000, Reason);
 	UE_LOG(LogPixelStreamingSS, Log, TEXT("Closing websocket to SS %s"), *Url);
+
+	bIsConnected = false;
 }
 
 bool FPixelStreamingSignallingConnection::IsConnected() const
@@ -519,6 +545,42 @@ void FPixelStreamingSignallingConnection::OnConfig(const FJsonObjectPtr& Json)
 	// force `UnifiedPlan` as we control both ends of WebRTC streaming
 	RTCConfig.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
 
+#if WEBRTC_5414
+	int MinPort, MaxPort;
+	MinPort = UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMinPort.GetValueOnAnyThread();
+	MaxPort = UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMaxPort.GetValueOnAnyThread();
+
+	if(MinPort < 0 || MinPort > 65535)
+	{
+		UE_LOG(LogPixelStreamingSS, Warning, TEXT("Invalid PixelStreaming.WebRTC.MinPort specified. Value must be within 0 to 65535 inclusive"));
+		MinPort = 49152;
+		UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMinPort->Set(MinPort, ECVF_SetByCode);
+	}
+
+	if(MaxPort < 0 || MaxPort > 65535)
+	{
+		UE_LOG(LogPixelStreamingSS, Warning, TEXT("Invalid PixelStreaming.WebRTC.MaxPort specified. Value must be within 0 to 65535 inclusive"));
+		MaxPort = 65535;
+		UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMaxPort->Set(MaxPort, ECVF_SetByCode);
+	}
+
+	if (MinPort > MaxPort)
+	{
+		int OldMax = MaxPort;
+		MaxPort = MinPort;
+		MinPort = OldMax;
+
+		// To try to not be misleading with debug texts etc, we reset these sanitised settings here
+		UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMinPort->Set(MinPort, ECVF_SetByCode);
+		UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMaxPort->Set(MaxPort, ECVF_SetByCode);
+	}
+
+	RTCConfig.set_min_port(MinPort);
+	RTCConfig.set_max_port(MaxPort);
+
+	RTCConfig.set_port_allocator_flags(UE::PixelStreaming::Settings::PortAllocatorParameters);
+#endif
+
 	Observer->OnSignallingConfig(RTCConfig);
 }
 
@@ -535,13 +597,26 @@ void FPixelStreamingSignallingConnection::OnSessionDescription(const FJsonObject
 
 	FPixelStreamingPlayerId PlayerId;
 	bool bGotPlayerId = GetPlayerIdJson(Json, PlayerId);
-	if (!bGotPlayerId)
+	if (bGotPlayerId)
 	{
-		Observer->OnSignallingSessionDescription(Type, Sdp);
+		int MinBitrate;
+		int MaxBitrate;
+		bool bGotMinBitrate;
+		bool bGotMaxBitrate;
+
+		bGotMinBitrate = Json->TryGetNumberField(TEXT("minBitrate"), MinBitrate);
+		bGotMaxBitrate = Json->TryGetNumberField(TEXT("maxBitrate"), MaxBitrate);
+
+		if (bGotMinBitrate && bGotMaxBitrate && MinBitrate > 0 && MaxBitrate > 0)
+		{
+			Observer->OnPlayerRequestsBitrate(PlayerId, MinBitrate, MaxBitrate);
+		}
+
+		Observer->OnSignallingSessionDescription(PlayerId, Type, Sdp);
 	}
 	else
 	{
-		Observer->OnSignallingSessionDescription(PlayerId, Type, Sdp);
+		Observer->OnSignallingSessionDescription(Type, Sdp);
 	}
 }
 
@@ -694,7 +769,7 @@ void FPixelStreamingSignallingConnection::OnStreamerList(const FJsonObjectPtr& J
 {
 	TArray<FString> ResultList;
 	const TArray<TSharedPtr<FJsonValue>>* JsonStreamerIds = nullptr;
-	if (Json->TryGetArrayField("ids", JsonStreamerIds))
+	if (Json->TryGetArrayField(TEXT("ids"), JsonStreamerIds))
 	{
 		for (auto& JsonId : *JsonStreamerIds)
 		{
@@ -737,60 +812,97 @@ bool FPixelStreamingSignallingConnection::GetPlayerIdJson(const FJsonObjectPtr& 
 	return false;
 }
 
+namespace UE::PixelStreamingSignallingConnection::Private
+{
+FTimerManager* GetTimerManager()
+{
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		// In editor use the editor manager
+		if (GEditor->IsTimerManagerValid())
+		{
+			return &GEditor->GetTimerManager().Get();
+		}
+	}
+	else
+#endif
+	{
+		// Otherwise we should always have a game instance
+		const TIndirectArray<FWorldContext>& WorldContexts = GEngine->GetWorldContexts();
+		for (const FWorldContext& WorldContext : WorldContexts)
+		{
+			if (WorldContext.WorldType == EWorldType::Game && WorldContext.OwningGameInstance)
+			{
+				return &WorldContext.OwningGameInstance->GetTimerManager();
+			}
+		}
+	}
+
+	return nullptr;
+}
+} // namespace UE::PixelStreamingSignallingConnection::Private
+
 void FPixelStreamingSignallingConnection::StartKeepAliveTimer()
 {
-	// GWorld dereferencing needs to happen on the game thread
+	// Dereferencing needs to happen on the game thread
 	// we dont need to wait since its just setting the timer
 	UE::PixelStreaming::DoOnGameThread([this]() {
-		if (GWorld && !GWorld->GetTimerManager().IsTimerActive(TimerHandle_KeepAlive))
+		using namespace UE::PixelStreamingSignallingConnection::Private;
+		FTimerManager* TimerManager = GetTimerManager();
+		if (TimerManager && !TimerManager->IsTimerActive(TimerHandle_KeepAlive))
 		{
-			GWorld->GetTimerManager().SetTimer(TimerHandle_KeepAlive, FTimerDelegate::CreateRaw(this, &FPixelStreamingSignallingConnection::KeepAlive), KEEP_ALIVE_INTERVAL, true);
+			TimerManager->SetTimer(TimerHandle_KeepAlive, FTimerDelegate::CreateRaw(this, &FPixelStreamingSignallingConnection::KeepAlive), KEEP_ALIVE_INTERVAL, true);
 		}
 	});
 }
 
 void FPixelStreamingSignallingConnection::StopKeepAliveTimer()
 {
-	// GWorld dereferencing needs to happen on the game thread
+	// Dereferencing needs to happen on the game thread
 	// we need to wait because if we're destructing this object we dont
 	// want to call the callback mid/post destruction
 	UE::PixelStreaming::DoOnGameThreadAndWait(MAX_uint32, [this]() {
-		if (GWorld)
+		using namespace UE::PixelStreamingSignallingConnection::Private;
+		FTimerManager* TimerManager = GetTimerManager();
+		if (TimerManager)
 		{
-			GWorld->GetTimerManager().ClearTimer(TimerHandle_KeepAlive);
+			TimerManager->ClearTimer(TimerHandle_KeepAlive);
 		}
 	});
 }
 
 void FPixelStreamingSignallingConnection::StartReconnectTimer()
 {
-	// GWorld dereferencing needs to happen on the game thread
+	// Dereferencing needs to happen on the game thread
 	UE::PixelStreaming::DoOnGameThread([this]() {
 		if (IsEngineExitRequested())
 		{
 			return;
 		}
-
-		if (GWorld && !GWorld->GetTimerManager().IsTimerActive(TimerHandle_Reconnect))
+		using namespace UE::PixelStreamingSignallingConnection::Private;
+		FTimerManager* TimerManager = GetTimerManager();
+		if (TimerManager && !TimerManager->IsTimerActive(TimerHandle_Reconnect))
 		{
 			float ReconnectInterval = UE::PixelStreaming::Settings::CVarPixelStreamingSignalingReconnectInterval.GetValueOnAnyThread();
-			GWorld->GetTimerManager().SetTimer(TimerHandle_Reconnect, FTimerDelegate::CreateRaw(this, &FPixelStreamingSignallingConnection::Connect, Url, true), ReconnectInterval, true);
+			TimerManager->SetTimer(TimerHandle_Reconnect, FTimerDelegate::CreateRaw(this, &FPixelStreamingSignallingConnection::Connect, Url, true), ReconnectInterval, true);
 		}
 	});
 }
 
 void FPixelStreamingSignallingConnection::StopReconnectTimer()
 {
-	// GWorld dereferencing needs to happen on the game thread
+	// Dereferencing needs to happen on the game thread
 	UE::PixelStreaming::DoOnGameThread([this]() {
 		if (IsEngineExitRequested())
 		{
 			return;
 		}
-
-		if (GWorld)
+		using namespace UE::PixelStreamingSignallingConnection::Private;
+		FTimerManager* TimerManager = GetTimerManager();
+		if (TimerManager)
 		{
-			GWorld->GetTimerManager().ClearTimer(TimerHandle_Reconnect);
+			TimerManager->ClearTimer(TimerHandle_Reconnect);
 		}
 	});
 }

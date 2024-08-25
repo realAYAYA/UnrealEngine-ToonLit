@@ -13,7 +13,7 @@ class UDMXPixelMappingOutputComponent;
 class UTextureRenderTarget2D;
 
 
-/** The position and size of a comoponent in a layout */
+/** The position and size of a comoponent in a layout. */
 USTRUCT(BlueprintType)
 struct DMXPIXELMAPPINGRUNTIME_API FDMXPixelMappingLayoutToken
 {
@@ -38,6 +38,10 @@ struct DMXPIXELMAPPINGRUNTIME_API FDMXPixelMappingLayoutToken
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Layout Script")
 	float SizeY = 0.f;
 
+	/** The rotation relative to the parent the component, applied after position */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Layout Script")
+	double RelativeRotation = 0.0;
+
 	/** The output component to which the token is applied */
 	UPROPERTY(BlueprintReadWrite, Category = "Pixel Mapping Layout")
 	TWeakObjectPtr<UDMXPixelMappingOutputComponent> Component;
@@ -55,11 +59,12 @@ private:
 /** 
  * Allows scripting of Pixel Mapping Component Layouts.
  * Override the Layout function to implement a layout. 
+ * 
+ * Note, layout scripts are applied in parent's unrotated space. 
  */
 UCLASS(BlueprintType, Blueprintable, EditInlineNew, Abstract)
 class DMXPIXELMAPPINGRUNTIME_API UDMXPixelMappingLayoutScript
 	: public UObject
-
 {
 	GENERATED_BODY()
 
@@ -73,7 +78,7 @@ public:
 	 */
 	UFUNCTION(BlueprintNativeEvent, Category = "DMX")
 	void Layout(const TArray<FDMXPixelMappingLayoutToken>& InTokens, TArray<FDMXPixelMappingLayoutToken>& OutTokens);
-	virtual void Layout_Implementation(const TArray<FDMXPixelMappingLayoutToken>& InTokens, TArray<FDMXPixelMappingLayoutToken>& OutTokens) PURE_VIRTUAL(UDMXPixelMappingLayoutScript::Layout_Implementation, return;)
+	virtual void Layout_Implementation(const TArray<FDMXPixelMappingLayoutToken>& InTokens, TArray<FDMXPixelMappingLayoutToken>& OutTokens) {}
 
 	/** Sets the number of Tokens that will be passed when Layout is called */
 	virtual void SetNumTokens(int32 NewNumTokens) { NumTokens = NewNumTokens; }
@@ -84,13 +89,16 @@ public:
 	/** Sets the size of the parent component where the components that are being layouted reside in. */
 	virtual void SetParentComponentSize(const FVector2D& NewSize) { ParentComponentSize = NewSize; };
 
+	/** Sets the size of the parent component where the components that are being layouted reside in. */
+	virtual void SetParentComponentRotation(double NewRotation) { ParentRotation = NewRotation; };
+
 	/** Sets the Texture Size */
 	virtual void SetTextureSize(const FVector2D& NewTextureSize) { TextureSize = NewTextureSize; }
 
 protected:
 	/** The number of tokens in the Layout. */
 	UPROPERTY(BlueprintReadOnly, Transient, Category = "Layout Script")
-	int32 NumTokens;
+	int32 NumTokens = 0;
 
 	/** The position of the parent component where the components that are being layouted reside in. */
 	UPROPERTY(BlueprintReadOnly, Transient, Category = "Layout Script")
@@ -100,7 +108,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Transient, Category = "Layout Script")
 	FVector2D ParentComponentSize;
 
-	/** The size of the texture in the Pixel Mapping asset. */
+	/** 
+	 * The rotation of the parent component where the components that are being layouted reside in.
+	 * Note, the position property does not consider this rotation to ease calculations.
+	 */
+	UPROPERTY(BlueprintReadOnly, Transient, Category = "Layout Script")
+	double ParentRotation;
+
+	/** The size of the texture this component is mapping. */
 	UPROPERTY(BlueprintReadOnly, Transient, Category = "Layout Script")
 	FVector2D TextureSize;
 };

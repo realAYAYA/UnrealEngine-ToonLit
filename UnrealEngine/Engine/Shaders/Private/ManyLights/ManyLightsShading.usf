@@ -1,0 +1,173 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../BlueNoise.ush"
+#include "ManyLights.ush"
+
+RWTexture2D<float3> RWResolvedDiffuseLighting;
+RWTexture2D<float3> RWResolvedSpecularLighting;
+
+Texture2D<float> ShadingTileAtlas;
+Texture2D<uint> ShadingTileGridAllocator;
+StructuredBuffer<uint> ShadingTileGrid;
+StructuredBuffer<uint> CompositeTileAllocator;
+StructuredBuffer<uint> ShadingTileAllocator;
+uint MaxCompositeTiles;
+uint MaxShadingTiles;
+
+StructuredBuffer<uint> TileAllocator;
+StructuredBuffer<uint> TileData;
+uint TileDataStride;
+
+/**
+ * Apply all lights per pixel to affected tiles using sampled weights from upscaled shading tiles
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ShadeLightSamplesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint TileIndex = GroupId.x;
+	if (TileIndex < TileAllocator[TILE_TYPE])
+	{
+		uint2 TileCoord = UnpackTile(TileData[TileIndex + TILE_TYPE * TileDataStride]);
+		uint2 ScreenCoord = TileCoord * TILE_SIZE + GroupThreadId.xy;
+
+		if (all(ScreenCoord < View.ViewRectMinAndSize.zw))
+		{
+	#if DEBUG_MODE
+			int2 DebugScreenCoord = View.CursorPosition.x >= 0 ? View.CursorPosition * View.ViewResolutionFraction : -1;
+			bool bDebug = all(ScreenCoord == DebugScreenCoord);
+			FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.55, 0.05));
+	#endif
+
+			float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+			FGBufferData GBuffer = GetGBufferData(ScreenUV);
+
+			// #ml_todo: handle this path when shadows are disabled
+			float ScreenSpaceAO = 1.0f;//Texture2DSampleLevel(SceneTexturesStruct.ScreenSpaceAOTexture, SceneTexturesStruct_ScreenSpaceAOTextureSampler, ScreenUV, 0).x;
+
+			float3 DiffuseLighting = 0.0f;
+			float3 SpecularLighting = 0.0f;
+
+			if (GBuffer.Depth > 0.0f)
+			{
+				uint2 ShadingTileCoord = TileCoord;
+				uint2 CoordInShadingTile = GroupThreadId.xy;
+
+				float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, GBuffer.Depth);		
+				float3 CameraVector = normalize(TranslatedWorldPosition - View.TranslatedWorldCameraOrigin);
+
+				uint NumShadingTilesInCell = ShadingTileGridAllocator.Load(int3(ShadingTileCoord, 0));
+
+				#if DEBUG_MODE
+				if (bDebug)
+				{
+					Print(Context, TEXT("ShadeSamplesCS"));
+					Newline(Context);
+					Print(Context, TEXT("ScreenCoord: "));
+					Print(Context, ScreenCoord.x);
+					Print(Context, ScreenCoord.y);
+					Newline(Context);
+					Print(Context, TEXT("NumShadingTilesInCell: "));
+					Print(Context, NumShadingTilesInCell);
+					Newline(Context);
+					Print(Context, TEXT("ShadingTiles:    "));
+					Print(Context, ShadingTileAllocator[0]);
+					Print(Context, MaxShadingTiles);
+					Print(Context, ShadingTileAllocator[0] / float(MaxShadingTiles));
+					Newline(Context);
+					Print(Context, TEXT("LightId   | Weight    | Diffuse   | Specular"));
+				}
+				#endif
+
+				for (uint IndexInCell = 0; IndexInCell < NumShadingTilesInCell; ++IndexInCell)
+				{
+					const uint PackedShadingTile = ShadingTileGrid[GetShadingTileGridOffset(ShadingTileCoord, IndexInCell)];
+					const FShadingTile ShadingTile = UnpackShadingTile(PackedShadingTile);
+					const FLocalLightData LocalLightData = GetLocalLightDataNonStereo(ShadingTile.LocalLightIndex);
+					FDeferredLightData LightData = ConvertToDeferredLight(LocalLightData);
+
+					float SampleWeight = 0.0f;
+
+					if (ShadingTile.ShadingTileIndex < MaxShadingTiles)
+					{
+						uint2 ShadingTileAtlasCoord = GetShadingTileAtlasCoord(ShadingTile.ShadingTileIndex, CoordInShadingTile);
+						SampleWeight = ShadingTileAtlas[ShadingTileAtlasCoord];
+					}
+
+					if (SampleWeight > 0.01f && LightData.IESAtlasIndex >= 0)
+					{
+						// #ml_todo: evaluate moving this to CompositeLightSamplesCS
+						SampleWeight *= ComputeLightProfileMultiplier(TranslatedWorldPosition, LightData.TranslatedWorldPosition, -LightData.Direction, LightData.Tangent, LightData.IESAtlasIndex);
+					}
+
+					#if DEBUG_MODE
+					if (bDebug)
+					{
+						Newline(Context);
+						Print(Context, LocalLightData.LightSceneId);
+						Print(Context, SampleWeight);
+					}
+					#endif
+
+					if (SampleWeight > 0.0f)
+					{
+						GBuffer.Roughness = max(GBuffer.Roughness, View.MinRoughness);
+
+						float4 LightAttenuation = 1.0f;
+						float Dither = 0.5f;
+						float SurfaceShadow = 1;
+						float AmbientOcclusion = ScreenSpaceAO;
+
+						// #ml_todo: Move more shading models to TILE_MODE_SIMPLE_SHADING
+						#if TILE_TYPE == TILE_MODE_SIMPLE_SHADING
+						{
+							GBuffer.ShadingModelID = SHADINGMODELID_DEFAULT_LIT;
+						}
+						#endif
+						LightData.ShadowedBits = 0;
+
+						FDeferredLightingSplit SplitLighting = GetDynamicLightingSplit(
+							TranslatedWorldPosition, CameraVector, GBuffer, AmbientOcclusion, GBuffer.ShadingModelID, 
+							LightData, LightAttenuation, Dither, ScreenCoord, 
+							SurfaceShadow);
+
+						DiffuseLighting += SplitLighting.DiffuseLighting.xyz * SampleWeight;
+						SpecularLighting += SplitLighting.SpecularLighting.xyz * SampleWeight;
+
+						#if DEBUG_MODE 
+						if (bDebug)
+						{
+							Print(Context, SplitLighting.DiffuseLighting.xyz);
+							Print(Context, SplitLighting.SpecularLighting.xyz);
+						}
+						#endif
+					}
+				}
+
+				// Apply pre-exposure
+				DiffuseLighting *= View.PreExposure;
+				SpecularLighting *= View.PreExposure;
+
+				DemodulateLighting(GBuffer, TranslatedWorldPosition, DiffuseLighting, SpecularLighting);
+			}
+
+			#if DEBUG_MODE
+			if (bDebug)
+			{
+				Newline(Context);
+				Print(Context, TEXT("Diffuse:  ")); 
+				Print(Context, DiffuseLighting);
+				Newline(Context);
+				Print(Context, TEXT("Specular: ")); 
+				Print(Context, SpecularLighting);
+			}
+			#endif
+
+			RWResolvedDiffuseLighting[ScreenCoord] = DiffuseLighting;
+			RWResolvedSpecularLighting[ScreenCoord] = SpecularLighting;
+		}
+	}
+}

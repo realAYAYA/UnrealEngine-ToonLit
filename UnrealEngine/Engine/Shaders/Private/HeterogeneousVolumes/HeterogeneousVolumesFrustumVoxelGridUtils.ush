@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#pragma once
+
 float Exponential(float sigma, float x)
 {
 	// X = 1 - e^(-sigma * x)

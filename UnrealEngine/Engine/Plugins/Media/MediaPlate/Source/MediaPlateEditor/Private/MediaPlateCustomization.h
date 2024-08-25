@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Editor.h"
 #include "IDetailCustomization.h"
 #include "Input/Reply.h"
@@ -30,7 +29,6 @@ public:
 	~FMediaPlateCustomization();
 
 	//~ IDetailCustomization interface
-
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
 
 	/**
@@ -44,6 +42,7 @@ public:
 	}
 
 private:
+	static void CustomizeCategories(IDetailLayoutBuilder& InDetailBuilder);
 
 	/** Property change delegate used for static mesh material changes. */
 	FDelegateHandle PropertyChangeDelegate;
@@ -60,11 +59,11 @@ private:
 
 	/** True if the first media source in the playlist is an external asset. */
 	bool bIsMediaSourceAsset;
-
+	
 	/**
 	 * Adds widgets for editing the mesh.
 	 */
-	void AddMeshCustomization(IDetailCategoryBuilder& MediaPlateCategory);
+	void AddMeshCustomization(IDetailCategoryBuilder& InParentCategory);
 
 	/**
 	 * Controls visibility for widgets for custom meshes.
@@ -124,8 +123,8 @@ private:
 
 	/**
 	 * Call this to get the aspect ratio.
-	 */
-	TOptional<float> GetAspectRatio() const;
+	 */	
+	float GetAspectRatio() const;
 
 	/**
 	 * Call this to set the aspect ratio.
@@ -135,7 +134,7 @@ private:
 	/**
 	 * Call this to get the aspect ratio.
 	 */
-	TOptional<float> GetLetterboxAspectRatio() const;
+	float GetLetterboxAspectRatio() const;
 
 	/**
 	 * Call this to set the horizontal range of the mesh.
@@ -241,5 +240,7 @@ private:
 	 * Call this to stop all playback.
 	 */
 	void StopMediaPlates();
+
+	UMediaPlayer* GetMediaPlayer() const;
 };
 

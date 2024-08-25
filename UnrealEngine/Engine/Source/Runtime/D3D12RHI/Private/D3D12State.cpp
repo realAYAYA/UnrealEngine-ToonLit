@@ -224,6 +224,30 @@ FSamplerStateRHIRef FD3D12DynamicRHI::RHICreateSamplerState(const FSamplerStateI
 	});
 }
 
+int32 GD3D12SamplerWarningThreshold = 10;
+static FAutoConsoleVariableRef CVarD3D12SamplerWarningThreshold(
+	TEXT("D3D12.SamplerWarningThreshold"),
+	GD3D12SamplerWarningThreshold,
+	TEXT("Threshold to start warning about creating too many sampler states")
+);
+
+static void LogSamplerStateWarning(const FSamplerStateInitializerRHI& Initializer)
+{
+	UE_LOG(LogD3D12RHI, Warning,
+		TEXT("Approaching SamplerState limit: FSamplerStateInitializerRHI(Filter: %d, AddressU: %d, AddressV: %d, AddressW: %d, MipBias: %f, MinMipLevel: %f, MaxMipLevel: %f, MaxAnisotropy: %d, BorderColor: %d, SamplerComparisonFunction: %d)"),
+		Initializer.Filter.GetIntValue(),
+		Initializer.AddressU.GetIntValue(),
+		Initializer.AddressV.GetIntValue(),
+		Initializer.AddressW.GetIntValue(),
+		Initializer.MipBias,
+		Initializer.MinMipLevel,
+		Initializer.MaxMipLevel,
+		Initializer.MaxAnisotropy,
+		Initializer.BorderColor,
+		Initializer.SamplerComparisonFunction.GetIntValue()
+	);
+}
+
 FD3D12SamplerState* FD3D12Device::CreateSampler(const FSamplerStateInitializerRHI& Initializer)
 {
 	D3D12_SAMPLER_DESC SamplerDesc;
@@ -286,6 +310,11 @@ FD3D12SamplerState* FD3D12Device::CreateSampler(const FSamplerStateInitializerRH
 		// 16-bit IDs are used for faster hashing
 		check(SamplerID < 0xffff);
 
+		if (static_cast<int32>(SamplerID + 1) > (D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE - GD3D12SamplerWarningThreshold))
+		{
+			LogSamplerStateWarning(Initializer);
+		}
+
 		FD3D12SamplerState* NewSampler = new FD3D12SamplerState(this, SamplerDesc, static_cast<uint16>(SamplerID));
 
 		SamplerMap.Add(SamplerDesc, NewSampler);
@@ -324,7 +353,6 @@ bool FD3D12RasterizerState::GetInitializer(struct FRasterizerStateInitializerRHI
 	check(Desc.DepthBias == FMath::FloorToInt(Init.DepthBias * static_cast<float>(1 << 24)));
 	Init.SlopeScaleDepthBias = Desc.SlopeScaledDepthBias;
 	Init.bAllowMSAA = !!Desc.MultisampleEnable;
-	Init.bEnableLineAA = false;
 	return true;
 }
 
@@ -576,6 +604,12 @@ FGraphicsPipelineStateRHIRef FD3D12DynamicRHI::RHICreateGraphicsPipelineState(co
 
 	const FD3D12RootSignature* RootSignature = GetAdapter().GetRootSignature(Initializer.BoundShaderState);
 
+	if (!RootSignature || !RootSignature->GetRootSignature())
+	{
+		UE_LOG(LogD3D12RHI, Error, TEXT("Unexpected null root signature at graphics pipeline creation time"));
+		return nullptr;
+	}
+
 	// Next try to find the PSO based on the hash of its desc.
 
 	FD3D12LowLevelGraphicsPipelineStateDesc LowLevelDesc;
@@ -617,6 +651,12 @@ TRefCountPtr<FRHIComputePipelineState> FD3D12DynamicRHI::RHICreateComputePipelin
 
 	const FD3D12RootSignature* RootSignature = ComputeShader->RootSignature;
 
+	if (!RootSignature || !RootSignature->GetRootSignature())
+	{
+		UE_LOG(LogD3D12RHI, Error, TEXT("Unexpected null root signature at compute pipeline creation time (shader hash %s)"), *ComputeShader->GetHash().ToString());
+		return nullptr;
+	}
+
 	// Next try to find the PSO based on the hash of its desc.
 	FD3D12ComputePipelineStateDesc LowLevelDesc;
 	Found = PSOCache.FindInLoadedCache(ComputeShader, RootSignature, LowLevelDesc);
@@ -641,13 +681,7 @@ FD3D12SamplerState::FD3D12SamplerState(FD3D12Device* InParent, const D3D12_SAMPL
 	GetParentDevice()->CreateSamplerInternal(Desc, OfflineDescriptor);
 
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
-	FD3D12BindlessDescriptorManager& BindlessDescriptorManager = GetParentDevice()->GetBindlessDescriptorManager();
-	BindlessHandle = BindlessDescriptorManager.Allocate(ERHIDescriptorHeapType::Sampler);
-
-	if (BindlessHandle.IsValid())
-	{
-		GetParentDevice()->GetBindlessDescriptorManager().UpdateImmediately(BindlessHandle, OfflineDescriptor);
-	}
+	BindlessHandle = GetParentDevice()->GetBindlessDescriptorManager().AllocateAndInitialize(this);
 #endif
 }
 

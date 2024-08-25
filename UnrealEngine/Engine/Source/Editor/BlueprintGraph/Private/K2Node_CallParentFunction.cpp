@@ -8,6 +8,8 @@
 #include "Engine/Blueprint.h"
 #include "Engine/MemberReference.h"
 #include "GraphEditorSettings.h"
+#include "FindInBlueprintManager.h"
+#include "FindInBlueprints.h"
 #include "HAL/PlatformMath.h"
 #include "Internationalization/Internationalization.h"
 #include "K2Node.h"
@@ -23,7 +25,6 @@
 UK2Node_CallParentFunction::UK2Node_CallParentFunction(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	bIsFinalFunction = true;
 }
 
 FText UK2Node_CallParentFunction::GetNodeTitle(ENodeTitleType::Type TitleType) const
@@ -92,6 +93,20 @@ void UK2Node_CallParentFunction::PostPlacedNewNode()
 	// We don't want to check if our function exists in the current scope
 
 	UK2Node::PostPlacedNewNode();
+}
+
+void UK2Node_CallParentFunction::AddSearchMetaDataInfo(TArray<struct FSearchTagDataPair>& OutTaggedMetaData) const
+{
+	Super::AddSearchMetaDataInfo(OutTaggedMetaData);
+
+	// CallParentFunction nodes will always target the direct parent class, unlike CallFunction nodes.
+	// However, we still want the function to be searchable using the ancestor class or interface that declares it.
+	// Therefore, index a FuncOriginClass metadata value and don't rely on the target pin's type.
+	if (const UClass* FuncOriginClass = FindInBlueprintsHelpers::GetFunctionOriginClass(GetTargetFunction()))
+	{
+		const FString FuncOriginClassName = FuncOriginClass->GetPathName();
+		OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_FuncOriginClass, FText::FromString(FuncOriginClassName)));
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

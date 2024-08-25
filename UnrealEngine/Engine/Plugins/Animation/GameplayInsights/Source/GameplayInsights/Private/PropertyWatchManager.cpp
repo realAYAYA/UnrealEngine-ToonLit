@@ -48,7 +48,7 @@ bool FPropertyWatchManager::UnwatchProperty(uint64 InObjectId, uint32 InProperty
 		{
 			const int32 PrevSize = WatchStorage->Num();
 		
-			WatchStorage->RemoveSwap(InPropertyNameId, false);
+			WatchStorage->RemoveSwap(InPropertyNameId, EAllowShrinking::No);
 
 			// Trigger broadcast only if property was successfully removed.
 			const bool bWasPropertyUnwatched = PrevSize != WatchStorage->Num();

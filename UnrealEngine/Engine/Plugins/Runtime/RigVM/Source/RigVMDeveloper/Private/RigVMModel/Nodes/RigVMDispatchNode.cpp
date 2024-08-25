@@ -78,7 +78,7 @@ FText URigVMDispatchNode::GetToolTipTextForPin(const URigVMPin* InPin) const
 	return URigVMNode::GetToolTipTextForPin(InPin);
 }
 
-bool URigVMDispatchNode::IsDeprecated() const
+bool URigVMDispatchNode::IsOutDated() const
 {
 	return !GetDeprecatedMetadata().IsEmpty();
 }

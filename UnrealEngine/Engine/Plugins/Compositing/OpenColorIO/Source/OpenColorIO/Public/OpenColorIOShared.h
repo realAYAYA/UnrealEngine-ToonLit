@@ -6,25 +6,36 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
-#include "Engine/EngineTypes.h"
+#include "CoreTypes.h"
 #include "Misc/Guid.h"
-#include "Misc/Optional.h"
 #include "Misc/SecureHash.h"
 #include "RenderResource.h"
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "RenderingThread.h"
 #endif
 #include "RenderDeferredCleanup.h"
-#include "RHI.h"
+#include "RHIFeatureLevel.h"
 #include "SceneTypes.h"
 #include "Shader.h"
-#include "ShaderCompiler.h"
 #include "StaticParameterSet.h"
 #include "Templates/RefCounting.h"
-#include "OpenColorIOShaderCompilationManager.h"
 
-enum class EOpenColorIOWorkingColorSpaceTransform : uint8;
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "CoreMinimal.h"
+#include "Engine/EngineTypes.h"
+#include "Misc/Optional.h"
+#include "ShaderCompiler.h"
+#include "OpenColorIOShaderCompilationManager.h"
+#include "RHI.h"
+#endif
+
+/** Enum used to indicate whether the working color space should be used as a source or destination. */
+enum class EOpenColorIOWorkingColorSpaceTransform : uint8
+{
+	None = 0,
+	Source = 1,
+	Destination = 2
+};
 
 class FOpenColorIOTransformResource;
 class FOpenColorIOShaderMap;
@@ -181,7 +192,7 @@ public:
 		);
 
 	/** Sorts the incoming compiled jobs into the appropriate OCIO shader maps, and finalizes this shader map so that it can be used for rendering. */
-	bool ProcessCompilationResults(const TArray<FShaderCommonCompileJobPtr>& InCompilationResults, int32& InOutResultIndex, float& InOutTimeBudget);
+	bool ProcessCompilationResults(const TArray<TRefCountPtr<class FShaderCommonCompileJob>>& InCompilationResults, int32& InOutResultIndex, float& InOutTimeBudget);
 #endif // WITH_EDITOR
 
 	/**
@@ -446,7 +457,7 @@ public:
 
 	const FString& GetFriendlyName()	const { return FriendlyName; }
 
-
+	UE_DEPRECATED(5.4, "SetupResource with EOpenColorIOWorkingColorSpaceTransform deprecated.")
 	void SetupResource(
 		ERHIFeatureLevel::Type InFeatureLevel,
 		const FString& InShaderCodeHash,
@@ -455,6 +466,15 @@ public:
 		const FString& InFriendlyName,
 		const FName& InAssetPath,
 		EOpenColorIOWorkingColorSpaceTransform InWorkingColorSpaceTransformType
+	);
+
+	void SetupResource(
+		ERHIFeatureLevel::Type InFeatureLevel,
+		const FString& InShaderCodeHash,
+		const FString& InShadercode,
+		const FString& InRawConfigHash,
+		const FString& InFriendlyName,
+		const FName& InAssetPath
 	);
 
 	void SetCompileErrors(TArray<FString> &InErrors)
@@ -489,7 +509,9 @@ public:
 
 	
 	bool IsSame(const FOpenColorIOShaderMapId& InId) const;
-	EOpenColorIOWorkingColorSpaceTransform GetWorkingColorSpaceTransformType() const { return WorkingColorSpaceTransformType; }
+
+	UE_DEPRECATED(5.4, "GetWorkingColorSpaceTransformType is deprecated.")
+	EOpenColorIOWorkingColorSpaceTransform GetWorkingColorSpaceTransformType() const { return EOpenColorIOWorkingColorSpaceTransform::None; }
 protected:
 #if WITH_EDITOR
 	/**
@@ -546,7 +568,6 @@ private:
 	uint32 bContainsInlineShaders : 1;
 	uint32 bLoadedCookedShaderMapId : 1;
 	FOpenColorIOShaderMapId CookedShaderMapId;
-	EOpenColorIOWorkingColorSpaceTransform WorkingColorSpaceTransformType;
 
 #if WITH_EDITOR
 	/**

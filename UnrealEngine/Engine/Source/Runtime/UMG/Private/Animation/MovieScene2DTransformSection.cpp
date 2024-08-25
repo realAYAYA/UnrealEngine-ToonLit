@@ -32,36 +32,43 @@ struct F2DTransformSectionEditorData
 		FText ShearGroup = NSLOCTEXT("MovieScene2DTransformSection", "Shear", "Shear");
 
 		MetaData[0].SetIdentifiers("Translation.X", FCommonChannelData::ChannelX, TranslationGroup);
+		MetaData[0].SubPropertyPath = MetaData[0].Name;
 		MetaData[0].bEnabled = EnumHasAllFlags(Mask, EMovieScene2DTransformChannel::TranslationX);
 		MetaData[0].SortOrder = 0;
 		MetaData[0].bCanCollapseToTrack = false;
 
 		MetaData[1].SetIdentifiers("Translation.Y", FCommonChannelData::ChannelY, TranslationGroup);
+		MetaData[1].SubPropertyPath = MetaData[1].Name;
 		MetaData[1].bEnabled = EnumHasAllFlags(Mask, EMovieScene2DTransformChannel::TranslationY);
 		MetaData[1].SortOrder = 1;
 		MetaData[1].bCanCollapseToTrack = false;
 
 		MetaData[2].SetIdentifiers("Angle", NSLOCTEXT("MovieScene2DTransformSection", "AngleText", "Angle"), RotationGroup);
+		MetaData[2].SubPropertyPath = MetaData[2].Name;
 		MetaData[2].bEnabled = EnumHasAllFlags(Mask, EMovieScene2DTransformChannel::Rotation);
 		MetaData[2].SortOrder = 2;
 		MetaData[2].bCanCollapseToTrack = false;
 
 		MetaData[3].SetIdentifiers("Scale.X", FCommonChannelData::ChannelX, ScaleGroup);
+		MetaData[3].SubPropertyPath = MetaData[3].Name;
 		MetaData[3].bEnabled = EnumHasAllFlags(Mask, EMovieScene2DTransformChannel::ScaleX);
 		MetaData[3].SortOrder = 3;
 		MetaData[3].bCanCollapseToTrack = false;
 
 		MetaData[4].SetIdentifiers("Scale.Y", FCommonChannelData::ChannelY, ScaleGroup);
+		MetaData[4].SubPropertyPath = MetaData[4].Name;
 		MetaData[4].bEnabled = EnumHasAllFlags(Mask, EMovieScene2DTransformChannel::ScaleY);
 		MetaData[4].SortOrder = 4;
 		MetaData[4].bCanCollapseToTrack = false;
 
 		MetaData[5].SetIdentifiers("Shear.X", FCommonChannelData::ChannelX, ShearGroup);
+		MetaData[5].SubPropertyPath = MetaData[5].Name;
 		MetaData[5].bEnabled = EnumHasAllFlags(Mask, EMovieScene2DTransformChannel::ShearX);
 		MetaData[5].SortOrder = 5;
 		MetaData[5].bCanCollapseToTrack = false;
 
 		MetaData[6].SetIdentifiers("Shear.Y", FCommonChannelData::ChannelY, ShearGroup);
+		MetaData[6].SubPropertyPath = MetaData[6].Name;
 		MetaData[6].bEnabled = EnumHasAllFlags(Mask, EMovieScene2DTransformChannel::ShearY);
 		MetaData[6].SortOrder = 6;
 		MetaData[6].bCanCollapseToTrack = false;

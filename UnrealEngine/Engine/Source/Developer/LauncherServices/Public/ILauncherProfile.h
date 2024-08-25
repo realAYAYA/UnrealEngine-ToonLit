@@ -1151,14 +1151,6 @@ public:
 	virtual void SetReferenceContainerCryptoKeysFileName(const FString& InReferenceContainerCryptoKeysFileName) = 0;
 
 	/**
-	* Whether or not to save the unaltered staged directory for platforms that modify
-	* i/o store containers for deployment. This is so that the containers can be saved and used as a reference 
-	* container later.
-	*/
-	virtual bool IsRetainStagedDirectory() const = 0;
-	virtual void SetRetainStagedDirectory(bool bInRetainStagedDirectory) = 0;
-
-	/**
 	 * Sets if we are going to generate a patch 
 	 * 
 	 * @param InShouldGeneratePatch enable generating patch
@@ -1397,6 +1389,16 @@ public:
 	 * Whether or not the flash image/software on the device should attempt to be updated before running
 	 */
 	virtual bool ShouldUpdateDeviceFlash() const = 0;
+
+	/**
+	 * Sets whether or not the Device is a Simulator
+	 */
+	virtual void SetDeviceIsASimulator(bool bInIsDeviceASimualtor) = 0;
+
+	/**
+	 * Whether or not the Device is a Simulator
+	 */
+	virtual bool IsDeviceASimulator() const = 0;
 
 public:
 	/**

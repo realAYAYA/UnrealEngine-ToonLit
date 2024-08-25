@@ -27,7 +27,7 @@ using static AutomationTool.CommandUtils;
 public sealed class BuildPlugin : BuildCommand
 {
 	const string MacDefaultArchitectures = "arm64+x64";
-	const string AndroidDefaultArchitectures = "arm64";
+	const string AndroidDefaultArchitectures = "arm64+x64";
 
 	string UnrealBuildToolDllRelativePath = @"Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll";
 	FileReference UnrealBuildToolDll;

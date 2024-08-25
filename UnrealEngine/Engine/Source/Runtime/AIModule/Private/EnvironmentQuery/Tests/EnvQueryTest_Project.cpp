@@ -2,6 +2,7 @@
 
 #include "EnvironmentQuery/Tests/EnvQueryTest_Project.h"
 #include "AI/Navigation/NavigationTypes.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "NavigationData.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_VectorBase.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"

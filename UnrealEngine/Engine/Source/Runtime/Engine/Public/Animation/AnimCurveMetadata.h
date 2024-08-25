@@ -191,6 +191,8 @@ class UAnimCurveMetaData : public UAssetUserData, public IInterface_AnimCurveMet
 public:
 #if WITH_EDITOR
 	// UObject interface
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 #endif
 

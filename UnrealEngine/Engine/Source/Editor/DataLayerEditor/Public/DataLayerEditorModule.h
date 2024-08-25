@@ -15,6 +15,7 @@ class FExtender;
 class FUICommandList;
 class SWidget;
 class UDataLayerInstance;
+class UExternalDataLayerAsset;
 
 /**
  * The module holding all of the UI related pieces for DataLayers
@@ -50,6 +51,7 @@ public:
 
 	/* Implement IDataLayerEditorModule */
 	virtual bool AddActorToDataLayers(AActor* Actor, const TArray<UDataLayerInstance*>& DataLayers) override;
+	virtual void SetActorEditorContextCurrentExternalDataLayer(const UExternalDataLayerAsset* InExternalDataLayerAsset) override;
 
 private:
 	TWeakPtr<SWidget> DataLayerBrowser;

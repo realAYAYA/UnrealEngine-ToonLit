@@ -5,6 +5,7 @@
 
 #include "Async/TaskGraphInterfaces.h"
 #include "CoreMinimal.h"
+#include "Delegates/Delegate.h"
 #include "MaterialTypes.h"
 #include "Containers/ArrayView.h"
 #include "UObject/ObjectMacros.h"
@@ -30,6 +31,7 @@
 #include "RHIFeatureLevel.h"
 #include "PSOPrecache.h"
 #include "StaticParameterSet.h"
+#include "Interfaces/Interface_AsyncCompilation.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "RHI.h"
@@ -50,6 +52,7 @@ class UPhysicalMaterial;
 class UPhysicalMaterialMask;
 class USubsurfaceProfile;
 class USpecularProfile;
+class UNeuralProfile;
 class UTexture;
 class UMaterialInstance;
 struct FDebugShaderTypeInfo;
@@ -65,7 +68,7 @@ class FMaterialCachedHLSLTree;
 struct FParameterChannelNames;
 #endif
 enum EShaderPlatform : uint16;
-struct FStrataCompilationConfig;
+struct FSubstrateCompilationConfig;
 class UMaterialExpressionCustomOutput;
 
 typedef TArray<FMaterialResource*> FMaterialResourceDeferredDeletionArray;
@@ -250,6 +253,8 @@ public:
 	bool bLoadedCachedExpressionData = false;
 };
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnBaseMaterialIsSet, UMaterialInterface*);
+
 UCLASS(abstract, BlueprintType, MinimalAPI, HideCategories = (Thumbnail))
 class UMaterialInterface : public UObject, public IBlendableInterface, public IInterface_AssetUserData
 {
@@ -285,9 +290,16 @@ public:
 	UPROPERTY()
 	TArray<TObjectPtr<class USpecularProfile>> SpecularProfiles;
 
+	/** Neural network profile. For internal usage, not editable/visible */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = PostProcessMaterial, meta = (DisplayName = "Neural Profile"))
+	TObjectPtr<class UNeuralProfile> NeuralProfile;
+
 	/** Whether this material interface is included in the base game (and not in a DLC) */
 	UPROPERTY()
 	uint8 bIncludedInBaseGame : 1;
+
+	/** Event triggered when the base material is set */
+	FOnBaseMaterialIsSet OnBaseMaterialSetEvent;
 
 	/* -------------------------- */
 
@@ -390,6 +402,8 @@ public:
 
 #if WITH_EDITOR
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 #endif // WITH_EDITOR
 	//~ End UObject Interface.
@@ -401,6 +415,11 @@ public:
 	/** Walks up parent chain and finds the base Material that this is an instance of. Just calls the virtual GetMaterial() */
 	UFUNCTION(BlueprintCallable, Category="Rendering|Material")
 	ENGINE_API UMaterial* GetBaseMaterial();
+
+	/** Callback triggered when the material has been assigned as an override material */
+	ENGINE_API virtual void OnAssignedAsOverride(const UObject* Owner);
+	/** Callback triggered when the material has been removed as an override material */
+	ENGINE_API virtual void OnRemovedAsOverride(const UObject* Owner);
 
 	/**
 	 * Get the material which we are instancing.
@@ -429,8 +448,8 @@ public:
 	ENGINE_API bool IsUsingNewHLSLGenerator() const;
 	ENGINE_API bool IsUsingControlFlow() const;
 
-	ENGINE_API const FStrataCompilationConfig& GetStrataCompilationConfig() const;
-	ENGINE_API void SetStrataCompilationConfig(FStrataCompilationConfig& StrataCompilationConfig);
+	ENGINE_API const FSubstrateCompilationConfig& GetSubstrateCompilationConfig() const;
+	ENGINE_API void SetSubstrateCompilationConfig(FSubstrateCompilationConfig& SubstrateCompilationConfig);
 
 	/**
 	* Test this material for dependency on a given material.
@@ -918,10 +937,13 @@ public:
 	ENGINE_API virtual FDisplacementScaling GetDisplacementScaling() const;
 	ENGINE_API virtual float GetMaxWorldPositionOffsetDisplacement() const;
 	ENGINE_API virtual bool ShouldAlwaysEvaluateWorldPositionOffset() const;
+	ENGINE_API virtual bool HasPixelAnimation() const;
 	ENGINE_API virtual USubsurfaceProfile* GetSubsurfaceProfile_Internal() const;
 	ENGINE_API virtual uint32 NumSpecularProfile_Internal() const;
 	ENGINE_API virtual USpecularProfile* GetSpecularProfile_Internal(uint32 Index) const;
+	ENGINE_API virtual UNeuralProfile* GetNeuralProfile_Internal() const;
 	ENGINE_API virtual bool CastsRayTracedShadows() const;
+	ENGINE_API virtual bool IsTessellationEnabled() const;
 
 	/**
 	 * Force the streaming system to disregard the normal logic for the specified duration and
@@ -1001,6 +1023,12 @@ public:
 	*/
 	virtual bool IsComplete() const { return true; }
 
+#if WITH_EDITOR
+	ENGINE_API virtual bool IsCompiling() const { return false; };
+#else
+	FORCEINLINE bool IsCompiling() const { return false; }
+#endif
+
 	/** @brief Checks to see if this material has all its shaders cached and if not, will perform a synchronous compilation of those.
 	*
 	* Materials are not guaranteed to have all their shaders compiled after loading and using this function before a draw will ensure that the material will not render until it's 
@@ -1014,7 +1042,7 @@ public:
 
 #if WITH_EDITOR
 	/** Clears the shader cache and recompiles the shader for rendering. */
-	virtual void ForceRecompileForRendering() {}
+	virtual void ForceRecompileForRendering(EMaterialShaderPrecompileMode CompileMode = EMaterialShaderPrecompileMode::Default) {}
 #endif // WITH_EDITOR
 
 	/**
@@ -1031,6 +1059,11 @@ public:
 	 * Initializes all default materials.
 	 */
 	ENGINE_API static void InitDefaultMaterials();
+
+	/**
+	 * Precache PSOs for all default materials.
+	 */
+	ENGINE_API static void PrecacheDefaultMaterialPSOs();
 
 	/** Checks to see if an input property should be active, based on the state of the material */
 	ENGINE_API virtual bool IsPropertyActive(EMaterialProperty InProperty) const;
@@ -1143,7 +1176,6 @@ public:
 #endif // WITH_EDITOR
 
 protected:
-
 	/** Returns a bitfield indicating which feature levels should be compiled for rendering. GMaxRHIFeatureLevel is always present */
 	ENGINE_API uint32 GetFeatureLevelsToCompileForRendering() const;
 
@@ -1194,6 +1226,7 @@ extern void SerializeInlineShaderMaps(
 	const TMap<const class ITargetPlatform*, TArray<FMaterialResource*>>* PlatformMaterialResourcesToSave,
 	FArchive& Ar,
 	TArray<FMaterialResource>& OutLoadedResources,
+	const FName& SerializingAsset = NAME_None,
 	uint32* OutOffsetToFirstResource = nullptr);
 /** Helper function to process (register) serialized inline shader maps for the given material resources. */
 extern void ProcessSerializedInlineShaderMaps(UMaterialInterface* Owner, TArray<FMaterialResource>& LoadedResources, TArray<FMaterialResource*>& OutMaterialResourcesLoaded);

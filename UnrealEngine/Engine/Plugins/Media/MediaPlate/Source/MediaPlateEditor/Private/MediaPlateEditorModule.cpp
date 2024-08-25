@@ -3,10 +3,12 @@
 #include "MediaPlateEditorModule.h"
 
 #include "Editor.h"
+#include "EngineAnalytics.h"
 #include "IPlacementModeModule.h"
 #include "ISequencerModule.h"
 #include "LevelEditor.h"
 #include "MaterialList.h"
+#include "Materials/Material.h"
 #include "MediaPlate.h"
 #include "MediaPlateComponent.h"
 #include "MediaPlateCustomization.h"
@@ -46,6 +48,8 @@ void FMediaPlateEditorModule::StartupModule()
 	ISequencerModule& SequencerModule = FModuleManager::Get().LoadModuleChecked<ISequencerModule>("Sequencer");
 	TrackEditorBindingHandle = SequencerModule.RegisterPropertyTrackEditor<FMediaPlateTrackEditor>();
 
+	RegisterContextMenuExtender();
+
 	// Add bottom extender for material item
 	FMaterialList::OnAddMaterialItemViewExtraBottomWidget.AddLambda([](const TSharedRef<FMaterialItemView>& InMaterialItemView, UActorComponent* InCurrentComponent, IDetailLayoutBuilder& InDetailBuilder, TArray<TSharedPtr<SWidget>>& OutExtensions)
 	{
@@ -60,6 +64,8 @@ void FMediaPlateEditorModule::ShutdownModule()
 {
 	FMaterialList::OnAddMaterialItemViewExtraBottomWidget.RemoveAll(this);
 
+	UnregisterContextMenuExtender();
+
 	if (GEditor != nullptr)
 	{
 		UEditorAssetSubsystem* EditorAssetSubsystem = GEditor->GetEditorSubsystem<UEditorAssetSubsystem>();
@@ -67,6 +73,8 @@ void FMediaPlateEditorModule::ShutdownModule()
 		{
 			EditorAssetSubsystem->GetOnExtractAssetFromFile().RemoveAll(this);
 		}
+
+		GEditor->OnLevelActorAdded().RemoveAll(this);
 	}
 
 	ISequencerModule* SequencerModulePtr = FModuleManager::Get().GetModulePtr<ISequencerModule>("Sequencer");
@@ -145,7 +153,7 @@ const FPlacementCategoryInfo* FMediaPlateEditorModule::GetMediaCategoryRegistere
 	const IPlacementModeModule& PlacementModeModule = IPlacementModeModule::Get();
 	const FName PlacementModeCategoryHandle = TEXT("MediaPlate");
 
-	if (const FPlacementCategoryInfo* RegisteredInfo = 
+	if (const FPlacementCategoryInfo* RegisteredInfo =
 		PlacementModeModule.GetRegisteredPlacementCategory(PlacementModeCategoryHandle))
 	{
 		return RegisteredInfo;
@@ -244,10 +252,15 @@ void FMediaPlateEditorModule::UnregisterPlacementModeItems()
 
 void FMediaPlateEditorModule::OnPostEngineInit()
 {
-	UEditorAssetSubsystem* EditorAssetSubsystem = GEditor->GetEditorSubsystem<UEditorAssetSubsystem>();
-	if (EditorAssetSubsystem != nullptr)
+	if (GEditor)
 	{
-		EditorAssetSubsystem->GetOnExtractAssetFromFile().AddRaw(this, &FMediaPlateEditorModule::ExtractAssetDataFromFiles);
+		UEditorAssetSubsystem* EditorAssetSubsystem = GEditor->GetEditorSubsystem<UEditorAssetSubsystem>();
+		if (EditorAssetSubsystem != nullptr)
+		{
+			EditorAssetSubsystem->GetOnExtractAssetFromFile().AddRaw(this, &FMediaPlateEditorModule::ExtractAssetDataFromFiles);
+		}
+
+		GEditor->OnLevelActorAdded().AddRaw(this, &FMediaPlateEditorModule::OnLevelActorAdded);
 	}
 }
 
@@ -312,6 +325,124 @@ void FMediaPlateEditorModule::ForceRealTimeViewports(const bool bEnable)
 				}
 			}
 		}
+	}
+}
+
+TSharedRef<FExtender> FMediaPlateEditorModule::ExtendLevelViewportContextMenuForMediaPlate(const TSharedRef<FUICommandList> CommandList, TArray<AActor*> SelectedActors)
+{
+	TSharedPtr<FExtender> Extender = MakeShared<FExtender>();
+
+	if (SelectedActors.Num() == 1)
+	{
+		AMediaPlate* MediaPlateActor = Cast<AMediaPlate>(SelectedActors[0]);
+		if (IsValid(MediaPlateActor))
+		{
+			Extender->AddMenuExtension("ActorTypeTools", EExtensionHook::After, CommandList,
+				FMenuExtensionDelegate::CreateLambda([MediaPlateActor](FMenuBuilder& MenuBuilder, AActor* SelectedActor)
+					{
+						const ISlateStyle* Style = &FMediaPlateEditorStyle::Get().Get();
+						check(Style);
+
+						FUIAction Action_ConfigureComposite(
+							FExecuteAction::CreateLambda([](AMediaPlate* InMediaPlateActor)
+								{
+									if (!IsValid(InMediaPlateActor))
+									{
+										return;
+									}
+
+									const FScopedTransaction Transaction(LOCTEXT("ApplyOverlayCompositeMats", "Apply Overlay Composite Materials"));
+									InMediaPlateActor->Modify();
+
+									UMaterial* BasePassMaterial = LoadObject<UMaterial>(NULL, TEXT("/MediaPlate/M_MediaPlate_Masked"), NULL, LOAD_None, NULL);
+									InMediaPlateActor->ApplyMaterial(BasePassMaterial);
+
+									UMaterial* OverlayMaterial = LoadObject<UMaterial>(NULL, TEXT("/MediaPlate/M_MediaPlate_OverlayComp"), NULL, LOAD_None, NULL);
+									InMediaPlateActor->ApplyOverlayMaterial(OverlayMaterial);
+
+									UE::MediaPlate::Private::ApplyTranslucencyScreenPercentageCVar(1);
+								}
+								,MediaPlateActor)
+						);
+
+						FUIAction Action_ResetDefault(
+							FExecuteAction::CreateLambda([](AMediaPlate* InMediaPlateActor)
+								{
+									if (!IsValid(InMediaPlateActor))
+									{
+										return;
+									}
+
+									const FScopedTransaction Transaction(LOCTEXT("ResetDefaultMats", "Reset Default Materials"));
+
+									InMediaPlateActor->Modify();
+									InMediaPlateActor->UseDefaultMaterial();
+
+									UE::MediaPlate::Private::ApplyTranslucencyScreenPercentageCVar(0);
+								}
+								, MediaPlateActor)
+						);
+
+						MenuBuilder.BeginSection("MediaPlate", LOCTEXT("MediaPlateHeading", "Media Plate"));
+						MenuBuilder.AddMenuEntry(
+							LOCTEXT("ApplyOverlayCompositeMats", "Apply Overlay Composite Materials"),
+							LOCTEXT("ApplyOverlayCompositeMats_Tooltip", "Setup the media plate for overlay-compositing to avoid TSR artifacts by replacing relevant materials. This technique is only effective on opaque media currently."),
+							FSlateIcon(Style->GetStyleSetName(), "ClassIcon.MediaPlate"),
+							Action_ConfigureComposite
+						);
+						MenuBuilder.AddMenuEntry(
+							LOCTEXT("ResetDefaultMats", "Reset Default Materials"),
+							LOCTEXT("ResetDefaultMats_Tooltip", "Reverts the media plate to its default materials. Note that we also globally disable r.Translucency.ScreenPercentage.Basis if previously enabled."),
+							FSlateIcon(Style->GetStyleSetName(), "ClassIcon.MediaPlate"),
+							Action_ResetDefault
+						);
+						MenuBuilder.EndSection();
+					},
+					MediaPlateActor
+				)
+			);
+		}
+
+
+	}
+
+	return Extender.ToSharedRef();
+}
+
+void FMediaPlateEditorModule::RegisterContextMenuExtender()
+{
+	// Extend the level viewport context menu to add an option to copy the object path.
+	LevelViewportContextMenuRemoteControlExtender = FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors::CreateRaw(this, &FMediaPlateEditorModule::ExtendLevelViewportContextMenuForMediaPlate);
+
+	FLevelEditorModule& LevelEditorModule = FModuleManager::Get().LoadModuleChecked<FLevelEditorModule>("LevelEditor");
+	TArray<FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors>& MenuExtenders = LevelEditorModule.GetAllLevelViewportContextMenuExtenders();
+	MenuExtenders.Add(LevelViewportContextMenuRemoteControlExtender);
+	MenuExtenderDelegateHandle = MenuExtenders.Last().GetHandle();
+}
+
+void FMediaPlateEditorModule::UnregisterContextMenuExtender()
+{
+	if (FModuleManager::Get().IsModuleLoaded("LevelEditor"))
+	{
+		FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
+		LevelEditorModule.GetAllLevelViewportContextMenuExtenders().RemoveAll(
+			[&](const FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors& Delegate)
+			{
+				return Delegate.GetHandle() == MenuExtenderDelegateHandle;
+			});
+	}
+}
+
+void FMediaPlateEditorModule::OnLevelActorAdded(AActor* InActor)
+{
+	if (!InActor || InActor->HasAnyFlags(RF_Transient))
+	{
+		return;
+	}
+
+	if (FEngineAnalytics::IsAvailable() && InActor->GetClass() == AMediaPlate::StaticClass())
+	{
+		FEngineAnalytics::GetProvider().RecordEvent(TEXT("Editor.Usage.MediaPlate.AddMediaPlateActorToLevel"));
 	}
 }
 

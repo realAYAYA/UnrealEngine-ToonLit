@@ -134,7 +134,6 @@ extern FString TargetPlatforms;
 extern double CookStartTime;
 extern double CookWallTimeSec;
 extern double StartupWallTimeSec;
-extern double CookByTheBookTimeSec;
 extern double StartCookByTheBookTimeSec;
 extern double TickCookOnTheSideTimeSec;
 extern double TickCookOnTheSideLoadPackagesTimeSec;
@@ -163,7 +162,7 @@ extern int32 PeakRequestQueueSize;
 extern int32 PeakLoadQueueSize;
 extern int32 PeakSaveQueueSize;
 
-void LogCookStats(ECookMode::Type CookMode);
+void SendLogCookStats(ECookMode::Type CookMode);
 
 }
 #endif

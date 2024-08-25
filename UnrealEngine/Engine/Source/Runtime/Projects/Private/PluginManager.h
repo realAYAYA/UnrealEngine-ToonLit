@@ -43,6 +43,12 @@ public:
 	bool bIsMounted : 1;
 
 	/**
+	 * True if an explicitly loaded plugin has also mounted its localization data.
+	 * @note Unused for non-explicitly loaded plugins.
+	 */
+	bool bIsExplicitlyLoadedLocalizationDataMounted : 1;
+
+	/**
 	 * FPlugin constructor
 	 */
 	FPlugin(const FString &FileName, const FPluginDescriptor& InDescriptor, EPluginType InType);
@@ -100,6 +106,11 @@ public:
 		return Descriptor.VersePath;
 	}
 
+	virtual void SetVersePath(FString&& InVersePath) override
+	{
+		Descriptor.VersePath = MoveTemp(InVersePath);
+	}
+
 	virtual EPluginType GetType() const override
 	{
 		return Type;
@@ -152,6 +163,15 @@ public:
 	virtual TSharedPtr<IPlugin> FindPluginFromPath(const FString& PluginPath) override;
 	virtual TSharedPtr<IPlugin> FindPluginFromDescriptor(const FPluginReferenceDescriptor& PluginDesc) override;
 
+	virtual TSharedPtr<IPlugin> FindEnabledPlugin(const FStringView Name) override;
+	virtual TSharedPtr<IPlugin> FindEnabledPlugin(const ANSICHAR* Name) override
+	{
+		FString NameString(Name);
+		return FindEnabledPlugin(FStringView(NameString));
+	}
+	virtual TSharedPtr<IPlugin> FindEnabledPluginFromPath(const FString& PluginPath) override;
+	virtual TSharedPtr<IPlugin> FindEnabledPluginFromDescriptor(const FPluginReferenceDescriptor& PluginDesc) override;
+
 	virtual void FindPluginsUnderDirectory(const FString& Directory, TArray<FString>& OutPluginFilePaths) override;
 
 	virtual TArray<TSharedRef<IPlugin>> GetEnabledPlugins() override;
@@ -170,20 +190,22 @@ public:
 	virtual TArray<TSharedRef<IPlugin>> GetPluginsWithPakFile() const override;
 	virtual FNewPluginMountedEvent& OnNewPluginCreated() override;
 	virtual FNewPluginMountedEvent& OnNewPluginMounted() override;
+	virtual FNewPluginMountedEvent& OnNewPluginContentMounted() override;
 	virtual FNewPluginMountedEvent& OnPluginEdited() override;
 	virtual FNewPluginMountedEvent& OnPluginUnmounted() override;
 	virtual void MountNewlyCreatedPlugin(const FString& PluginName) override;
 	virtual bool MountExplicitlyLoadedPlugin(const FString& PluginName) override;
 	virtual bool MountExplicitlyLoadedPlugin_FromFileName(const FString& PluginFileName) override;
 	virtual bool MountExplicitlyLoadedPlugin_FromDescriptor(const FPluginReferenceDescriptor& PluginDescriptor) override;
-	virtual bool UnmountExplicitlyLoadedPlugin(const FString& PluginName, FText* OutReason) override;
+	virtual bool MountExplicitlyLoadedPluginLocalizationData(const FString& PluginName) override;
+	virtual bool UnmountExplicitlyLoadedPluginLocalizationData(const FString& PluginName) override;
+	virtual bool UnmountExplicitlyLoadedPlugin(const FString& PluginName, FText* OutReason) override { return UnmountExplicitlyLoadedPlugin(PluginName, OutReason, true); }
+	virtual bool UnmountExplicitlyLoadedPlugin(const FString& PluginName, FText* OutReason, bool bAllowUnloadCode) override;
 	virtual bool GetPluginDependencies(const FString& PluginName, TArray<FPluginReferenceDescriptor>& PluginDependencies) override;
 	virtual bool GetPluginDependencies_FromFileName(const FString& PluginFileName, TArray<FPluginReferenceDescriptor>& PluginDependencies) override;
 	virtual bool GetPluginDependencies_FromDescriptor(const FPluginReferenceDescriptor& PluginDescriptor, TArray<FPluginReferenceDescriptor>& PluginDependencies) override;
 	virtual FName PackageNameFromModuleName(FName ModuleName) override;
-#if UE_USE_VERSE_PATHS
 	virtual bool TrySplitVersePath(const UE::Core::FVersePath& VersePath, FName& OutPackageName, FString& OutLeafPath) override;
-#endif // #if UE_USE_VERSE_PATHS
 	virtual bool RequiresTempTargetForCodePlugin(const FProjectDescriptor* ProjectDescriptor, const FString& Platform, EBuildConfiguration Configuration, EBuildTargetType TargetType, FText& OutReason) override;
 
 	virtual bool IntegratePluginsIntoConfig(FConfigCacheIni& ConfigSystem, const TCHAR* EngineIniName, const TCHAR* PlatformName, const TCHAR* StagedPluginsFile) override;
@@ -202,7 +224,8 @@ private:
 	void DiscoverAllPlugins();
 
 	/** Reads all the plugin descriptors */
-	static void ReadAllPlugins(FDiscoveredPluginMap& Plugins, const TSet<FString>& ExtraSearchPaths);
+	static void ReadAllPlugins(FDiscoveredPluginMap& Plugins, const TSet<FString>& ExtraSearchPaths,
+		TArray<FString>* OutPluginSources=nullptr);
 
 	/** Reads all the plugin descriptors from disk */
 	static void ReadPluginsInDirectory(const FString& PluginsDirectory, const EPluginType Type, FDiscoveredPluginMap& Plugins, TArray<TSharedRef<FPlugin>>& ChildPlugins);
@@ -217,16 +240,17 @@ private:
 	static void FindPluginManifestsInDirectory(const FString& PluginManifestDirectory, TArray<FString>& FileNames);
 
 	/** Gets all the code plugins that are enabled for a content only project */
-	static bool GetCodePluginsForProject(const FProjectDescriptor* ProjectDescriptor, const FString& Platform, EBuildConfiguration Configuration, EBuildTargetType TargetType, FDiscoveredPluginMap& AllPlugins, TSet<FString>& CodePluginNames, FConfigurePluginResultInfo& OutResultInfo);
+	static bool GetCodePluginsForProject(const FProjectDescriptor* ProjectDescriptor, const FString& Platform, EBuildConfiguration Configuration, EBuildTargetType TargetType, FDiscoveredPluginMap& AllPlugins, TSet<FString>& CodePluginNames, const TSet<FString>& AllowedOptionalPluginReferences, FConfigurePluginResultInfo& OutResultInfo);
 
 	/** Sets the bPluginEnabled flag on all plugins found from DiscoverAllPlugins that are enabled in config */
 	bool ConfigureEnabledPlugins();
 
-	/** Adds a single enabled plugin, and all its dependencies */
-	bool ConfigureEnabledPluginForCurrentTarget(const FPluginReferenceDescriptor& FirstReference, TMap<FString, FPlugin*>& EnabledPlugins);
+	/** Adds a single enabled plugin, and all its dependencies. If AllowedOptionalDependencies is not empty, only enable optional dependencies that are listed */
+	bool ConfigureEnabledPluginForCurrentTarget(const FPluginReferenceDescriptor& FirstReference,
+		TMap<FString, FPlugin*>& EnabledPlugins, FStringView SourceOfPluginRequest, const TSet<FString>& AllowedOptionalDependencies);
 
-	/** Adds a single enabled plugin and all its dependencies. */
-	static bool ConfigureEnabledPluginForTarget(const FPluginReferenceDescriptor& FirstReference, const FProjectDescriptor* ProjectDescriptor, const FString& TargetName, const FString& Platform, EBuildConfiguration Configuration, EBuildTargetType TargetType, bool bLoadPluginsForTargetPlatforms, FDiscoveredPluginMap& AllPlugins, TMap<FString, FPlugin*>& EnabledPlugins, FConfigurePluginResultInfo& OutResultInfo);
+	/** Adds a single enabled plugin and all its dependencies. If AllowedOptionalDependencies is not empty, only enable optional dependencies that are listed */
+	static bool ConfigureEnabledPluginForTarget(const FPluginReferenceDescriptor& FirstReference, const FProjectDescriptor* ProjectDescriptor, const FString& TargetName, const FString& Platform, EBuildConfiguration Configuration, EBuildTargetType TargetType, bool bLoadPluginsForTargetPlatforms, FDiscoveredPluginMap& AllPlugins, TMap<FString, FPlugin*>& EnabledPlugins, const TSet<FString>& AllowedOptionalDependencies, FConfigurePluginResultInfo& OutResultInfo);
 
 	/** Prompts the user to download a missing plugin from the given URL */
 	static bool PromptToDownloadPlugin(const FString& PluginName, const FString& MarketplaceURL);
@@ -255,6 +279,9 @@ private:
 	/** Attempt to load all the modules for the given plugin */
 	bool TryLoadModulesForPlugin(const FPlugin& Plugin, const ELoadingPhase::Type LoadingPhase) const;
 
+	/** Attempt to unload all the modules for the given plugin */
+	bool TryUnloadModulesForPlugin(const FPlugin& Plugin, const ELoadingPhase::Type LoadingPhase, FText* OutFailureMessage = nullptr, bool bSkipUnload = false, bool bAllowUnloadCode = true) const;
+
 	/** Gets the instance of a given plugin */
 	TSharedPtr<FPlugin> FindPluginInstance(const FString& Name);
 
@@ -269,9 +296,6 @@ private:
 
 	/** Mounts a plugin that was requested to be mounted from external code (either by MountNewlyCreatedPlugin or MountExplicitlyLoadedPlugin) */
 	void MountPluginFromExternalSource(const TSharedRef<FPlugin>& Plugin);
-
-	/** Unmounts a plugin that was requested to be unmounted from external code (by UnmountExplicitlyLoadedPlugin) */
-	bool UnmountPluginFromExternalSource(const TSharedPtr<FPlugin>& Plugin, FText* OutReason);
 
 #if WITH_EDITOR
 	void AddToModuleNameToPluginMap(const TSharedRef<FPlugin>& Plugin);
@@ -320,6 +344,7 @@ private:
 	/** Callback for notifications that a new plugin was mounted */
 	FNewPluginMountedEvent NewPluginCreatedEvent;
 	FNewPluginMountedEvent NewPluginMountedEvent;
+	FNewPluginMountedEvent NewPluginContentMountedEvent;
 	FNewPluginMountedEvent PluginEditedEvent;
 	FNewPluginMountedEvent PluginUnmountedEvent;
 

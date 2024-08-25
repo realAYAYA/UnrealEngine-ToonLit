@@ -67,7 +67,7 @@ public:
 
 	virtual FIntPoint GetDim() const override
 	{
-		return Frame.Info.Dim;
+		return Frame.GetDim();
 	}
 
 	virtual uint8 GetNumMips() const override
@@ -124,7 +124,7 @@ public:
 
 	virtual bool IsOutputSrgb() const override
 	{
-		return Frame.Info.Srgb;
+		return Frame.IsOutputSrgb();
 	}
 
 private:

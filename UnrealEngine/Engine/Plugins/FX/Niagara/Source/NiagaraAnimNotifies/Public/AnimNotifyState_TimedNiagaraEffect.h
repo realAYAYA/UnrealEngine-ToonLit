@@ -37,6 +37,10 @@ class UAnimNotifyState_TimedNiagaraEffect : public UAnimNotifyState
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NiagaraSystem, meta = (ToolTip = "Rotation offset from the socket or bone for the Niagara system"))
 	FRotator RotationOffset;
 
+	// Should we set the animation rate scale as time dilation on the spawn effect?
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NiagaraSystem)
+	bool bApplyRateScaleAsTimeDilation = false;
+
 	// Whether or not we destroy the component at the end of the notify or instead just stop
 	// the emitters.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NiagaraSystem, meta = (DisplayName = "Destroy Immediately", ToolTip = "Whether the Niagara system should be immediately destroyed at the end of the notify state or be allowed to finish"))
@@ -87,6 +91,8 @@ class UAnimNotifyState_TimedNiagaraEffectAdvanced : public UAnimNotifyState_Time
 	GENERATED_UCLASS_BODY()
 
 public:
+	NIAGARAANIMNOTIFIES_API virtual void Serialize(class FArchive& Ar) override;
+
 	UE_DEPRECATED(5.0, "Please use the other NotifyBegin function instead")
 	NIAGARAANIMNOTIFIES_API virtual void NotifyBegin(class USkeletalMeshComponent* MeshComp, class UAnimSequenceBase* Animation, float TotalDuration) override;
 
@@ -106,6 +112,10 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = NotifyProgress, meta = (DisplayName = "Enable Normalized Notify Progress", ToolTip = "This send a 0-1 value of the normalized progress to the FX Component to the float User Parameter."))
 	bool bEnableNormalizedNotifyProgress = true;
+
+	// Should we apply the animation rate scale when calculating the elasped time.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NiagaraSystem)
+	bool bApplyRateScaleToProgress = true;
 
 	UPROPERTY(EditAnywhere, Category = NotifyProgress, meta = (DisplayName = "User Parameter", ToolTip = "The name of your niagara user variable you would like to send the normalized notify progress to."))
 	FName NotifyProgressUserParameter;

@@ -154,6 +154,8 @@ private:
 	void InitializeColorCode();
 	int32 GetRelationDisplayDepth(TSharedPtr<const FThreadTimingTrack> Track, double Time, int32 KnownDepth);
 
+	void OutputWarnings();
+
 private:
 	bool bIsInitialized;
 	bool bIsAvailable;
@@ -184,6 +186,8 @@ private:
 	bool bShowNestedTasks = false;
 	
 	FDelegateHandle OnWindowClosedEventHandle;
+
+	TSet<FString> HiddenTrackNames;
 };
 
 } // namespace Insights

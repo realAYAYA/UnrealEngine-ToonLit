@@ -7,7 +7,6 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "HeadMountedDisplayTypes.h"
 #include "IIdentifiableXRDevice.h" // for FXRDeviceId
-#include "XRGestureConfig.h"
 #include "HeadMountedDisplayFunctionLibrary.generated.h"
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FXRDeviceOnDisconnectDelegate, const FString, OutReason);
@@ -112,35 +111,6 @@ class XRBASE_API UHeadMountedDisplayFunctionLibrary : public UBlueprintFunctionL
 	 */
 	UFUNCTION(BlueprintPure, Category = "Input|HeadMountedDisplay", meta = (AdvancedDisplay = "LeftFOV,RightFOV,TopFOV,BottomFOV,Distance,NearPlane,FarPlane"))
 	static void GetTrackingSensorParameters(FVector& Origin, FRotator& Rotation, float& LeftFOV, float& RightFOV, float& TopFOV, float& BottomFOV, float& Distance, float& NearPlane, float& FarPlane, bool& IsActive, int32 Index = 0);
-
-	/**
-	 * If the HMD has a positional sensor, this will return the game-world location of it, as well as the parameters for the bounding region of tracking.
-	 * This allows an in-game representation of the legal positional tracking range.  All values will be zeroed if the sensor is not available or the HMD does not support it.
-	 *
-	 * @param Origin			(out) Origin, in world-space, of the sensor
-	 * @param Rotation			(out) Rotation, in world-space, of the sensor
-	 * @param HFOV				(out) Field-of-view, horizontal, in degrees, of the valid tracking zone of the sensor
-	 * @param VFOV				(out) Field-of-view, vertical, in degrees, of the valid tracking zone of the sensor
-	 * @param CameraDistance	(out) Nominal distance to sensor, in world-space
-	 * @param NearPlane			(out) Near plane distance of the tracking volume, in world-space
-	 * @param FarPlane			(out) Far plane distance of the tracking volume, in world-space
-	 */
-	UFUNCTION(BlueprintPure, Category="Input|HeadMountedDisplay", meta=(DeprecatedFunction, DeprecationMessage = "Use new GetTrackingSensorParameters / GetNumOfTrackingSensors"))
-	static void GetPositionalTrackingCameraParameters(FVector& CameraOrigin, FRotator& CameraRotation, float& HFOV, float& VFOV, float& CameraDistance, float& NearPlane, float& FarPlane);
-
-	/**
-	 * Returns true, if HMD is in low persistence mode. 'false' otherwise.
-	 */
-	UFUNCTION(BlueprintPure, Category="Input|HeadMountedDisplay", meta = (DeprecatedFunction, DeprecationMessage = "This functionality is no longer available. HMD platforms that support low persistence will always enable it."))
-	static bool IsInLowPersistenceMode() { return false; }
-
-	/**
-	 * Switches between low and full persistence modes.
-	 *
-	 * @param bEnable			(in) 'true' to enable low persistence mode; 'false' otherwise
-	 */
-	UFUNCTION(BlueprintCallable, Category="Input|HeadMountedDisplay", meta = (DeprecatedFunction, DeprecationMessage = "This functionality is no longer available. HMD platforms that support low persistence will always enable it."))
-	static void EnableLowPersistenceMode(bool bEnable) { }
 
 	/** 
 	 * Resets orientation by setting roll and pitch to 0, assuming that current yaw is forward direction and assuming
@@ -274,6 +244,18 @@ class XRBASE_API UHeadMountedDisplayFunctionLibrary : public UBlueprintFunctionL
 	static void SetSpectatorScreenModeTexturePlusEyeLayout(FVector2D EyeRectMin, FVector2D EyeRectMax, FVector2D TextureRectMin, FVector2D TextureRectMax, bool bDrawEyeFirst = true, bool bClearBlack = false, bool bUseAlpha = false);
 
 	/**
+	 * Multiply the post-compositor frame by a color and add a bias.
+	 * LayerColor = LayerColor * ColorScale + ColorBias
+	 *
+	 * @param ColorScale		(in) Color to multiply the compositor layer by
+	 * @param ColorBias			(in) Color to offset the compositor layer by
+	 * 
+	 * @return  (boolean)		True if successful, false if unsuccessful or unsupported.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Input|HeadMountedDisplay")
+	static bool SetHMDColorScaleAndBias(FLinearColor ColorScale, FLinearColor ColorBias);
+
+	/**
 	 * Cross XR-System query that will list all XR devices currently being tracked.
 	 *
 	 * @param  SystemId		(Optional) Specifies an explicit system to poll devices from (use if you want only devices belonging to one explicit XR ecosystem, e.g. 'OculusHMD', or 'OpenXR')
@@ -324,12 +306,13 @@ class XRBASE_API UHeadMountedDisplayFunctionLibrary : public UBlueprintFunctionL
 
 	/**
 	 * Cross XR-System query that returns critical information about the motion controller (position, orientation, hand/finger position)
+	 *
+	 * @param  WorldContext				Any object in the world (the player pawn would work).  Used in PIE to make sure we get this data from a motioncontroller component that is currently active, rather than one in an editor view world that is never tracked.
+	 * @param  Hand						Indicates which hand we want data for.
+	 * @param  MotionControllerData		[out] Struct filled with information about the motion controller state.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Input|XRTracking")
 	static void GetMotionControllerData(UObject* WorldContext, const EControllerHand Hand, FXRMotionControllerData& MotionControllerData);
-
-	UFUNCTION(BlueprintCallable, Category = "Input|XRTracking", meta = (DeprecatedFunction, DeprecationMessage = "ConfigureGestures is deprecated as of 5.3.  It has had no function for some time."))
-	static bool ConfigureGestures(const FXRGestureConfig& GestureConfig);
 
 	/**
 	 * Get the openXR interaction profile name for the given controller. Returns true if the openxr call is successfully made.  The string may be empty

@@ -154,8 +154,10 @@ void FTexture2DStreamIn::DoAsyncCreateWithNewMips(const FContext& Context)
 			Context.Resource->GetPixelFormat(),
 			ResourceState.NumRequestedLODs,
 			Context.Resource->GetCreationFlags(),
+			ERHIAccess::Unknown,
 			InitialMipDataForAsyncCreate+PendingFirstLODIdx,
 			ResourceState.NumRequestedLODs - ResourceState.NumResidentLODs,
+			*Context.Resource->GetTextureName().ToString(),
 			CompletionEvent);
 
 		if (CompletionEvent)

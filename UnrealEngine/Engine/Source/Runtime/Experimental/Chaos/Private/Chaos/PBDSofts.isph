@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#ifndef __PBDSOFTS_ISPH__
+#define __PBDSOFTS_ISPH__
 #define EXPLICIT_VECTOR4 1
 
 #include "Math/Vector.isph"
@@ -12,3 +14,4 @@ inline void UnzipPandInvM( const FVector4f& PandInvM, FVector3f& P, float& InvM 
 
 	InvM = PandInvM.V[3];
 }
+#endif

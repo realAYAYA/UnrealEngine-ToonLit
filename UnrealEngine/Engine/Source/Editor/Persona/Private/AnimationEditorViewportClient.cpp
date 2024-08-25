@@ -46,6 +46,7 @@
 #include "Engine/PoseWatchRenderData.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
 #include "Animation/AnimCompositeBase.h"
+#include "AudioEditorSettings.h"
 
 namespace {
 	static const float AnimationEditorViewport_RotateSpeed = 0.02f;
@@ -59,6 +60,22 @@ namespace EAnimationPlaybackSpeeds
 {
 	// Speed scales for animation playback, must match EAnimationPlaybackSpeeds::Type
 	float Values[EAnimationPlaybackSpeeds::NumPlaybackSpeeds] = { 0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 2.0f, 5.0f, 10.0f, 0.f };
+}
+
+namespace UE::Private
+{
+	bool CanDrawPreviewComponents(TArray<UDebugSkelMeshComponent*> PreviewComponents)
+	{
+		//Avoid drawing if any of the component reference a compiling asset
+		for (UDebugSkelMeshComponent* PreviewMeshComponent : PreviewComponents)
+		{
+			if (PreviewMeshComponent && PreviewMeshComponent->GetSkinnedAsset() && PreviewMeshComponent->GetSkinnedAsset()->IsCompiling())
+			{
+				return false;
+			}
+		}
+		return true;
+	}
 }
 
 #define LOCTEXT_NAMESPACE "FAnimationViewportClient"
@@ -142,10 +159,9 @@ FAnimationViewportClient::FAnimationViewportClient(const TSharedRef<IPersonaPrev
 	{
 		World->bAllowAudioPlayback = !ConfigOption->bMuteAudio;
 
-		if(FAudioDevice* AudioDevice = World->GetAudioDeviceRaw())
-		{
-			AudioDevice->SetUseAttenuationForNonGameWorlds(ConfigOption->bUseAudioAttenuation);
-		}
+		UAudioEditorSettings* AudioConfigOption = GetMutableDefault<UAudioEditorSettings>();
+		check(AudioConfigOption);
+		AudioConfigOption->SetUseAudioAttenuation(true);
 	}
 }
 
@@ -181,6 +197,10 @@ FAnimationViewportClient::~FAnimationViewportClient()
 	OnPhysicsCreatedDelegateHandle.Reset();
 	OnMeshChangedDelegateHandle.Reset();
 
+	// Clear out the preview scene so any subsequent editor object destruction that tries to poke into the
+	// world will not crash.
+	static_cast<FAssetEditorModeManager*>(ModeTools.Get())->SetPreviewScene(nullptr);
+	
 	UAssetViewerSettings::Get()->OnAssetViewerSettingsChanged().RemoveAll(this);
 }
 
@@ -242,21 +262,16 @@ bool FAnimationViewportClient::IsAudioMuted() const
 
 void FAnimationViewportClient::OnToggleUseAudioAttenuation()
 {
-	ConfigOption->SetUseAudioAttenuation(!ConfigOption->bUseAudioAttenuation);
-
-	UWorld* World = PreviewScene->GetWorld();
-	if(World)
-	{
-		if(FAudioDevice* AudioDevice = GetWorld()->GetAudioDeviceRaw())
-		{
-			AudioDevice->SetUseAttenuationForNonGameWorlds(ConfigOption->bUseAudioAttenuation);
-		}
-	}
+	UAudioEditorSettings* AudioConfigOption = GetMutableDefault<UAudioEditorSettings>();
+	check(AudioConfigOption);
+	AudioConfigOption->SetUseAudioAttenuation(!AudioConfigOption->IsUsingAudioAttenuation());
 }
 
 bool FAnimationViewportClient::IsUsingAudioAttenuation() const
 {
-	return ConfigOption->bUseAudioAttenuation;
+	const UAudioEditorSettings* AudioConfigOption = GetDefault<UAudioEditorSettings>();
+	check(AudioConfigOption);
+	return AudioConfigOption->IsUsingAudioAttenuation();
 }
 
 void FAnimationViewportClient::ToggleRotateCameraToFollowBone()
@@ -517,10 +532,15 @@ void FAnimationViewportClient::HandleOnSkelMeshPhysicsCreated()
 
 void FAnimationViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterface* PDI)
 {
+	TArray<UDebugSkelMeshComponent*> PreviewMeshComponents = GetPreviewScene()->GetAllPreviewMeshComponents();
+	if (!UE::Private::CanDrawPreviewComponents(PreviewMeshComponents))
+	{
+		return;
+	}
+
 	FEditorViewportClient::Draw(View, PDI);
 
 	// draw bones for all debug skeletal meshes
-	TArray<UDebugSkelMeshComponent*> PreviewMeshComponents = GetPreviewScene()->GetAllPreviewMeshComponents();
 	for (UDebugSkelMeshComponent* PreviewMeshComponent : PreviewMeshComponents)
 	{
 		const bool bValidComponent = PreviewMeshComponent != nullptr;
@@ -613,11 +633,16 @@ void FAnimationViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterf
 
 void FAnimationViewportClient::DrawCanvas( FViewport& InViewport, FSceneView& View, FCanvas& Canvas )
 {
+	TArray<UDebugSkelMeshComponent*> PreviewMeshComponents = GetPreviewScene()->GetAllPreviewMeshComponents();
+	if (!UE::Private::CanDrawPreviewComponents(PreviewMeshComponents))
+	{
+		return;
+	}
+
 	FEditorViewportClient::DrawCanvas(InViewport, View, Canvas);
 
 	UWorld* World = nullptr;
 	
-	TArray<UDebugSkelMeshComponent*> PreviewMeshComponents = GetPreviewScene()->GetAllPreviewMeshComponents();
 	for  (UDebugSkelMeshComponent* PreviewMeshComponent : PreviewMeshComponents)
 	{
 		if (!PreviewMeshComponent)
@@ -1341,9 +1366,9 @@ FVector FAnimationViewportClient::GetWidgetLocation() const
 
 FMatrix FAnimationViewportClient::GetWidgetCoordSystem() const
 {
-	const bool bIsLocal = GetWidgetCoordSystemSpace() == COORD_Local;
-
-	if( bIsLocal )
+	const ECoordSystem Space = GetWidgetCoordSystemSpace();
+	const bool bIsLocalOrParent = Space == COORD_Local || Space == COORD_Parent;
+	if( bIsLocalOrParent )
 	{
 		return ModeTools->GetCustomInputCoordinateSystem();
 	}

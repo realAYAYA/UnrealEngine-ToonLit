@@ -1,0 +1,34 @@
+{
+	"FileVersion": 1,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Studio Telemetry",
+	"Description": "Centralised plugin for Studio telemetry data",
+	"Category": "Telemetry",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "AnalyticsLog",
+			"Type": "EditorAndProgram",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "AnalyticsHorde",
+			"Type": "EditorAndProgram",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "StudioTelemetry",
+			"Type": "EditorAndProgram",
+			"LoadingPhase": "PostConfigInit"
+		}
+	]
+}

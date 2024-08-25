@@ -50,7 +50,8 @@ public:
 	};
 
 	// Iterate over each active FTimelineDebugShapes, and call callback
-	virtual void IterateDebugShapes(TFunction<void(const FTimelineDebugShapes&) > Callback) {};
+	virtual void IterateDebugShapes(TFunction<void(const FTimelineDebugShapes&) > Callback) { };
+	virtual bool MatchCategoryFilters(const FName& CategoryName, ELogVerbosity::Type Verbosity) const { return true; };
 
 protected:
 #if ENABLE_VISUAL_LOG

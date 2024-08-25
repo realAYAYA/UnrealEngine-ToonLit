@@ -59,12 +59,14 @@ namespace AssetUtils
 	 * Construct the linear per-section material list for a given LODIndex of a StaticMeshAsset
 	 * @param MaterialListOut the list of linear per-section indices into the Asset Material List
 	 * @param MaterialIndexOut the corresponding list of linear per-section indices into the Asset Material List
+	 * @param MaterialSlotNameOut the corresponding list of material slot names
 	 */
 	MODELINGCOMPONENTS_API bool GetStaticMeshLODMaterialListBySection(
 		UStaticMesh* StaticMeshAsset,
 		int32 LODIndex,
 		TArray<UMaterialInterface*>& MaterialListOut,
-		TArray<int32>& MaterialIndexOut);
+		TArray<int32>& MaterialIndexOut,
+		TArray<FName>& MaterialSlotNameOut);
 
 	/**
 	 * Generate a new unique material slot name for the given SlotMaterial and NewSlotIndex,

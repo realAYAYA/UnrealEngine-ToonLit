@@ -100,7 +100,7 @@ static inline int32 FindLast(TStringView<CharType> View, TStringView<CharType> S
 }
 
 template <typename CharType>
-static inline int32 FindFirstOfAny(TStringView<CharType> View, TConstArrayView<TStringView<CharType>> Search, ESearchCase::Type SearchCase)
+static inline int32 FindFirstOfAny(TStringView<CharType> View, TConstArrayView<TStringView<CharType>> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
 	check(Algo::NoneOf(Search, &TStringView<CharType>::IsEmpty));
 	switch (Search.Num())
@@ -108,7 +108,14 @@ static inline int32 FindFirstOfAny(TStringView<CharType> View, TConstArrayView<T
 	case 0:
 		return INDEX_NONE;
 	case 1:
-		return String::FindFirst(View, Search[0], SearchCase);
+	{
+		const int32 Index = String::FindFirst(View, Search[0], SearchCase);
+		if (Index != INDEX_NONE && OutMatchIndex)
+		{
+			*OutMatchIndex = 0;
+		}
+		return Index;
+	}
 	default:
 		if (Algo::AllOf(Search, [](const TStringView<CharType>& Pattern) { return Pattern.Len() == 1; }))
 		{
@@ -118,7 +125,7 @@ static inline int32 FindFirstOfAny(TStringView<CharType> View, TConstArrayView<T
 			{
 				SearchChars.Add(Pattern[0]);
 			}
-			return String::FindFirstOfAnyChar(View, SearchChars, SearchCase);
+			return String::FindFirstOfAnyChar(View, SearchChars, SearchCase, OutMatchIndex);
 		}
 		break;
 	}
@@ -129,8 +136,12 @@ static inline int32 FindFirstOfAny(TStringView<CharType> View, TConstArrayView<T
 	{
 		const TStringView<CharType> RemainingView(ViewBegin + ViewIndex, ViewLen - ViewIndex);
 		auto MatchPattern = [&RemainingView, SearchCase](const TStringView<CharType>& Pattern) { return RemainingView.StartsWith(Pattern, SearchCase); };
-		if (Algo::FindByPredicate(Search, MatchPattern))
+		if (const TStringView<CharType>* Match = Algo::FindByPredicate(Search, MatchPattern))
 		{
+			if (OutMatchIndex)
+			{
+				*OutMatchIndex = UE_PTRDIFF_TO_INT32(Match - Search.GetData());
+			}
 			return ViewIndex;
 		}
 	}
@@ -138,7 +149,7 @@ static inline int32 FindFirstOfAny(TStringView<CharType> View, TConstArrayView<T
 }
 
 template <typename CharType>
-static inline int32 FindLastOfAny(TStringView<CharType> View, TConstArrayView<TStringView<CharType>> Search, ESearchCase::Type SearchCase)
+static inline int32 FindLastOfAny(TStringView<CharType> View, TConstArrayView<TStringView<CharType>> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
 	check(Algo::NoneOf(Search, &TStringView<CharType>::IsEmpty));
 	switch (Search.Num())
@@ -146,7 +157,14 @@ static inline int32 FindLastOfAny(TStringView<CharType> View, TConstArrayView<TS
 	case 0:
 		return INDEX_NONE;
 	case 1:
-		return String::FindLast(View, Search[0], SearchCase);
+	{
+		const int32 Index = String::FindLast(View, Search[0], SearchCase);
+		if (Index != INDEX_NONE && OutMatchIndex)
+		{
+			*OutMatchIndex = 0;
+		}
+		return Index;
+	}
 	default:
 		if (Algo::AllOf(Search, [](const TStringView<CharType>& Pattern) { return Pattern.Len() == 1; }))
 		{
@@ -156,11 +174,10 @@ static inline int32 FindLastOfAny(TStringView<CharType> View, TConstArrayView<TS
 			{
 				SearchChars.Add(Pattern[0]);
 			}
-			return String::FindLastOfAnyChar(View, SearchChars, SearchCase);
+			return String::FindLastOfAnyChar(View, SearchChars, SearchCase, OutMatchIndex);
 		}
 		break;
 	}
-
 
 	const CharType* const ViewBegin = View.GetData();
 	const int32 ViewLen = View.Len();
@@ -172,8 +189,12 @@ static inline int32 FindLastOfAny(TStringView<CharType> View, TConstArrayView<TS
 	{
 		const TStringView<CharType> RemainingView(ViewBegin + ViewIndex, ViewLen - ViewIndex);
 		auto MatchPattern = [&RemainingView, SearchCase](const TStringView<CharType>& Pattern) { return RemainingView.StartsWith(Pattern, SearchCase); };
-		if (Algo::FindByPredicate(Search, MatchPattern))
+		if (const TStringView<CharType>* Match = Algo::FindByPredicate(Search, MatchPattern))
 		{
+			if (OutMatchIndex)
+			{
+				*OutMatchIndex = UE_PTRDIFF_TO_INT32(Match - Search.GetData());
+			}
 			return ViewIndex;
 		}
 	}
@@ -243,14 +264,21 @@ static inline int32 FindLastChar(TStringView<CharType> View, CharType Search, ES
 }
 
 template <typename CharType>
-static inline int32 FindFirstOfAnyChar(TStringView<CharType> View, TConstArrayView<CharType> Search, ESearchCase::Type SearchCase)
+static inline int32 FindFirstOfAnyChar(TStringView<CharType> View, TConstArrayView<CharType> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
 	switch (Search.Num())
 	{
 	case 0:
 		return INDEX_NONE;
 	case 1:
-		return String::FindFirstChar(View, Search[0], SearchCase);
+	{
+		const int32 Index = String::FindFirstChar(View, Search[0], SearchCase);
+		if (OutMatchIndex)
+		{
+			*OutMatchIndex = 0;
+		}
+		return Index;
+	}
 	default:
 		break;
 	}
@@ -261,8 +289,12 @@ static inline int32 FindFirstOfAnyChar(TStringView<CharType> View, TConstArrayVi
 	{
 		for (const CharType* ViewIt = ViewBegin; ViewIt < ViewEnd; ++ViewIt)
 		{
-			if (Algo::Find(Search, *ViewIt))
+			if (const CharType* Match = Algo::Find(Search, *ViewIt))
 			{
+				if (OutMatchIndex)
+				{
+					*OutMatchIndex = UE_PTRDIFF_TO_INT32(Match - Search.GetData());
+				}
 				return int32(ViewIt - ViewBegin);
 			}
 		}
@@ -278,8 +310,12 @@ static inline int32 FindFirstOfAnyChar(TStringView<CharType> View, TConstArrayVi
 		}
 		for (const CharType* ViewIt = ViewBegin; ViewIt < ViewEnd; ++ViewIt)
 		{
-			if (Algo::Find(SearchUpper, TChar<CharType>::ToUpper(*ViewIt)))
+			if (const CharType* Match = Algo::Find(SearchUpper, TChar<CharType>::ToUpper(*ViewIt)))
 			{
+				if (OutMatchIndex)
+				{
+					*OutMatchIndex = UE_PTRDIFF_TO_INT32(Match - SearchUpper.GetData());
+				}
 				return int32(ViewIt - ViewBegin);
 			}
 		}
@@ -288,14 +324,21 @@ static inline int32 FindFirstOfAnyChar(TStringView<CharType> View, TConstArrayVi
 }
 
 template <typename CharType>
-static inline int32 FindLastOfAnyChar(TStringView<CharType> View, TConstArrayView<CharType> Search, ESearchCase::Type SearchCase)
+static inline int32 FindLastOfAnyChar(TStringView<CharType> View, TConstArrayView<CharType> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
 	switch (Search.Num())
 	{
 	case 0:
 		return INDEX_NONE;
 	case 1:
-		return String::FindLastChar(View, Search[0], SearchCase);
+	{
+		const int32 Index = String::FindLastChar(View, Search[0], SearchCase);
+		if (OutMatchIndex)
+		{
+			*OutMatchIndex = 0;
+		}
+		return Index;
+	}
 	default:
 		break;
 	}
@@ -310,8 +353,12 @@ static inline int32 FindLastOfAnyChar(TStringView<CharType> View, TConstArrayVie
 	{
 		for (const CharType* ViewIt = ViewEnd - 1; ViewIt >= ViewBegin; --ViewIt)
 		{
-			if (Algo::Find(Search, *ViewIt))
+			if (const CharType* Match = Algo::Find(Search, *ViewIt))
 			{
+				if (OutMatchIndex)
+				{
+					*OutMatchIndex = UE_PTRDIFF_TO_INT32(Match - Search.GetData());
+				}
 				return int32(ViewIt - ViewBegin);
 			}
 		}
@@ -327,8 +374,12 @@ static inline int32 FindLastOfAnyChar(TStringView<CharType> View, TConstArrayVie
 		}
 		for (const CharType* ViewIt = ViewEnd - 1; ViewIt >= ViewBegin; --ViewIt)
 		{
-			if (Algo::Find(SearchUpper, TChar<CharType>::ToUpper(*ViewIt)))
+			if (const CharType* Match = Algo::Find(SearchUpper, TChar<CharType>::ToUpper(*ViewIt)))
 			{
+				if (OutMatchIndex)
+				{
+					*OutMatchIndex = UE_PTRDIFF_TO_INT32(Match - SearchUpper.GetData());
+				}
 				return int32(ViewIt - ViewBegin);
 			}
 		}
@@ -361,24 +412,34 @@ int32 FindLast(FWideStringView View, FWideStringView Search, ESearchCase::Type S
 	return Private::FindLast(View, Search, SearchCase);
 }
 
-int32 FindFirstOfAny(FUtf8StringView View, TConstArrayView<FUtf8StringView> Search, ESearchCase::Type SearchCase)
+int32 FindFirstOfAny(FAnsiStringView View, TConstArrayView<FAnsiStringView> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindFirstOfAny(View, Search, SearchCase);
+	return Private::FindFirstOfAny(View, Search, SearchCase, OutMatchIndex);
 }
 
-int32 FindFirstOfAny(FWideStringView View, TConstArrayView<FWideStringView> Search, ESearchCase::Type SearchCase)
+int32 FindFirstOfAny(FUtf8StringView View, TConstArrayView<FUtf8StringView> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindFirstOfAny(View, Search, SearchCase);
+	return Private::FindFirstOfAny(View, Search, SearchCase, OutMatchIndex);
 }
 
-int32 FindLastOfAny(FUtf8StringView View, TConstArrayView<FUtf8StringView> Search, ESearchCase::Type SearchCase)
+int32 FindFirstOfAny(FWideStringView View, TConstArrayView<FWideStringView> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindLastOfAny(View, Search, SearchCase);
+	return Private::FindFirstOfAny(View, Search, SearchCase, OutMatchIndex);
 }
 
-int32 FindLastOfAny(FWideStringView View, TConstArrayView<FWideStringView> Search, ESearchCase::Type SearchCase)
+int32 FindLastOfAny(FAnsiStringView View, TConstArrayView<FAnsiStringView> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindLastOfAny(View, Search, SearchCase);
+	return Private::FindLastOfAny(View, Search, SearchCase, OutMatchIndex);
+}
+
+int32 FindLastOfAny(FUtf8StringView View, TConstArrayView<FUtf8StringView> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
+{
+	return Private::FindLastOfAny(View, Search, SearchCase, OutMatchIndex);
+}
+
+int32 FindLastOfAny(FWideStringView View, TConstArrayView<FWideStringView> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
+{
+	return Private::FindLastOfAny(View, Search, SearchCase, OutMatchIndex);
 }
 
 int32 FindFirstChar(FUtf8StringView View, ANSICHAR Search, ESearchCase::Type SearchCase)
@@ -411,34 +472,34 @@ int32 FindLastChar(FWideStringView View, WIDECHAR Search, ESearchCase::Type Sear
 	return Private::FindLastChar(View, Search, SearchCase);
 }
 
-int32 FindFirstOfAnyChar(FUtf8StringView View, TConstArrayView<ANSICHAR> Search, ESearchCase::Type SearchCase)
+int32 FindFirstOfAnyChar(FUtf8StringView View, TConstArrayView<ANSICHAR> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindFirstOfAnyChar(View, MakeArrayView((const UTF8CHAR*)Search.GetData(), Search.Num()), SearchCase);
+	return Private::FindFirstOfAnyChar(View, MakeArrayView((const UTF8CHAR*)Search.GetData(), Search.Num()), SearchCase, OutMatchIndex);
 }
 
-int32 FindFirstOfAnyChar(FUtf8StringView View, TConstArrayView<UTF8CHAR> Search, ESearchCase::Type SearchCase)
+int32 FindFirstOfAnyChar(FUtf8StringView View, TConstArrayView<UTF8CHAR> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindFirstOfAnyChar(View, Search, SearchCase);
+	return Private::FindFirstOfAnyChar(View, Search, SearchCase, OutMatchIndex);
 }
 
-int32 FindFirstOfAnyChar(FWideStringView View, TConstArrayView<WIDECHAR> Search, ESearchCase::Type SearchCase)
+int32 FindFirstOfAnyChar(FWideStringView View, TConstArrayView<WIDECHAR> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindFirstOfAnyChar(View, Search, SearchCase);
+	return Private::FindFirstOfAnyChar(View, Search, SearchCase, OutMatchIndex);
 }
 
-int32 FindLastOfAnyChar(FUtf8StringView View, TConstArrayView<ANSICHAR> Search, ESearchCase::Type SearchCase)
+int32 FindLastOfAnyChar(FUtf8StringView View, TConstArrayView<ANSICHAR> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindLastOfAnyChar(View, MakeArrayView((const UTF8CHAR*)Search.GetData(), Search.Num()), SearchCase);
+	return Private::FindLastOfAnyChar(View, MakeArrayView((const UTF8CHAR*)Search.GetData(), Search.Num()), SearchCase, OutMatchIndex);
 }
 
-int32 FindLastOfAnyChar(FUtf8StringView View, TConstArrayView<UTF8CHAR> Search, ESearchCase::Type SearchCase)
+int32 FindLastOfAnyChar(FUtf8StringView View, TConstArrayView<UTF8CHAR> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindLastOfAnyChar(View, Search, SearchCase);
+	return Private::FindLastOfAnyChar(View, Search, SearchCase, OutMatchIndex);
 }
 
-int32 FindLastOfAnyChar(FWideStringView View, TConstArrayView<WIDECHAR> Search, ESearchCase::Type SearchCase)
+int32 FindLastOfAnyChar(FWideStringView View, TConstArrayView<WIDECHAR> Search, ESearchCase::Type SearchCase, int32* OutMatchIndex)
 {
-	return Private::FindLastOfAnyChar(View, Search, SearchCase);
+	return Private::FindLastOfAnyChar(View, Search, SearchCase, OutMatchIndex);
 }
 
 } // UE::String

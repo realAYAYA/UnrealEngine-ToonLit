@@ -46,7 +46,7 @@ namespace RewindDebugger
 
 		// Clear previous data
 		TArray<TRange<double>> & Segments = EnabledSegments->Segments;
-		Segments.SetNum(0, false);
+		Segments.SetNum(0, EAllowShrinking::No);
 
 		bool bPrevValue = false;
 		double SegmentStartTime = 0.0;

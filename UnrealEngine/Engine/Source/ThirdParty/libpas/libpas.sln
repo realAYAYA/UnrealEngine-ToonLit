@@ -1,0 +1,51 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.32126.315
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libpas", "libpas.vcxproj", "{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "test_pas", "test_pas.vcxproj", "{3AE7ACE1-5868-490A-AEA5-0D62314E5238}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		DebugUE|x64 = DebugUE|x64
+		Release|x64 = Release|x64
+		ReleaseMSVC|x64 = ReleaseMSVC|x64
+		ReleaseTesting|x64 = ReleaseTesting|x64
+		ReleaseUE|x64 = ReleaseUE|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.Debug|x64.ActiveCfg = Debug|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.Debug|x64.Build.0 = Debug|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.DebugUE|x64.ActiveCfg = DebugUE|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.DebugUE|x64.Build.0 = DebugUE|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.Release|x64.ActiveCfg = Release|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.Release|x64.Build.0 = Release|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.ReleaseMSVC|x64.ActiveCfg = ReleaseMSVC|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.ReleaseMSVC|x64.Build.0 = ReleaseMSVC|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.ReleaseTesting|x64.ActiveCfg = ReleaseTesting|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.ReleaseTesting|x64.Build.0 = ReleaseTesting|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.ReleaseUE|x64.ActiveCfg = ReleaseUE|x64
+		{BBBDCE0C-DC79-453C-8E05-A9A2FC02F597}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.Debug|x64.ActiveCfg = Debug|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.Debug|x64.Build.0 = Debug|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.DebugUE|x64.ActiveCfg = DebugUE|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.DebugUE|x64.Build.0 = DebugUE|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.Release|x64.ActiveCfg = Release|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.Release|x64.Build.0 = Release|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.ReleaseMSVC|x64.ActiveCfg = ReleaseMSVC|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.ReleaseMSVC|x64.Build.0 = ReleaseMSVC|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.ReleaseTesting|x64.ActiveCfg = ReleaseTesting|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.ReleaseTesting|x64.Build.0 = ReleaseTesting|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.ReleaseUE|x64.ActiveCfg = ReleaseUE|x64
+		{3AE7ACE1-5868-490A-AEA5-0D62314E5238}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {47EDE321-D08B-4788-90DA-956BAB4ECD9D}
+	EndGlobalSection
+EndGlobal

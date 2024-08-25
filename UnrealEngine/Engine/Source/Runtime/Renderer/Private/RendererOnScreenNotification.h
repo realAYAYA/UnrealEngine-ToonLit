@@ -60,6 +60,7 @@ public:
 	void Broadcast()
 	{
 		// Broadcast using temporary container to reduce any lock contention.
+		FCoreDelegates::FSeverityMessageMap MessagesTmp;
 		MessagesTmp.Empty(Messages.Num());
 		
 		{
@@ -95,5 +96,4 @@ private:
 	TMulticastDelegate<void(FCoreDelegates::FSeverityMessageMap&)> ProxyDelegate;
 	FDelegateHandle BaseDelegateHandle;
 	FCoreDelegates::FSeverityMessageMap Messages;
-	FCoreDelegates::FSeverityMessageMap MessagesTmp;
 };

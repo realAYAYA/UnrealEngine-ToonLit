@@ -76,11 +76,11 @@ public:
 		const FEmbreeScene& InEmbreeScene,
 		const TArray<FVector3f>* InSampleDirections,
 		float InLocalSpaceTraceDistance,
-		FBox InVolumeBounds,
+		FBox3f InVolumeBounds,
 		float InLocalToVolumeScale,
-		FVector2D InDistanceFieldToVolumeScaleBias,
-		FIntVector InBrickCoordinate,
-		FIntVector InIndirectionSize,
+		FVector2f InDistanceFieldToVolumeScaleBias,
+		FInt32Vector InBrickCoordinate,
+		FInt32Vector InIndirectionSize,
 		bool bInUsePointQuery)
 		:
 		EmbreeScene(InEmbreeScene),
@@ -252,8 +252,8 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 	const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 	const FStaticMeshLODResources& LODModel,
 	class FQueuedThreadPool& ThreadPool,
-	const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
-	const FBoxSphereBounds& Bounds,
+	const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
+	const FBoxSphereBounds3f& Bounds,
 	float DistanceFieldResolutionScale,
 	bool bGenerateAsIfTwoSided,
 	FDistanceFieldVolumeData& OutData)
@@ -263,13 +263,15 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 	if (DistanceFieldResolutionScale > 0)
 	{
 		const double StartTime = FPlatformTime::Seconds();
+		const bool bIncludeTranslucentTriangles = false;
 
 		FEmbreeScene EmbreeScene;
 		MeshRepresentation::SetupEmbreeScene(MeshName,
 			SourceMeshData,
 			LODModel,
-			MaterialBlendModes,
+			SectionData,
 			bGenerateAsIfTwoSided,
+			bIncludeTranslucentTriangles,
 			EmbreeScene);
 
 		check(EmbreeScene.bUseEmbree);
@@ -309,12 +311,12 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 		const float VoxelDensity = CVarDensity->GetValueOnAnyThread();
 
 		const float NumVoxelsPerLocalSpaceUnit = VoxelDensity * DistanceFieldResolutionScale;
-		FBox LocalSpaceMeshBounds(Bounds.GetBox());
+		FBox3f LocalSpaceMeshBounds(Bounds.GetBox());
 
 		// Make sure the mesh bounding box has positive extents to handle planes
 		{
-			FVector MeshBoundsCenter = LocalSpaceMeshBounds.GetCenter();
-			FVector MeshBoundsExtent = FVector::Max(LocalSpaceMeshBounds.GetExtent(), FVector(1.0f, 1.0f, 1.0f));
+			FVector3f MeshBoundsCenter = LocalSpaceMeshBounds.GetCenter();
+			FVector3f MeshBoundsExtent = FVector3f::Max(LocalSpaceMeshBounds.GetExtent(), FVector3f::OneVector);
 			LocalSpaceMeshBounds.Min = MeshBoundsCenter - MeshBoundsExtent;
 			LocalSpaceMeshBounds.Max = MeshBoundsCenter + MeshBoundsExtent;
 		}
@@ -324,22 +326,22 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 		// Only expand for two sided meshes as this adds significant Mesh SDF tracing cost
 		if (EmbreeScene.bMostlyTwoSided)
 		{
-			const FVector DesiredDimensions = FVector(LocalSpaceMeshBounds.GetSize() * FVector(NumVoxelsPerLocalSpaceUnit / (float)DistanceField::UniqueDataBrickSize));
-			const FIntVector Mip0IndirectionDimensions = FIntVector(
+			const FVector3f DesiredDimensions = LocalSpaceMeshBounds.GetSize() * FVector3f(NumVoxelsPerLocalSpaceUnit / (float)DistanceField::UniqueDataBrickSize);
+			const FInt32Vector Mip0IndirectionDimensions = FInt32Vector(
 				FMath::Clamp(FMath::RoundToInt(DesiredDimensions.X), 1, MaxNumBlocksOneDim),
 				FMath::Clamp(FMath::RoundToInt(DesiredDimensions.Y), 1, MaxNumBlocksOneDim),
 				FMath::Clamp(FMath::RoundToInt(DesiredDimensions.Z), 1, MaxNumBlocksOneDim));
 
 			const float CentralDifferencingExpandInVoxels = .25f;
-			const FVector TexelObjectSpaceSize = LocalSpaceMeshBounds.GetSize() / FVector(Mip0IndirectionDimensions * DistanceField::UniqueDataBrickSize - FIntVector(2 * CentralDifferencingExpandInVoxels));
+			const FVector3f TexelObjectSpaceSize = LocalSpaceMeshBounds.GetSize() / FVector3f(Mip0IndirectionDimensions * DistanceField::UniqueDataBrickSize - FInt32Vector(2 * CentralDifferencingExpandInVoxels));
 			LocalSpaceMeshBounds = LocalSpaceMeshBounds.ExpandBy(TexelObjectSpaceSize);
 		}
 
 		// The tracing shader uses a Volume space that is normalized by the maximum extent, to keep Volume space within [-1, 1], we must match that behavior when encoding
 		const float LocalToVolumeScale = 1.0f / LocalSpaceMeshBounds.GetExtent().GetMax();
 
-		const FVector DesiredDimensions = FVector(LocalSpaceMeshBounds.GetSize() * FVector(NumVoxelsPerLocalSpaceUnit / (float)DistanceField::UniqueDataBrickSize));
-		const FIntVector Mip0IndirectionDimensions = FIntVector(
+		const FVector3f DesiredDimensions = FVector3f(LocalSpaceMeshBounds.GetSize() * NumVoxelsPerLocalSpaceUnit / (float)DistanceField::UniqueDataBrickSize);
+		const FInt32Vector Mip0IndirectionDimensions = FInt32Vector(
 			FMath::Clamp(FMath::RoundToInt(DesiredDimensions.X), 1, MaxNumBlocksOneDim),
 			FMath::Clamp(FMath::RoundToInt(DesiredDimensions.Y), 1, MaxNumBlocksOneDim),
 			FMath::Clamp(FMath::RoundToInt(DesiredDimensions.Z), 1, MaxNumBlocksOneDim));
@@ -348,22 +350,22 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 
 		for (int32 MipIndex = 0; MipIndex < DistanceField::NumMips; MipIndex++)
 		{
-			const FIntVector IndirectionDimensions = FIntVector(
+			const FInt32Vector IndirectionDimensions = FInt32Vector(
 				FMath::DivideAndRoundUp(Mip0IndirectionDimensions.X, 1 << MipIndex),
 				FMath::DivideAndRoundUp(Mip0IndirectionDimensions.Y, 1 << MipIndex),
 				FMath::DivideAndRoundUp(Mip0IndirectionDimensions.Z, 1 << MipIndex));
 
 			// Expand to guarantee one voxel border for gradient reconstruction using bilinear filtering
-			const FVector TexelObjectSpaceSize = LocalSpaceMeshBounds.GetSize() / FVector(IndirectionDimensions * DistanceField::UniqueDataBrickSize - FIntVector(2 * DistanceField::MeshDistanceFieldObjectBorder));
-			const FBox DistanceFieldVolumeBounds = LocalSpaceMeshBounds.ExpandBy(TexelObjectSpaceSize);
+			const FVector3f TexelObjectSpaceSize = LocalSpaceMeshBounds.GetSize() / FVector3f(IndirectionDimensions * DistanceField::UniqueDataBrickSize - FIntVector(2 * DistanceField::MeshDistanceFieldObjectBorder));
+			const FBox3f DistanceFieldVolumeBounds = LocalSpaceMeshBounds.ExpandBy(TexelObjectSpaceSize);
 
-			const FVector IndirectionVoxelSize = DistanceFieldVolumeBounds.GetSize() / FVector(IndirectionDimensions);
+			const FVector3f IndirectionVoxelSize = DistanceFieldVolumeBounds.GetSize() / FVector3f(IndirectionDimensions);
 			const float IndirectionVoxelRadius = IndirectionVoxelSize.Size();
 
-			const FVector VolumeSpaceDistanceFieldVoxelSize = IndirectionVoxelSize * LocalToVolumeScale / FVector(DistanceField::UniqueDataBrickSize);
+			const FVector3f VolumeSpaceDistanceFieldVoxelSize = IndirectionVoxelSize * LocalToVolumeScale / FVector3f(DistanceField::UniqueDataBrickSize);
 			const float MaxDistanceForEncoding = VolumeSpaceDistanceFieldVoxelSize.Size() * DistanceField::BandSizeInVoxels;
 			const float LocalSpaceTraceDistance = MaxDistanceForEncoding / LocalToVolumeScale;
-			const FVector2D DistanceFieldToVolumeScaleBias(2.0f * MaxDistanceForEncoding, -MaxDistanceForEncoding);
+			const FVector2f DistanceFieldToVolumeScaleBias(2.0f * MaxDistanceForEncoding, -MaxDistanceForEncoding);
 
 			TArray<FSparseMeshDistanceFieldAsyncTask> AsyncTasks;
 			AsyncTasks.Reserve(IndirectionDimensions.X * IndirectionDimensions.Y * IndirectionDimensions.Z / 8);
@@ -381,7 +383,7 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 							DistanceFieldVolumeBounds,
 							LocalToVolumeScale,
 							DistanceFieldToVolumeScaleBias,
-							FIntVector(XIndex, YIndex, ZIndex),
+							FInt32Vector(XIndex, YIndex, ZIndex),
 							IndirectionDimensions,
 							bUsePointQuery);
 					}
@@ -483,10 +485,10 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 			OutMip.NumDistanceFieldBricks = NumBricks;
 
 			// Account for the border voxels we added
-			const FVector VirtualUVMin = FVector(DistanceField::MeshDistanceFieldObjectBorder) / FVector(IndirectionDimensions * DistanceField::UniqueDataBrickSize);
-			const FVector VirtualUVSize = FVector(IndirectionDimensions * DistanceField::UniqueDataBrickSize - FIntVector(2 * DistanceField::MeshDistanceFieldObjectBorder)) / FVector(IndirectionDimensions * DistanceField::UniqueDataBrickSize);
+			const FVector3f VirtualUVMin = FVector3f(DistanceField::MeshDistanceFieldObjectBorder) / FVector3f(IndirectionDimensions * DistanceField::UniqueDataBrickSize);
+			const FVector3f VirtualUVSize = FVector3f(IndirectionDimensions * DistanceField::UniqueDataBrickSize - FInt32Vector(2 * DistanceField::MeshDistanceFieldObjectBorder)) / FVector3f(IndirectionDimensions * DistanceField::UniqueDataBrickSize);
 		
-			const FVector VolumePositionExtent = LocalSpaceMeshBounds.GetExtent() * LocalToVolumeScale;
+			const FVector3f VolumePositionExtent = LocalSpaceMeshBounds.GetExtent() * LocalToVolumeScale;
 
 			// [-VolumePositionExtent, VolumePositionExtent] -> [VirtualUVMin, VirtualUVMin + VirtualUVSize]
 			OutMip.VolumeToVirtualUVScale = VirtualUVSize / (2 * VolumePositionExtent);
@@ -529,7 +531,7 @@ void FMeshUtilities::GenerateSignedDistanceFieldVolumeData(
 	const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 	const FStaticMeshLODResources& LODModel,
 	class FQueuedThreadPool& ThreadPool,
-	const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
+	const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
 	const FBoxSphereBounds& Bounds,
 	float DistanceFieldResolutionScale,
 	bool bGenerateAsIfTwoSided,

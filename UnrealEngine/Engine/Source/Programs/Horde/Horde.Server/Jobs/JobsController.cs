@@ -6,13 +6,19 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Artifacts;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using Horde.Server.Acls;
 using Horde.Server.Agents;
+using Horde.Server.Artifacts;
 using Horde.Server.Jobs.Artifacts;
 using Horde.Server.Jobs.Graphs;
 using Horde.Server.Jobs.Templates;
 using Horde.Server.Jobs.Timing;
-using Horde.Server.Logs;
 using Horde.Server.Notifications;
 using Horde.Server.Perforce;
 using Horde.Server.Server;
@@ -22,7 +28,6 @@ using Horde.Server.Utilities;
 using HordeCommon;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 
@@ -39,46 +44,45 @@ namespace Horde.Server.Jobs
 		private readonly IGraphCollection _graphs;
 		private readonly ICommitService _commitService;
 		private readonly IPerforceService _perforce;
-		private readonly IStreamCollection _streamCollection;
 		private readonly JobService _jobService;
 		private readonly ITemplateCollection _templateCollection;
-		private readonly IArtifactCollectionV1 _artifactCollection;
+		private readonly IArtifactCollection _artifactCollection;
+		private readonly IArtifactCollectionV1 _artifactCollectionV1;
 		private readonly IUserCollection _userCollection;
 		private readonly INotificationService _notificationService;
 		private readonly AgentService _agentService;
 		private readonly IOptionsSnapshot<GlobalConfig> _globalConfig;
-		private readonly ILogger<JobsController> _logger;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public JobsController(IGraphCollection graphs, ICommitService commitService, IPerforceService perforce, IStreamCollection streamCollection, JobService jobService, ITemplateCollection templateCollection, IArtifactCollectionV1 artifactCollection, IUserCollection userCollection, INotificationService notificationService, AgentService agentService, IOptionsSnapshot<GlobalConfig> globalConfig, ILogger<JobsController> logger)
+		public JobsController(IGraphCollection graphs, ICommitService commitService, IPerforceService perforce, JobService jobService, ITemplateCollection templateCollection, IArtifactCollection artifactCollection, IArtifactCollectionV1 artifactCollectionV1, IUserCollection userCollection, INotificationService notificationService, AgentService agentService, IOptionsSnapshot<GlobalConfig> globalConfig)
 		{
 			_graphs = graphs;
 			_commitService = commitService;
 			_perforce = perforce;
-			_streamCollection = streamCollection;
 			_jobService = jobService;
 			_templateCollection = templateCollection;
 			_artifactCollection = artifactCollection;
+			_artifactCollectionV1 = artifactCollectionV1;
 			_userCollection = userCollection;
 			_notificationService = notificationService;
 			_agentService = agentService;
 			_globalConfig = globalConfig;
-			_logger = logger;
 		}
 
 		/// <summary>
 		/// Creates a new job
 		/// </summary>
 		/// <param name="create">Properties of the new job</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Id of the new job</returns>
 		[HttpPost]
 		[Route("/api/v1/jobs")]
-		public async Task<ActionResult<CreateJobResponse>> CreateJobAsync([FromBody] CreateJobRequest create)
+		public async Task<ActionResult<CreateJobResponse>> CreateJobAsync([FromBody] CreateJobRequest create, CancellationToken cancellationToken = default)
 		{
 			StreamConfig? streamConfig;
-			if (!_globalConfig.Value.TryGetStream(new StreamId(create.StreamId), out streamConfig))
+			if (!_globalConfig.Value.TryGetStream(create.StreamId, out streamConfig))
 			{
 				return NotFound(create.StreamId);
 			}
@@ -161,7 +165,7 @@ namespace Horde.Server.Jobs
 			Priority priority = create.Priority ?? template.Priority ?? Priority.Normal;
 
 			// New groups for the job
-			IGraph graph = await _graphs.AddAsync(template, streamConfig.InitialAgentType);
+			IGraph graph = await _graphs.AddAsync(template, streamConfig.InitialAgentType, cancellationToken);
 
 			// Get the commits for this stream
 			ICommitCollection commits = _commitService.GetCollection(streamConfig);
@@ -174,7 +178,7 @@ namespace Horde.Server.Jobs
 			int codeChange = lastCodeCommit?.Number ?? change;
 
 			// New properties for the job
-			List<string> arguments = create.Arguments ?? template.GetDefaultArguments();
+			List<string> arguments = create.Arguments ?? template.GetDefaultArguments(false);
 
 			bool? updateIssues = null;
 			if (template.UpdateIssues)
@@ -196,6 +200,7 @@ namespace Horde.Server.Jobs
 			options.UpdateIssues = updateIssues;
 			options.Claims.AddRange(User.Claims.Select(x => new AclClaimConfig(x)));
 			options.Arguments.AddRange(arguments);
+			options.JobOptions ??= create.JobOptions;
 
 			foreach ((string key, string value) in environment)
 			{
@@ -203,8 +208,8 @@ namespace Horde.Server.Jobs
 			}
 
 			// Create the job
-			IJob job = await _jobService.CreateJobAsync(null, streamConfig, templateRefId, template.Hash, graph, name, change, codeChange, options);
-			await UpdateNotificationsAsync(job.Id, new UpdateNotificationsRequest { Slack = true });
+			IJob job = await _jobService.CreateJobAsync(null, streamConfig, templateRefId, template.Hash, graph, name, change, codeChange, options, cancellationToken);
+			await UpdateNotificationsAsync(job.Id, new UpdateNotificationsRequest { Slack = true }, cancellationToken);
 			return new CreateJobResponse(job.Id.ToString());
 		}
 
@@ -240,12 +245,13 @@ namespace Horde.Server.Jobs
 		/// Deletes a specific job.
 		/// </summary>
 		/// <param name="jobId">Id of the job to delete</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
 		[HttpDelete]
 		[Route("/api/v1/jobs/{jobId}")]
-		public async Task<ActionResult> DeleteJobAsync(JobId jobId)
+		public async Task<ActionResult> DeleteJobAsync(JobId jobId, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -254,7 +260,7 @@ namespace Horde.Server.Jobs
 			{
 				return Forbid(JobAclAction.DeleteJob, jobId);
 			}
-			if (!await _jobService.DeleteJobAsync(job))
+			if (!await _jobService.DeleteJobAsync(job, cancellationToken))
 			{
 				return NotFound(jobId);
 			}
@@ -313,12 +319,13 @@ namespace Horde.Server.Jobs
 		/// </summary>
 		/// <param name="jobId">Id of the job to find</param>
 		/// <param name="request">The notification request</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested job</returns>
 		[HttpPut]
 		[Route("/api/v1/jobs/{jobId}/notifications")]
-		public async Task<ActionResult> UpdateNotificationsAsync(JobId jobId, [FromBody] UpdateNotificationsRequest request)
+		public async Task<ActionResult> UpdateNotificationsAsync(JobId jobId, [FromBody] UpdateNotificationsRequest request, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -336,13 +343,13 @@ namespace Horde.Server.Jobs
 
 			ObjectId triggerId = job.NotificationTriggerId ?? ObjectId.GenerateNewId();
 
-			job = await _jobService.UpdateJobAsync(job, null, null, null, null, triggerId, null, null);
+			job = await _jobService.UpdateJobAsync(job, null, null, null, null, triggerId, null, null, cancellationToken: cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
 			}
 
-			await _notificationService.UpdateSubscriptionsAsync(triggerId, User, request.Email, request.Slack);
+			await _notificationService.UpdateSubscriptionsAsync(triggerId, User, request.Email, request.Slack, cancellationToken);
 			return Ok();
 		}
 
@@ -350,12 +357,13 @@ namespace Horde.Server.Jobs
 		/// Gets information about a specific job.
 		/// </summary>
 		/// <param name="jobId">Id of the job to find</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested job</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}/notifications")]
-		public async Task<ActionResult<GetNotificationResponse>> GetNotificationsAsync(JobId jobId)
+		public async Task<ActionResult<GetNotificationResponse>> GetNotificationsAsync(JobId jobId, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -378,7 +386,7 @@ namespace Horde.Server.Jobs
 			}
 			else
 			{
-				subscription = await _notificationService.GetSubscriptionsAsync(job.NotificationTriggerId.Value, User);
+				subscription = await _notificationService.GetSubscriptionsAsync(job.NotificationTriggerId.Value, User, cancellationToken);
 			}
 			return new GetNotificationResponse(subscription);
 		}
@@ -389,13 +397,14 @@ namespace Horde.Server.Jobs
 		/// <param name="jobId">Id of the job to find</param>
 		/// <param name="modifiedAfter">If specified, returns an empty response unless the job's update time is equal to or less than the given value</param>
 		/// <param name="filter">Filter for the fields to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested job</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}")]
 		[ProducesResponseType(typeof(GetJobResponse), 200)]
-		public async Task<ActionResult<object>> GetJobAsync(JobId jobId, [FromQuery] DateTimeOffset? modifiedAfter = null, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<object>> GetJobAsync(JobId jobId, [FromQuery] DateTimeOffset? modifiedAfter = null, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -415,9 +424,9 @@ namespace Horde.Server.Jobs
 				return new Dictionary<string, object>();
 			}
 
-			IGraph graph = await _jobService.GetGraphAsync(job);
+			IGraph graph = await _jobService.GetGraphAsync(job, cancellationToken);
 			bool includeCosts = streamConfig.Authorize(ServerAclAction.ViewCosts, User);
-			return await CreateJobResponseAsync(job, graph, includeCosts, filter);
+			return await CreateJobResponseAsync(job, graph, includeCosts, filter, cancellationToken);
 		}
 
 		/// <summary>
@@ -427,16 +436,17 @@ namespace Horde.Server.Jobs
 		/// <param name="graph">The graph for this job</param>
 		/// <param name="includeCosts">Whether to include costs in the response</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Object containing the requested properties</returns>
-		async Task<object> CreateJobResponseAsync(IJob job, IGraph graph, bool includeCosts, PropertyFilter? filter)
+		async Task<object> CreateJobResponseAsync(IJob job, IGraph graph, bool includeCosts, PropertyFilter? filter, CancellationToken cancellationToken)
 		{
 			if (filter == null)
 			{
-				return await CreateJobResponseAsync(job, graph, true, true, includeCosts);
+				return await CreateJobResponseAsync(job, graph, true, true, includeCosts, true, cancellationToken);
 			}
 			else
 			{
-				return filter.ApplyTo(await CreateJobResponseAsync(job, graph, filter.Includes(nameof(GetJobResponse.Batches)), filter.Includes(nameof(GetJobResponse.Labels)) || filter.Includes(nameof(GetJobResponse.DefaultLabel)), includeCosts));
+				return filter.ApplyTo(await CreateJobResponseAsync(job, graph, filter.Includes(nameof(GetJobResponse.Batches)), filter.Includes(nameof(GetJobResponse.Labels)) || filter.Includes(nameof(GetJobResponse.DefaultLabel)), includeCosts, filter.Includes(nameof(GetJobResponse.Artifacts)), cancellationToken));
 			}
 		}
 
@@ -448,19 +458,21 @@ namespace Horde.Server.Jobs
 		/// <param name="includeBatches">Whether to include the job batches in the response</param>
 		/// <param name="includeLabels">Whether to include the job aggregates in the response</param>
 		/// <param name="includeCosts">Whether to include costs of running particular agents</param>
+		/// <param name="includeArtifacts">Whether to include artifacts in the response</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The response object</returns>
-		async ValueTask<GetJobResponse> CreateJobResponseAsync(IJob job, IGraph graph, bool includeBatches, bool includeLabels, bool includeCosts)
+		async ValueTask<GetJobResponse> CreateJobResponseAsync(IJob job, IGraph graph, bool includeBatches, bool includeLabels, bool includeCosts, bool includeArtifacts, CancellationToken cancellationToken)
 		{
 			GetThinUserInfoResponse? startedByUserInfo = null;
 			if (job.StartedByUserId != null)
 			{
-				startedByUserInfo = new GetThinUserInfoResponse(await _userCollection.GetCachedUserAsync(job.StartedByUserId.Value));
+				startedByUserInfo = (await _userCollection.GetCachedUserAsync(job.StartedByUserId.Value, cancellationToken))?.ToThinApiResponse();
 			}
 
 			GetThinUserInfoResponse? abortedByUserInfo = null;
 			if (job.AbortedByUserId != null)
 			{
-				abortedByUserInfo = new GetThinUserInfoResponse(await _userCollection.GetCachedUserAsync(job.AbortedByUserId.Value));
+				abortedByUserInfo = (await _userCollection.GetCachedUserAsync(job.AbortedByUserId.Value, cancellationToken))?.ToThinApiResponse();
 			}
 
 			GetJobResponse response = new GetJobResponse(job, startedByUserInfo, abortedByUserInfo);
@@ -471,7 +483,7 @@ namespace Horde.Server.Jobs
 					response.Batches = new List<GetBatchResponse>();
 					foreach (IJobStepBatch batch in job.Batches)
 					{
-						response.Batches.Add(await CreateBatchResponseAsync(batch, includeCosts));
+						response.Batches.Add(await CreateBatchResponseAsync(batch, includeCosts, cancellationToken));
 					}
 				}
 				if (includeLabels)
@@ -480,7 +492,59 @@ namespace Horde.Server.Jobs
 					response.DefaultLabel = job.GetLabelStateResponses(graph, response.Labels);
 				}
 			}
+			if (includeArtifacts)
+			{
+				response.Artifacts = new List<GetJobArtifactResponse>();
+
+				HashSet<(ArtifactName, JobStepId)> addedArtifacts = new HashSet<(ArtifactName, JobStepId)>();
+
+				string artifactKey = $"job:{job.Id}";
+				string artifactStepKeyPrefix = $"job:{job.Id}/step:";
+				await foreach (IArtifact artifact in _artifactCollection.FindAsync(keys: new[] { artifactKey }, cancellationToken: cancellationToken))
+				{
+					if (IncludeArtifactInResponse(artifact))
+					{
+						string? stepKey = artifact.Keys.FirstOrDefault(x => x.StartsWith(artifactStepKeyPrefix, StringComparison.Ordinal));
+						if (stepKey != null && JobStepId.TryParse(stepKey.Substring(artifactStepKeyPrefix.Length), out JobStepId jobStepId))
+						{
+							response.Artifacts.Add(new GetJobArtifactResponse(artifact.Id, artifact.Name, artifact.Type, artifact.Description, artifact.Keys.ToList(), jobStepId));
+							addedArtifacts.Add((artifact.Name, jobStepId));
+						}
+					}
+				}
+
+				Dictionary<string, IGraphArtifact> outputNameToArtifact = new Dictionary<string, IGraphArtifact>(StringComparer.OrdinalIgnoreCase);
+				foreach (IGraphArtifact artifact in graph.Artifacts)
+				{
+					outputNameToArtifact[artifact.OutputName] = artifact;
+				}
+
+				foreach (IJobStepBatch batch in job.Batches)
+				{
+					INodeGroup group = graph.Groups[batch.GroupIdx];
+					foreach (IJobStep step in batch.Steps)
+					{
+						INode node = group.Nodes[step.NodeIdx];
+						foreach (string outputName in node.OutputNames)
+						{
+							IGraphArtifact? graphArtifact;
+							if (outputNameToArtifact.TryGetValue(outputName, out graphArtifact) && !addedArtifacts.Contains((graphArtifact.Name, step.Id)))
+							{
+								response.Artifacts.Add(new GetJobArtifactResponse(null, graphArtifact.Name, graphArtifact.Type, graphArtifact.Description, graphArtifact.Keys.ToList(), step.Id));
+							}
+						}
+					}
+				}
+			}
 			return response;
+		}
+
+		static bool IncludeArtifactInResponse(IArtifact artifact)
+		{
+			return artifact.Type != ArtifactType.StepOutput
+				&& artifact.Type != ArtifactType.StepSaved
+				&& artifact.Type != ArtifactType.StepTrace
+				&& artifact.Type != ArtifactType.StepTestData;
 		}
 
 		/// <summary>
@@ -488,19 +552,20 @@ namespace Horde.Server.Jobs
 		/// </summary>
 		/// <param name="batch"></param>
 		/// <param name="includeCosts"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		async ValueTask<GetBatchResponse> CreateBatchResponseAsync(IJobStepBatch batch, bool includeCosts)
+		async ValueTask<GetBatchResponse> CreateBatchResponseAsync(IJobStepBatch batch, bool includeCosts, CancellationToken cancellationToken)
 		{
 			List<GetStepResponse> steps = new List<GetStepResponse>();
 			foreach (IJobStep step in batch.Steps)
 			{
-				steps.Add(await CreateStepResponseAsync(step));
+				steps.Add(await CreateStepResponseAsync(step, cancellationToken));
 			}
 
 			double? agentRate = null;
 			if (batch.AgentId != null && includeCosts)
 			{
-				agentRate = await _agentService.GetRateAsync(batch.AgentId.Value);
+				agentRate = await _agentService.GetRateAsync(batch.AgentId.Value, cancellationToken);
 			}
 
 			return new GetBatchResponse(batch, steps, agentRate);
@@ -510,19 +575,20 @@ namespace Horde.Server.Jobs
 		/// Get the response object for a step
 		/// </summary>
 		/// <param name="step"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		async ValueTask<GetStepResponse> CreateStepResponseAsync(IJobStep step)
+		async ValueTask<GetStepResponse> CreateStepResponseAsync(IJobStep step, CancellationToken cancellationToken)
 		{
 			GetThinUserInfoResponse? abortedByUserInfo = null;
 			if (step.AbortedByUserId != null)
 			{
-				abortedByUserInfo = new GetThinUserInfoResponse(await _userCollection.GetCachedUserAsync(step.AbortedByUserId.Value));
+				abortedByUserInfo = (await _userCollection.GetCachedUserAsync(step.AbortedByUserId.Value, cancellationToken))?.ToThinApiResponse();
 			}
 
 			GetThinUserInfoResponse? retriedByUserInfo = null;
 			if (step.RetriedByUserId != null)
 			{
-				retriedByUserInfo = new GetThinUserInfoResponse(await _userCollection.GetCachedUserAsync(step.RetriedByUserId.Value));
+				retriedByUserInfo = (await _userCollection.GetCachedUserAsync(step.RetriedByUserId.Value, cancellationToken))?.ToThinApiResponse();
 			}
 
 			return new GetStepResponse(step, abortedByUserInfo, retriedByUserInfo);
@@ -564,13 +630,14 @@ namespace Horde.Server.Jobs
 		/// </summary>
 		/// <param name="jobId">Id of the job to find</param>
 		/// <param name="filter">Filter for the fields to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested job</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}/timing")]
 		[ProducesResponseType(typeof(GetJobTimingResponse), 200)]
-		public async Task<ActionResult<object>> GetJobTimingAsync(JobId jobId, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<object>> GetJobTimingAsync(JobId jobId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -586,12 +653,12 @@ namespace Horde.Server.Jobs
 				return Forbid(JobAclAction.ViewJob, jobId);
 			}
 
-			IJobTiming jobTiming = await _jobService.GetJobTimingAsync(job);
-			IGraph graph = await _jobService.GetGraphAsync(job);
-			return PropertyFilter.Apply(await CreateJobTimingResponse(job, graph, jobTiming), filter);
+			IJobTiming jobTiming = await _jobService.GetJobTimingAsync(job, cancellationToken);
+			IGraph graph = await _jobService.GetGraphAsync(job, cancellationToken);
+			return PropertyFilter.Apply(await CreateJobTimingResponseAsync(job, graph, jobTiming, cancellationToken: cancellationToken), filter);
 		}
 
-		private async Task<GetJobTimingResponse> CreateJobTimingResponse(IJob job, IGraph graph, IJobTiming jobTiming, bool includeJobResponse = false)
+		private async Task<GetJobTimingResponse> CreateJobTimingResponseAsync(IJob job, IGraph graph, IJobTiming jobTiming, bool includeJobResponse = false, CancellationToken cancellationToken = default)
 		{
 			Dictionary<INode, TimingInfo> nodeToTimingInfo = job.GetTimingInfo(graph, jobTiming);
 
@@ -615,12 +682,12 @@ namespace Horde.Server.Jobs
 			GetJobResponse? jobResponse = null;
 			if (includeJobResponse)
 			{
-				jobResponse = await CreateJobResponseAsync(job, graph, true, true, true);
+				jobResponse = await CreateJobResponseAsync(job, graph, true, true, true, true, cancellationToken);
 			}
 
 			return new GetJobTimingResponse(jobResponse, steps, labels);
 		}
-		
+
 		/// <summary>
 		/// Find timing information about the graph for multiple jobs
 		/// </summary>
@@ -628,6 +695,7 @@ namespace Horde.Server.Jobs
 		/// <param name="templates">List of templates to find</param>
 		/// <param name="filter">Filter for the fields to return</param>
 		/// <param name="count">Number of results to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Job timings for each job ID</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/timing")]
@@ -636,7 +704,8 @@ namespace Horde.Server.Jobs
 			[FromQuery] string? streamId = null,
 			[FromQuery(Name = "template")] string[]? templates = null,
 			[FromQuery] PropertyFilter? filter = null,
-			[FromQuery] int count = 100)
+			[FromQuery] int count = 100,
+			CancellationToken cancellationToken = default)
 		{
 			if (streamId == null)
 			{
@@ -649,17 +718,17 @@ namespace Horde.Server.Jobs
 				_ => Array.Empty<TemplateId>()
 			};
 
-			List<IJob> jobs = await _jobService.FindJobsByStreamWithTemplatesAsync(new StreamId(streamId), templateRefIds, count: count, consistentRead: false);
+			IReadOnlyList<IJob> jobs = await _jobService.FindJobsByStreamWithTemplatesAsync(new StreamId(streamId), templateRefIds, count: count, consistentRead: false, cancellationToken: cancellationToken);
 
 			Dictionary<string, GetJobTimingResponse> jobTimings = await jobs.ToAsyncEnumerable()
 				.Where(job => _globalConfig.Value.Authorize(job, JobAclAction.ViewJob, User))
 				.ToDictionaryAwaitAsync(x => ValueTask.FromResult(x.Id.ToString()), async job =>
 				{
-					IJobTiming jobTiming = await _jobService.GetJobTimingAsync(job);
+					IJobTiming jobTiming = await _jobService.GetJobTimingAsync(job, cancellationToken);
 					IGraph graph = await _jobService.GetGraphAsync(job);
-					return await CreateJobTimingResponse(job, graph, jobTiming, true);
-				});
-			
+					return await CreateJobTimingResponseAsync(job, graph, jobTiming, true);
+				}, cancellationToken);
+
 			return PropertyFilter.Apply(new FindJobTimingsResponse(jobTimings), filter);
 		}
 
@@ -691,7 +760,7 @@ namespace Horde.Server.Jobs
 			}
 
 			ITemplate? template = await _templateCollection.GetAsync(job.TemplateHash);
-			if(template == null)
+			if (template == null)
 			{
 				return NotFound(job.StreamId, job.TemplateId);
 			}
@@ -745,14 +814,14 @@ namespace Horde.Server.Jobs
 			[FromQuery] DateTimeOffset? modifiedAfter = null,
 			[FromQuery] string? target = null,
 			[FromQuery] JobStepState[]? state = null,
-			[FromQuery] JobStepOutcome[]? outcome = null, 
+			[FromQuery] JobStepOutcome[]? outcome = null,
 			[FromQuery] PropertyFilter? filter = null,
 			[FromQuery] int index = 0,
 			[FromQuery] int count = 100)
 		{
 			JobId[]? jobIdValues = (ids == null) ? (JobId[]?)null : Array.ConvertAll(ids, x => JobId.Parse(x));
-			StreamId? streamIdValue = (streamId == null)? (StreamId?)null : new StreamId(streamId);
-			
+			StreamId? streamIdValue = (streamId == null) ? (StreamId?)null : new StreamId(streamId);
+
 			TemplateId[]? templateRefIds = (templates != null && templates.Length > 0) ? templates.Select(x => new TemplateId(x)).ToArray() : null;
 
 			if (includePreflight == false)
@@ -774,7 +843,7 @@ namespace Horde.Server.Jobs
 				startedByUserIdValue = UserId.Parse(startedByUserId);
 			}
 
-			List<IJob> jobs;
+			IReadOnlyList<IJob> jobs;
 			jobs = await _jobService.FindJobsAsync(jobIdValues, streamIdValue, name, templateRefIds, minChange,
 				maxChange, preflightChange, preflightOnly, preflightStartedByUserIdValue, startedByUserIdValue, minCreateTime?.UtcDateTime, maxCreateTime?.UtcDateTime, target, null, state, outcome,
 				modifiedBefore, modifiedAfter, index, count, false);
@@ -794,6 +863,7 @@ namespace Horde.Server.Jobs
 		/// <param name="index">Index of the first result to be returned</param>
 		/// <param name="count">Number of results to return</param>
 		/// <param name="consistentRead">If a read to the primary database is required, for read consistency. Usually not required.</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of jobs</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/streams/{streamId}")]
@@ -807,21 +877,22 @@ namespace Horde.Server.Jobs
 			[FromQuery] PropertyFilter? filter = null,
 			[FromQuery] int index = 0,
 			[FromQuery] int count = 100,
-			[FromQuery] bool consistentRead = false)
+			[FromQuery] bool consistentRead = false,
+			CancellationToken cancellationToken = default)
 		{
 			StreamId streamIdValue = new StreamId(streamId);
 			TemplateId[] templateRefIds = templates.Select(x => new TemplateId(x)).ToArray();
 			UserId? preflightStartedByUserIdValue = preflightStartedByUserId != null ? UserId.Parse(preflightStartedByUserId) : null;
 			count = Math.Min(1000, count);
 
-			List<IJob> jobs = await _jobService.FindJobsByStreamWithTemplatesAsync(streamIdValue, templateRefIds, preflightStartedByUserIdValue, maxCreateTime, modifiedAfter, index, count, consistentRead);
-			return await CreateAuthorizedJobResponsesAsync(jobs, filter);
+			IReadOnlyList<IJob> jobs = await _jobService.FindJobsByStreamWithTemplatesAsync(streamIdValue, templateRefIds, preflightStartedByUserIdValue, maxCreateTime, modifiedAfter, index, count, consistentRead, cancellationToken: cancellationToken);
+			return await CreateAuthorizedJobResponsesAsync(jobs, filter, cancellationToken);
 		}
 
-		private async Task<List<object>> CreateAuthorizedJobResponsesAsync(List<IJob> jobs, PropertyFilter? filter = null)
+		private async Task<List<object>> CreateAuthorizedJobResponsesAsync(IReadOnlyList<IJob> jobs, PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			List<object> responses = new ();
-			foreach(IGrouping<StreamId, IJob> grouping in jobs.GroupBy(x => x.StreamId))
+			List<object> responses = new();
+			foreach (IGrouping<StreamId, IJob> grouping in jobs.GroupBy(x => x.StreamId))
 			{
 				StreamConfig? streamConfig;
 				if (_globalConfig.Value.TryGetStream(grouping.Key, out streamConfig) && streamConfig.Authorize(JobAclAction.ViewJob, User))
@@ -829,8 +900,8 @@ namespace Horde.Server.Jobs
 					bool includeCosts = streamConfig.Authorize(ServerAclAction.ViewCosts, User);
 					foreach (IJob job in grouping)
 					{
-						IGraph graph = await _jobService.GetGraphAsync(job);
-						responses.Add(await CreateJobResponseAsync(job, graph, includeCosts, filter));
+						IGraph graph = await _jobService.GetGraphAsync(job, cancellationToken);
+						responses.Add(await CreateJobResponseAsync(job, graph, includeCosts, filter, cancellationToken));
 					}
 				}
 			}
@@ -842,14 +913,16 @@ namespace Horde.Server.Jobs
 		/// </summary>
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="requests">Properties of the new nodes</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Id of the new job</returns>
 		[HttpPost]
+		[Obsolete("Modifying graph through REST API is not supported")]
 		[Route("/api/v1/jobs/{jobId}/groups")]
-		public async Task<ActionResult> CreateGroupsAsync(JobId jobId, [FromBody] List<NewGroup> requests)
+		public async Task<ActionResult> CreateGroupsAsync(JobId jobId, [FromBody] List<NewGroup> requests, CancellationToken cancellationToken = default)
 		{
 			for (; ; )
 			{
-				IJob? job = await _jobService.GetJobAsync(jobId);
+				IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 				if (job == null)
 				{
 					return NotFound(jobId);
@@ -865,10 +938,10 @@ namespace Horde.Server.Jobs
 					return Forbid(JobAclAction.ExecuteJob, jobId);
 				}
 
-				IGraph graph = await _jobService.GetGraphAsync(job);
-				graph = await _graphs.AppendAsync(graph, requests, null, null);
+				IGraph oldGraph = await _jobService.GetGraphAsync(job, cancellationToken);
+				IGraph newGraph = await _graphs.AppendAsync(oldGraph, requests, null, null, null, cancellationToken);
 
-				IJob? newJob = await _jobService.TryUpdateGraphAsync(job, graph);
+				IJob? newJob = await _jobService.TryUpdateGraphAsync(job, oldGraph, newGraph, cancellationToken);
 				if (newJob != null)
 				{
 					return Ok();
@@ -881,13 +954,15 @@ namespace Horde.Server.Jobs
 		/// </summary>
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/groups")]
 		[ProducesResponseType(typeof(List<GetGroupResponse>), 200)]
-		public async Task<ActionResult<List<object>>> GetGroupsAsync(JobId jobId, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<List<object>>> GetGroupsAsync(JobId jobId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -903,7 +978,7 @@ namespace Horde.Server.Jobs
 				return Forbid(JobAclAction.ViewJob, jobId);
 			}
 
-			IGraph graph = await _jobService.GetGraphAsync(job);
+			IGraph graph = await _jobService.GetGraphAsync(job, cancellationToken);
 			return graph.Groups.ConvertAll(x => new GetGroupResponse(x, graph.Groups).ApplyFilter(filter));
 		}
 
@@ -913,13 +988,15 @@ namespace Horde.Server.Jobs
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="groupIdx">The group index</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/groups/{groupIdx}")]
 		[ProducesResponseType(typeof(GetGroupResponse), 200)]
-		public async Task<ActionResult<object>> GetGroupAsync(JobId jobId, int groupIdx, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<object>> GetGroupAsync(JobId jobId, int groupIdx, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -935,7 +1012,7 @@ namespace Horde.Server.Jobs
 				return Forbid(JobAclAction.ViewJob, jobId);
 			}
 
-			IGraph graph = await _jobService.GetGraphAsync(job);
+			IGraph graph = await _jobService.GetGraphAsync(job, cancellationToken);
 			if (groupIdx < 0 || groupIdx >= graph.Groups.Count)
 			{
 				return NotFound(jobId, groupIdx);
@@ -951,6 +1028,7 @@ namespace Horde.Server.Jobs
 		/// <param name="groupIdx">Index of the group containing the node to update</param>
 		/// <param name="filter">Filter for the properties to return</param>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/groups/{groupIdx}/nodes")]
 		[ProducesResponseType(typeof(List<GetNodeResponse>), 200)]
 		public async Task<ActionResult<List<object>>> GetNodesAsync(JobId jobId, int groupIdx, [FromQuery] PropertyFilter? filter = null)
@@ -988,6 +1066,7 @@ namespace Horde.Server.Jobs
 		/// <param name="nodeIdx">Index of the node to update</param>
 		/// <param name="filter">Filter for the properties to return</param>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/groups/{groupIdx}/nodes/{nodeIdx}")]
 		[ProducesResponseType(typeof(GetNodeResponse), 200)]
 		public async Task<ActionResult<object>> GetNodeAsync(JobId jobId, int groupIdx, int nodeIdx, [FromQuery] PropertyFilter? filter = null)
@@ -1013,7 +1092,7 @@ namespace Horde.Server.Jobs
 			{
 				return NotFound(jobId, groupIdx);
 			}
-			if(nodeIdx < 0 || nodeIdx >= graph.Groups[groupIdx].Nodes.Count)
+			if (nodeIdx < 0 || nodeIdx >= graph.Groups[groupIdx].Nodes.Count)
 			{
 				return NotFound(jobId, groupIdx, nodeIdx);
 			}
@@ -1026,13 +1105,15 @@ namespace Horde.Server.Jobs
 		/// </summary>
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/batches")]
 		[ProducesResponseType(typeof(List<GetBatchResponse>), 200)]
-		public async Task<ActionResult<List<object>>> GetBatchesAsync(JobId jobId, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<List<object>>> GetBatchesAsync(JobId jobId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1053,7 +1134,7 @@ namespace Horde.Server.Jobs
 			List<object> responses = new List<object>();
 			foreach (IJobStepBatch batch in job.Batches)
 			{
-				GetBatchResponse response = await CreateBatchResponseAsync(batch, includeCosts);
+				GetBatchResponse response = await CreateBatchResponseAsync(batch, includeCosts, cancellationToken);
 				responses.Add(response.ApplyFilter(filter));
 			}
 			return responses;
@@ -1066,8 +1147,9 @@ namespace Horde.Server.Jobs
 		/// <param name="batchId">Unique id for the step</param>
 		/// <param name="request">Updates to apply to the node</param>
 		[HttpPut]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}")]
-		public async Task<ActionResult> UpdateBatchAsync(JobId jobId, SubResourceId batchId, [FromBody] UpdateBatchRequest request)
+		public async Task<ActionResult> UpdateBatchAsync(JobId jobId, JobStepBatchId batchId, [FromBody] UpdateBatchRequest request)
 		{
 			IJob? job = await _jobService.GetJobAsync(jobId);
 			if (job == null)
@@ -1089,7 +1171,7 @@ namespace Horde.Server.Jobs
 				return Forbid("Missing session claim for job {JobId} batch {BatchId}", jobId, batchId);
 			}
 
-			IJob? newJob = await _jobService.UpdateBatchAsync(job, batchId, streamConfig, (request.LogId == null)? null : LogId.Parse(request.LogId), request.State);
+			IJob? newJob = await _jobService.UpdateBatchAsync(job, batchId, streamConfig, (request.LogId == null) ? null : LogId.Parse(request.LogId), request.State);
 			if (newJob == null)
 			{
 				return NotFound(jobId);
@@ -1103,13 +1185,15 @@ namespace Horde.Server.Jobs
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="batchId">Unique id for the step</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}")]
 		[ProducesResponseType(typeof(GetBatchResponse), 200)]
-		public async Task<ActionResult<object>> GetBatchAsync(JobId jobId, SubResourceId batchId, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<object>> GetBatchAsync(JobId jobId, JobStepBatchId batchId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1130,7 +1214,7 @@ namespace Horde.Server.Jobs
 			{
 				if (batch.Id == batchId)
 				{
-					GetBatchResponse response = await CreateBatchResponseAsync(batch, includeCosts);
+					GetBatchResponse response = await CreateBatchResponseAsync(batch, includeCosts, cancellationToken);
 					return response.ApplyFilter(filter);
 				}
 			}
@@ -1144,13 +1228,15 @@ namespace Horde.Server.Jobs
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="batchId">Unique id for the batch</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}/steps")]
 		[ProducesResponseType(typeof(List<GetStepResponse>), 200)]
-		public async Task<ActionResult<List<object>>> GetStepsAsync(JobId jobId, SubResourceId batchId, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<List<object>>> GetStepsAsync(JobId jobId, JobStepBatchId batchId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1173,7 +1259,7 @@ namespace Horde.Server.Jobs
 					List<object> responses = new List<object>();
 					foreach (IJobStep step in batch.Steps)
 					{
-						GetStepResponse response = await CreateStepResponseAsync(step);
+						GetStepResponse response = await CreateStepResponseAsync(step, cancellationToken);
 						responses.Add(response.ApplyFilter(filter));
 					}
 					return responses;
@@ -1192,7 +1278,7 @@ namespace Horde.Server.Jobs
 		/// <param name="request">Updates to apply to the node</param>
 		[HttpPut]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}/steps/{stepId}")]
-		public async Task<ActionResult<UpdateStepResponse>> UpdateStepAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId, [FromBody] UpdateStepRequest request)
+		public async Task<ActionResult<UpdateStepResponse>> UpdateStepAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId, [FromBody] UpdateStepRequest request)
 		{
 			IJob? job = await _jobService.GetJobAsync(jobId);
 			if (job == null)
@@ -1246,7 +1332,7 @@ namespace Horde.Server.Jobs
 					retryNodeRef = new NodeRef(batch.GroupIdx, step.NodeIdx);
 				}
 
-				IJob? newJob = await _jobService.UpdateStepAsync(job, batchId, stepId, streamConfig, request.State, request.Outcome, null, request.AbortRequested, abortByUser, (request.LogId == null)? null : LogId.Parse(request.LogId), null, retryByUser, request.Priority, null, request.Properties);
+				IJob? newJob = await _jobService.UpdateStepAsync(job, batchId, stepId, streamConfig, request.State, request.Outcome, null, request.AbortRequested, abortByUser, (request.LogId == null) ? null : LogId.Parse(request.LogId), null, retryByUser, request.Priority, null, request.Properties);
 				if (newJob == null)
 				{
 					return NotFound(jobId);
@@ -1277,13 +1363,15 @@ namespace Horde.Server.Jobs
 		/// <param name="batchId">Unique id for the batch</param>
 		/// <param name="stepId">Unique id for the step</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
+		[Obsolete("Query entire job instead")]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}/steps/{stepId}")]
 		[ProducesResponseType(typeof(GetStepResponse), 200)]
-		public async Task<ActionResult<object>> GetStepAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId, [FromQuery] PropertyFilter? filter = null)
+		public async Task<ActionResult<object>> GetStepAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1307,7 +1395,7 @@ namespace Horde.Server.Jobs
 					{
 						if (step.Id == stepId)
 						{
-							GetStepResponse response = await CreateStepResponseAsync(step);
+							GetStepResponse response = await CreateStepResponseAsync(step, cancellationToken);
 							return response.ApplyFilter(filter);
 						}
 					}
@@ -1325,12 +1413,13 @@ namespace Horde.Server.Jobs
 		/// <param name="batchId">Unique id for the batch</param>
 		/// <param name="stepId">Unique id for the step</param>
 		/// <param name="request">The notification request</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested job</returns>
 		[HttpPut]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}/steps/{stepId}/notifications")]
-		public async Task<ActionResult> UpdateStepNotificationsAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId, [FromBody] UpdateNotificationsRequest request)
+		public async Task<ActionResult> UpdateStepNotificationsAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId, [FromBody] UpdateNotificationsRequest request, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1360,13 +1449,13 @@ namespace Horde.Server.Jobs
 			if (triggerId == null)
 			{
 				triggerId = ObjectId.GenerateNewId();
-				if (await _jobService.UpdateStepAsync(job, batchId, stepId, streamConfig, JobStepState.Unspecified, JobStepOutcome.Unspecified, newNotificationTriggerId: triggerId) == null)
+				if (await _jobService.UpdateStepAsync(job, batchId, stepId, streamConfig, JobStepState.Unspecified, JobStepOutcome.Unspecified, newNotificationTriggerId: triggerId, cancellationToken: cancellationToken) == null)
 				{
 					return NotFound(jobId, batchId, stepId);
 				}
 			}
 
-			await _notificationService.UpdateSubscriptionsAsync(triggerId.Value, User, request.Email, request.Slack);
+			await _notificationService.UpdateSubscriptionsAsync(triggerId.Value, User, request.Email, request.Slack, cancellationToken);
 			return Ok();
 		}
 
@@ -1376,12 +1465,13 @@ namespace Horde.Server.Jobs
 		/// <param name="jobId">Id of the job to find</param>
 		/// <param name="batchId">Unique id for the batch</param>
 		/// <param name="stepId">Unique id for the step</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested job</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}/steps/{stepId}/notifications")]
-		public async Task<ActionResult<GetNotificationResponse>> GetStepNotificationsAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId)
+		public async Task<ActionResult<GetNotificationResponse>> GetStepNotificationsAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1414,7 +1504,7 @@ namespace Horde.Server.Jobs
 			}
 			else
 			{
-				subscription = await _notificationService.GetSubscriptionsAsync(step.NotificationTriggerId.Value, User);
+				subscription = await _notificationService.GetSubscriptionsAsync(step.NotificationTriggerId.Value, User, cancellationToken);
 			}
 			return new GetNotificationResponse(subscription);
 		}
@@ -1426,12 +1516,13 @@ namespace Horde.Server.Jobs
 		/// <param name="batchId">Unique id for the batch</param>
 		/// <param name="stepId">Unique id for the step</param>
 		/// <param name="name"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}/steps/{stepId}/artifacts/{*name}")]
-		public async Task<ActionResult> GetArtifactAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId, string name)
+		public async Task<ActionResult> GetArtifactAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId, string name, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1456,14 +1547,14 @@ namespace Horde.Server.Jobs
 				return NotFound(jobId, batchId, stepId);
 			}
 
-			List<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(jobId, stepId, name);
+			IReadOnlyList<IArtifactV1> artifacts = await _artifactCollectionV1.GetArtifactsAsync(jobId, stepId, name, cancellationToken);
 			if (artifacts.Count == 0)
 			{
 				return NotFound();
 			}
 
 			IArtifactV1 artifact = artifacts[0];
-			return new FileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact), artifact.MimeType);
+			return new FileStreamResult(await _artifactCollectionV1.OpenArtifactReadStreamAsync(artifact, cancellationToken), artifact.MimeType);
 		}
 
 		/// <summary>
@@ -1472,12 +1563,13 @@ namespace Horde.Server.Jobs
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="batchId">Unique id for the batch</param>
 		/// <param name="stepId">Unique id for the step</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of nodes to be executed</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}/batches/{batchId}/steps/{stepId}/trace")]
-		public async Task<ActionResult> GetStepTraceAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId)
+		public async Task<ActionResult> GetStepTraceAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1502,12 +1594,12 @@ namespace Horde.Server.Jobs
 				return NotFound(jobId, batchId, stepId);
 			}
 
-			List<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(jobId, stepId, null);
+			IReadOnlyList<IArtifactV1> artifacts = await _artifactCollectionV1.GetArtifactsAsync(jobId, stepId, null, cancellationToken);
 			foreach (IArtifactV1 artifact in artifacts)
 			{
 				if (artifact.Name.Equals("trace.json", StringComparison.OrdinalIgnoreCase))
 				{
-					return new FileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact), "text/json");
+					return new FileStreamResult(await _artifactCollectionV1.OpenArtifactReadStreamAsync(artifact, cancellationToken), "text/json");
 				}
 			}
 			return NotFound();
@@ -1519,14 +1611,15 @@ namespace Horde.Server.Jobs
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="labelIndex">Index for the label</param>
 		/// <param name="request">The notification request</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		[HttpPut]
 		[Route("/api/v1/jobs/{jobId}/labels/{labelIndex}/notifications")]
-		public async Task<ActionResult> UpdateLabelNotificationsAsync(JobId jobId, int labelIndex, [FromBody] UpdateNotificationsRequest request)
+		public async Task<ActionResult> UpdateLabelNotificationsAsync(JobId jobId, int labelIndex, [FromBody] UpdateNotificationsRequest request, CancellationToken cancellationToken)
 		{
 			ObjectId triggerId;
 			for (; ; )
 			{
-				IJob? job = await _jobService.GetJobAsync(jobId);
+				IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 				if (job == null)
 				{
 					return NotFound(jobId);
@@ -1551,7 +1644,7 @@ namespace Horde.Server.Jobs
 
 				newTriggerId = ObjectId.GenerateNewId();
 
-				IJob? newJob = await _jobService.UpdateJobAsync(job, labelIdxToTriggerId: new KeyValuePair<int, ObjectId>(labelIndex, newTriggerId));
+				IJob? newJob = await _jobService.UpdateJobAsync(job, labelIdxToTriggerId: new KeyValuePair<int, ObjectId>(labelIndex, newTriggerId), cancellationToken: cancellationToken);
 				if (newJob != null)
 				{
 					triggerId = newTriggerId;
@@ -1559,7 +1652,7 @@ namespace Horde.Server.Jobs
 				}
 			}
 
-			await _notificationService.UpdateSubscriptionsAsync(triggerId, User, request.Email, request.Slack);
+			await _notificationService.UpdateSubscriptionsAsync(triggerId, User, request.Email, request.Slack, cancellationToken);
 			return Ok();
 		}
 
@@ -1568,12 +1661,13 @@ namespace Horde.Server.Jobs
 		/// </summary>
 		/// <param name="jobId">Id of the job to find</param>
 		/// <param name="labelIndex">Index for the label</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Notification info for the requested label in the job</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}/labels/{labelIndex}/notifications")]
-		public async Task<ActionResult<GetNotificationResponse>> GetLabelNotificationsAsync(JobId jobId, int labelIndex)
+		public async Task<ActionResult<GetNotificationResponse>> GetLabelNotificationsAsync(JobId jobId, int labelIndex, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
 			if (job == null)
 			{
 				return NotFound(jobId);
@@ -1586,7 +1680,7 @@ namespace Horde.Server.Jobs
 			}
 			else
 			{
-				subscription = await _notificationService.GetSubscriptionsAsync(job.LabelIdxToTriggerId[labelIndex], User);
+				subscription = await _notificationService.GetSubscriptionsAsync(job.LabelIdxToTriggerId[labelIndex], User, cancellationToken);
 			}
 			return new GetNotificationResponse(subscription);
 		}

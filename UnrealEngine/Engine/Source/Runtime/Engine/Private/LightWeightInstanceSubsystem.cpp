@@ -79,18 +79,21 @@ bool FLightWeightInstanceSubsystem::RemoveManager(ALightWeightInstanceManager* M
 
 ALightWeightInstanceManager* FLightWeightInstanceSubsystem::FindLightWeightInstanceManager(const FActorInstanceHandle& Handle) const
 {
-	if (Handle.Manager.IsValid())
+	if (Handle.GetManagerInterface().IsValid())
 	{
-		return Handle.Manager.Get();
+		return Handle.GetManager<ALightWeightInstanceManager>();
 	}
 
-	if (Handle.Actor.IsValid())
+	if (AActor* CachedActor = Handle.GetCachedActor())
 	{
+		const UClass* CachedActorClass = CachedActor->GetClass();
+		CA_ASSUME(CachedActorClass);
+
 		FReadScopeLock Lock(LWIManagersRWLock);
 		// see if we already have a match
 		for (ALightWeightInstanceManager* LWInstance : LWInstanceManagers)
 		{
-			if (Handle.Actor->GetClass() == LWInstance->GetRepresentedClass())
+			if (CachedActorClass == LWInstance->GetRepresentedClass(Handle.GetInstanceIndex()))
 			{
 				const FInt32Vector3 GridCoord = LWInstance->ConvertPositionToCoord(Handle.GetLocation());
 				const FInt32Vector3 ManagerGridCoord = LWInstance->ConvertPositionToCoord(LWInstance->GetActorLocation());
@@ -139,7 +142,7 @@ ALightWeightInstanceManager* FLightWeightInstanceSubsystem::FindLightWeightInsta
 	{
 		if (IsValid(InstanceManager))
 		{
-			if (InstanceManager->GetRepresentedClass() == &ActorClass)
+			if (InstanceManager->GetRepresentedClassInternal() == &ActorClass)
 			{
 				const FInt32Vector3 GridCoord = InstanceManager->ConvertPositionToCoord(InPos);
 				const FInt32Vector3 ManagerGridCoord = InstanceManager->ConvertPositionToCoord(InstanceManager->GetActorLocation());
@@ -240,7 +243,7 @@ UClass* FLightWeightInstanceSubsystem::FindBestInstanceManagerClass(const UClass
 	{
 		if (ManagerClass->GetDefaultObject<ALightWeightInstanceManager>()->DoesAcceptClass(InActorClass))
 		{
-			const UClass* HandledClass = ManagerClass->GetDefaultObject<ALightWeightInstanceManager>()->GetRepresentedClass();
+			const UClass* HandledClass = ManagerClass->GetDefaultObject<ALightWeightInstanceManager>()->GetRepresentedClassInternal();
 			if (!HandledClass)
 			{
 				HandledClass = ManagerClass->GetDefaultObject<ALightWeightInstanceManager>()->GetAcceptedClass();
@@ -268,37 +271,21 @@ UClass* FLightWeightInstanceSubsystem::FindBestInstanceManagerClass(const UClass
 	return BestManagerClass;
 }
 
-AActor* FLightWeightInstanceSubsystem::FetchActor(const FActorInstanceHandle& Handle)
-{
-	// if the actor is valid return it
-	if (Handle.Actor.IsValid())
-	{
-		return Handle.Actor.Get();
-	}
-
-	if (ALightWeightInstanceManager* LWIManager = FindLightWeightInstanceManager(Handle))
-	{
-		return LWIManager->FetchActorFromHandle(Handle);
-	}
-
-	return nullptr;
-}
-
 AActor* FLightWeightInstanceSubsystem::GetActor_NoCreate(const FActorInstanceHandle& Handle) const
 {
-	return Handle.Actor.Get();
+	return Handle.GetCachedActor();
 }
 
 UClass* FLightWeightInstanceSubsystem::GetActorClass(const FActorInstanceHandle& Handle)
 {
-	if (Handle.Actor.IsValid())
+	if (const AActor* CachedActor = Handle.GetCachedActor())
 	{
-		return Handle.Actor->StaticClass();
+		return CachedActor->StaticClass();
 	}
 
 	if (ALightWeightInstanceManager* LWIManager = FindLightWeightInstanceManager(Handle))
 	{
-		return LWIManager->GetRepresentedClass();
+		return LWIManager->GetRepresentedClass(Handle.GetInstanceIndex());
 	}
 
 	return nullptr;
@@ -308,9 +295,9 @@ FVector FLightWeightInstanceSubsystem::GetLocation(const FActorInstanceHandle& H
 {
 	ensure(Handle.IsValid());
 
-	if (Handle.Actor.IsValid())
+	if (const AActor* CachedActor = Handle.GetCachedActor())
 	{
-		return Handle.Actor->GetActorLocation();
+		return CachedActor->GetActorLocation();
 	}
 
 	if (ALightWeightInstanceManager* InstanceManager = FindLightWeightInstanceManager(Handle))
@@ -325,9 +312,9 @@ FString FLightWeightInstanceSubsystem::GetName(const FActorInstanceHandle& Handl
 {
 	ensure(Handle.IsValid());
 
-	if (Handle.Actor.IsValid())
+	if (const AActor* CachedActor = Handle.GetCachedActor())
 	{
-		return Handle.Actor->GetName();
+		return CachedActor->GetName();
 	}
 
 	if (ALightWeightInstanceManager* InstanceManager = FindLightWeightInstanceManager(Handle))
@@ -342,9 +329,9 @@ ULevel* FLightWeightInstanceSubsystem::GetLevel(const FActorInstanceHandle& Hand
 {
 	ensure(Handle.IsValid());
 
-	if (Handle.Actor.IsValid())
+	if (AActor* CachedActor = Handle.GetCachedActor())
 	{
-		return Handle.Actor->GetLevel();
+		return CachedActor->GetLevel();
 	}
 
 	if (ALightWeightInstanceManager* InstanceManager = FindLightWeightInstanceManager(Handle))
@@ -359,9 +346,9 @@ bool FLightWeightInstanceSubsystem::IsInLevel(const FActorInstanceHandle& Handle
 {
 	ensure(Handle.IsValid());
 
-	if (Handle.Actor.IsValid())
+	if (AActor* CachedActor = Handle.GetCachedActor())
 	{
-		return Handle.Actor->IsInLevel(InLevel);
+		return CachedActor->IsInLevel(InLevel);
 	}
 
 	if (ALightWeightInstanceManager* InstanceManager = FindLightWeightInstanceManager(Handle))
@@ -382,7 +369,7 @@ FActorInstanceHandle FLightWeightInstanceSubsystem::CreateNewLightWeightInstance
 			// create an instance with the given data
 			int32 InstanceIdx = LWIManager->AddNewInstance(InitData);
 			InstanceIdx = LWIManager->ConvertInternalIndexToHandleIndex(InstanceIdx);
-			return FActorInstanceHandle(LWIManager, InstanceIdx);
+			return FActorInstanceHandle(FActorInstanceManagerInterface(LWIManager), InstanceIdx);
 		}
 	}
 

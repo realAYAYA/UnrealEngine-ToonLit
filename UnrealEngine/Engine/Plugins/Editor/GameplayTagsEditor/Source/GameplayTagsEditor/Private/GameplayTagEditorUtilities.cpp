@@ -11,6 +11,7 @@ namespace UE::GameplayTags::EditorUtilities
 {
 
 static FName NAME_Categories = FName("Categories");
+static FName NAME_GameplayTagFilter = FName("GameplayTagFilter");
 
 FString ExtractTagFilterStringFromGraphPin(UEdGraphPin* InTagPin)
 {
@@ -29,6 +30,10 @@ FString ExtractTagFilterStringFromGraphPin(UEdGraphPin* InTagPin)
 		if (FilterString.IsEmpty())
 		{
 			FilterString = OwningNode->GetPinMetaData(InTagPin->PinName, NAME_Categories);
+		}
+		if (FilterString.IsEmpty())
+		{
+			FilterString = OwningNode->GetPinMetaData(InTagPin->PinName, NAME_GameplayTagFilter);
 		}
 
 		if (FilterString.IsEmpty())

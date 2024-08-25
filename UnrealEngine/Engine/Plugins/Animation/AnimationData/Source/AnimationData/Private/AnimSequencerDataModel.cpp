@@ -29,12 +29,6 @@
 
 #define LOCTEXT_NAMESPACE "AnimSequencerDataModel"
 
-int32 UAnimationSequencerDataModel::RetainFloatCurves = 0;
-static FAutoConsoleVariableRef CVarRetainFloatCurves(
-	TEXT("a.AnimSequencer.RetainFloatCurves"),
-	UAnimationSequencerDataModel::RetainFloatCurves,
-	TEXT("1 = Original FloatCurves are retained when generating transient curve data from Control Curves . 0 = FloatCurves are overriden with Control Curves"));
-
 int32 UAnimationSequencerDataModel::ValidationMode = 0;
 static FAutoConsoleVariableRef CValidationMode(
 	TEXT("a.AnimSequencer.ValidationMode"),
@@ -60,8 +54,8 @@ void UAnimationSequencerDataModel::RemoveOutOfDateControls() const
 					TArray<FRigElementKey> ElementKeysToRemove;
 					Hierarchy->ForEach<FRigControlElement>([this, Section, &ElementKeysToRemove](const FRigControlElement* ControlElement) -> bool
 					{
-						const bool bContainsBone = Section->HasTransformParameter(ControlElement->GetName());
-						const bool bContainsCurve = Section->HasScalarParameter(ControlElement->GetName());
+						const bool bContainsBone = Section->HasTransformParameter(ControlElement->GetFName());
+						const bool bContainsCurve = Section->HasScalarParameter(ControlElement->GetFName());
 						
 						if (!bContainsBone && !bContainsCurve)
 						{
@@ -73,7 +67,7 @@ void UAnimationSequencerDataModel::RemoveOutOfDateControls() const
 						
 					Hierarchy->ForEach<FRigCurveElement>([this, &ElementKeysToRemove](const FRigCurveElement* CurveElement) -> bool
 					{
-						const FName TargetCurveName = CurveElement->GetName();
+						const FName TargetCurveName = CurveElement->GetFName();
 						if(!LegacyCurveData.FloatCurves.ContainsByPredicate([TargetCurveName](const FFloatCurve& Curve) { return Curve.GetName() == TargetCurveName; }))
 						{
 							ElementKeysToRemove.Add(CurveElement->GetKey());	
@@ -651,18 +645,28 @@ FGuid UAnimationSequencerDataModel::GenerateGuid() const
 		{
 			Sha.Update(reinterpret_cast<const uint8*>(&Data), sizeof(Data));
 		};
-		
+
 		for (const FAnimatedBoneAttribute& Attribute : AnimatedBoneAttributes)
 		{
 			UpdateSHAWithArray(Attribute.Identifier.GetName().ToString().GetCharArray());
 			UpdateSHAWithArray(Attribute.Identifier.GetBoneName().ToString().GetCharArray());
 			UpdateWithData(Attribute.Identifier.GetBoneIndex());
 			UpdateSHAWithArray(Attribute.Identifier.GetType()->GetFName().ToString().GetCharArray());
-			const uint32 StructSize = Attribute.Identifier.GetType()->GetPropertiesSize();
+			const UScriptStruct* TypeStruct = Attribute.Identifier.GetType();
+			const uint32 StructSize = TypeStruct->GetPropertiesSize();
+			const bool bHasTypeHash = TypeStruct->GetCppStructOps()->HasGetTypeHash();
 			for (const FAttributeKey& Key : Attribute.Curve.GetConstRefOfKeys())
 			{
 				UpdateWithData(Key.Time);
-				Sha.Update(Key.GetValuePtr<uint8>(), StructSize);
+				if (bHasTypeHash)
+				{
+					const uint32 KeyHash = TypeStruct->GetStructTypeHash(Key.GetValuePtr<uint8>());
+					UpdateWithData(KeyHash);
+				}
+				else
+				{
+					Sha.Update(Key.GetValuePtr<uint8>(), StructSize);
+				}
 			}
 		}
 
@@ -785,13 +789,25 @@ void UAnimationSequencerDataModel::OnNotify(const EAnimDataModelNotifyType& Noti
 
 		if (Collector.IsNotWithinBracket())
 		{
-			const TArray<EAnimDataModelNotifyType> CurveNotifyTypes = {EAnimDataModelNotifyType::CurveAdded, EAnimDataModelNotifyType::CurveChanged, EAnimDataModelNotifyType::CurveRenamed, EAnimDataModelNotifyType::CurveRemoved,
-			EAnimDataModelNotifyType::CurveFlagsChanged, EAnimDataModelNotifyType::CurveScaled, EAnimDataModelNotifyType::CurveColorChanged, EAnimDataModelNotifyType::Populated, EAnimDataModelNotifyType::Reset };
-			if(Collector.Contains(CurveNotifyTypes))
+			const TArray<EAnimDataModelNotifyType> CurveStorageNotifyTypes = {EAnimDataModelNotifyType::CurveAdded, EAnimDataModelNotifyType::CurveChanged, EAnimDataModelNotifyType::CurveRenamed, EAnimDataModelNotifyType::CurveRemoved,
+			EAnimDataModelNotifyType::CurveScaled, EAnimDataModelNotifyType::Populated, EAnimDataModelNotifyType::Reset };
+
+			if(Collector.Contains(CurveStorageNotifyTypes))
 			{
 				if(!ValidationMode)
 				{
-					GenerateLegacyCurveData();
+					RegenerateLegacyCurveData();
+				}
+				RefreshControlsAndProxy();
+				ResetCachedGUID();
+			}
+
+			const TArray<EAnimDataModelNotifyType> CurveDataNotifyTypes = {EAnimDataModelNotifyType::CurveFlagsChanged, EAnimDataModelNotifyType::CurveColorChanged, EAnimDataModelNotifyType::CurveCommentChanged};
+			if(Collector.Contains(CurveDataNotifyTypes))
+			{
+				if(!ValidationMode)
+				{
+					UpdateLegacyCurveData();
 				}
 				RefreshControlsAndProxy();
 				ResetCachedGUID();
@@ -853,11 +869,11 @@ UMovieSceneControlRigParameterSection* UAnimationSequencerDataModel::GetFKContro
 	return nullptr;
 }
 
-void UAnimationSequencerDataModel::GenerateLegacyCurveData()
+void UAnimationSequencerDataModel::RegenerateLegacyCurveData()
 {
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_GenerateLegacyCurveData);
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_RegenerateLegacyCurveData);
 	ValidateSequencerData();
-	
+
 	if (const UMovieSceneControlRigParameterTrack* Track = GetControlRigTrack())
 	{
 		for (const UMovieSceneSection* TrackSection : Track->GetAllSections())
@@ -866,70 +882,91 @@ void UAnimationSequencerDataModel::GenerateLegacyCurveData()
 			{
 				if (const UControlRig* ControlRig = Section->GetControlRig())
 				{
-						if(URigHierarchy* Hierarchy = ControlRig->GetHierarchy())
+					if(URigHierarchy* Hierarchy = ControlRig->GetHierarchy())
+					{
+						const TArray<FScalarParameterNameAndCurve>& ScalarCurves = Section->GetScalarParameterNamesAndCurves();
+						LegacyCurveData.FloatCurves.Empty();
+
+						Hierarchy->ForEach<FRigCurveElement>([Hierarchy, this, ScalarCurves, FrameRate = GetFrameRate()](const FRigCurveElement* CurveElement) -> bool
 						{
-							const FString SequencerSuffix(TEXT("_Sequencer"));
-							const TArray<FScalarParameterNameAndCurve>& ScalarCurves = Section->GetScalarParameterNamesAndCurves();				
-							if (RetainFloatCurves)
+							const FRigElementKey ControlKey(UFKControlRig::GetControlName(CurveElement->GetFName(), ERigElementType::Curve), ERigElementType::Control);
+							if (const FRigControlElement* Element = Hierarchy->Find<FRigControlElement>(ControlKey))
 							{
-								LegacyCurveData.FloatCurves.RemoveAll([SequencerSuffix](const FFloatCurve& FloatCurve)
-								{
-								return FloatCurve.GetName().ToString().EndsWith(SequencerSuffix);
-								});
-							}
-							else
-							{
-								LegacyCurveData.FloatCurves.Empty();
-							}				
+								FFloatCurve& FloatCurve = LegacyCurveData.FloatCurves.AddDefaulted_GetRef();
+								FloatCurve.SetName(CurveElement->GetFName());
+								FloatCurve.Color = Element->Settings.ShapeColor;
 
-						Hierarchy->ForEach<FRigCurveElement>([Hierarchy, this, ScalarCurves, FrameRate = GetFrameRate(), SequencerSuffix](const FRigCurveElement* CurveElement) -> bool
-							{
-								const FRigElementKey ControlKey(UFKControlRig::GetControlName(CurveElement->GetName(), ERigElementType::Curve), ERigElementType::Control);
-								if (const FRigControlElement* Element = Hierarchy->Find<FRigControlElement>(ControlKey))
-								{
-									FFloatCurve& FloatCurve = LegacyCurveData.FloatCurves.AddDefaulted_GetRef();
-									if (RetainFloatCurves)
-									{
-									FloatCurve.SetName(FName(*(CurveElement->GetName().ToString() + TEXT("_Sequencer"))));
-									}
-									else
-									{
-									FloatCurve.SetName(CurveElement->GetName());
-									}						
-								
-									FloatCurve.Color = Element->Settings.ShapeColor;
-									
 								const FAnimationCurveIdentifier CurveId(FloatCurve.GetName(), ERawCurveTrackTypes::RCT_Float);
-								if (!RetainFloatCurves || !FloatCurve.GetName().ToString().Contains(SequencerSuffix))
-									{
-										if (CurveIdentifierToMetaData.Contains(CurveId))
-										{
-											const FAnimationCurveMetaData& CurveMetaData = CurveIdentifierToMetaData.FindChecked(CurveId);
-											FloatCurve.SetCurveTypeFlags(CurveMetaData.Flags);
-											FloatCurve.Color = CurveMetaData.Color;
-										}
-									}							
-
-									if (const FScalarParameterNameAndCurve* ScalarCurve = ScalarCurves.FindByPredicate([Element](FScalarParameterNameAndCurve Curve)
-									{
-										return Curve.ParameterName == Element->GetName();
-									}))
-									{							
-										AnimSequencerHelpers::ConvertFloatChannelToRichCurve(ScalarCurve->ParameterCurve, FloatCurve.FloatCurve, FrameRate);
-									}
+								if (CurveIdentifierToMetaData.Contains(CurveId))
+								{
+									const FAnimationCurveMetaData& CurveMetaData = CurveIdentifierToMetaData.FindChecked(CurveId);
+									FloatCurve.SetCurveTypeFlags(CurveMetaData.Flags);
+									FloatCurve.Color = CurveMetaData.Color;
+									FloatCurve.Comment = CurveMetaData.Comment;
 								}
-								return true;
-							});	
-						}
-						else
-						{						
-							IAnimationDataController::ReportObjectErrorf(this, LOCTEXT("UnableToFindRigHierarchy", "Unable to retrieve RigHierarchy for ControlRig ({0})"), FText::FromString(ControlRig->GetPathName()));	      
-						}
-					}								
+
+								if (const FScalarParameterNameAndCurve* ScalarCurve = ScalarCurves.FindByPredicate([Element](const FScalarParameterNameAndCurve& Curve)
+								{
+									return Curve.ParameterName == Element->GetFName();
+								}))
+								{
+									AnimSequencerHelpers::ConvertFloatChannelToRichCurve(ScalarCurve->ParameterCurve, FloatCurve.FloatCurve, FrameRate);
+								}
+							}
+							return true;
+						});	
+					}
+					else
+					{
+						IAnimationDataController::ReportObjectErrorf(this, LOCTEXT("UnableToFindRigHierarchy", "Unable to retrieve RigHierarchy for ControlRig ({0})"), FText::FromString(ControlRig->GetPathName()));	      
+					}
 				}
 			}
 		}
 	}
+}
+
+void UAnimationSequencerDataModel::UpdateLegacyCurveData()
+{
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_UpdateLegacyCurveData);
+	ValidateSequencerData();
+
+	if (const UMovieSceneControlRigParameterTrack* Track = GetControlRigTrack())
+	{
+		for (const UMovieSceneSection* TrackSection : Track->GetAllSections())
+		{
+			if (const UMovieSceneControlRigParameterSection* Section = Cast<UMovieSceneControlRigParameterSection>(TrackSection))
+			{
+				if (const UControlRig* ControlRig = Section->GetControlRig())
+				{
+					if(URigHierarchy* Hierarchy = ControlRig->GetHierarchy())
+					{
+						for(FFloatCurve& FloatCurve : LegacyCurveData.FloatCurves)
+						{
+							const FRigElementKey ControlKey(UFKControlRig::GetControlName(FloatCurve.GetName(), ERigElementType::Curve), ERigElementType::Control);
+							if (const FRigControlElement* Element = Hierarchy->Find<FRigControlElement>(ControlKey))
+							{
+								FloatCurve.Color = Element->Settings.ShapeColor;
+
+								const FAnimationCurveIdentifier CurveId(FloatCurve.GetName(), ERawCurveTrackTypes::RCT_Float);
+								if (const FAnimationCurveMetaData* CurveMetaData = CurveIdentifierToMetaData.Find(CurveId))
+								{
+									FloatCurve.SetCurveTypeFlags(CurveMetaData->Flags);
+									FloatCurve.Color = CurveMetaData->Color;
+									FloatCurve.Comment = CurveMetaData->Comment;
+								}
+							}
+						}
+					}
+					else
+					{
+						IAnimationDataController::ReportObjectErrorf(this, LOCTEXT("UnableToFindRigHierarchy", "Unable to retrieve RigHierarchy for ControlRig ({0})"), FText::FromString(ControlRig->GetPathName()));	      
+					}
+				}
+			}
+		}
+	}
+}
 
 void UAnimationSequencerDataModel::ValidateData() const
 {		
@@ -944,19 +981,19 @@ void UAnimationSequencerDataModel::ValidateData() const
 
 void UAnimationSequencerDataModel::ValidateSequencerData() const
 {
-	checkf(MovieScene, TEXT("No Movie Scene found for SequencerDataModel"));
+	checkf(MovieScene, TEXT("%s: No Movie Scene found for SequencerDataModel"), *GetPathName());
 
 	const int32 NumberOfTracks = MovieScene->GetTracks().Num();
-	checkf(NumberOfTracks == 1, TEXT("Invalid number of Tracks in Movie Scene expected 1 but found %i"), NumberOfTracks);
+	checkf(NumberOfTracks == 1, TEXT("%s: Invalid number of Tracks in Movie Scene expected 1 but found %i"), *GetPathName(), NumberOfTracks);
 		
 	const UMovieSceneControlRigParameterTrack* Track = MovieScene->FindTrack<UMovieSceneControlRigParameterTrack>();
-	checkf(Track, TEXT("Unable to find Control Rig Track"));
+	checkf(Track, TEXT("%s: Unable to find Control Rig Track"), *GetPathName());
 
 	const int32 NumberOfSections = Track->GetAllSections().Num();
-	checkf(NumberOfSections == 1, TEXT("Invalid number of Sections found for Control Rig Track expected 1 but found %i"), NumberOfSections);
+	checkf(NumberOfSections == 1, TEXT("%s: Invalid number of Sections found for Control Rig Track expected 1 but found %i"), *GetPathName(), NumberOfSections);
 
 	const UMovieSceneControlRigParameterSection* Section = GetFKControlRigSection();
-	checkf(Section, TEXT("Unable to find Control Rig Section"));
+	checkf(Section, TEXT("%s: Unable to find Control Rig Section"), *GetPathName());
 }
 
 void UAnimationSequencerDataModel::ValidateControlRigData() const
@@ -1183,7 +1220,7 @@ void UAnimationSequencerDataModel::GeneratePoseData(UControlRig* ControlRig, FAn
 				QUICK_SCOPE_CYCLE_COUNTER(STAT_GetMappings);
 				RigHierarchy->ForEach<FRigBoneElement>([&MeshRefSkeleton, &RequiredBones, &SkeletonRefSkeleton, &RigHierarchy, &RetargetingScope, &RigPose](const FRigBoneElement* BoneElement) -> bool
 				{
-					const FName& BoneName = BoneElement->GetName();
+					const FName& BoneName = BoneElement->GetFName();
 					const int32 BoneIndex = MeshRefSkeleton.FindBoneIndex(BoneName);
 					if (BoneIndex != INDEX_NONE)
 					{
@@ -1205,7 +1242,7 @@ void UAnimationSequencerDataModel::GeneratePoseData(UControlRig* ControlRig, FAn
 
 				RigHierarchy->ForEach<FRigCurveElement>([this, &RigHierarchy, &Curve](const FRigCurveElement* CurveElement) -> bool
 					{
-						const FName& CurveName = CurveElement->GetName();
+						const FName& CurveName = CurveElement->GetFName();
 					Curve.Add(CurveName, RigHierarchy->GetCurveValue(CurveElement->GetKey()));
 						return true;
 					});
@@ -1325,7 +1362,7 @@ void UAnimationSequencerDataModel::EvaluateTrack(UMovieSceneControlRigParameterT
 					FRigControlElement* ControlElement = ControlRig->FindControl(Name);
 					if (ControlElement && ControlElement->Settings.ControlType == ERigControlType::Float)
 					{
-						RigHierarchy->SetControlValue(ControlElement, FRigControlValue::Make<float>(Value), ERigControlValueType::Current, false, false, false, false);
+						RigHierarchy->SetControlValue(ControlElement, FRigControlValue::Make<float>(Value), ERigControlValueType::Current, false, true, false, false);
 					}
 				}
 			}
@@ -1461,7 +1498,7 @@ void UAnimationSequencerDataModel::EvaluateTrack(UMovieSceneControlRigParameterT
 						
 							EulerTransform = FEulerTransform(FinalTransform);
 						}
-						RigHierarchy->SetControlValue(ControlElement, FRigControlValue::Make<FRigControlValue::FEulerTransform_Float>(EulerTransform), ERigControlValueType::Current, false, false, false, false);
+						RigHierarchy->SetControlValue(ControlElement, FRigControlValue::Make<FRigControlValue::FEulerTransform_Float>(EulerTransform), ERigControlValueType::Current, false, true, false, false);
 					}
 				}
 			}

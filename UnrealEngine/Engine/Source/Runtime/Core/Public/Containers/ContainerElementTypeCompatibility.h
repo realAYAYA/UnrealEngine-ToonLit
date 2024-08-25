@@ -34,9 +34,12 @@ struct TContainerElementTypeCompatibility
  * These types and the container methods that leverage them will be removed in a future release.
  */
 template <typename ElementType>
-struct TIsContainerElementTypeReinterpretable
+constexpr bool TIsContainerElementTypeReinterpretable_V = !std::is_same_v<typename TContainerElementTypeCompatibility<ElementType>::ReinterpretType, ElementType>;
+
+template <typename ElementType>
+struct UE_DEPRECATED(5.4, "TIsContainerElementTypeReinterpretable has been deprecated - please use TIsContainerElementTypeReinterpretable_V instead") TIsContainerElementTypeReinterpretable
 {
-	enum { Value = !std::is_same_v<typename TContainerElementTypeCompatibility<ElementType>::ReinterpretType, ElementType> };
+	enum { Value = TIsContainerElementTypeReinterpretable_V<ElementType> };
 };
 
 /**
@@ -44,7 +47,10 @@ struct TIsContainerElementTypeReinterpretable
  * These types and the container methods that leverage them will be removed in a future release.
  */
 template <typename ElementType>
-struct TIsContainerElementTypeCopyable
+constexpr bool TIsContainerElementTypeCopyable_V = !std::is_same_v<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, ElementType>;
+
+template <typename ElementType>
+struct UE_DEPRECATED(5.4, "TIsContainerElementTypeCopyable has been deprecated - please use TIsContainerElementTypeCopyable_V instead") TIsContainerElementTypeCopyable
 {
-	enum { Value = !std::is_same_v<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, ElementType> };
+	enum { Value = TIsContainerElementTypeCopyable_V<ElementType> };
 };

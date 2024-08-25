@@ -90,7 +90,7 @@ void PushToPhysicsStateImp(const Chaos::FDirtyPropertiesManager& Manager, Chaos:
 		auto NewVelocities = bHasKinematicData ? ParticleData.FindVelocities(Manager, DataIdx) : nullptr;
 		if(NewVelocities)
 		{
-			KinematicHandle->SetVelocities(*NewVelocities);
+			Evolution.SetParticleVelocities(KinematicHandle, NewVelocities->V(), NewVelocities->W());
 		}
 
 		auto NewKinematicTargetGT = bHasKinematicData ? ParticleData.FindKinematicTarget(Manager, DataIdx) : nullptr;
@@ -104,7 +104,7 @@ void PushToPhysicsStateImp(const Chaos::FDirtyPropertiesManager& Manager, Chaos:
 			// Update world-space cached state like the bounds
 			// @todo(chaos): do we need to do this here? It should be done in Integrate and ApplyKinematicTarget so only really Statics need this...
 			const bool bHasKinematicTarget = (NewKinematicTargetGT != nullptr) && (NewKinematicTargetGT->GetMode() == EKinematicTargetMode::Position);
-			const FRigidTransform3 WorldTransform = !bHasKinematicTarget ? FRigidTransform3(Handle->X(), Handle->R()) : NewKinematicTargetGT->GetTarget();
+			const FRigidTransform3 WorldTransform = !bHasKinematicTarget ? FRigidTransform3(Handle->GetX(), Handle->GetR()) : NewKinematicTargetGT->GetTarget();
 			Handle->UpdateWorldSpaceState(WorldTransform, FVec3(0));
 
 			Evolution.DirtyParticle(*Handle);
@@ -226,10 +226,10 @@ void FSingleParticlePhysicsProxy::ClearAccumulatedData()
 template <typename T>
 void BufferPhysicsResultsImp(Chaos::FDirtyRigidParticleData& PullData, T* Particle)
 {
-	PullData.X = Particle->X();
-	PullData.R = Particle->R();
-	PullData.V = Particle->V();
-	PullData.W = Particle->W();
+	PullData.X = Particle->GetX();
+	PullData.R = Particle->GetR();
+	PullData.V = Particle->GetV();
+	PullData.W = Particle->GetW();
 	PullData.ObjectState = Particle->ObjectState();
 }
 
@@ -254,49 +254,50 @@ void FSingleParticlePhysicsProxy::BufferPhysicsResults_External(Chaos::FDirtyRig
 	}
 }
 
-
-float RenderInterpErrorCorrectionDuration = 0.5f;
-FAutoConsoleVariableRef CVarRenderInterpErrorCorrectionDuration(TEXT("p.RenderInterp.ErrorCorrectionDuration"), RenderInterpErrorCorrectionDuration, TEXT("How long in seconds to apply error correction over."));
-
-float RenderInterpErrorVelocitySmoothingDuration = 0.5f;
-FAutoConsoleVariableRef CVarRenderInterpErrorVelocitySmoothingDuration(TEXT("p.RenderInterp.ErrorVelocitySmoothingDuration"), RenderInterpErrorVelocitySmoothingDuration, TEXT("How long in seconds to apply error velocity smoothing correction over, should be smaller than or equal to p.RenderInterp.ErrorCorrectionDuration. RENDERINTERPOLATION_VELOCITYSMOOTHING needs to be defined."));
-
-int32 RenderInterpDebugDraw = 0;
-FAutoConsoleVariableRef CVarRenderInterpDebugDraw(TEXT("p.RenderInterp.DebugDraw"), RenderInterpDebugDraw, TEXT("Draw debug lines for physics render interpolation, also needs p.Chaos.DebugDraw.Enabled set"));
+bool ShouldUpdateTransformFromSimulation(const Chaos::FPBDRigidParticle& Rigid)
+{
+	if (Rigid.ObjectState() == Chaos::EObjectStateType::Kinematic)
+	{
+		switch (Chaos::SyncKinematicOnGameThread)
+		{
+		case 0:
+			return false;
+		case 1:
+			return true;
+		default:
+			return Rigid.UpdateKinematicFromSimulation();
+		}
+	}
+	return true;
+}
 
 bool FSingleParticlePhysicsProxy::PullFromPhysicsState(const Chaos::FDirtyRigidParticleData& PullData,int32 SolverSyncTimestamp, const Chaos::FDirtyRigidParticleData* NextPullData, const Chaos::FRealSingle* Alpha, const FDirtyRigidParticleReplicationErrorData* Error, const Chaos::FReal AsyncFixedTimeStep)
 {
 	using namespace Chaos;
+
 	// Move buffered data into the TPBDRigidParticle without triggering invalidation of the physics state.
-	auto Rigid = Particle ? Particle->CastToRigidParticle() : nullptr;
+	Chaos::FPBDRigidParticle* Rigid = Particle ? Particle->CastToRigidParticle() : nullptr;
 	if(Rigid)
 	{
 		// Note that kinematics should either be updated here (following simulation), or when the
 		// kinematic target is set in FChaosEngineInterface::SetKinematicTarget_AssumesLocked If the
 		// logic in one place is changed, it should be checked in the other place too.
-		bool bUpdatePositionFromSimulation = true;
-		if (Rigid->ObjectState() == EObjectStateType::Kinematic)
-		{
-			switch (SyncKinematicOnGameThread)
-			{
-			case 0:
-				bUpdatePositionFromSimulation = false ; break;
-			case 1: 
-				bUpdatePositionFromSimulation = true; break;
-			default:
-				bUpdatePositionFromSimulation = Rigid->UpdateKinematicFromSimulation();
-			}
-		}
-
+		bool bUpdatePositionFromSimulation = ShouldUpdateTransformFromSimulation(*Rigid);
 		const FSingleParticleProxyTimestamp* ProxyTimestamp = PullData.GetTimestamp();
 		
 #if RENDERINTERP_ERRORVELOCITYSMOOTHING
-		const int32 RenderInterpErrorVelocitySmoothingDurationTicks = FMath::FloorToInt32(RenderInterpErrorVelocitySmoothingDuration / AsyncFixedTimeStep); // Convert duration from seconds to simulation ticks
+		const int32 RenderInterpErrorVelocitySmoothingDurationTicks = FMath::FloorToInt32(GetRenderInterpErrorVelocitySmoothingDuration() / AsyncFixedTimeStep); // Convert duration from seconds to simulation ticks
 #endif
 
 		if (Error)
 		{
-			const int32 RenderInterpErrorCorrectionDurationTicks = FMath::FloorToInt32(RenderInterpErrorCorrectionDuration / AsyncFixedTimeStep); // Convert duration from seconds to simulation ticks
+			const FReal ErrorMagSq = Error->ErrorX.SizeSquared();
+			const FReal MaxErrorCorrection = GetRenderInterpMaximumErrorCorrectionBeforeSnapping();
+			int32 RenderInterpErrorCorrectionDurationTicks = 0;
+			if (ErrorMagSq < MaxErrorCorrection * MaxErrorCorrection)
+			{
+				RenderInterpErrorCorrectionDurationTicks = FMath::FloorToInt32(GetRenderInterpErrorCorrectionDuration() / AsyncFixedTimeStep); // Convert duration from seconds to simulation ticks
+			}
 			InterpolationData.AccumlateErrorXR(Error->ErrorX, Error->ErrorR, SolverSyncTimestamp, RenderInterpErrorCorrectionDurationTicks);
 #if RENDERINTERP_ERRORVELOCITYSMOOTHING
 			InterpolationData.SetVelocitySmoothing(Rigid->V(), Rigid->X(), RenderInterpErrorVelocitySmoothingDurationTicks);
@@ -318,10 +319,10 @@ bool FSingleParticlePhysicsProxy::PullFromPhysicsState(const Chaos::FDirtyRigidP
 			if (bUpdatePositionFromSimulation)
 			{
 				const bool bIsReplicationErrorSmoothing = InterpolationData.IsErrorSmoothing();
+				bool DirectionalDecayPerformed = false;
 #if RENDERINTERP_ERRORVELOCITYSMOOTHING
 				const bool bIsErrorVelocitySmoothing = InterpolationData.IsErrorVelocitySmoothing();
 #endif
-
 				InterpolationData.UpdateError(SolverSyncTimestamp, AsyncFixedTimeStep);
 
 				if (const FVec3* Prev = LerpHelper(PullData.X, ProxyTimestamp->OverWriteX))
@@ -329,6 +330,11 @@ bool FSingleParticlePhysicsProxy::PullFromPhysicsState(const Chaos::FDirtyRigidP
 					FVec3 Target = FMath::Lerp(*Prev, NextPullData->X, *Alpha);
 					if (bIsReplicationErrorSmoothing)
 					{
+						if (GetRenderInterpErrorDirectionalDecayMultiplier() > 0.0f)
+						{
+							DirectionalDecayPerformed = InterpolationData.DirectionalDecay(NextPullData->X - *Prev);
+						}
+
 						Target += InterpolationData.GetErrorX(*Alpha);
 
 #if RENDERINTERP_ERRORVELOCITYSMOOTHING
@@ -361,11 +367,11 @@ bool FSingleParticlePhysicsProxy::PullFromPhysicsState(const Chaos::FDirtyRigidP
 				}
 				
 #if CHAOS_DEBUG_DRAW
-				if (!!RenderInterpDebugDraw)
+				if (GetRenderInterpDebugDraw())
 				{
 					Chaos::FDebugDrawQueue::GetInstance().DrawDebugBox(NextPullData->X, FVector(2, 1, 1), NextPullData->R, FColor::Yellow, false, 5.f, 0, 0.5f);
 					Chaos::FDebugDrawQueue::GetInstance().DrawDebugDirectionalArrow(PullData.X, NextPullData->X, 0.5f, FColor::Yellow, false, 5.0f, 0, 0.5f);
-					Chaos::FDebugDrawQueue::GetInstance().DrawDebugBox(Rigid->X(), FVector(2, 1, 1), Rigid->R(), FColor::Green, false, 5.f, 0, 0.5f);
+					Chaos::FDebugDrawQueue::GetInstance().DrawDebugBox(Rigid->X(), FVector(2, 1, 1), Rigid->R(), DirectionalDecayPerformed ? FColor::Cyan : FColor::Green, false, 5.f, 0, 0.5f);
 
 					if (bIsReplicationErrorSmoothing)
 					{
@@ -386,7 +392,6 @@ bool FSingleParticlePhysicsProxy::PullFromPhysicsState(const Chaos::FDirtyRigidP
 							Chaos::FDebugDrawQueue::GetInstance().DrawDebugDirectionalArrow((Rigid->X() - InterpolationData.GetErrorX(*Alpha)), Rigid->X(), 1, FColor::Blue, false, 5.0f, 0, 0.5f);
 						}
 					}
-
 				}
 #endif // CHAOS_DEBUG_DRAW
 			}

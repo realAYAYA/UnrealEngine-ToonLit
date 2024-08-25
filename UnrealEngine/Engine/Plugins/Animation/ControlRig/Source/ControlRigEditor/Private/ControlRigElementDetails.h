@@ -30,6 +30,67 @@
 
 class IPropertyHandle;
 
+namespace FRigElementKeyDetailsDefs
+{
+	// Active foreground pin alpha
+	static const float ActivePinForegroundAlpha = 1.f;
+	// InActive foreground pin alpha
+	static const float InactivePinForegroundAlpha = 0.15f;
+	// Active background pin alpha
+	static const float ActivePinBackgroundAlpha = 0.8f;
+	// InActive background pin alpha
+	static const float InactivePinBackgroundAlpha = 0.4f;
+};
+
+class SRigElementKeyWidget : public SCompoundWidget
+{
+public:
+
+	DECLARE_DELEGATE_RetVal(FText, FGetElementNameAsText);
+	DECLARE_DELEGATE_RetVal(ERigElementType, FGetElementType);
+	DECLARE_DELEGATE_RetVal(bool, FIsEnabled);
+	DECLARE_DELEGATE_OneParam(FOnElementTypeChanged, ERigElementType);
+	
+	SLATE_BEGIN_ARGS(SRigElementKeyWidget)
+	{
+	}
+	SLATE_ARGUMENT(UControlRigBlueprint*, Blueprint)
+	SLATE_ARGUMENT(FSlateColor, ActiveBackgroundColor)
+	SLATE_ARGUMENT(FSlateColor, InactiveBackgroundColor)
+	SLATE_ARGUMENT(FSlateColor, ActiveForegroundColor)
+	SLATE_ARGUMENT(FSlateColor, InactiveForegroundColor)
+	SLATE_EVENT(SSearchableComboBox::FOnSelectionChanged, OnElementNameChanged)
+	SLATE_EVENT(FOnClicked, OnGetSelectedClicked)
+	SLATE_EVENT(FOnClicked, OnSelectInHierarchyClicked)
+	SLATE_EVENT(FGetElementNameAsText, OnGetElementNameAsText)
+	SLATE_EVENT(FGetElementType, OnGetElementType)
+	SLATE_EVENT(FOnElementTypeChanged, OnElementTypeChanged)
+	SLATE_EVENT(FIsEnabled, IsEnabled);
+	
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs, TSharedPtr<IPropertyHandle> InNameHandle, TSharedPtr<IPropertyHandle> InTypeHandle);
+	void Construct(const FArguments& InArgs);
+
+	void UpdateElementNameList();
+
+private:
+	TSharedPtr<IPropertyHandle> NameHandle;
+	TSharedPtr<IPropertyHandle> TypeHandle;
+
+	/** Helper buttons. */
+	TSharedPtr<SButton> UseSelectedButton;
+	TSharedPtr<SButton> SelectElementButton;
+
+	FGetElementType OnGetElementType;
+	FOnElementTypeChanged OnElementTypeChanged;
+	SSearchableComboBox::FOnSelectionChanged OnElementNameChanged;
+
+	UControlRigBlueprint* BlueprintBeingCustomized;
+	TArray<TSharedPtr<FString>> ElementNameList;
+	TSharedPtr<SSearchableComboBox> SearchableComboBox;
+};
+
 class FRigElementKeyDetails : public IPropertyTypeCustomization
 {
 public:
@@ -48,9 +109,7 @@ protected:
 	ERigElementType GetElementType() const;
 	FString GetElementName() const;
 	void SetElementName(FString InName);
-	void UpdateElementNameList();
 	void OnElementNameChanged(TSharedPtr<FString> InItem, ESelectInfo::Type InSelectionInfo);
-	TSharedRef<SWidget> OnGetElementNameWidget(TSharedPtr<FString> InItem);
 	FText GetElementNameAsText() const;
 
 	/** Helper buttons. */
@@ -69,9 +128,8 @@ protected:
 	
 	TSharedPtr<IPropertyHandle> TypeHandle;
 	TSharedPtr<IPropertyHandle> NameHandle;
-	TArray<TSharedPtr<FString>> ElementNameList;
 	UControlRigBlueprint* BlueprintBeingCustomized;
-	TSharedPtr<SSearchableComboBox> SearchableComboBox;
+	TSharedPtr<SRigElementKeyWidget> RigElementKeyWidget;
 };
 
 UENUM()
@@ -232,6 +290,8 @@ public:
 	bool IsAnyControlOfValueType(ERigControlType InType) const;
 	bool IsAnyControlNotOfValueType(ERigControlType InType) const;
 	bool IsAnyElementProcedural() const;
+	bool IsAnyConnectorImported() const;
+	bool IsAnyConnectorPrimary() const;
 	bool GetCommonElementType(ERigElementType& OutElementType) const;
 	bool GetCommonControlType(ERigControlType& OutControlType) const;
 	bool GetCommonAnimationType(ERigControlAnimationType& OutAnimationType) const;
@@ -357,7 +417,7 @@ public:
 
 	bool IsShapeEnabled() const;
 
-	const TArray<TSharedPtr<FString>>& GetShapeNameList() const;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>& GetShapeNameList() const;
 
 	FText GetDisplayName() const;
 	void SetDisplayName(const FText& InNewText, ETextCommit::Type InCommitType);
@@ -683,8 +743,9 @@ private:
 	TSharedRef<ITableRow> HandleGenerateAnimationChannelTypeRow(TSharedPtr<ERigControlType> ControlType, const TSharedRef<STableViewBase>& OwnerTable, FRigElementKey ControlKey);
 	void HandleControlTypeChanged(TSharedPtr<ERigControlType> ControlType, ESelectInfo::Type SelectInfo, FRigElementKey ControlKey, const TSharedRef<IPropertyUtilities> PropertyUtilities);
 	void HandleControlTypeChanged(ERigControlType ControlType, TArray<FRigElementKey> ControlKeys, const TSharedRef<IPropertyUtilities> PropertyUtilities);
+	void HandleControlEnumChanged(TSharedPtr<FString> InItem, ESelectInfo::Type InSelectionInfo, const TSharedRef<IPropertyUtilities> PropertyUtilities);
 
-	TArray<TSharedPtr<FString>> ShapeNameList;
+	TArray<TSharedPtr<FRigVMStringWithTag>> ShapeNameList;
 	TSharedPtr<FRigInfluenceEntryModifier> InfluenceModifier;
 	TSharedPtr<FStructOnScope> InfluenceModifierStruct;
 
@@ -738,4 +799,72 @@ public:
 
 	/** IDetailCustomization interface */
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+};
+
+class FRigConnectorElementDetails : public FRigTransformElementDetails
+{
+public:
+
+	// Makes a new instance of this detail layout class for a specific detail view requesting it
+	static TSharedRef<IDetailCustomization> MakeInstance()
+	{
+		return MakeShareable(new FRigConnectorElementDetails);
+	}
+
+	/** IDetailCustomization interface */
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+
+	void CustomizeSettings(IDetailLayoutBuilder& DetailBuilder);
+};
+
+class FRigSocketElementDetails : public FRigNullElementDetails
+{
+public:
+
+	// Makes a new instance of this detail layout class for a specific detail view requesting it
+	static TSharedRef<IDetailCustomization> MakeInstance()
+	{
+		return MakeShareable(new FRigSocketElementDetails);
+	}
+
+	/** IDetailCustomization interface */
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+
+	void CustomizeSettings(IDetailLayoutBuilder& DetailBuilder);
+
+private:
+
+	FReply SetSocketColor(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent);
+	FLinearColor GetSocketColor() const; 
+	void OnSocketColorPicked(FLinearColor NewColor);
+	void SetSocketDescription(const FText& InDescription, ETextCommit::Type InCommitType);
+	FText GetSocketDescription() const; 
+};
+
+class FRigConnectionRuleDetails : public IPropertyTypeCustomization
+{
+public:
+
+	static TSharedRef<IPropertyTypeCustomization> MakeInstance()
+	{
+		return MakeShareable(new FRigConnectionRuleDetails);
+	}
+
+	/** IPropertyTypeCustomization interface */
+	virtual void CustomizeHeader(TSharedRef<class IPropertyHandle> InStructPropertyHandle, class FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils) override;
+	virtual void CustomizeChildren(TSharedRef<class IPropertyHandle> InStructPropertyHandle, class IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils) override;
+
+protected:
+	
+	TSharedRef<SWidget> GenerateStructPicker();
+	void OnPickedStruct(const UScriptStruct* ChosenStruct);
+	FText OnGetStructTextValue() const;
+	void OnRuleContentChanged();
+	
+	FRigConnectionRuleStash RuleStash;
+	TSharedPtr<FStructOnScope> Storage;
+	UControlRigBlueprint* BlueprintBeingCustomized;
+	TSharedPtr<IPropertyHandle> StructPropertyHandle;
+	TSharedPtr<IPropertyUtilities> PropertyUtilities;
+	TAttribute<bool> EnabledAttribute;
 };

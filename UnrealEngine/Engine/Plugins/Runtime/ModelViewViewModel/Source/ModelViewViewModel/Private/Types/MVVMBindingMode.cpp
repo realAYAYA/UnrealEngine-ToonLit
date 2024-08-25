@@ -10,11 +10,13 @@ namespace UE::MVVM
 
 	bool IsForwardBinding(EMVVMBindingMode Mode)
 	{
+		//OneTimeToDestination || OneWayToDestination || TwoWay
 		return static_cast<uint8>(Mode) <= static_cast<uint8>(EMVVMBindingMode::TwoWay);
 	}
 
 	bool IsBackwardBinding(EMVVMBindingMode Mode)
 	{
+		//OneTimeToSource || OneWayToSource || TwoWay
 		return static_cast<uint8>(Mode) >= static_cast<uint8>(EMVVMBindingMode::TwoWay);
 	}
 

@@ -3,7 +3,7 @@
 #include "DatasmithMaxWriter.h"
 
 #include "DatasmithSceneFactory.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 
 #include "Misc/Paths.h"
 

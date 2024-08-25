@@ -144,12 +144,12 @@ void FParticleScratchVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 
 	FRHIResourceCreateInfo CreateInfo(TEXT("FParticleScratchVertexBuffer"));
 	VertexBufferRHI = RHICmdList.CreateVertexBuffer(GParticleScratchVertexBufferSize, Flags, CreateInfo);
-	VertexBufferSRV_G32R32F = RHICmdList.CreateShaderResourceView(VertexBufferRHI, /*Stride=*/ sizeof(FVector2f), PF_G32R32F);
+	VertexBufferSRV_A32B32G32R32F = RHICmdList.CreateShaderResourceView(VertexBufferRHI, Stride, PF_A32B32G32R32F);
 }
 
 FParticleShaderParamRef FParticleScratchVertexBuffer::GetShaderParam()
 {
-	return VertexBufferSRV_G32R32F;
+	return VertexBufferSRV_A32B32G32R32F;
 }
 
 FParticleBufferParamRef FParticleScratchVertexBuffer::GetBufferParam()
@@ -160,7 +160,7 @@ FParticleBufferParamRef FParticleScratchVertexBuffer::GetBufferParam()
 /** Release RHI resources. */
 void FParticleScratchVertexBuffer::ReleaseRHI()
 {
-	VertexBufferSRV_G32R32F.SafeRelease();
+	VertexBufferSRV_A32B32G32R32F.SafeRelease();
 	FVertexBuffer::ReleaseRHI();
 }
 

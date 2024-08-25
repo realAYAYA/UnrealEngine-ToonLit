@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/iallocator.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/error.h"
@@ -41,14 +42,19 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 		inline track_stream_range calculate_track_range(const track_stream& stream, bool is_vector4)
 		{
+			const uint32_t num_samples = stream.get_num_samples();
+			if (num_samples == 0)
+				return track_stream_range::from_min_max(rtm::vector_zero(), rtm::vector_zero());
+
 			rtm::vector4f min = rtm::vector_set(1e10F);
 			rtm::vector4f max = rtm::vector_set(-1e10F);
-
-			const uint32_t num_samples = stream.get_num_samples();
+			
 			for (uint32_t sample_index = 0; sample_index < num_samples; ++sample_index)
 			{
 				const rtm::vector4f sample = stream.get_raw_sample<rtm::vector4f>(sample_index);
@@ -396,6 +402,8 @@ namespace acl
 			}
 		}
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

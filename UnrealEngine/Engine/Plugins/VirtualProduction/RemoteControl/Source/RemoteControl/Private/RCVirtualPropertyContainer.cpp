@@ -44,10 +44,12 @@ URCVirtualPropertyInContainer* URCVirtualPropertyContainerBase::AddProperty(cons
 	// Create Property in Container
 	URCVirtualPropertyInContainer* VirtualPropertyInContainer = NewObject<URCVirtualPropertyInContainer>(this, InPropertyClass.Get(), NAME_None, RF_Transactional);
 	VirtualPropertyInContainer->PropertyName = PropertyName;
+	VirtualPropertyInContainer->DisplayName = PropertyName;
 	VirtualPropertyInContainer->PresetWeakPtr = PresetWeakPtr;
 	VirtualPropertyInContainer->ContainerWeakPtr = this;
 	VirtualPropertyInContainer->Id = FGuid::NewGuid();
 
+	ControllerLabelToIdCache.Add(PropertyName, VirtualPropertyInContainer->Id);
 	AddVirtualProperty(VirtualPropertyInContainer);
 
 	return VirtualPropertyInContainer;
@@ -66,10 +68,12 @@ URCVirtualPropertyInContainer* URCVirtualPropertyContainerBase::DuplicatePropert
 	
 	URCVirtualPropertyInContainer* VirtualPropertyInContainer = NewObject<URCVirtualPropertyInContainer>(this, InPropertyClass.Get());
 	VirtualPropertyInContainer->PropertyName = InPropertyName;
+	VirtualPropertyInContainer->DisplayName = GenerateUniqueDisplayName(VirtualPropertyInContainer->DisplayName, this);;
 	VirtualPropertyInContainer->PresetWeakPtr = PresetWeakPtr;
 	VirtualPropertyInContainer->ContainerWeakPtr = this;
 	VirtualPropertyInContainer->Id = FGuid::NewGuid();
 
+	ControllerLabelToIdCache.Add(InPropertyName, VirtualPropertyInContainer->Id);
 	AddVirtualProperty(VirtualPropertyInContainer);
 
 	return VirtualPropertyInContainer;
@@ -101,6 +105,7 @@ URCVirtualPropertyInContainer* URCVirtualPropertyContainerBase::DuplicateVirtual
 	if (URCVirtualPropertyInContainer* NewVirtualProperty = DuplicateObject<URCVirtualPropertyInContainer>(InVirtualProperty, InVirtualProperty->GetOuter()))
 	{
 		NewVirtualProperty->PropertyName = GenerateUniquePropertyName(InVirtualProperty->PropertyName, this);
+		NewVirtualProperty->DisplayName = GenerateUniqueDisplayName(InVirtualProperty->DisplayName, this);
 		NewVirtualProperty->Id = FGuid::NewGuid();
 
 		// Sync Property Bag
@@ -116,6 +121,9 @@ URCVirtualPropertyInContainer* URCVirtualPropertyContainerBase::DuplicateVirtual
 		// Sync Virtual Properties List
 		AddVirtualProperty(NewVirtualProperty);
 
+		// Sync Cache
+		ControllerLabelToIdCache.Add(NewVirtualProperty->DisplayName, NewVirtualProperty->Id);
+
 		return NewVirtualProperty;
 	}
 
@@ -126,12 +134,13 @@ bool URCVirtualPropertyContainerBase::RemoveProperty(const FName& InPropertyName
 {
 	Bag.RemovePropertyByName(InPropertyName);
 
-	for (auto PropertiesIt = VirtualProperties.CreateIterator(); PropertiesIt; ++PropertiesIt)
+	for (TSet<TObjectPtr<URCVirtualPropertyBase>>::TIterator PropertiesIt = VirtualProperties.CreateIterator(); PropertiesIt; ++PropertiesIt)
 	{
 		if (const URCVirtualPropertyBase* VirtualProperty = *PropertiesIt)
 		{
 			if (VirtualProperty->PropertyName == InPropertyName)
 			{
+				ControllerLabelToIdCache.Remove(VirtualProperty->DisplayName);
 				PropertiesIt.RemoveCurrent();
 				return true;
 			}
@@ -144,7 +153,7 @@ bool URCVirtualPropertyContainerBase::RemoveProperty(const FName& InPropertyName
 void URCVirtualPropertyContainerBase::Reset()
 {
 	VirtualProperties.Empty();
-
+	ControllerLabelToIdCache.Reset();
 	Bag.Reset();
 }
 
@@ -181,6 +190,14 @@ URCVirtualPropertyBase* URCVirtualPropertyContainerBase::GetVirtualProperty(cons
 
 URCVirtualPropertyBase* URCVirtualPropertyContainerBase::GetVirtualPropertyByDisplayName(const FName InDisplayName) const
 {
+	if (const FGuid* ControllerId = ControllerLabelToIdCache.Find(InDisplayName))
+	{
+		if (URCVirtualPropertyBase* Controller = GetVirtualProperty(*ControllerId))
+		{
+			return Controller;
+		}
+	}
+
 	for (URCVirtualPropertyBase* VirtualProperty : VirtualProperties)
 	{
 		if (VirtualProperty->DisplayName == InDisplayName)
@@ -250,6 +267,22 @@ TSharedPtr<FStructOnScope> URCVirtualPropertyContainerBase::CreateStructOnScope(
 	return MakeShared<FStructOnScope>(Bag.GetPropertyBagStruct(), Bag.GetMutableValue().GetMemory());
 }
 
+FName URCVirtualPropertyContainerBase::SetControllerDisplayName(FGuid InGuid, FName InNewName)
+{
+	if (URCVirtualPropertyBase* Controller = GetVirtualProperty(InGuid))
+	{
+		Controller->Modify();
+
+		ControllerLabelToIdCache.Remove(Controller->DisplayName);
+		Controller->DisplayName = GenerateUniqueDisplayName(InNewName, this);
+		ControllerLabelToIdCache.Add(Controller->DisplayName, Controller->Id);
+
+		return Controller->DisplayName;
+	}
+
+	return NAME_None;
+}
+
 FName URCVirtualPropertyContainerBase::GenerateUniquePropertyName(const FName& InPropertyName, const EPropertyBagPropertyType InValueType, UObject* InValueTypeObject, const URCVirtualPropertyContainerBase* InContainer)
 {
 	FName BaseName = InPropertyName;
@@ -289,6 +322,84 @@ FName URCVirtualPropertyContainerBase::GenerateUniquePropertyName(const FName& I
 	}
 
 	return *FinalName;
+}
+
+FName URCVirtualPropertyContainerBase::GenerateUniqueDisplayName(const FName& InPropertyName, const URCVirtualPropertyContainerBase* InContainer)
+{
+	auto GetFinalName = [](const FName& InPrefix, const int32 InIndex = 0)
+	{
+		FName FinalName = InPrefix;
+
+		if (InIndex > 0)
+		{
+			FinalName = FName(FinalName.ToString() + TEXT("_") + FString::FromInt(InIndex));
+		}
+
+		return FinalName;
+	};
+
+	int32 Index = 0;
+	const FName InitialName = InPropertyName;
+	FName FinalName = InitialName;
+
+	// Recursively search for an available name by incrementing suffix till we find one.
+	bool bControllerExist = InContainer->ControllerLabelToIdCache.Contains(FinalName);
+	while (bControllerExist)
+	{
+		++Index;
+		FinalName = GetFinalName(InitialName, Index);
+		bControllerExist = InContainer->ControllerLabelToIdCache.Contains(FinalName);
+	}
+
+	return FinalName;
+}
+
+void URCVirtualPropertyContainerBase::UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap)
+{
+	for (const TObjectPtr<URCVirtualPropertyBase>& VirtualProperty : VirtualProperties)
+	{
+		if (VirtualProperty)
+		{
+			VirtualProperty->UpdateEntityIds(InEntityIdMap);
+		}
+	}
+}
+
+void URCVirtualPropertyContainerBase::CacheControllersLabels()
+{
+	ControllerLabelToIdCache.Reset();
+	for (const URCVirtualPropertyBase* Controller : VirtualProperties)
+	{
+		if (Controller)
+		{
+			if (!ControllerLabelToIdCache.Contains(Controller->DisplayName))
+			{
+				ControllerLabelToIdCache.Add(Controller->DisplayName, Controller->Id);
+			}
+		}
+	}
+}
+
+void URCVirtualPropertyContainerBase::FixAndCacheControllersLabels()
+{
+	ControllerLabelToIdCache.Reset();
+	for (URCVirtualPropertyBase* Controller : VirtualProperties)
+	{
+		if (Controller)
+		{
+			if (!ControllerLabelToIdCache.Contains(Controller->DisplayName))
+			{
+				ControllerLabelToIdCache.Add(Controller->DisplayName, Controller->Id);
+			}
+			// Cases for older presets where you could have the same DisplayName, and if it is already saved then we need to change it now before caching it
+			else
+			{
+				const FName NewControllerName = GenerateUniqueDisplayName(Controller->DisplayName, this);
+				Controller->DisplayName = NewControllerName;
+				ControllerLabelToIdCache.Add(NewControllerName, Controller->Id);
+			}
+		}
+	}
 }
 
 #if WITH_EDITOR

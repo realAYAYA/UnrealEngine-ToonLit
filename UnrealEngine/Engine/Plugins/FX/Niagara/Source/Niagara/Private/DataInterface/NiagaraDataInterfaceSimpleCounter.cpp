@@ -4,9 +4,11 @@
 #include "NiagaraClearCounts.h"
 #include "NiagaraCompileHashVisitor.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
+#include "NiagaraGpuComputeDispatch.h"
 #include "NiagaraGpuReadbackManager.h"
 #include "NiagaraShaderParametersBuilder.h"
 #include "NiagaraSystemInstance.h"
+#include "NiagaraWorldManager.h"
 
 #include "Internationalization/Internationalization.h"
 #include "Async/Async.h"
@@ -72,16 +74,20 @@ struct FNDISimpleCounterProxy : public FNiagaraDataInterfaceProxyRW
 				const FNiagaraGPUInstanceCountManager& CounterManager = Context.GetComputeDispatchInterface().GetGPUInstanceCounterManager();
 				const FRWBuffer& CountBuffer = CounterManager.GetInstanceCountBuffer();
 
+				//-TODO: Once the count manager is ported to RDG we won't need to track this
+				const FNiagaraGpuComputeDispatch& ComputeDispatch = static_cast<const FNiagaraGpuComputeDispatch&>(Context.GetComputeDispatchInterface());
+				const ERHIAccess CountRHIAccess = ComputeDispatch.IsExecutingFirstDispatchGroup() ? FNiagaraGPUInstanceCountManager::kCountBufferDefaultState : ERHIAccess::UAVCompute;
+
 				//-TODO:RDG: Once the count buffer is a graph resource this can be changed
 				AddPass(
 					Context.GetGraphBuilder(),
 					RDG_EVENT_NAME("NiagaraSimpleCounter::PreStage"),
-					[CountBufferUAV=CountBuffer.UAV, CountOffset=InstanceData->CountOffset, CountValue=InstanceData->CountValue.GetValue()](FRHICommandListImmediate& RHICmdList)
+					[CountBufferUAV=CountBuffer.UAV, CountOffset=InstanceData->CountOffset, CountValue=InstanceData->CountValue.GetValue(), CountRHIAccess](FRHICommandListImmediate& RHICmdList)
 					{
-						const TPair<uint32, int32> DataToClear(CountOffset, CountValue);
-						RHICmdList.Transition(FRHITransitionInfo(CountBufferUAV, ERHIAccess::UAVCompute, ERHIAccess::UAVCompute));
-						NiagaraClearCounts::ClearCountsInt(RHICmdList, CountBufferUAV, MakeArrayView(&DataToClear, 1) );
-						RHICmdList.Transition(FRHITransitionInfo(CountBufferUAV, ERHIAccess::UAVCompute, ERHIAccess::UAVCompute));
+						const TPair<uint32, uint32> DataToClear(CountOffset, reinterpret_cast<const uint32&>(CountValue));
+						RHICmdList.Transition(FRHITransitionInfo(CountBufferUAV, CountRHIAccess, ERHIAccess::UAVCompute));
+						NiagaraClearCounts::ClearCountsUInt(RHICmdList, CountBufferUAV, MakeArrayView(&DataToClear, 1) );
+						RHICmdList.Transition(FRHITransitionInfo(CountBufferUAV, ERHIAccess::UAVCompute, CountRHIAccess));
 					}
 				);
 
@@ -113,10 +119,11 @@ struct FNDISimpleCounterProxy : public FNiagaraDataInterfaceProxyRW
 							[SystemInstanceID, WeakOwner=Proxy->WeakOwner, Proxy](TConstArrayView<TPair<void*, uint32>> ReadbackData)
 							{
 								const int32 CounterValue = *reinterpret_cast<const int32*>(ReadbackData[0].Key);
-								AsyncTask(
-									ENamedThreads::GameThread,
+								FNiagaraWorldManager::EnqueueGlobalDeferredCallback(
 									[SystemInstanceID, CounterValue, WeakOwner, Proxy]()
 									{
+										TRACE_CPUPROFILER_EVENT_SCOPE(NDISimpleCounterGTCallback);
+
 										// FNiagaraDataInterfaceProxy do not outlive UNiagaraDataInterface so if our Object is valid so is the proxy
 										// Equally because we do not share instance IDs (monotonically increasing number) we won't ever stomp something that has 'gone away'
 										if ( WeakOwner.Get() )
@@ -163,14 +170,17 @@ void UNiagaraDataInterfaceSimpleCounter::PostInitProperties()
 	}
 }
 
+void UNiagaraDataInterfaceSimpleCounter::PostLoad()
+{
+	Super::PostLoad();
+	UpdateDIProxy();
+}
+
 #if WITH_EDITOR
 void UNiagaraDataInterfaceSimpleCounter::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	// Ensure proxy properties are up to date
-	FNDISimpleCounterProxy* Proxy_GT = GetProxyAs<FNDISimpleCounterProxy>();
-	Proxy_GT->GpuSyncMode = GpuSyncMode;
+	UpdateDIProxy();
 }
 #endif
 
@@ -199,8 +209,7 @@ bool UNiagaraDataInterfaceSimpleCounter::CopyToInternal(UNiagaraDataInterface* D
 	DestinationTyped->InitialValue = InitialValue;
 
 	// Ensure proxy properties are up to date
-	FNDISimpleCounterProxy* DestinationProxy = DestinationTyped->GetProxyAs<FNDISimpleCounterProxy>();
-	DestinationProxy->GpuSyncMode = GpuSyncMode;
+	DestinationTyped->UpdateDIProxy();
 
 	return true;
 }
@@ -261,7 +270,8 @@ int32 UNiagaraDataInterfaceSimpleCounter::PerInstanceDataSize() const
 	return sizeof(FNDISimpleCounterInstanceData_GameThread);
 }
 
-void UNiagaraDataInterfaceSimpleCounter::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceSimpleCounter::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDISimpleCounterLocal;
 
@@ -347,6 +357,7 @@ void UNiagaraDataInterfaceSimpleCounter::GetFunctions(TArray<FNiagaraFunctionSig
 		Sig.SetDescription(LOCTEXT("DecrementDesc", "Decrements the counter by 1."));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceSimpleCounter::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {
@@ -464,6 +475,130 @@ void UNiagaraDataInterfaceSimpleCounter::PushToRenderThreadImpl()
 			}
 		);
 	}
+}
+
+UObject* UNiagaraDataInterfaceSimpleCounter::SimCacheBeginWrite(UObject* SimCache, FNiagaraSystemInstance* NiagaraSystemInstance, const void* OptionalPerInstanceData, FNiagaraSimCacheFeedbackContext& FeedbackContext) const
+{
+	UNDISimpleCounterSimCacheData* CacheData = NewObject<UNDISimpleCounterSimCacheData>(SimCache);
+	return CacheData;
+}
+
+bool UNiagaraDataInterfaceSimpleCounter::SimCacheWriteFrame(UObject* StorageObject, int FrameIndex, FNiagaraSystemInstance* SystemInstance, const void* OptionalPerInstanceData, FNiagaraSimCacheFeedbackContext& FeedbackContext) const
+{
+	check(OptionalPerInstanceData && StorageObject);
+
+	UNDISimpleCounterSimCacheData* CacheData = CastChecked<UNDISimpleCounterSimCacheData>(StorageObject);
+
+	const int32 ValueOffset = FrameIndex * 2;
+	const int32 ExpectedValues = ValueOffset + 2;
+	if (CacheData->Values.Num() < ExpectedValues)
+	{
+		CacheData->Values.AddDefaulted(ExpectedValues - CacheData->Values.Num());
+	}
+
+	const FNDISimpleCounterInstanceData_GameThread* InstanceData_GT = static_cast<const FNDISimpleCounterInstanceData_GameThread*>(OptionalPerInstanceData);
+	CacheData->Values[ValueOffset + 0] = InstanceData_GT->Counter;
+	CacheData->Values[ValueOffset + 1] = InstanceData_GT->Counter;
+
+	if (IsUsedWithGPUScript())
+	{
+		ENQUEUE_RENDER_COMMAND(FNDISimpleCounter_CacheWriteFrame)
+		(
+			[Proxy_RT=GetProxyAs<FNDISimpleCounterProxy>(), InstanceID=SystemInstance->GetId(), ComputeInterface=SystemInstance->GetComputeDispatchInterface(), CacheData, ValueOffset](FRHICommandListImmediate& RHICmdList)
+			{
+				const FNDISimpleCounterInstanceData_RenderThread* InstanceData_RT = Proxy_RT->PerInstanceData_RenderThread.Find(InstanceID);
+				if (!InstanceData_RT || InstanceData_RT->CountOffset == INDEX_NONE)
+				{
+					return;
+				}
+
+				const FNiagaraGPUInstanceCountManager& CountManager = ComputeInterface->GetGPUInstanceCounterManager();
+				FNiagaraGpuReadbackManager* ReadbackManager = ComputeInterface->GetGpuReadbackManager();
+
+				ReadbackManager->EnqueueReadback(
+					RHICmdList,
+					CountManager.GetInstanceCountBuffer().Buffer,
+					InstanceData_RT->CountOffset * sizeof(uint32), sizeof(int32),
+					[CacheData, ValueOffset](TConstArrayView<TPair<void*, uint32>> ReadbackData)
+					{
+						CacheData->Values[ValueOffset + 1] = *static_cast<const int32*>(ReadbackData[0].Key);
+					}
+				);
+				ReadbackManager->WaitCompletion(RHICmdList);
+			}
+		);
+		FlushRenderingCommands();
+	}
+	return true;
+}
+
+bool UNiagaraDataInterfaceSimpleCounter::SimCacheReadFrame(UObject* StorageObject, int FrameA, int FrameB, float Interp, FNiagaraSystemInstance* SystemInstance, void* OptionalPerInstanceData)
+{
+	check(OptionalPerInstanceData && StorageObject);
+
+	const int32 ValueOffset = FrameA * 2;
+	const int32 ExpectedValues = ValueOffset + 2;
+
+	UNDISimpleCounterSimCacheData* CacheData = CastChecked<UNDISimpleCounterSimCacheData>(StorageObject);
+	if (CacheData->Values.Num() < ExpectedValues)
+	{
+		return false;
+	}
+
+	// Set CPU Data
+	FNDISimpleCounterInstanceData_GameThread* InstanceData_GT = static_cast<FNDISimpleCounterInstanceData_GameThread*>(OptionalPerInstanceData);
+	InstanceData_GT->Counter = CacheData->Values[ValueOffset + 0];
+
+	// Set GPU Data
+	if (IsUsedWithGPUScript())
+	{
+		ENQUEUE_RENDER_COMMAND(FNDISimpleCounter_PushToRender)
+		(
+			[Proxy_RT=GetProxyAs<FNDISimpleCounterProxy>(), InstanceID=SystemInstance->GetId(), NewValue=CacheData->Values[ValueOffset + 1]](FRHICommandListImmediate& RHICmdList)
+			{
+				if ( FNDISimpleCounterInstanceData_RenderThread* InstanceData_RT=Proxy_RT->PerInstanceData_RenderThread.Find(InstanceID) )
+				{
+					InstanceData_RT->CountValue = NewValue;
+				}
+			}
+		);
+	}
+
+	return true;
+}
+
+bool UNiagaraDataInterfaceSimpleCounter::SimCacheCompareFrame(UObject* LhsStorageObject, UObject* RhsStorageObject, int FrameIndex, TOptional<float> Tolerance, FString& OutErrors) const
+{
+	UNDISimpleCounterSimCacheData* LhsCacheData = CastChecked<UNDISimpleCounterSimCacheData>(LhsStorageObject);
+	UNDISimpleCounterSimCacheData* RhsCacheData = CastChecked<UNDISimpleCounterSimCacheData>(RhsStorageObject);
+
+	const int32 ValueOffset = FrameIndex * 2;
+	const int32 ExpectedValues = ValueOffset + 2;
+
+	if (LhsCacheData->Values.Num() != RhsCacheData->Values.Num())
+	{
+		OutErrors = FString::Printf(TEXT("Number of LhsValues(%d) != RhsValues(%d)"), LhsCacheData->Values.Num(), RhsCacheData->Values.Num());
+		return false;
+	}
+
+	if ((LhsCacheData->Values[ValueOffset + 0] != RhsCacheData->Values[ValueOffset + 0]) ||
+		(LhsCacheData->Values[ValueOffset + 1] != RhsCacheData->Values[ValueOffset + 1]))
+	{
+		OutErrors = FString::Printf(
+			TEXT("Cpu|Gpu values to do not match LhsValues(%d|%d) != RhsValues(%d|%d)"),
+			LhsCacheData->Values[ValueOffset + 0], LhsCacheData->Values[ValueOffset + 1],
+			RhsCacheData->Values[ValueOffset + 0], RhsCacheData->Values[ValueOffset + 1]
+		);
+		return false;
+	}
+
+	return true;
+}
+
+void UNiagaraDataInterfaceSimpleCounter::UpdateDIProxy()
+{
+	FNDISimpleCounterProxy* Proxy_GT = GetProxyAs<FNDISimpleCounterProxy>();
+	Proxy_GT->GpuSyncMode = GpuSyncMode;
 }
 
 void UNiagaraDataInterfaceSimpleCounter::VMGet(FVectorVMExternalFunctionContext& Context)

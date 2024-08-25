@@ -28,9 +28,9 @@ public:
 	virtual void Init(USkeletalMeshComponent* SkelMeshComponent) override;
 	virtual void PostMLDeformerComponentInit() override;
 	virtual void BeginDestroy() override;
-	virtual void Tick(float DeltaTime, float ModelWeight) override;
 	virtual void HandleZeroModelWeight() override;
 	virtual bool IsValidForDataProvider() const override;
+	virtual void PostTick(bool bExecuteCalled) override;
 	// ~END UMLDeformerModelInstance overrides.
 
 	int32 GetExternalMorphSetID() const;
@@ -48,13 +48,4 @@ protected:
 
 	/** The ID of the external morph target set for this instance. This gets initialized during Init. */
 	int32 ExternalMorphSetID = -1;
-
-	/** The morph target weights we are blending towards. */
-	TArray<float> StartMorphWeights;
-
-	/** The current lerp alpha (between 0 and 1). */
-	float MorphLerpAlpha = 1.0f;
-
-	/** The quality level in the previous tick. */
-	int32 LastQualityLevel = -1;
 };

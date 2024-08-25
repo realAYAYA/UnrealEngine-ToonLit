@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security.Claims;
@@ -11,18 +12,24 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using EpicGames.Core;
 using EpicGames.Horde;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Agents.Pools;
 using EpicGames.Horde.Common;
+using EpicGames.Horde.Issues;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Replicators;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Telemetry;
 using Horde.Server.Acls;
-using Horde.Server.Agents.Pools;
 using Horde.Server.Configuration;
 using Horde.Server.Issues;
 using Horde.Server.Jobs.Graphs;
 using Horde.Server.Jobs.Templates;
 using Horde.Server.Perforce;
 using Horde.Server.Projects;
+using Horde.Server.Replicators;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
-using Horde.Common;
 using HordeCommon;
 using HordeCommon.Rpc.Tasks;
 
@@ -73,21 +80,14 @@ namespace Horde.Server.Streams
 	[JsonSchema("https://unrealengine.com/horde/stream")]
 	[JsonSchemaCatalog("Horde Stream", "Horde stream configuration file", new[] { "*.stream.json", "Streams/*.json" })]
 	[ConfigIncludeRoot]
-	public class StreamConfig : IAclScope
+	[ConfigMacroScope]
+	public class StreamConfig
 	{
 		/// <summary>
 		/// Accessor for the project containing this stream
 		/// </summary>
 		[JsonIgnore]
 		public ProjectConfig ProjectConfig { get; private set; } = null!;
-
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public IAclScope? ParentScope => ProjectConfig;
-
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public AclScopeName ScopeName { get; private set; }
 
 		/// <summary>
 		/// Identifier for the stream
@@ -104,6 +104,11 @@ namespace Horde.Server.Streams
 		/// Includes for other configuration files
 		/// </summary>
 		public List<ConfigInclude> Include { get; set; } = new List<ConfigInclude>();
+
+		/// <summary>
+		/// Macros within this stream
+		/// </summary>
+		public List<ConfigMacro> Macros { get; set; } = new List<ConfigMacro>();
 
 		/// <summary>
 		/// Revision identifier for this configuration object
@@ -137,7 +142,7 @@ namespace Horde.Server.Streams
 		public string? NotificationChannel { get; set; }
 
 		/// <summary>
-		/// Notification channel filter for this template. Can be Success|Failure|Warnings
+		/// Notification channel filter for this template. Can be Success, Failure, or Warnings.
 		/// </summary>
 		public string? NotificationChannelFilter { get; set; }
 
@@ -152,6 +157,11 @@ namespace Horde.Server.Streams
 		public JobOptions JobOptions { get; set; } = new JobOptions();
 
 		/// <summary>
+		/// Telemetry store for Horde data for this stream
+		/// </summary>
+		public TelemetryStoreId TelemetryStoreId { get; set; }
+
+		/// <summary>
 		/// View for the AutoSDK paths to sync. If null, the whole thing will be synced.
 		/// </summary>
 		public List<string>? AutoSdkView { get; set; }
@@ -163,7 +173,7 @@ namespace Horde.Server.Streams
 		public string? DefaultPreflightTemplate
 		{
 			get => DefaultPreflight?.TemplateId?.ToString();
-			set => DefaultPreflight = (value == null)? null : new DefaultPreflightConfig { TemplateId = new TemplateId(value) };
+			set => DefaultPreflight = (value == null) ? null : new DefaultPreflightConfig { TemplateId = new TemplateId(value) };
 		}
 
 		/// <summary>
@@ -204,7 +214,7 @@ namespace Horde.Server.Streams
 		/// <summary>
 		/// Custom permissions for this object
 		/// </summary>
-		public AclConfig? Acl { get; set; }
+		public AclConfig Acl { get; set; } = new AclConfig();
 
 		/// <summary>
 		/// Pause stream builds until specified date
@@ -217,19 +227,9 @@ namespace Horde.Server.Streams
 		public string? PauseComment { get; set; }
 
 		/// <summary>
-		/// How to replicate data from VCS to Horde Storage.
+		/// Configuration for workers to replicate commit data into Horde Storage.
 		/// </summary>
-		public ContentReplicationMode ReplicationMode { get; set; }
-
-		/// <summary>
-		/// Filter for paths to be replicated to storage, as a Perforce wildcard relative to the root of the workspace.
-		/// </summary>
-		public string? ReplicationFilter { get; set; }
-
-		/// <summary>
-		/// Stream to use for replication, if different to the default.
-		/// </summary>
-		public string? ReplicationStream { get; set; }
+		public List<ReplicatorConfig> Replicators { get; set; } = new List<ReplicatorConfig>();
 
 		/// <summary>
 		/// Workflows for dealing with new issues
@@ -240,7 +240,11 @@ namespace Horde.Server.Streams
 		/// Tokens to create for each job step
 		/// </summary>
 		public List<TokenConfig> Tokens { get; set; } = new List<TokenConfig>();
-		
+
+		/// <inheritdoc cref="AclConfig.Authorize(AclAction, ClaimsPrincipal)"/>
+		public bool Authorize(AclAction action, ClaimsPrincipal user)
+			=> Acl.Authorize(action, user);
+
 		/// <summary>
 		/// Callback after reading this stream configuration
 		/// </summary>
@@ -250,13 +254,51 @@ namespace Horde.Server.Streams
 		{
 			Id = id;
 			ProjectConfig = projectConfig;
-			ScopeName = projectConfig.ScopeName.Append("s", Id.ToString());
+
+			Acl.PostLoad(projectConfig.Acl, $"stream:{Id}");
 
 			JobOptions.MergeDefaults(projectConfig.JobOptions);
+
+			if (TelemetryStoreId.IsEmpty)
+			{
+				TelemetryStoreId = projectConfig.TelemetryStoreId;
+			}
 
 			foreach (TemplateRefConfig template in Templates)
 			{
 				template.PostLoad(this);
+			}
+
+			ConfigType.MergeDefaults(AgentTypes.Select(x => (x.Key, x.Value.Base, x.Value)));
+			ConfigType.MergeDefaults(WorkspaceTypes.Select(x => (x.Key, x.Value.Base, x.Value)));
+			ConfigType.MergeDefaults(Templates.Select(x => (x.Id, x.Base, x)));
+
+			foreach (TemplateRefConfig template in Templates)
+			{
+				template.JobOptions.MergeDefaults(JobOptions);
+			}
+
+			foreach (TemplateRefConfig template in Templates)
+			{
+				foreach (ParameterData parameter in template.Parameters)
+				{
+					parameter.PostLoad();
+				}
+			}
+
+			foreach (TemplateRefConfig template in Templates)
+			{
+				ScheduleConfig? schedule = template.Schedule;
+				if (schedule != null)
+				{
+					foreach (CommitTag commitTag in schedule.Commits)
+					{
+						if (!TryGetCommitTag(commitTag, out _))
+						{
+							throw new InvalidOperationException($"Missing definition for commit tag '{commitTag}' referenced by {Id}:{template.Id}");
+						}
+					}
+				}
 			}
 
 			if (Environment != null && Environment.Count > 0)
@@ -375,6 +417,18 @@ namespace Horde.Server.Streams
 		}
 
 		/// <summary>
+		/// Tries to find a replicator with the given id
+		/// </summary>
+		/// <param name="replicatorId"></param>
+		/// <param name="replicatorConfig"></param>
+		/// <returns></returns>
+		public bool TryGetReplicator(StreamReplicatorId replicatorId, [NotNullWhen(true)] out ReplicatorConfig? replicatorConfig)
+		{
+			replicatorConfig = Replicators.FirstOrDefault(x => x.Id == replicatorId);
+			return replicatorConfig != null;
+		}
+
+		/// <summary>
 		/// Tries to find a template with the given id
 		/// </summary>
 		/// <param name="templateRefId"></param>
@@ -418,28 +472,51 @@ namespace Horde.Server.Streams
 	}
 
 	/// <summary>
+	/// Style for rendering a tab
+	/// </summary>
+	public enum TabStyle
+	{
+		/// <summary>
+		/// Regular job list
+		/// </summary>
+		Normal,
+
+		/// <summary>
+		/// Omit job names, show condensed view
+		/// </summary>
+		Compact,
+	}
+
+	/// <summary>
 	/// Information about a page to display in the dashboard for a stream
 	/// </summary>
-	[JsonKnownTypes(typeof(JobsTabConfig))]
-	public abstract class TabConfig
+	public class TabConfig
 	{
 		/// <summary>
 		/// Title of this page
 		/// </summary>
 		[Required]
 		public string Title { get; set; } = null!;
-	}
 
-	/// <summary>
-	/// Describes a job page
-	/// </summary>
-	[JsonDiscriminator("Jobs")]
-	public class JobsTabConfig : TabConfig
-	{
+		/// <summary>
+		/// Type of this tab
+		/// </summary>
+		public string Type { get; set; } = "Jobs";
+
+		/// <summary>
+		/// Presentation style for this page
+		/// </summary>
+		public TabStyle Style { get; set; }
+
 		/// <summary>
 		/// Whether to show job names on this page
 		/// </summary>
-		public bool ShowNames { get; set; }
+		public bool ShowNames
+		{
+			get => _showNames ?? (Style != TabStyle.Compact);
+			set => _showNames = value;
+		}
+		bool? _showNames;
 
 		/// <summary>
 		/// Whether to show all user preflights 
@@ -459,13 +536,13 @@ namespace Horde.Server.Streams
 		/// <summary>
 		/// Columns to display for different types of aggregates
 		/// </summary>
-		public List<JobsTabColumnConfig>? Columns { get; set; }
+		public List<TabColumnConfig>? Columns { get; set; }
 	}
 
 	/// <summary>
 	/// Type of a column in a jobs tab
 	/// </summary>
-	public enum JobsTabColumnType
+	public enum TabColumnType
 	{
 		/// <summary>
 		/// Contains labels
@@ -481,12 +558,12 @@ namespace Horde.Server.Streams
 	/// <summary>
 	/// Describes a column to display on the jobs page
 	/// </summary>
-	public class JobsTabColumnConfig
+	public class TabColumnConfig
 	{
 		/// <summary>
 		/// The type of column
 		/// </summary>
-		public JobsTabColumnType Type { get; set; } = JobsTabColumnType.Labels;
+		public TabColumnType Type { get; set; } = TabColumnType.Labels;
 
 		/// <summary>
 		/// Heading for this column
@@ -516,9 +593,13 @@ namespace Horde.Server.Streams
 	public class AgentConfig
 	{
 		/// <summary>
+		/// Base agent config to inherit settings from
+		/// </summary>
+		public string? Base { get; set; }
+
+		/// <summary>
 		/// Pool of agents to use for this agent type
 		/// </summary>
-		[Required]
 		public PoolId Pool { get; set; }
 
 		/// <summary>
@@ -539,6 +620,7 @@ namespace Horde.Server.Streams
 		/// <summary>
 		/// Tokens to allocate for this agent type
 		/// </summary>
+		[ConfigMergeStrategy(ConfigMergeStrategy.Append)]
 		public List<TokenConfig>? Tokens { get; set; }
 
 		/// <summary>
@@ -565,6 +647,11 @@ namespace Horde.Server.Streams
 	/// </summary>
 	public class WorkspaceConfig
 	{
+		/// <summary>
+		/// Base workspace to derive from
+		/// </summary>
+		public string? Base { get; set; }
+
 		/// <summary>
 		/// Name of the Perforce server cluster to use
 		/// </summary>
@@ -598,21 +685,23 @@ namespace Horde.Server.Streams
 		/// <summary>
 		/// Custom view for the workspace
 		/// </summary>
+		[ConfigMergeStrategy(ConfigMergeStrategy.Append)]
 		public List<string>? View { get; set; }
 
 		/// <summary>
 		/// Whether to use an incrementally synced workspace
 		/// </summary>
-		public bool Incremental { get; set; }
+		public bool? Incremental { get; set; }
 
 		/// <summary>
 		/// Whether to use the AutoSDK
 		/// </summary>
-		public bool UseAutoSdk { get; set; } = true;
+		public bool? UseAutoSdk { get; set; }
 
 		/// <summary>
 		/// View for the AutoSDK paths to sync. If null, the whole thing will be synced.
 		/// </summary>
+		[ConfigMergeStrategy(ConfigMergeStrategy.Append)]
 		public List<string>? AutoSdkView { get; set; }
 
 		/// <summary>
@@ -635,7 +724,7 @@ namespace Horde.Server.Streams
 		/// Condition to evaluate before deciding to use this query. May query tags in a preflight.
 		/// </summary>
 		public Condition? Condition { get; set; }
-		
+
 		/// <summary>
 		/// The template id to query
 		/// </summary>
@@ -700,7 +789,8 @@ namespace Horde.Server.Streams
 	/// <summary>
 	/// Parameters to create a template within a stream
 	/// </summary>
-	public class TemplateRefConfig : TemplateConfig, IAclScope
+	[DebuggerDisplay("{Id}")]
+	public class TemplateRefConfig : TemplateConfig
 	{
 		/// <summary>
 		/// The owning stream config
@@ -708,18 +798,15 @@ namespace Horde.Server.Streams
 		[JsonIgnore]
 		public StreamConfig StreamConfig { get; private set; } = null!;
 
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public IAclScope? ParentScope => StreamConfig;
-
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public AclScopeName ScopeName { get; private set; }
-
 		/// <summary>
 		/// Optional identifier for this ref. If not specified, an id will be generated from the name.
 		/// </summary>
 		public TemplateId Id { get; set; }
+
+		/// <summary>
+		/// Base template id to copy from
+		/// </summary>
+		public TemplateId Base { get; set; }
 
 		/// <summary>
 		/// Whether to show badges in UGS for these jobs
@@ -737,7 +824,7 @@ namespace Horde.Server.Streams
 		public string? NotificationChannel { get; set; }
 
 		/// <summary>
-		/// Notification channel filter for this template. Can be Success|Failure|Warnings
+		/// Notification channel filter for this template. Can be a combination of "Success", "Failure" and "Warnings" separated by pipe characters.
 		/// </summary>
 		public string? NotificationChannelFilter { get; set; }
 
@@ -763,17 +850,24 @@ namespace Horde.Server.Streams
 		/// <summary>
 		/// Schedule to execute this template
 		/// </summary>
+		[ConfigMergeStrategy(ConfigMergeStrategy.Recursive)]
 		public ScheduleConfig? Schedule { get; set; }
 
 		/// <summary>
 		/// List of chained job triggers
 		/// </summary>
+		[ConfigMergeStrategy(ConfigMergeStrategy.Append)]
 		public List<ChainedJobTemplateConfig>? ChainedJobs { get; set; }
 
 		/// <summary>
 		/// The ACL for this template
 		/// </summary>
-		public AclConfig? Acl { get; set; }
+		[ConfigMergeStrategy(ConfigMergeStrategy.Recursive)]
+		public AclConfig Acl { get; set; } = new AclConfig();
+
+		/// <inheritdoc cref="AclConfig.Authorize(AclAction, ClaimsPrincipal)"/>
+		public bool Authorize(AclAction action, ClaimsPrincipal user)
+			=> Acl.Authorize(action, user);
 
 		/// <summary>
 		/// Callback after the config is loaded
@@ -782,14 +876,13 @@ namespace Horde.Server.Streams
 		public void PostLoad(StreamConfig streamConfig)
 		{
 			StreamConfig = streamConfig;
-			ScopeName = streamConfig.ScopeName.Append("t", Id.ToString());
-
-			JobOptions.MergeDefaults(streamConfig.JobOptions);
 
 			if (Id.IsEmpty)
 			{
 				Id = new TemplateId(StringId.Sanitize(Name));
 			}
+
+			Acl.PostLoad(streamConfig.Acl, $"template:{Id}");
 		}
 	}
 
@@ -806,17 +899,17 @@ namespace Horde.Server.Streams
 		/// <summary>
 		/// Time during the day for the first schedule to trigger. Measured in minutes from midnight.
 		/// </summary>
-		public int MinTime { get; set; }
+		public ScheduleTimeOfDay MinTime { get; set; } = new ScheduleTimeOfDay(0);
 
 		/// <summary>
 		/// Time during the day for the last schedule to trigger. Measured in minutes from midnight.
 		/// </summary>
-		public int? MaxTime { get; set; }
+		public ScheduleTimeOfDay? MaxTime { get; set; }
 
 		/// <summary>
 		/// Interval between each schedule triggering
 		/// </summary>
-		public int? Interval { get; set; }
+		public ScheduleInterval? Interval { get; set; }
 
 		/// <summary>
 		/// Constructor
@@ -835,9 +928,9 @@ namespace Horde.Server.Streams
 		public SchedulePatternConfig(List<DayOfWeek>? daysOfWeek, int minTime, int? maxTime, int? interval)
 		{
 			DaysOfWeek = daysOfWeek;
-			MinTime = minTime;
-			MaxTime = maxTime;
-			Interval = interval;
+			MinTime = new ScheduleTimeOfDay(minTime);
+			MaxTime = (maxTime != null) ? new ScheduleTimeOfDay(maxTime.Value) : null;
+			Interval = (interval != null) ? new ScheduleInterval(interval.Value) : null;
 		}
 
 		/// <summary>
@@ -861,21 +954,21 @@ namespace Horde.Server.Streams
 					int lastTimeMinutes = (int)(lastTime - baseTime).TotalMinutes;
 
 					// Get the time of the first trigger of this day. If the last time is less than this, this is the next trigger.
-					if (lastTimeMinutes < MinTime)
+					if (lastTimeMinutes < MinTime.Minutes)
 					{
-						return baseTime.AddMinutes(MinTime).UtcDateTime;
+						return baseTime.AddMinutes(MinTime.Minutes).UtcDateTime;
 					}
 
 					// Otherwise, get the time for the last trigger in the day.
-					if (Interval.HasValue && Interval.Value > 0)
+					if (Interval != null && Interval.Minutes > 0)
 					{
-						int actualMaxTime = MaxTime ?? ((24 * 60) - 1);
+						int actualMaxTime = MaxTime?.Minutes ?? ((24 * 60) - 1);
 						if (lastTimeMinutes < actualMaxTime)
 						{
-							int lastIndex = (lastTimeMinutes - MinTime) / Interval.Value;
+							int lastIndex = (lastTimeMinutes - MinTime.Minutes) / Interval.Minutes;
 							int nextIndex = lastIndex + 1;
 
-							int nextTimeMinutes = MinTime + (nextIndex * Interval.Value);
+							int nextTimeMinutes = MinTime.Minutes + (nextIndex * Interval.Minutes);
 							if (nextTimeMinutes <= actualMaxTime)
 							{
 								return baseTime.AddMinutes(nextTimeMinutes).UtcDateTime;
@@ -885,6 +978,80 @@ namespace Horde.Server.Streams
 				}
 				baseTime = baseTime.AddDays(1.0);
 			}
+		}
+	}
+
+	/// <summary>
+	/// Time of day value for a schedule
+	/// </summary>
+	[JsonSchemaString]
+	[JsonConverter(typeof(ScheduleTimeOfDayJsonConverter))]
+	public record class ScheduleTimeOfDay(int Minutes)
+	{
+		/// <summary>
+		/// Parse a string as a time of day
+		/// </summary>
+		[return: NotNullIfNotNull("text")]
+		public static ScheduleTimeOfDay? Parse(string? text)
+			=> (text != null) ? new ScheduleTimeOfDay((int)TimeOfDayJsonConverter.Parse(text).TotalMinutes) : null;
+	}
+
+	class ScheduleTimeOfDayJsonConverter : JsonConverter<ScheduleTimeOfDay>
+	{
+		/// <inheritdoc/>
+		public override ScheduleTimeOfDay? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+		{
+			if (reader.TokenType == JsonTokenType.Number)
+			{
+				return new ScheduleTimeOfDay(reader.GetInt32());
+			}
+			else
+			{
+				return ScheduleTimeOfDay.Parse(reader.GetString());
+			}
+		}
+
+		/// <inheritdoc/>
+		public override void Write(Utf8JsonWriter writer, ScheduleTimeOfDay value, JsonSerializerOptions options)
+		{
+			writer.WriteNumberValue(value.Minutes);
+		}
+	}
+
+	/// <summary>
+	/// Time of day value for a schedule
+	/// </summary>
+	[JsonSchemaString]
+	[JsonConverter(typeof(ScheduleIntervalJsonConverter))]
+	public record class ScheduleInterval(int Minutes)
+	{
+		/// <summary>
+		/// Parse a string as a time of day
+		/// </summary>
+		[return: NotNullIfNotNull("text")]
+		public static ScheduleInterval? Parse(string? text)
+			=> (text != null) ? new ScheduleInterval((int)IntervalJsonConverter.Parse(text).TotalMinutes) : null;
+	}
+
+	class ScheduleIntervalJsonConverter : JsonConverter<ScheduleInterval>
+	{
+		/// <inheritdoc/>
+		public override ScheduleInterval? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+		{
+			if (reader.TokenType == JsonTokenType.Number)
+			{
+				return new ScheduleInterval(reader.GetInt32());
+			}
+			else
+			{
+				return ScheduleInterval.Parse(reader.GetString());
+			}
+		}
+
+		/// <inheritdoc/>
+		public override void Write(Utf8JsonWriter writer, ScheduleInterval value, JsonSerializerOptions options)
+		{
+			writer.WriteNumberValue(value.Minutes);
 		}
 	}
 

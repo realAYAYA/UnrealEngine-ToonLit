@@ -26,5 +26,9 @@ namespace Metasound
 		} // namespace AssetTags
 
 		IMetaSoundAssetManager* IMetaSoundAssetManager::Instance = nullptr;
+
+#if WITH_SERVER_CODE
+		TMulticastDelegate<void()> IMetaSoundAssetManager::OnManagerSet;
+#endif //WITH_SERVER_CODE
 	} // namespace Frontend
 } // namespace Metasound

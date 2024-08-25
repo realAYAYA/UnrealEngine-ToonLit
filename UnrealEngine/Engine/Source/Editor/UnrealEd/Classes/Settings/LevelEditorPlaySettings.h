@@ -340,10 +340,6 @@ public:
 	/** Whether to automatically recompile dirty Blueprints before launching */
 	UPROPERTY(config, EditAnywhere, Category=PlayOnDevice)
 	bool bAutoCompileBlueprintsOnLaunch;
-
-	/** A programmatically defined custom PIE window to use */
-	UE_DEPRECATED(4.25, "This variable is no longer read. Specify the Custom Window in the FRequestPlaySessionParams instead during PIE request.")
-	TWeakPtr<SWindow> CustomPIEWindow;
 	
 	/**
 	* This is a rarely used option that will launch a separate server (possibly hidden in-process depending on RunUnderOneProcess) 
@@ -364,11 +360,6 @@ private:
 	UPROPERTY(config, EditAnywhere, Category="Multiplayer Options")
 	bool RunUnderOneProcess;
 
-	/** If checked, a separate dedicated server will be launched. Otherwise the first player will act as a listen server that all other players connect to. */
-	UE_DEPRECATED(4.25, "This variable is no longer read. Use PlayNetMode = EPlayNetMode::PIE_Client and bLaunchSeparateServer instead.")
-	UPROPERTY(config)
-	bool PlayNetDedicated;
-
 	/** The number of client windows to open. The first one to open will respect the Play In Editor "Modes" option (PIE, PINW), additional clients respect the RunUnderOneProcess setting. */
 	UPROPERTY(config, EditAnywhere, Category="Multiplayer Options|Client", meta=(ClampMin = "1", UIMin = "1", UIMax = "64"))
 	int32 PlayNumberOfClients;
@@ -384,15 +375,6 @@ private:
 	/** Width to use when spawning additional windows. */
 	UPROPERTY(config, EditAnywhere, Category="Multiplayer Options|Client", meta=(ClampMin=0))
 	int32 ClientWindowWidth;
-	
-	/**
-	 * When running multiple players or a dedicated server the client need to connect to the server, this option sets how they connect
-	 *
-	 * If this is checked, the clients will automatically connect to the launched server, if false they will launch into the map and wait
-	 */
-	UE_DEPRECATED(4.25, "This variable is no longer read. Use PlayNetMode = EPlayNetMode::PIE_Standalone instead to prevent auto-connection.")
-	UPROPERTY(config)
-	bool AutoConnectToServer;
 
 	/**
 	 * When running multiple player windows in a single process, this option determines how the game pad input gets routed.
@@ -426,11 +408,6 @@ private:
 	UPROPERTY(config, EditAnywhere, Category="Multiplayer Options|Server", meta=(EditCondition = "PlayNetMode != EPlayNetMode::PIE_Standalone || bLaunchSeparateServer"))
 	FString AdditionalServerGameOptions;
 
-	/** Additional command line options that will be passed to standalone game instances, for example -debug */
-	UE_DEPRECATED(4.25, "This variable is no longer read. Use AdditionalServerLaunchParmeters instead to pass specific flags to externally launched servers.")
-	UPROPERTY(config)
-	FString AdditionalLaunchOptions;
-
 	/** Controls the default value of the show flag ServerDrawDebug */
 	UPROPERTY(config, EditAnywhere, Category = "Multiplayer Options")
 	bool bShowServerDebugDrawingByDefault;
@@ -442,6 +419,14 @@ private:
 	/** Debug drawing originating from the server will be biased towards this color */
 	UPROPERTY(config, EditAnywhere, Category="Multiplayer Options")
 	FLinearColor ServerDebugDrawingColorTint;
+
+	/** 
+	* When True each PIE process is launched with "-HMDSimulator" argument.  
+	* The usefullness of this will vary by XR platform.  
+	* The PIE instances may get special -HMDSimulator behavior from an XR plugin, they may successfully make connections to the HMD hardware, their attempt to connect to hardware may be rejected by the runtime.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Multiplayer Options", meta = (EditCondition = "!RunUnderOneProcess"))
+	bool bOneHeadsetEachProcess;
 
 private:
 	UNREALED_API void PushDebugDrawingSettings();
@@ -490,14 +475,6 @@ public:
 	bool IsRunUnderOneProcessActive() const { return true; }
 	bool GetRunUnderOneProcess( bool &OutRunUnderOneProcess ) const { OutRunUnderOneProcess = RunUnderOneProcess; return IsRunUnderOneProcessActive(); }
 	
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UE_DEPRECATED(4.25, "Read bLaunchSeparateServer directly instead.")
-	void SetPlayNetDedicated(const bool InPlayNetDedicated) { PlayNetDedicated = InPlayNetDedicated; }
-	UE_DEPRECATED(4.25, "Read bLaunchSeparateServer directly instead.")
-	bool IsPlayNetDedicatedActive() const { return (RunUnderOneProcess ? true : PlayNetMode == PIE_Client); }
-	UE_DEPRECATED(4.25, "Read bLaunchSeparateServer directly instead.")
-	bool GetPlayNetDedicated(bool &OutPlayNetDedicated) const { OutPlayNetDedicated = PlayNetDedicated; return IsPlayNetDedicatedActive(); }
-	
 	void SetPlayNumberOfClients( const int32 InPlayNumberOfClients ) { PlayNumberOfClients = InPlayNumberOfClients; }
 	bool IsPlayNumberOfClientsActive() const { return true; }
 	bool GetPlayNumberOfClients( int32 &OutPlayNumberOfClients ) const { OutPlayNumberOfClients = PlayNumberOfClients; return IsPlayNumberOfClientsActive(); }
@@ -508,18 +485,11 @@ public:
 	bool IsServerPortActive() const { return (PlayNetMode != PIE_Standalone) || RunUnderOneProcess; }
 	bool GetServerPort(uint16 &OutServerPort) const { OutServerPort = ServerPort; return IsServerPortActive(); }
 	
-	UE_DEPRECATED(4.25, "This feature has been removed. Set PlayNetMode == EPlayNetMode::PIE_Standalone instead.")
-	bool IsAutoConnectToServerActive() const { return PlayNumberOfClients > 1 || PlayNetDedicated; }
-	UE_DEPRECATED(4.25, "This feature has been removed. Set PlayNetMode == EPlayNetMode::PIE_Standalone instead.")
-	bool GetAutoConnectToServer(bool &OutAutoConnectToServer) const { OutAutoConnectToServer = AutoConnectToServer; return IsAutoConnectToServerActive(); }
-	UE_DEPRECATED(4.25, "This feature has been removed. Set PlayNetMode == EPlayNetMode::PIE_Standalone instead.")
-	EVisibility GetAutoConnectToServerVisibility() const { return (RunUnderOneProcess ? EVisibility::Visible : EVisibility::Hidden); }
-	
 	bool IsRouteGamepadToSecondWindowActive() const { return PlayNumberOfClients > 1; }
 	bool GetRouteGamepadToSecondWindow( bool &OutRouteGamepadToSecondWindow ) const { OutRouteGamepadToSecondWindow = RouteGamepadToSecondWindow; return IsRouteGamepadToSecondWindowActive(); }
 	EVisibility GetRouteGamepadToSecondWindowVisibility() const { return (RunUnderOneProcess ? EVisibility::Visible : EVisibility::Hidden); }
 
-	EVisibility GetNetworkEmulationVisibility() const { return (PlayNumberOfClients > 1 || PlayNetDedicated) ? EVisibility::Visible : EVisibility::Hidden; }
+	EVisibility GetNetworkEmulationVisibility() const { return (PlayNumberOfClients > 1) ? EVisibility::Visible : EVisibility::Hidden; }
 
 	bool IsServerMapNameOverrideActive() const { return false /*(PlayNetMode == PIE_StandaloneWithServer)*/; }
 	bool GetServerMapNameOverride( FString& OutStandaloneServerMapName ) const { OutStandaloneServerMapName = ServerMapNameOverride; return IsServerMapNameOverrideActive(); }
@@ -527,14 +497,6 @@ public:
 
 	bool IsAdditionalServerGameOptionsActive() const { return (PlayNetMode != PIE_Standalone) || RunUnderOneProcess; }
 	bool GetAdditionalServerGameOptions( FString &OutAdditionalServerGameOptions ) const { OutAdditionalServerGameOptions = AdditionalServerGameOptions; return IsAdditionalServerGameOptionsActive(); }
-
-	UE_DEPRECATED(4.25, "Read AdditionalServerLaunchParmeters for a non-zero length instead.")
-	bool IsAdditionalLaunchOptionsActive() const { return true; }
-	UE_DEPRECATED(4.25, "Read AdditionalServerLaunchParmeters directly instead.")
-	bool GetAdditionalLaunchOptions(FString &OutAdditionalLaunchOptions) const { OutAdditionalLaunchOptions = AdditionalLaunchOptions; return IsAdditionalLaunchOptionsActive(); }
-	UE_DEPRECATED(4.25, "Read AdditionalServerLaunchParmeters for a non-zero length instead.")
-	EVisibility GetAdditionalLaunchOptionsVisibility() const { return (RunUnderOneProcess ? EVisibility::Hidden : EVisibility::Visible); }
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	void SetClientWindowSize( const FIntPoint InClientWindowSize ) { ClientWindowWidth = InClientWindowSize.X; ClientWindowHeight = InClientWindowSize.Y; }
 	bool IsClientWindowSizeActive() const { return PlayNumberOfClients > 1; }
@@ -558,6 +520,8 @@ public:
 			return FApp::GetBuildConfiguration();
 		}
 	}
+
+	bool IsOneHeadsetEachProcess() const { return bOneHeadsetEachProcess; }
 
 public:
 

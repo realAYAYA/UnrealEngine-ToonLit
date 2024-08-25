@@ -178,16 +178,19 @@
 		</GroupBox>
 
 		<!-- Start sync -->
-		<TextBlock Grid.Row="3" Margin="4" HorizontalAlignment="Center">
-			<Hyperlink Command="{Binding OnStartSync}" CommandParameter="{Binding SelectedItems, ElementName=SelectedPlatforms}">
-				<Hyperlink.IsEnabled>
-					<MultiBinding Converter="{StaticResource BoolConv_All}">
-						<Binding ElementName="SelectedPlatforms" Path="SelectedItems.Count"/>
-						<Binding Path="DstPath.Length"/>
-					</MultiBinding>
-				</Hyperlink.IsEnabled>
-				Start Sync
-			</Hyperlink>
-		</TextBlock>
+		<Grid Grid.Row="3">
+			<CheckBox Content="Dry Run" IsChecked="{Binding DryRun}" ToolTip="Download and verify the data, but don't write outputs to disk" Margin="10,4,4,4" HorizontalAlignment="Left"/>
+			<TextBlock Margin="4" HorizontalAlignment="Center">
+				<Hyperlink Command="{Binding OnStartSync}" CommandParameter="{Binding SelectedItems, ElementName=SelectedPlatforms}">
+					<Hyperlink.IsEnabled>
+						<MultiBinding Converter="{StaticResource BoolConv_All}">
+							<Binding ElementName="SelectedPlatforms" Path="SelectedItems.Count"/>
+							<Binding Path="DstPath.Length"/>
+						</MultiBinding>
+					</Hyperlink.IsEnabled>
+					Start Sync
+				</Hyperlink>
+			</TextBlock>
+		</Grid>
 	</Grid>
 </UserControl>

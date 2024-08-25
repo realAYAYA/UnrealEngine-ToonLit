@@ -16,12 +16,12 @@ class JSONBLUEPRINTUTILITIES_API UJsonBlueprintFunctionLibrary final : public UB
 
 public:
 	/** Creates a JsonObject from the provided Json string. */
-	UFUNCTION(BlueprintCallable, Category="Json", meta = (WorldContext="WorldContextObject",  HidePin = "WorldContextObject", DefaultToSelf = "WorldContextObject", DisplayName="Load Json from String"))
-	static UPARAM(DisplayName="Success") bool FromString(UObject* WorldContextObject, const FString& JsonString, UPARAM(DisplayName="JsonObject") FJsonObjectWrapper& OutJsonObject);
+	UFUNCTION(BlueprintCallable, Category="Json", meta = (DisplayName="Load Json from String"))
+	static UPARAM(DisplayName="Success") bool FromString(const FString& JsonString, UPARAM(DisplayName="JsonObject") FJsonObjectWrapper& OutJsonObject);
 
 	/** Creates a JsonObject from the provided Json file. */
-	UFUNCTION(BlueprintCallable, Category="Json", meta = (WorldContext="WorldContextObject",  HidePin = "WorldContextObject", DefaultToSelf = "WorldContextObject", DisplayName="Load Json from File"))
-	static UPARAM(DisplayName="Success") bool FromFile(UObject* WorldContextObject, const FFilePath& File, UPARAM(DisplayName="JsonObject") FJsonObjectWrapper& OutJsonObject);
+	UFUNCTION(BlueprintCallable, Category="Json", meta = (DisplayName="Load Json from File"))
+	static UPARAM(DisplayName="Success") bool FromFile(const FFilePath& File, UPARAM(DisplayName="JsonObject") FJsonObjectWrapper& OutJsonObject);
 
 	/** Creates a Json string from the provided JsonObject. */
 	UFUNCTION(BlueprintCallable, Category="Json", meta = (DisplayName = "Get Json String"))

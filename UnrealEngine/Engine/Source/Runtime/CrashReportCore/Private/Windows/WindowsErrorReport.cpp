@@ -9,7 +9,6 @@
 #include "Internationalization/Internationalization.h"
 #include "HAL/PlatformFileManager.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <ShlObj.h>
 #include "Windows/HideWindowsPlatformTypes.h"

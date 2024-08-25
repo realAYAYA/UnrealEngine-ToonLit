@@ -45,12 +45,12 @@ protected:
 	FOnlineSubsystemGoogle* GoogleSubsystem;
 	/** Endpoint configurations retrieved from Google discovery service */
 	FGoogleOpenIDConfiguration Endpoints;
-	/** Client secret retrieved from Google Dashboard */
-	FString ClientSecret;
 	/** Users that have been registered/authenticated */
 	FUserOnlineAccountGoogleMap UserAccounts;
 	/** Ids mapped to locally registered users */
 	TMap<int32, FUniqueNetIdPtr > UserIds;
+	/** Platform can know the client access token */
+	bool bAccessTokenAvailableToPlatform = true;
 
 	typedef TFunction<void(bool)> PendingLoginRequestCb;
 
@@ -68,7 +68,7 @@ public:
 	virtual FString GetPlayerNickname(int32 LocalUserNum) const override;
 	virtual FString GetPlayerNickname(const FUniqueNetId& UserId) const override;
 	virtual FString GetAuthToken(int32 LocalUserNum) const override;
-	virtual void GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate) override;
+	virtual void GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI=EShowPrivilegeResolveUI::Default) override;
 	virtual FPlatformUserId GetPlatformUserIdFromUniqueNetId(const FUniqueNetId& UniqueNetId) const override;
 	virtual FString GetAuthType() const override;
 	virtual void RevokeAuthToken(const FUniqueNetId& UserId, const FOnRevokeAuthTokenCompleteDelegate& Delegate) override;
@@ -86,6 +86,9 @@ public:
 
 PACKAGE_SCOPE:
 
+	/** Checks config to know if we should request offline access (Server Auth code on mobile or refresh token on REST implementation)*/
+	static bool ShouldRequestOfflineAccess();
+
 	/**
 	 * Retrieve the profile for a given user and access token
 	 *
@@ -95,7 +98,6 @@ PACKAGE_SCOPE:
 	 */
 	void ProfileRequest(int32 LocalUserNum, const FAuthTokenGoogle& InAuthToken, FOnProfileRequestComplete& InCompletionDelegate);
 
-protected:
 
 	/**
 	 * Retrieve auth endpoints from Google discovery service
@@ -104,6 +106,7 @@ protected:
 	 */
 	void RetrieveDiscoveryDocument(PendingLoginRequestCb&& LoginCb);
 
+protected:
 	/**
 	 * Delegate fired when the discover service request has completed
 	 */

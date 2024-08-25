@@ -92,12 +92,12 @@ void FStatsTraceInternal::BeginEncodeOp(const FName& Stat, EOpType Op, FThreadSt
 	{
 		OutThreadState = InitThreadState();
 	}
-	uint64 CycleDiff = Cycle - OutThreadState->LastCycle;
-	OutThreadState->LastCycle = Cycle;
 	if (OutThreadState->BufferSize >= FullBufferThreshold)
 	{
 		FStatsTraceInternal::FlushThreadBuffer(OutThreadState);
 	}
+	uint64 CycleDiff = Cycle - OutThreadState->LastCycle;
+	OutThreadState->LastCycle = Cycle;
 	OutBufferPtr = OutThreadState->Buffer + OutThreadState->BufferSize;
 	FTraceUtils::Encode7bit((uint64(Stat.GetComparisonIndex().ToUnstableInt()) << 3) | uint64(Op), OutBufferPtr);
 	FTraceUtils::Encode7bit(CycleDiff, OutBufferPtr);

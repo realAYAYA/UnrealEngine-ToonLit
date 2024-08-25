@@ -2,13 +2,13 @@
 
 #include "Apple/AppleEventLoopHttpThread.h"
 
-#include "Apple/AppleHTTPNSUrlSession.h" 
+#include "Apple/AppleHttp.h" 
 
 bool FAppleEventLoopHttpThread::StartThreadedRequest(IHttpThreadedRequest* Request)
 {
 	FHttpResponsePtr Response = Request->GetResponse();
-	auto AppleResponse = StaticCastSharedPtr<FAppleHttpNSUrlSessionResponse>(Response);
-	AppleResponse->SetInternalTaskCompleteDelegate(FTaskCompleteDelegate::CreateLambda([IOAccess = EventLoop->GetIOAccess()]() mutable
+	auto AppleResponse = StaticCastSharedPtr<FAppleHttpResponse>(Response);
+	AppleResponse->SetNewAppleHttpEventDelegate(FNewAppleHttpEventDelegate::CreateLambda([IOAccess = EventLoop->GetIOAccess()]() mutable
 	{
 		IOAccess.Notify();
 	}));

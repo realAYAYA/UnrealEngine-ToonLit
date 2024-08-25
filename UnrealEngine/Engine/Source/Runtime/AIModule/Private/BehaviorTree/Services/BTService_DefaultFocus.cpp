@@ -139,6 +139,16 @@ EBlackboardNotificationResult UBTService_DefaultFocus::OnBlackboardKeyValueChang
 	return EBlackboardNotificationResult::ContinueObserving;
 }
 
+void UBTService_DefaultFocus::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTFocusMemory>(NodeMemory, InitType);
+}
+
+void UBTService_DefaultFocus::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTFocusMemory>(NodeMemory, CleanupType);
+}
+
 #if WITH_EDITOR
 
 FName UBTService_DefaultFocus::GetNodeIconName() const

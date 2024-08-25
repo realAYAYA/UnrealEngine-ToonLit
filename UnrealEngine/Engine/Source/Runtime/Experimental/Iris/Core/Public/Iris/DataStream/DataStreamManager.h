@@ -57,7 +57,7 @@ public:
 	// UDataStream interface
 
 	/** Call BeginWrite on all active data streams. */
-	IRISCORE_API virtual EWriteResult BeginWrite() override;
+	IRISCORE_API virtual EWriteResult BeginWrite(const FBeginWriteParameters& Params) override;
 
 	/** Call WriteData on all active data streams. */
 	IRISCORE_API virtual EWriteResult WriteData(UE::Net::FNetSerializationContext& context, FDataStreamRecord const*& OutRecord) override;

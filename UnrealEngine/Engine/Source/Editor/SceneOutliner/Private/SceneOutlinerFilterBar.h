@@ -74,6 +74,7 @@ public:
 	virtual void LoadSettings() override;
 
 protected:
+	virtual UAssetFilterBarContext* CreateAssetFilterBarContext() override;
 
 	/** Handler for when a custom text filter is created */
 	virtual void OnCreateCustomTextFilter(const FCustomTextFilterData& InFilterData, bool bApplyFilter) override;
@@ -103,5 +104,6 @@ private:
 
 	/** Whether this Filter bar wants to load/save from the settings common to all instances */
 	bool bUseSharedSettings;
-	
+
+	TSharedPtr<FFilterCategory> CategoryToExpand;	
 };

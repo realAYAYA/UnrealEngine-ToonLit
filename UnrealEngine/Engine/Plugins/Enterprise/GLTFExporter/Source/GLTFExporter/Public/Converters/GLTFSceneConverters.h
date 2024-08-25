@@ -17,4 +17,7 @@ public:
 protected:
 
 	virtual FGLTFJsonScene* Convert(const UWorld* Level) override;
+
+	void MakeSkinnedMeshesRoot(FGLTFJsonScene* Scene);
+	void MakeSkinnedMeshesRoot(FGLTFJsonNode* Node, bool bIsRootNode, FGLTFJsonScene* Scene);
 };

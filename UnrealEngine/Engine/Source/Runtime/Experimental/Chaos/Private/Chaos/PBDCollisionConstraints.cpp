@@ -54,6 +54,9 @@ namespace Chaos
 	FRealSingle CollisionAngularFrictionOverride = -1.0f;
 	FAutoConsoleVariableRef CVarCollisionAngularFrictionOverride(TEXT("p.CollisionAngularFriction"), CollisionAngularFrictionOverride, TEXT("Collision angular friction for all contacts if >= 0"));
 
+	FRealSingle CollisionBaseFrictionImpulseOverride = -1.0f;
+	FAutoConsoleVariableRef CVarCollisionBaseFrictionImpulseOverride(TEXT("p.CollisionBaseFrictionImpulse"), CollisionBaseFrictionImpulseOverride, TEXT("Collision base friction position impulse for all contacts if >= 0"));
+
 	CHAOS_API int32 EnableCollisions = 1;
 	FAutoConsoleVariableRef CVarEnableCollisions(TEXT("p.EnableCollisions"), EnableCollisions, TEXT("Enable/Disable collisions on the Chaos solver."));
 	
@@ -74,8 +77,13 @@ namespace Chaos
 
 	bool CollisionsAllowParticleTracking = true;
 	FAutoConsoleVariableRef CVarCollisionsAllowParticleTracking(TEXT("p.Chaos.Collision.AllowParticleTracking"), CollisionsAllowParticleTracking, TEXT("Allow particles to track their collisions constraints when their DoBufferCollisions flag is enable [def:true]"));
-	
+
+	//	Which edge pruning features to enable (for particle swith EdgeSmoothing enabled)
+	bool bCollisionsEnableEdgeCollisionPruning = true;
+	bool bCollisionsEnableMeshCollisionPruning = true;
 	bool bCollisionsEnableSubSurfaceCollisionPruning = false;
+	FAutoConsoleVariableRef CVarCollisionsEnableEdgeCollisionPruning(TEXT("p.Chaos.Collision.EnableEdgeCollisionPruning"), bCollisionsEnableEdgeCollisionPruning, TEXT(""));
+	FAutoConsoleVariableRef CVarCollisionsEnableMeshCollisionPruning(TEXT("p.Chaos.Collision.EnableMeshCollisionPruning"), bCollisionsEnableMeshCollisionPruning, TEXT(""));
 	FAutoConsoleVariableRef CVarCollisionsEnableSubSurfaceCollisionPruning(TEXT("p.Chaos.Collision.EnableSubSurfaceCollisionPruning"), bCollisionsEnableSubSurfaceCollisionPruning, TEXT(""));
 
 	bool DebugDrawProbeDetection = false;
@@ -91,6 +99,7 @@ namespace Chaos
 	DECLARE_CYCLE_STAT(TEXT("Collisions::Reset"), STAT_Collisions_Reset, STATGROUP_ChaosCollision);
 	DECLARE_CYCLE_STAT(TEXT("Collisions::BeginDetect"), STAT_Collisions_BeginDetect, STATGROUP_ChaosCollision);
 	DECLARE_CYCLE_STAT(TEXT("Collisions::EndDetect"), STAT_Collisions_EndDetect, STATGROUP_ChaosCollision);
+	DECLARE_CYCLE_STAT(TEXT("Collisions::Sort"), STAT_Collisions_Sort, STATGROUP_ChaosCollision);
 	DECLARE_CYCLE_STAT(TEXT("Collisions::DetectProbeCollisions"), STAT_Collisions_DetectProbeCollisions, STATGROUP_ChaosCollision);
 
 #if CHAOS_ABTEST_CONSTRAINTSOLVER_ENABLED
@@ -371,7 +380,7 @@ namespace Chaos
 #if CHAOS_ABTEST_CONSTRAINTSOLVER_ENABLED
 			if (CVars::bCollisionsEnableSolverABTest)
 			{
-				// Create an AB testing collison solver for simd testing
+				// Create an AB testing collision solver for simd testing
 				return MakeUnique<FABTestingCollisionContainerSolver>(
 					MakeUnique<FPBDCollisionContainerSolver>(*this, Priority),
 					MakeUnique<Private::FPBDCollisionContainerSolverSimd>(*this, Priority),
@@ -389,6 +398,12 @@ namespace Chaos
 		return nullptr;
 	}
 
+	void FPBDCollisionConstraints::SetIsDeterministic(const bool bInIsDeterministic)
+	{
+		bIsDeterministic = bInIsDeterministic;
+		ConstraintAllocator.SetIsDeterministic(bInIsDeterministic);
+	}
+
 	void FPBDCollisionConstraints::DisableHandles()
 	{
 		check(NumConstraints() == 0);
@@ -403,6 +418,24 @@ namespace Chaos
 	FPBDCollisionConstraints::FConstHandles FPBDCollisionConstraints::GetConstConstraintHandles() const
 	{
 		return ConstraintAllocator.GetConstConstraints();
+	}
+
+	void UpdateSoftCollisionSettings(const FChaosPhysicsMaterial* PhysicsMaterial, const FGeometryParticleHandle* Particle, FReal& InOutThickess)
+	{
+		if ((PhysicsMaterial->SoftCollisionMode != EChaosPhysicsMaterialSoftCollisionMode::None) && (PhysicsMaterial->SoftCollisionThickness > 0))
+		{
+			FReal MaterialThickness = FReal(0);
+			if (PhysicsMaterial->SoftCollisionMode == EChaosPhysicsMaterialSoftCollisionMode::AbsoluteThickness)
+			{
+				MaterialThickness = PhysicsMaterial->SoftCollisionThickness;
+			}
+			else if ((Particle != nullptr) && Particle->HasBounds())
+			{
+				MaterialThickness = FMath::Clamp(PhysicsMaterial->SoftCollisionThickness, 0.0f, 0.5f) * Particle->LocalBounds().Extents().GetAbsMin();
+			}
+
+			InOutThickess = FMath::Max(InOutThickess, MaterialThickness);
+		}
 	}
 
 	void FPBDCollisionConstraints::UpdateConstraintMaterialProperties(FPBDCollisionConstraint& Constraint)
@@ -423,6 +456,9 @@ namespace Chaos
 		FReal MaterialRestitutionThreshold = 0;
 		FReal MaterialStaticFriction = 0;
 		FReal MaterialDynamicFriction = 0;
+		FReal MaterialSoftThickness = 0;
+		FReal MaterialSoftDivisor = 0;
+		FReal MaterialBaseFrictionImpulse = 0;
 
 		if (PhysicsMaterial0 && PhysicsMaterial1)
 		{
@@ -434,6 +470,13 @@ namespace Chaos
 			const FReal StaticFriction0 = FMath::Max(PhysicsMaterial0->Friction, PhysicsMaterial0->StaticFriction);
 			const FReal StaticFriction1 = FMath::Max(PhysicsMaterial1->Friction, PhysicsMaterial1->StaticFriction);
 			MaterialStaticFriction = FChaosPhysicsMaterial::CombineHelper(StaticFriction0, StaticFriction1, FrictionCombineMode);
+
+			// @todo(chaos): could do with a nicer way to deal with collisions between two soft objects with different softness settings
+			UpdateSoftCollisionSettings(PhysicsMaterial0, Constraint.GetParticle0(), MaterialSoftThickness);
+			UpdateSoftCollisionSettings(PhysicsMaterial1, Constraint.GetParticle1(), MaterialSoftThickness);
+
+			// Combine base friction impulse
+			MaterialBaseFrictionImpulse = FChaosPhysicsMaterial::CombineHelper(PhysicsMaterial0->BaseFrictionImpulse, PhysicsMaterial1->BaseFrictionImpulse, FrictionCombineMode);
 		}
 		else if (PhysicsMaterial0)
 		{
@@ -441,6 +484,8 @@ namespace Chaos
 			MaterialRestitution = PhysicsMaterial0->Restitution;
 			MaterialDynamicFriction = PhysicsMaterial0->Friction;
 			MaterialStaticFriction = StaticFriction0;
+			MaterialBaseFrictionImpulse = PhysicsMaterial0->BaseFrictionImpulse;
+			UpdateSoftCollisionSettings(PhysicsMaterial0, Constraint.GetParticle0(), MaterialSoftThickness);
 		}
 		else if (PhysicsMaterial1)
 		{
@@ -448,6 +493,8 @@ namespace Chaos
 			MaterialRestitution = PhysicsMaterial1->Restitution;
 			MaterialDynamicFriction = PhysicsMaterial1->Friction;
 			MaterialStaticFriction = StaticFriction1;
+			MaterialBaseFrictionImpulse = PhysicsMaterial1->BaseFrictionImpulse;
+			UpdateSoftCollisionSettings(PhysicsMaterial1, Constraint.GetParticle1(), MaterialSoftThickness);
 		}
 		else
 		{
@@ -476,17 +523,25 @@ namespace Chaos
 		{
 			MaterialStaticFriction = CollisionAngularFrictionOverride;
 		}
+		if (CollisionBaseFrictionImpulseOverride >= 0)
+		{
+			MaterialBaseFrictionImpulse = CollisionBaseFrictionImpulseOverride;
+		}
 		if (!bEnableRestitution)
 		{
 			MaterialRestitution = 0.0f;
 		}
 		
-		Constraint.Material.MaterialRestitution = FRealSingle(MaterialRestitution);
+		Constraint.Material.Restitution = FRealSingle(MaterialRestitution);
 		Constraint.Material.RestitutionThreshold = FRealSingle(MaterialRestitutionThreshold);
-		Constraint.Material.MaterialStaticFriction = FRealSingle(MaterialStaticFriction);
-		Constraint.Material.MaterialDynamicFriction = FRealSingle(MaterialDynamicFriction);
-
-		Constraint.Material.ResetMaterialModifications();
+		Constraint.Material.StaticFriction = FRealSingle(MaterialStaticFriction);
+		Constraint.Material.DynamicFriction = FRealSingle(MaterialDynamicFriction);
+		Constraint.Material.SoftSeparation = FRealSingle(-MaterialSoftThickness);	// Negate: convert from penetration to separation
+		Constraint.Material.InvMassScale0 = 1;
+		Constraint.Material.InvMassScale1 = 1;
+		Constraint.Material.InvInertiaScale0 = 1;
+		Constraint.Material.InvInertiaScale1 = 1;
+		Constraint.Material.BaseFrictionImpulse = FRealSingle(MaterialBaseFrictionImpulse);
 	}
 
 	void FPBDCollisionConstraints::BeginFrame()
@@ -553,7 +608,7 @@ namespace Chaos
 
 	void FPBDCollisionConstraints::ApplyMidPhaseModifier(const TArray<ISimCallbackObject*>& MidPhaseModifiers, FReal Dt)
 	{
-		FMidPhaseModifierAccessor ModifierAccessor;
+		FMidPhaseModifierAccessor ModifierAccessor(GetConstraintAllocator());
 		for(ISimCallbackObject* ModifierCallback : MidPhaseModifiers)
 		{
 			ModifierCallback->MidPhaseModification_Internal(ModifierAccessor);
@@ -640,21 +695,27 @@ namespace Chaos
 			}
 		}
 
-		// Sort new constraints into a predictable order. This isn't strictly required unless we have
-		// deterministic mode enabled, but we do it always because we can get fairly different behaviour 
-		// from run to run because the collisions detection order is effectively random on multicore machines.
+		// Sort new constraints into a predictable order. This isn't strictly required if we don't need
+		// deterministic behaviour, but without sorting we can get fairly different behaviour from run 
+		// to run because the collisions detection order is effectively random on multicore machines.
 		//
 		// @todo(chaos): this is still not good enough for some types of determinism. Specifically if we 
 		// create two set of objects in a different order but with the same physical positions and other 
 		// state, they will behave differently which is undesirable. To fix this we need a sorting 
-		// mechanism that does not rely on properties like IDs. E.g., some kind of physical state hash?
-		TempCollisions.Sort(
-			[](const FPBDCollisionConstraintHandle& L, const FPBDCollisionConstraintHandle& R)
-			{
-				const uint64 LKey = L.GetContact().GetParticlePairKey().GetKey();
-				const uint64 RKey = R.GetContact().GetParticlePairKey().GetKey();
-				return LKey < RKey;
-			});
+		// mechanism that does not rely on properties like Particle IDs, but it would be expensive.
+		//
+		// NOTE: If bIsDeterministic is true, we have already sorted the active constraints list 
+		// (see EndDetectCollisions) so we don't need to do it again here
+		if (!bIsDeterministic)
+		{
+			SCOPE_CYCLE_COUNTER(STAT_Collisions_Sort);
+
+			TempCollisions.Sort(
+				[](const FPBDCollisionConstraintHandle& L, const FPBDCollisionConstraintHandle& R)
+				{
+					return L.GetContact().GetCollisionSortKey() < R.GetContact().GetCollisionSortKey();
+				});
+		}
 
 		// Add the new constraints to the graph
 		for (FPBDCollisionConstraintHandle* ConstraintHandle : TempCollisions)
@@ -687,12 +748,21 @@ namespace Chaos
 			{
 				if ((ParticleHandle.CollisionConstraintFlags() & (uint32)ECollisionConstraintFlags::CCF_SmoothEdgeCollisions) != 0)
 				{
-					FParticleEdgeCollisionPruner EdgePruner(ParticleHandle.Handle());
-					EdgePruner.Prune();
+					if (bCollisionsEnableMeshCollisionPruning)
+					{
+						FParticleMeshCollisionPruner MeshPruner(ParticleHandle.Handle());
+						MeshPruner.Prune();
+					}
+
+					if (bCollisionsEnableEdgeCollisionPruning)
+					{
+						FParticleEdgeCollisionPruner EdgePruner(ParticleHandle.Handle());
+						EdgePruner.Prune();
+					}
 
 					if (bCollisionsEnableSubSurfaceCollisionPruning)
 					{
-						const FVec3 UpVector = ParticleHandle.R().GetAxisZ();
+						const FVec3 UpVector = ParticleHandle.GetR().GetAxisZ();
 						FParticleSubSurfaceCollisionPruner SubSurfacePruner(ParticleHandle.Handle());
 						SubSurfacePruner.Prune(UpVector);
 					}

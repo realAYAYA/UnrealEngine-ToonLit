@@ -16,7 +16,7 @@
 
 
 enum class EOptimusNodePinDirection : uint8;
-
+struct FOptimusExecutionDomain;
 
 USTRUCT()
 struct FOptimusSecondaryInputBindingsGroup
@@ -59,9 +59,11 @@ public:
 	TArray<TObjectPtr<UComputeSource>> GetAdditionalSources() const override { return AdditionalSources; }
 
 	// IOptimusComputeKernelProvider
-	FName GetExecutionDomain() const override { return ExecutionDomain.Name; } 
+	FOptimusExecutionDomain GetExecutionDomain() const override;
 	const UOptimusNodePin* GetPrimaryGroupPin() const override;
-	UComputeDataInterface* GetKernelDataInterface(UObject* InOuter) const override;
+	UComputeDataInterface* MakeKernelDataInterface(UObject* InOuter) const override;
+	bool DoesOutputPinSupportAtomic(const UOptimusNodePin* InPin) const override;
+	bool DoesOutputPinSupportRead(const UOptimusNodePin* InPin) const override;
 
 #if WITH_EDITOR
 	// IOptimusShaderTextProvider overrides
@@ -69,12 +71,16 @@ public:
 	FString GetDeclarations() const override;
 	FString GetShaderText() const override;
 	void SetShaderText(const FString& NewText) override;
+	bool IsShaderTextReadOnly() const override;
 	// IOptimusShaderTextProvider overrides
 #endif
 	
 	// IOptimusParameterBindingProvider
 	FString GetBindingDeclaration(FName BindingName) const override;
-
+	bool GetBindingSupportAtomicCheckBoxVisibility(FName BindingName) const override;
+	bool GetBindingSupportReadCheckBoxVisibility(FName BindingName) const override;
+	EOptimusDataTypeUsageFlags GetTypeUsageFlags(const FOptimusDataDomain& InDataDomain) const override;
+	
 	// IOptimusNodeAdderPinProvider
 	TArray<FAdderPinAction> GetAvailableAdderPinActions(
 		const UOptimusNodePin* InSourcePin,
@@ -83,8 +89,9 @@ public:
 		) const override;
 
 	TArray<UOptimusNodePin*> TryAddPinFromPin(
-		const FAdderPinAction& InSelectedAction,
-		UOptimusNodePin* InSourcePin
+		const FAdderPinAction& InSelectedAction, 
+		UOptimusNodePin* InSourcePin, 
+		FName InNameToUse
 		) override;
 	
 	bool RemoveAddedPins(
@@ -168,7 +175,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 protected:
 	void ConstructNode() override;
 	bool ValidateConnection(const UOptimusNodePin& InThisNodesPin, const UOptimusNodePin& InOtherNodesPin, FString* OutReason) const override;
-	TOptional<FText> ValidateForCompile() const override;
+	TOptional<FText> ValidateForCompile(const FOptimusPinTraversalContext& InContext) const override;
 	
 private:
 
@@ -186,6 +193,7 @@ private:
 	UOptimusNodePin* GetPrimaryGroupPin_Internal() const;
 	void PostLoadExtractExecutionDomain();
 	void PostLoadAddMissingPrimaryGroupPin();
+	void PostLoadExtractAtomicModeFromConnectedResource();
 	
 	// Called during UOptimusDeformer::PostLoad()
 	bool PostLoadRemoveDeprecatedNumThreadsPin();

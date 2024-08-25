@@ -18,15 +18,7 @@ public:
 	 * @return The index at which the edit layer named InEditLayerName exists
 	 */
 	virtual int32 GetOrCreateEditLayer(FName InEditLayerName, ALandscape* InTargetLandscape) = 0;
-};
 
-#if WITH_EDITOR
-class FLandscapeEditorServices : public ILandscapeEditorServices
-{
-public:
-	virtual ~FLandscapeEditorServices() {}
-
-	// Implements pure virtual function. Insertion logic is left to the user through modal drag + drop dialog.
-	virtual int32 GetOrCreateEditLayer(FName InEditLayerName, ALandscape* InTargetLandscape);
+	/** Requires the landscape editor mode, if active to refresh its detail panel */
+	virtual void RefreshDetailPanel() = 0;
 };
-#endif // WITH_EDITOR

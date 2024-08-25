@@ -50,7 +50,7 @@ void UAbilityTask_WaitGameplayEffectStackChange::OnDestroy(bool AbilityIsEnding)
 	UAbilitySystemComponent* EffectOwningAbilitySystemComponent = Handle.GetOwningAbilitySystemComponent();
 	if (EffectOwningAbilitySystemComponent && OnGameplayEffectStackChangeDelegateHandle.IsValid())
 	{
-		FOnActiveGameplayEffectRemoved_Info* DelPtr = EffectOwningAbilitySystemComponent->OnGameplayEffectRemoved_InfoDelegate(Handle);
+		FOnActiveGameplayEffectStackChange* DelPtr = EffectOwningAbilitySystemComponent->OnGameplayEffectStackChangeDelegate(Handle);
 		if (DelPtr)
 		{
 			DelPtr->Remove(OnGameplayEffectStackChangeDelegateHandle);

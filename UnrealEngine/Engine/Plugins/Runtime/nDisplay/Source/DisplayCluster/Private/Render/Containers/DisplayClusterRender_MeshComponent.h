@@ -30,6 +30,7 @@ public:
 	virtual void ReleaseProxyGeometry() override;
 
 	virtual USceneComponent* GetOriginComponent() const override;
+	virtual UMeshComponent* GetMeshComponent() const override;
 	virtual UStaticMeshComponent* GetStaticMeshComponent() const override;
 	virtual const UStaticMesh* GetStaticMesh() const override;
 	virtual UProceduralMeshComponent* GetProceduralMeshComponent() const override;
@@ -60,5 +61,5 @@ private:
 	TWeakObjectPtr<const UStaticMesh> StaticMeshRef;
 
 private:
-	FDisplayClusterRender_MeshComponentProxy* MeshComponentProxy = nullptr;
+	TSharedPtr<FDisplayClusterRender_MeshComponentProxy, ESPMode::ThreadSafe> MeshComponentProxyPtr;
 };

@@ -424,7 +424,7 @@ void UMLAdapterSession::RemoveAgent(FMLAdapter::FAgentID AgentID)
 
 	if (Agents.Num() == AgentID)
 	{
-		Agents.Pop(/*bAllowShrinking=*/false);
+		Agents.Pop(EAllowShrinking::No);
 	}
 	else
 	{
@@ -437,7 +437,7 @@ void UMLAdapterSession::RemoveAgent(FMLAdapter::FAgentID AgentID)
 			It.RemoveCurrent();
 		}
 	}
-	AwaitingAvatar.RemoveSingleSwap(Agent, /*bAllowShrinking=*/false);
+	AwaitingAvatar.RemoveSingleSwap(Agent, EAllowShrinking::No);
 	// there should have been only one agent in AwaitingAvatar
 	ensureMsgf(AwaitingAvatar.Find(Agent) == false, TEXT("there should have been only one agent in AwaitingAvatar"));
 
@@ -546,7 +546,7 @@ void UMLAdapterSession::BindAvatar(UMLAdapterAgent& Agent, AActor& Avatar)
 	ClearAvatar(Agent);
 
 	Agent.SetAvatar(&Avatar);
-	AwaitingAvatar.RemoveSingleSwap(&Agent, /*bAllowShrinking=*/false);	
+	AwaitingAvatar.RemoveSingleSwap(&Agent, EAllowShrinking::No);
 	AvatarToAgent.Add(HashAvatar(Avatar), &Agent);
 
 	OnAgentAvatarChanged.Broadcast(Agent, OldAvatar);

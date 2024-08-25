@@ -411,20 +411,18 @@ void SWidgetDrawer::OnGlobalFocusChanging(const FFocusEvent& FocusEvent, const F
 void SWidgetDrawer::OnActiveTabChanged(TSharedPtr<SDockTab> PreviouslyActive, TSharedPtr<SDockTab> NewlyActivated)
 {
 	bool bShouldRemoveDrawer = false;
-	if (!PreviouslyActive || !NewlyActivated)
+	if (NewlyActivated)
 	{
-		// Remove the content browser if there is some invalid state with the tabs
-		bShouldRemoveDrawer = true;
-	}
-	else if(NewlyActivated->GetTabRole() == ETabRole::MajorTab)
-	{
-		// Remove the content browser if a newly activated tab is a major tab
-		bShouldRemoveDrawer = true;
-	}
-	else if (PreviouslyActive->GetTabManagerPtr() != NewlyActivated->GetTabManagerPtr())
-	{
-		// Remove the content browser if we're switching tab managers (indicates a new status bar is becoming active)
-		bShouldRemoveDrawer = true;
+		if (NewlyActivated->GetTabRole() == ETabRole::MajorTab)
+		{
+			// Remove the drawer if a newly activated tab is a major tab
+			bShouldRemoveDrawer = true;
+		}
+		else if (PreviouslyActive && PreviouslyActive->GetTabManagerPtr() != NewlyActivated->GetTabManagerPtr())
+		{
+			// Remove the drawer if we're switching tab managers (indicates a new status bar is becoming active)
+			bShouldRemoveDrawer = true;
+		}
 	}
 
 	if (bShouldRemoveDrawer)
@@ -471,6 +469,12 @@ TSharedRef<SWidget> SWidgetDrawer::MakeStatusBarDrawerButton(const FWidgetDrawer
 					SNew(STextBlock)
 					.TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
 					.Text(Drawer.ButtonText)
+				]
+				+ SHorizontalBox::Slot()
+				.VAlign(VAlign_Center)
+				.AutoWidth()
+				[
+					Drawer.CustomButtonWidgets
 				]
 			]
 		];

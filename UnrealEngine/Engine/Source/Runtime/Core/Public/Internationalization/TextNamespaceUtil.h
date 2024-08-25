@@ -22,7 +22,7 @@ constexpr inline TCHAR PackageNamespaceEndMarker = TEXT(']');
  * @param InTextNamespace				The namespace currently used by the FText instance.
  * @param InPackageNamespace			The namespace of the package owning the FText instance.
  * @param bAlwaysApplyPackageNamespace	If true, this will always apply the package namespace to the text namespace.
- *										If false, this will only apply the package namespace if the text namespace already contains package namespace makers.
+ *										If false, this will only apply the package namespace if the text namespace already contains package namespace markers.
  *
  * @return The full namespace that should be used by the localization system.
  */
@@ -65,8 +65,8 @@ enum class ETextCopyMethod : uint8
  * @param InText						The current FText instance.
  * @param InPackageNamespace			The namespace of the destination package of the FText instance.
  * @param InCopyMethod					The method that should be used to copy the FText instance.
- * @param bAlwaysApplyPackageNamespace	If true, this will always apply the package namespace to the text namespace (always treated as Verbatim when USE_STABLE_LOCALIZATION_KEYS is false).
- *										If false, this will only apply the package namespace if the text namespace already contains package namespace makers.
+ * @param bAlwaysApplyPackageNamespace	If true, this will always apply the package namespace to the text namespace (always treated as ETextCopyMethod::Verbatim when USE_STABLE_LOCALIZATION_KEYS is false).
+ *										If false, this will only apply the package namespace if the text namespace already contains package namespace markers.
  *
  * @return A copy of the given text that's valid to use with the given package namespace.
  */

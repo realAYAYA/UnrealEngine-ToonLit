@@ -25,7 +25,7 @@
 #include "Materials/MaterialExpressionForLoop.h"
 #include "Materials/MaterialExpressionGetLocal.h"
 #include "Materials/MaterialExpressionSetLocal.h"
-#include "Materials/MaterialExpressionStrata.h"
+#include "Materials/MaterialExpressionSubstrate.h"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -148,7 +148,7 @@ void MaterialExpressionClasses::InitMaterialExpressionClasses()
 
 							if (ClassName.StartsWith(ExpressionPrefix, ESearchCase::CaseSensitive))
 							{
-								ClassName.MidInline(ExpressionPrefix.Len(), MAX_int32, false);
+								ClassName.MidInline(ExpressionPrefix.Len(), MAX_int32, EAllowShrinking::No);
 							}
 							MaterialExpression.Name = ClassName;
 							MaterialExpression.MaterialClass = Class;
@@ -180,9 +180,9 @@ void MaterialExpressionClasses::InitMaterialExpressionClasses()
 								}
 							}
 
-							// Skip adding Strata node to the context menu if Strata is disabled
-							// STRATA_TODO: remove this when Strata becomes the only shading path
-							if ((Class->IsChildOf(UMaterialExpressionStrataBSDF::StaticClass()) || Class->IsChildOf(UMaterialExpressionStrataUtilityBase::StaticClass())) && !Strata::IsStrataEnabled())
+							// Skip adding Substrate node to the context menu if Substrate is disabled
+							// SUBSTRATE_TODO: remove this when Substrate becomes the only shading path
+							if ((Class->IsChildOf(UMaterialExpressionSubstrateBSDF::StaticClass()) || Class->IsChildOf(UMaterialExpressionSubstrateUtilityBase::StaticClass())) && !Substrate::IsSubstrateEnabled())
 							{
 								continue;
 							}

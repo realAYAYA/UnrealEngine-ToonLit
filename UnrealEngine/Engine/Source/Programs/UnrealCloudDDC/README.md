@@ -9,9 +9,9 @@ Unreal Cloud DDC can signficantly help teams speed up their cook processes in th
 # Table of contents
 - [Introduction](#introduction)
 - [Table of contents](#table-of-contents)
+- [License](#license)
 - [Directories](#directories)
 - [Dependencies](#dependencies)
-- [Other useful things](#other-useful-things)
 - [Functional Test requirements](#functional-test-requirements)
 - [Running locally](#running-locally)
 - [Deployment](#deployment)
@@ -19,6 +19,7 @@ Unreal Cloud DDC can signficantly help teams speed up their cook processes in th
   - [AWS](#aws)
   - [On premise](#on-premise)
   - [Azure](#azure)
+  - [GCE](#gce)
   - [Testing your deployment](#testing-your-deployment)
 - [Monitoring](#monitoring)
   - [Health Checks](#health-checks)
@@ -30,8 +31,13 @@ Unreal Cloud DDC can signficantly help teams speed up their cook processes in th
   - [Private port](#private-port)
   - [Internal Port](#internal-port)
 - [Common operations](#common-operations)
+  - [Running a local cook against a local instance](#running-a-local-cook-against-a-local-instance)
   - [Add new region](#add-new-region)
   - [Blob replication setup](#blob-replication-setup)
+
+# License
+The source of Unreal Cloud DDC is covered by the regular Unreal Engine source license.
+We do provide container images at https://github.com/orgs/EpicGames/packages/container/package/unreal-cloud-ddc - these containers are provided under MIT.
 
 # Directories 
 
@@ -45,12 +51,8 @@ Unreal Cloud DDC can signficantly help teams speed up their cook processes in th
 
 * DotNet Core 6 (and Visual Studio 2022 or VS Code)
 * Docker
-* Scylla
-* Blob storage (S3, Azure Blob Store or a local filesystem)
-
-# Other useful things
-* MongoDB
-* Minio
+* Database (Scylla is recommended, MongoDB is also supported for single regions)
+* Blob storage (S3, S3 emulations like Minio, Azure Blob Store or a local filesystem)
 * Docker Compose
 
 # Functional Test requirements
@@ -67,12 +69,10 @@ The AWS compose file can be replaced with `docker-compose-azure.yml` if you want
 
 Docker compose setups disable authentication for to make it quick to get started, generally we recommend that you hook UnrealCloudDDC up to a OIDC provider before deploying this.
 
-UnrealCloudDDC hosts Swagger documentation at `/docs` (so `http://localhost/docs` when running locally). This page lets you pick the service you want to call and lists the API for it.
-Note that some endpoints using binary protocol for effieceny and the format of those is not documented in swagger, we always provide a REST api for every use case.
-
 # Deployment
-UnrealCloudDDC is currently only run in production on AWS, but the requirements on storage and db are very generic and also abstracted. 
-We have basic (untested) support for Azure services.
+UnrealCloudDDC is currently only run in production on AWS for Epic, but the requirements on storage and db are very generic and also abstracted. 
+We have licensees running on Azure and include support for that but we have limited testing coverage for this.
+GCE can be used by using GCS with its S3 api which we have licensees that do, as with azure we have very limited testing for this mode.
 
 We provide helm values (under `/Helm`) that we use for epic internal deployments to kubernetes, but kubernetes is not a requirement.
 
@@ -91,13 +91,16 @@ https://www.scylladb.com/download/#open-source
 Scylla provides machine images for use in cloud environments.
 
 ## AWS
-This is the most tested deployment form as this is how we operate it at Epic. The helm chart we install into each regions kubernetes cluster is provided in this repo.
+This is the most tested deployment form as this is how we operate it at Epic. The helm chart we install into each regions kubernetes cluster is available in the  `Helm` directory.
 
 ## On premise
 UnrealCloudDDC can be deployed onprem without using any cloud resources. You can either setup a Mongo database for this (if you only intend to run this in a single region) or Scylla if you inted to run it multi region but still on premise. If you are starting with one region but might expand later we recommend using Scylla - as that allows you to just scale out while Mongo would require drop all your existing state.
 
 ## Azure
 To deploy on AWS you will just need to set Azure as your cloud provider and specify the `Azure.ConnectionString` setting with a connection string to your Azure Blob Storage.
+
+## GCE
+To run using GCS you will need to use the S3 api they provide as well as set the `S3.UseChunkEncoding` setting to `false`
 
 ## Testing your deployment
 Once you have a deployment up and running you can connect to the machine and run curl commands to verify its working as it should.
@@ -120,7 +123,7 @@ curl http://localhost/api/v1/refs/test-namespace/default/00000000000000000000000
 ```
 
 # Monitoring
-We use Datadog to monitor our services, as such UnrealCloudDDC is instrumented to work well with that service. But all logs are delivered as structured logs to stdout, so any monitoring service that understands structured logs should be able to monitor it quite well.
+We use Datadog to monitor our services, as such UnrealCloudDDC is instrumented to work well with that service. All logs are delivered as structured logs to stdout, so any monitoring service that understands structured logs should be able to monitor it quite well. Traces are output using OpenTelemetry formats so any monitoring service that can ingest that should be compatible.
 
 ## Health Checks
 All UnrealCloudDDC services use health checks to monitor themselves, any background services they may run and any dependent service they may have (DB / Blob store etc).
@@ -139,12 +142,13 @@ auth:
     defaultScheme: Bearer
     schemes:
       Bearer: 
-        implementation: "Jwt"
+        implementation: "JWTBearer"
         jwtAudience: "api://unreal"
         jwtAuthority: "<url-to-your-idp>
 ```
 We recommend naming your scheme `Bearer` if its your first and only scheme. You can use multiple schemes to connect against multiple IdPs, this is mostly useful during a migration.
 
+The implementation field is usually `JWTBearer` but we do offer a `Okta` if you are using Okta with custom auth servers, for Okta using the org auth server you will need to use `JWTBearer` as well.
 
 ## Namespace access
 
@@ -182,7 +186,7 @@ auth:
         - AdminAction
 
 namespace:
-  policy:
+  policies:
     example-namespace:
       acls:
       - actions: 
@@ -226,7 +230,7 @@ This is typically exposed on port `8008` and as `corp-http` within kubernetes.
 ## Internal Port
 The internal port is only needed to be reachable by other UnrealCloudDDC instances. This exposes everything that the private port does but also certain apis that are deemed sensitive (enumerating content via the replication log primarily).
 This is exposed on port `8080` and as `internal-http` within kubernetes.
-Its recommended to keep this ingress only to other UnrealCloudDDC instances via a private VPC or using some kind of ip-range allow list or similar.
+Its recommended to keep this port only to other UnrealCloudDDC instances via a private VPC or using some kind of ip-range allow list or similar.
 
 Note that this port is primarily used for the speculative blob replication (see `Blob replication setup`). 
 

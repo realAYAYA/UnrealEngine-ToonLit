@@ -6,7 +6,6 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/App.h"
 #include "Misc/EngineBuildSettings.h"
-#include "GenericPlatform/GenericPlatformCrashContext.h"
 
 FCrashReportCoreConfig::FCrashReportCoreConfig()
 	: DiagnosticsFilename( TEXT( "Diagnostics.txt" ) )
@@ -23,41 +22,27 @@ FCrashReportCoreConfig::FCrashReportCoreConfig()
 	{
 		CrashReportClientVersion = TEXT("0.0.0");
 	}
-	UE_LOG(CrashReportCoreLog, Log, TEXT("CrashReportClientVersion=%s"), *CrashReportClientVersion);
 
 	if (!GConfig->GetString( *SectionName, TEXT( "CrashReportReceiverIP" ), CrashReportReceiverIP, GEngineIni ))
 	{
 		// Use the default value (blank/disabled)
 		CrashReportReceiverIP = TEXT("");
 	}
-	if (CrashReportReceiverIP.IsEmpty())
-	{
-		UE_LOG(CrashReportCoreLog, Log, TEXT("CrashReportReceiver disabled"));
-	}
-	else
-	{
-		UE_LOG(CrashReportCoreLog, Log, TEXT("CrashReportReceiverIP: %s"), *CrashReportReceiverIP);
-	}
 
 	if (!GConfig->GetString(*SectionName, TEXT("DataRouterUrl"), DataRouterUrl, GEngineIni))
 	{
-		// Use the default value.
+#if defined CRC_DEFAULT_URL
+		DataRouterUrl = TEXT(CRC_DEFAULT_URL);
+#else
 		DataRouterUrl = TEXT("");
-	}
-	if (DataRouterUrl.IsEmpty())
-	{
-		UE_LOG(CrashReportCoreLog, Log, TEXT("DataRouter disabled"));
-	}
-	else
-	{
-		UE_LOG(CrashReportCoreLog, Log, TEXT("DataRouterUrl: %s"), *DataRouterUrl);
+#endif
 	}
 
 	if (FEngineBuildSettings::IsInternalBuild())
 	{
 		bAllowToBeContacted = true;
 	}
-	else if (!GConfig->GetBool( TEXT( "CrashReportClient" ), TEXT( "bAllowToBeContacted" ), bAllowToBeContacted, GEngineIni ))
+	else if (!GConfig->GetBool(*SectionName, TEXT("bAllowToBeContacted"), bAllowToBeContacted, GEngineIni ))
 	{
 		// Default to true when unattended when config is missing. This is mostly for dedicated servers that do not have config files for CRC.
 		if (bUnattended)
@@ -66,7 +51,7 @@ FCrashReportCoreConfig::FCrashReportCoreConfig()
 		}
 	}
 
-	if (!GConfig->GetBool( TEXT( "CrashReportClient" ), TEXT( "bSendLogFile" ), bSendLogFile, GEngineIni ))
+	if (!GConfig->GetBool(*SectionName, TEXT("bSendLogFile"), bSendLogFile, GEngineIni ))
 	{
 		// Default to true when unattended when config is missing. This is mostly for dedicated servers that do not have config files for CRC.
 		if (bUnattended)
@@ -75,13 +60,47 @@ FCrashReportCoreConfig::FCrashReportCoreConfig()
 		}
 	}
 
-	if (!GConfig->GetInt(TEXT("CrashReportClient"), TEXT("UserCommentSizeLimit"), UserCommentSizeLimit, GEngineIni))
+	if (!GConfig->GetInt(*SectionName, TEXT("UserCommentSizeLimit"), UserCommentSizeLimit, GEngineIni))
 	{
 		UserCommentSizeLimit = 4000;
 	}
 
-	FConfigFile EmptyConfigFile;
-	SetProjectConfigOverrides(EmptyConfigFile);
+	if (!GConfig->GetBool(*SectionName, TEXT("bHideLogFilesOption"), bHideLogFilesOption, GEngineIni))
+	{
+		bHideLogFilesOption = false;
+	}
+
+	if (!GConfig->GetBool(*SectionName, TEXT("bHideRestartOption"), bHideRestartOption, GEngineIni))
+	{
+		bHideRestartOption = false;
+	}
+	
+	if (!GConfig->GetBool(*SectionName, TEXT("bIsAllowedToCloseWithoutSending"), bIsAllowedToCloseWithoutSending, GEngineIni))
+	{
+		// Default to false (show the option) when config is missing.
+		bIsAllowedToCloseWithoutSending = true;
+	}
+	
+	if (!GConfig->GetBool(*SectionName, TEXT("bShowEndpointInTooltip"), bShowEndpointInTooltip, GEngineIni))
+	{
+		bShowEndpointInTooltip = false;
+	}
+
+	if (!GConfig->GetString(*SectionName, TEXT("CompanyName"), CompanyName, GEngineIni))
+	{
+#if defined(CRC_DEFAULT_COMPANY_NAME)
+		CompanyName = TEXT(CRC_DEFAULT_COMPANY_NAME);
+#else
+		CompanyName = TEXT("");
+#endif
+	}
+
+#if PLATFORM_WINDOWS
+	if (!GConfig->GetBool(*SectionName, TEXT("bIsAllowedToCopyFilesToClipboard"), bIsAllowedToCopyFilesToClipboard, GEngineIni))
+	{
+		bIsAllowedToCopyFilesToClipboard = false;
+	}
+#endif
 
 	ReadFullCrashDumpConfigurations();
 }
@@ -98,41 +117,36 @@ void FCrashReportCoreConfig::SetSendLogFile( bool bNewValue )
 	GConfig->SetBool( *SectionName, TEXT( "bSendLogFile" ), bSendLogFile, GEngineIni );
 }
 
-void FCrashReportCoreConfig::SetProjectConfigOverrides(const FConfigFile& InConfigFile)
+void FCrashReportCoreConfig::ApplyProjectOverrides(const FString& ConfigFilePath)
 {
-	const FConfigSection* Section = InConfigFile.Find(FGenericCrashContext::ConfigSectionName);
-
-	// Default to false (show the option) when config is missing.
-	bHideLogFilesOption = false;
-	bHideRestartOption = false;
-
-	// Default to true (Allow the user to close without sending) when config is missing.
-	bIsAllowedToCloseWithoutSending = true;
-
-	// Try to read values from override config file
-	if (Section != nullptr)
+	if (FPaths::FileExists(ConfigFilePath))
 	{
-		const FConfigValue* HideLogFilesOptionValue = Section->Find(TEXT("bHideLogFilesOption"));
-		if (HideLogFilesOptionValue != nullptr)
-		{
-			bHideLogFilesOption = FCString::ToBool(*HideLogFilesOptionValue->GetValue());
-		}
-
-		const FConfigValue* HideRestartOptionValue = Section->Find(TEXT("bHideRestartOption"));
-		if (HideRestartOptionValue != nullptr)
-		{
-			bHideRestartOption = FCString::ToBool(*HideRestartOptionValue->GetValue());
-		}
-
-		const FConfigValue* IsAllowedToCloseWithoutSendingValue = Section->Find(TEXT("bIsAllowedToCloseWithoutSending"));
-		if (IsAllowedToCloseWithoutSendingValue != nullptr)
-		{
-			bIsAllowedToCloseWithoutSending = FCString::ToBool(*IsAllowedToCloseWithoutSendingValue->GetValue());
-		}
+		UE_LOG(CrashReportCoreLog, Display, TEXT("Applying project settings from '%s'."), *ConfigFilePath)
+		FConfigFile ProjectConfig;
+		ProjectConfig.Read(ConfigFilePath);
+		SetProjectConfigOverrides(ProjectConfig);
 	}
 }
 
-const FString FCrashReportCoreConfig::GetFullCrashDumpLocationForBranch( const FString& BranchName ) const
+void FCrashReportCoreConfig::SetProjectConfigOverrides(const FConfigFile& InConfigFile)
+{
+	InConfigFile.GetString(*SectionName, TEXT("CrashReportClientVersion"), CrashReportClientVersion);
+	InConfigFile.GetString(*SectionName, TEXT("CrashReportReceiverIP"), CrashReportReceiverIP);
+	InConfigFile.GetString(*SectionName, TEXT("DataRouterUrl"), DataRouterUrl);
+	InConfigFile.GetBool(*SectionName, TEXT("bAllowToBeContacted"), bAllowToBeContacted);
+	InConfigFile.GetBool(*SectionName, TEXT( "bSendLogFile" ), bSendLogFile);
+	InConfigFile.GetInt(*SectionName, TEXT("UserCommentSizeLimit"), UserCommentSizeLimit);
+	InConfigFile.GetBool(*SectionName, TEXT("bHideLogFilesOption"), bHideLogFilesOption);
+	InConfigFile.GetBool(*SectionName, TEXT("bHideRestartOption"), bHideRestartOption);
+	InConfigFile.GetBool(*SectionName, TEXT("bIsAllowedToCloseWithoutSending"), bIsAllowedToCloseWithoutSending);
+	InConfigFile.GetBool(*SectionName, TEXT("bShowEndpointInTooltip"), bShowEndpointInTooltip);
+	InConfigFile.GetString(*SectionName, TEXT("CompanyName"), CompanyName);
+#if PLATFORM_WINDOWS
+	InConfigFile.GetBool(*SectionName, TEXT("bIsAllowedToCopyFilesToClipboard"), bIsAllowedToCopyFilesToClipboard);
+#endif
+}
+
+FString FCrashReportCoreConfig::GetFullCrashDumpLocationForBranch(const FString& BranchName) const
 {
 	for (const auto& It : FullCrashDumpConfigurations)
 	{
@@ -151,32 +165,55 @@ const FString FCrashReportCoreConfig::GetFullCrashDumpLocationForBranch( const F
 	return TEXT( "" );
 }
 
-FString FCrashReportCoreConfig::GetKey( const FString& KeyName )
-{
-	FString Result;
-	if (!GConfig->GetString( *SectionName, *KeyName, Result, GEngineIni ))
-	{
-		return TEXT( "" );
-	}
-	return Result;
-}
-
 void FCrashReportCoreConfig::ReadFullCrashDumpConfigurations()
 {
+	auto GetKey = [this](const TCHAR* KeyName) -> FString
+	{
+		FString Result;
+		if (!GConfig->GetString( *SectionName, KeyName, Result, GEngineIni ))
+		{
+			return TEXT( "" );
+		}
+		return MoveTemp(Result);
+	};
+	
 	for (int32 NumEntries = 0;; ++NumEntries)
 	{
-		FString Branch = GetKey( FString::Printf( TEXT( "FullCrashDump_%i_Branch" ), NumEntries ) );
+		FString Branch = GetKey( *FString::Printf( TEXT( "FullCrashDump_%i_Branch" ), NumEntries ) );
 		if (Branch.IsEmpty())
 		{
 			break;
 		}
 
-		const FString NetworkLocation = GetKey( FString::Printf( TEXT( "FullCrashDump_%i_Location" ), NumEntries ) );
+		const FString NetworkLocation = GetKey( *FString::Printf( TEXT( "FullCrashDump_%i_Location" ), NumEntries ) );
 		const bool bExactMatch = !Branch.EndsWith( TEXT( "*" ) );
 		Branch.ReplaceInline( TEXT( "*" ), TEXT( "" ) );
 
 		FullCrashDumpConfigurations.Add( FFullCrashDumpEntry( Branch, NetworkLocation, bExactMatch ) );
+	}
+}
 
-		UE_LOG( CrashReportCoreLog, Log, TEXT( "FullCrashDump: %s, NetworkLocation: %s, bExactMatch:%i" ), *Branch, *NetworkLocation, bExactMatch );
+void FCrashReportCoreConfig::PrintSettingsToLog() const
+{
+	UE_LOG(CrashReportCoreLog, Log, TEXT("CrashReportClientVersion=%s"), *CrashReportClientVersion);
+	if (CrashReportReceiverIP.IsEmpty())
+	{
+		UE_LOG(CrashReportCoreLog, Log, TEXT("CrashReportReceiver disabled"));
+	}
+	else
+	{
+		UE_LOG(CrashReportCoreLog, Log, TEXT("CrashReportReceiverIP: %s"), *CrashReportReceiverIP);
+	}
+	if (DataRouterUrl.IsEmpty())
+	{
+		UE_LOG(CrashReportCoreLog, Log, TEXT("DataRouter disabled"));
+	}
+	else
+	{
+		UE_LOG(CrashReportCoreLog, Log, TEXT("DataRouterUrl: %s"), *DataRouterUrl);
+	}
+	for (auto Location : FullCrashDumpConfigurations)
+	{
+		UE_LOG( CrashReportCoreLog, Log, TEXT( "FullCrashDump: %s, NetworkLocation: %s, bExactMatch:%i" ), *Location.BranchName, *Location.Location, Location.bExactMatch);
 	}
 }

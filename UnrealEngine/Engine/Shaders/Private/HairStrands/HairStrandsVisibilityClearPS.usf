@@ -3,19 +3,24 @@
 #include "/Engine/Public/Platform.ush"
 
 
-uint ClearValue;
+uint uClearValue; 
+float fClearValue;
 
 void ClearPS(
 #if PERMUTATION_OUTPUT_FORMAT == 0
 	out uint OutColor : SV_Target0
 #elif PERMUTATION_OUTPUT_FORMAT == 1
 	out uint2 OutColor : SV_Target0
+#elif PERMUTATION_OUTPUT_FORMAT == 2
+	out float OutColor : SV_Target0
 #endif
 )
 {
 #if PERMUTATION_OUTPUT_FORMAT == 0
-	OutColor = ClearValue;
+	OutColor = uClearValue;
 #elif PERMUTATION_OUTPUT_FORMAT == 1
-	OutColor = ClearValue.xx;
+	OutColor = uClearValue.xx;
+#elif PERMUTATION_OUTPUT_FORMAT == 2
+	OutColor = fClearValue;
 #endif
 }

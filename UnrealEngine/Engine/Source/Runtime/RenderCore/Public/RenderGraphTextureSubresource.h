@@ -5,7 +5,7 @@
 #include "RHI.h"
 
 template <typename InElementType, typename InAllocatorType = FDefaultAllocator>
-using TRDGTextureSubresourceArray = TArray<InElementType, TInlineAllocator<1, InAllocatorType>>;
+using TRDGTextureSubresourceArray = TArray<InElementType, InAllocatorType>;
 
 struct FRDGTextureSubresource
 {

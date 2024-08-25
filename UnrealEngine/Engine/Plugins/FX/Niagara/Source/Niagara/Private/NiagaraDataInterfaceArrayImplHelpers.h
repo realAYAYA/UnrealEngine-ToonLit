@@ -69,6 +69,13 @@ struct FNDIArrayImplHelper<FVector2f> : public FNDIArrayImplHelperBase<FVector2f
 	{
 		OutString.Appendf(TEXT("%f, %f"), Value.X, Value.Y);
 	}
+
+	static bool IsNearlyEqual(const FVector2f& Lhs, const FVector2f& Rhs, float Tolerance)
+	{
+		return
+			FMath::IsNearlyEqual(Lhs.X, Rhs.X, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Y, Rhs.Y, Tolerance);
+	}
 };
 
 template<>
@@ -113,6 +120,14 @@ struct FNDIArrayImplHelper<FVector3f> : public FNDIArrayImplHelperBase<FVector3f
 	{
 		OutString.Appendf(TEXT("%f, %f, %f"), Value.X, Value.Y, Value.Z);
 	}
+
+	static bool IsNearlyEqual(const FVector3f& Lhs, const FVector3f& Rhs, float Tolerance)
+	{
+		return
+			FMath::IsNearlyEqual(Lhs.X, Rhs.X, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Y, Rhs.Y, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Z, Rhs.Z, Tolerance);
+	}
 };
 
 template<>
@@ -134,6 +149,14 @@ struct FNDIArrayImplHelper<FNiagaraPosition> : public FNDIArrayImplHelper<FVecto
 	static void AppendValueToString(const FVector3f& Value, FString& OutString)
 	{
 		OutString.Appendf(TEXT("%f, %f, %f"), Value.X, Value.Y, Value.Z);
+	}
+
+	static bool IsNearlyEqual(const FNiagaraPosition& Lhs, const FNiagaraPosition& Rhs, float Tolerance)
+	{
+		return
+			FMath::IsNearlyEqual(Lhs.X, Rhs.X, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Y, Rhs.Y, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Z, Rhs.Z, Tolerance);
 	}
 };
 
@@ -179,6 +202,15 @@ struct FNDIArrayImplHelper<FVector4f> : public FNDIArrayImplHelperBase<FVector4f
 	{
 		OutString.Appendf(TEXT("%f, %f, %f, %f"), Value.X, Value.Y, Value.Z, Value.W);
 	}
+
+	static bool IsNearlyEqual(const FVector4f& Lhs, const FVector4f& Rhs, float Tolerance)
+	{
+		return
+			FMath::IsNearlyEqual(Lhs.X, Rhs.X, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Y, Rhs.Y, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Z, Rhs.Z, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.W, Rhs.W, Tolerance);
+	}
 };
 
 template<>
@@ -201,6 +233,15 @@ struct FNDIArrayImplHelper<FLinearColor> : public FNDIArrayImplHelperBase<FLinea
 	static void AppendValueToString(const FLinearColor& Value, FString& OutString)
 	{
 		OutString.Appendf(TEXT("%f, %f, %f, %f"), Value.R, Value.G, Value.B, Value.A);
+	}
+
+	static bool IsNearlyEqual(const FLinearColor& Lhs, const FLinearColor& Rhs, float Tolerance)
+	{
+		return
+			FMath::IsNearlyEqual(Lhs.R, Rhs.R, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.G, Rhs.G, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.B, Rhs.B, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.A, Rhs.A, Tolerance);
 	}
 };
 
@@ -245,6 +286,15 @@ struct FNDIArrayImplHelper<FQuat4f> : public FNDIArrayImplHelperBase<FQuat4f>
 	static void AppendValueToString(const FQuat4f& Value, FString& OutString)
 	{
 		OutString.Appendf(TEXT("%f, %f, %f, %f"), Value.X, Value.Y, Value.Z, Value.W);
+	}
+
+	static bool IsNearlyEqual(const FQuat4f& Lhs, const FQuat4f& Rhs, float Tolerance)
+	{
+		return
+			FMath::IsNearlyEqual(Lhs.X, Rhs.X, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Y, Rhs.Y, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.Z, Rhs.Z, Tolerance) &&
+			FMath::IsNearlyEqual(Lhs.W, Rhs.W, Tolerance);
 	}
 };
 
@@ -311,6 +361,22 @@ struct FNDIArrayImplHelper<FMatrix44f> : public FNDIArrayImplHelperBase<FMatrix4
 				}
 			}
 		}
+	}
+
+	static bool IsNearlyEqual(const FMatrix44f& Lhs, const FMatrix44f& Rhs, float Tolerance)
+	{
+		for (int32 r = 0; r < 4; ++r)
+		{
+			for (int32 c = 0; c < 4; ++c)
+			{
+				if (!FMath::IsNearlyEqual(Lhs.M[r][c], Rhs.M[r][c], Tolerance))
+				{
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 };
 
@@ -468,5 +534,10 @@ struct FNDIArrayImplHelper<FNiagaraID> : public FNDIArrayImplHelperBase<FNiagara
 	static void AppendValueToString(const FNiagaraID Value, FString& OutString)
 	{
 		OutString.Appendf(TEXT("%d, %d"), Value.Index, Value.AcquireTag);
+	}
+
+	static bool IsNearlyEqual(const FNiagaraID& Lhs, const FNiagaraID& Rhs, float Tolerance)
+	{
+		return Lhs.AcquireTag == Rhs.AcquireTag && Lhs.Index == Rhs.Index;
 	}
 };

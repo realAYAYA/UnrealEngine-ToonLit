@@ -11,6 +11,7 @@
 
 #include "Physics/PhysicsDataCollection.h"
 #include "Physics/CollisionGeometryVisualization.h"
+#include "Physics/ComponentCollisionUtil.h"
 
 // physics data
 #include "PhysicsEngine/AggregateGeom.h"
@@ -34,6 +35,22 @@ using namespace UE::Geometry;
 
 #define LOCTEXT_NAMESPACE "USimpleCollisionEditorTool"
 
+
+bool USimpleCollisionEditorToolBuilder::CanBuildTool(const FToolBuilderState& SceneState) const
+{
+	if (Super::CanBuildTool(SceneState)) // let super verify that there is only one targetable component
+	{
+		// make sure we can also write collision on the target
+		bool bCanReadWrite = false;
+		SceneState.TargetManager->EnumerateSelectedAndTargetableComponents(SceneState, GetTargetRequirements(), [&](UActorComponent* TargetComponent)
+		{
+			bCanReadWrite = Cast<UPrimitiveComponent>(TargetComponent) &&
+				UE::Geometry::ComponentTypeSupportsCollision(Cast<UPrimitiveComponent>(TargetComponent), UE::Geometry::EComponentCollisionSupportLevel::ReadWrite);
+		});
+		return bCanReadWrite;
+	}
+	return false;
+}
 
 const FToolTargetTypeRequirements& USimpleCollisionEditorToolBuilder::GetTargetRequirements() const
 {
@@ -163,10 +180,13 @@ void USimpleCollisionEditorTool::OnShutdown(EToolShutdownType ShutdownType)
 		}
 		else if (UDynamicMeshComponent* DynamicMeshComponent = Cast<UDynamicMeshComponent>(Component))
 		{
+			DynamicMeshComponent->Modify();
 			if (UBodySetup* BodySetup = DynamicMeshComponent->GetBodySetup())
 			{
-				UpdateBodySetup(BodySetup);
+				BodySetup->Modify();
 			}
+			DynamicMeshComponent->SetSimpleCollisionShapes(PhysicsInfos->AggGeom, true);
+			DynamicMeshComponent->MarkRenderStateDirty();
 		}
 
 		// post the undo transaction

@@ -30,8 +30,9 @@ namespace AVEncoder
 	// *** FVideoEncoderInput *************************************************************************
 
 	// --- construct video encoder input based on expected input frame format -------------------------
-
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<FVideoEncoderInput> FVideoEncoderInput::CreateDummy(bool bIsResizable)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		TSharedPtr<FVideoEncoderInputImpl>	Input = MakeShared<FVideoEncoderInputImpl>();
 		Input->bIsResizable = bIsResizable;
@@ -43,7 +44,9 @@ namespace AVEncoder
 		return Input;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<FVideoEncoderInput> FVideoEncoderInput::CreateForYUV420P(uint32 InWidth, uint32 InHeight, bool bIsResizable)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		TSharedPtr<FVideoEncoderInputImpl>	Input = MakeShared<FVideoEncoderInputImpl>();
 		Input->bIsResizable = bIsResizable;
@@ -55,7 +58,9 @@ namespace AVEncoder
 		return Input;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<FVideoEncoderInput> FVideoEncoderInput::CreateForD3D11(void* InApplicationD3DDevice, bool bIsResizable, bool IsShared)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		TSharedPtr<FVideoEncoderInputImpl>	Input = MakeShared<FVideoEncoderInputImpl>();
 
@@ -83,7 +88,9 @@ namespace AVEncoder
 	}
 
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<FVideoEncoderInput> FVideoEncoderInput::CreateForD3D12(void* InApplicationD3DDevice, bool bIsResizable, bool IsShared)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		TSharedPtr<FVideoEncoderInputImpl>	Input = MakeShared<FVideoEncoderInputImpl>();
 
@@ -110,7 +117,9 @@ namespace AVEncoder
 		return Input;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<FVideoEncoderInput> FVideoEncoderInput::CreateForCUDA(void* InApplicationContext, bool bIsResizable)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		TSharedPtr<FVideoEncoderInputImpl> Input = MakeShared<FVideoEncoderInputImpl>();
 		Input->bIsResizable = bIsResizable;
@@ -123,14 +132,20 @@ namespace AVEncoder
 	}
 
 #if PLATFORM_DESKTOP && !PLATFORM_APPLE
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<FVideoEncoderInput> FVideoEncoderInput::CreateForVulkan(void* InApplicationVulkanData, bool bIsResizable)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		TSharedPtr<FVideoEncoderInputImpl>	Input = MakeShared<FVideoEncoderInputImpl>();
 		Input->bIsResizable = bIsResizable;
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FVulkanDataStruct* VulkanData = static_cast<FVulkanDataStruct*>(InApplicationVulkanData);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (!Input->SetupForVulkan(VulkanData->VulkanInstance, VulkanData->VulkanPhysicalDevice, VulkanData->VulkanDevice))
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			Input.Reset();
 		}
@@ -151,6 +166,7 @@ namespace AVEncoder
 
 	// *** FVideoEncoderInputImpl *********************************************************************
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderInputImpl::~FVideoEncoderInputImpl()
 	{
 		{
@@ -166,16 +182,21 @@ namespace AVEncoder
 		//	DEBUG_D3D11_REPORT_LIVE_DEVICE_OBJECT(FrameInfoD3D.EncoderDeviceD3D11);
 #endif
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	bool FVideoEncoderInputImpl::SetupForDummy()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = EVideoFrameFormat::Undefined;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return true;
 	}
 
 	bool FVideoEncoderInputImpl::SetupForYUV420P(uint32 InWidth, uint32 InHeight)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = EVideoFrameFormat::YUV420P;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		FrameInfoYUV420P.StrideY = InWidth;
 		FrameInfoYUV420P.StrideU = (InWidth + 1) / 2;
 		FrameInfoYUV420P.StrideV = (InWidth + 1) / 2;
@@ -224,7 +245,9 @@ namespace AVEncoder
 		DEBUG_SET_D3D11_OBJECT_NAME(FrameInfoD3D.EncoderDeviceD3D11, "FVideoEncoderInputImpl");
 		DEBUG_SET_D3D11_OBJECT_NAME(FrameInfoD3D.EncoderDeviceContextD3D11, "FVideoEncoderInputImpl");
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = EVideoFrameFormat::D3D11_R8G8B8A8_UNORM;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		CollectAvailableEncoders();
 		return true;
@@ -274,7 +297,9 @@ namespace AVEncoder
 		DEBUG_SET_D3D11_OBJECT_NAME(FrameInfoD3D.EncoderDeviceD3D11, "FVideoEncoderInputImpl");
 		DEBUG_SET_D3D11_OBJECT_NAME(FrameInfoD3D.EncoderDeviceContextD3D11, "FVideoEncoderInputImpl");
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = EVideoFrameFormat::D3D11_R8G8B8A8_UNORM;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		CollectAvailableEncoders();
 		return true;
@@ -311,7 +336,9 @@ namespace AVEncoder
 			return false;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = EVideoFrameFormat::D3D12_R8G8B8A8_UNORM;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		CollectAvailableEncoders();
 		return true;
@@ -371,7 +398,9 @@ namespace AVEncoder
 		DEBUG_SET_D3D11_OBJECT_NAME(FrameInfoD3D.EncoderDeviceD3D11, "FVideoEncoderInputImpl");
 		DEBUG_SET_D3D11_OBJECT_NAME(FrameInfoD3D.EncoderDeviceContextD3D11, "FVideoEncoderInputImpl");
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = EVideoFrameFormat::D3D11_R8G8B8A8_UNORM;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		CollectAvailableEncoders();
 		return true;
@@ -386,7 +415,9 @@ namespace AVEncoder
 	{
 		FrameInfoCUDA.EncoderContextCUDA = static_cast<CUcontext>(InApplicationContext);
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = EVideoFrameFormat::CUDA_R8G8B8A8_UNORM;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		CollectAvailableEncoders();
 		return true;
@@ -395,11 +426,13 @@ namespace AVEncoder
 #if PLATFORM_DESKTOP && !PLATFORM_APPLE
 	bool FVideoEncoderInputImpl::SetupForVulkan(VkInstance InApplicationVulkanInstance, VkPhysicalDevice InApplicationVulkanPhysicalDevice, VkDevice InApplicationVulkanDevice)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameInfoVulkan.VulkanInstance = InApplicationVulkanInstance;
 		FrameInfoVulkan.VulkanPhysicalDevice = InApplicationVulkanPhysicalDevice;
 		FrameInfoVulkan.VulkanDevice = InApplicationVulkanDevice;
 
 		FrameFormat = EVideoFrameFormat::VULKAN_R8G8B8A8_UNORM;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		CollectAvailableEncoders();
 		return true;
@@ -411,6 +444,7 @@ namespace AVEncoder
 	void FVideoEncoderInputImpl::CollectAvailableEncoders()
 	{
 		AvailableEncoders.Empty();
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		for (const FVideoEncoderInfo& Info : FVideoEncoderFactory::Get().GetAvailable())
 		{
 			if (Info.SupportedInputFormats.Contains(FrameFormat))
@@ -418,16 +452,21 @@ namespace AVEncoder
 				AvailableEncoders.Push(Info);
 			}
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	const TArray<FVideoEncoderInfo>& FVideoEncoderInputImpl::GetAvailableEncoders()
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		return AvailableEncoders;
 	}
 
 	// --- encoder input frames -----------------------------------------------------------------------
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	bool FVideoEncoderInputImpl::IsUserManagedFrame(const FVideoEncoderInputFrame* InBuffer) const
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		const FVideoEncoderInputFrameImpl* Frame = static_cast<const FVideoEncoderInputFrameImpl*>(InBuffer);
 		FScopeLock						Guard(&ProtectFrames);
@@ -442,7 +481,9 @@ namespace AVEncoder
 	}
 
 	// create a user managed buffer
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderInputFrame* FVideoEncoderInputImpl::CreateBuffer(OnFrameReleasedCallback InOnFrameReleased)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FVideoEncoderInputFrameImpl* Frame = CreateFrame();
 		if (Frame)
@@ -454,7 +495,9 @@ namespace AVEncoder
 	}
 
 	// destroy user managed buffer
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderInputImpl::DestroyBuffer(FVideoEncoderInputFrame* InBuffer)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FVideoEncoderInputFrameImpl* Frame = static_cast<FVideoEncoderInputFrameImpl*>(InBuffer);
 		FScopeLock						Guard(&ProtectFrames);
@@ -475,7 +518,9 @@ namespace AVEncoder
 
 	// --- encoder input frames -----------------------------------------------------------------------
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<FVideoEncoderInputFrame> FVideoEncoderInputImpl::ObtainInputFrame()
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		TSharedPtr<FVideoEncoderInputFrameImpl> Frame;
 		FScopeLock						Guard(&ProtectFrames);
@@ -489,11 +534,15 @@ namespace AVEncoder
 		else
 		{
 			Frame = MakeShareable(CreateFrame());
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			UE_LOG(LogVideoEncoder, Verbose, TEXT("Created new frame total frames: %d"), NumBuffers);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
+		
 
 		ActiveFrames.Push(Frame);
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Frame->SetFrameID(NextFrameID++);
 
 		if (NextFrameID == 0)
@@ -502,12 +551,14 @@ namespace AVEncoder
 		}
 
 		Frame->Obtain();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return Frame;
 	}
 
 	FVideoEncoderInputFrameImpl* FVideoEncoderInputImpl::CreateFrame()
 	{
 		FVideoEncoderInputFrameImpl* Frame = new FVideoEncoderInputFrameImpl(this);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		NumBuffers++;
 		switch (FrameFormat)
 		{
@@ -533,10 +584,13 @@ namespace AVEncoder
 			check(false);
 			break;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return Frame;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderInputImpl::ReleaseInputFrame(FVideoEncoderInputFrame* InFrame)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FVideoEncoderInputFrameImpl* InFrameImpl = static_cast<FVideoEncoderInputFrameImpl*>(InFrame);
 
@@ -564,6 +618,7 @@ namespace AVEncoder
 		if (NumRemoved > 0)
 		{
 			// drop frame if format changed
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (InFrame->GetFormat() != FrameFormat)
 			{
 				ProtectFrames.Unlock();
@@ -579,6 +634,7 @@ namespace AVEncoder
 				UE_LOG(LogVideoEncoder, Verbose, TEXT("Deleted buffer (too many) total frames: %d"), NumBuffers);
 				return;
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			AvailableFrames.Enqueue(InFramePtr);
 		}
@@ -588,32 +644,40 @@ namespace AVEncoder
 	{
 		FScopeLock ScopeLock(&ProtectFrames);
 		AvailableFrames.Empty();
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		NumBuffers = 0;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
+	
 
 	void FVideoEncoderInputImpl::SetupFrameYUV420P(FVideoEncoderInputFrameImpl* Frame)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Frame->SetFormat(EVideoFrameFormat::YUV420P);
 		FVideoEncoderInputFrame::FYUV420P& YUV420P = Frame->GetYUV420P();
 		YUV420P.StrideY = FrameInfoYUV420P.StrideY;
 		YUV420P.StrideU = FrameInfoYUV420P.StrideU;
 		YUV420P.StrideV = FrameInfoYUV420P.StrideV;
 		YUV420P.Data[0] = YUV420P.Data[1] = YUV420P.Data[2] = nullptr;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	void FVideoEncoderInputImpl::SetupFrameD3D11(FVideoEncoderInputFrameImpl* Frame)
 	{
 #if PLATFORM_WINDOWS
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Frame->SetFormat(FrameFormat);
 
 		FVideoEncoderInputFrame::FD3D11& Data = Frame->GetD3D11();
 		Data.EncoderDevice = FrameInfoD3D.EncoderDeviceD3D11;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
 	void FVideoEncoderInputImpl::SetupFrameD3D12(FVideoEncoderInputFrameImpl* Frame)
 	{
 #if PLATFORM_WINDOWS
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Frame->SetFormat(FrameFormat);
 
 		if (FrameFormat == EVideoFrameFormat::D3D11_R8G8B8A8_UNORM)
@@ -626,24 +690,30 @@ namespace AVEncoder
 			FVideoEncoderInputFrame::FD3D12& Data = Frame->GetD3D12();
 			Data.EncoderDevice = FrameInfoD3D.EncoderDeviceD3D12;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
 	void FVideoEncoderInputImpl::SetupFrameVulkan(FVideoEncoderInputFrameImpl* Frame)
 	{
 #if PLATFORM_DESKTOP && !PLATFORM_APPLE
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Frame->SetFormat(FrameFormat);
 
 		FVideoEncoderInputFrame::FVulkan& Data = Frame->GetVulkan();
 		Data.EncoderDevice = FrameInfoVulkan.VulkanDevice;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
 	void FVideoEncoderInputImpl::SetupFrameCUDA(FVideoEncoderInputFrameImpl* Frame)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Frame->SetFormat(FrameFormat);
+
 		FVideoEncoderInputFrame::FCUDA& Data = Frame->GetCUDA();
 		Data.EncoderDevice = FrameInfoCUDA.EncoderContextCUDA;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	// ---
@@ -679,24 +749,29 @@ namespace AVEncoder
 		, TimestampUs(0)
 		, TimestampRTP(0)
 		, NumReferences(0)
-		, Format(EVideoFrameFormat::Undefined)
 		, Width(0)
 		, Height(0)
 		, bFreeYUV420PData(false)
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		, Format(EVideoFrameFormat::Undefined)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderInputFrame::FVideoEncoderInputFrame(const FVideoEncoderInputFrame& CloneFrom)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		: FrameID(CloneFrom.FrameID)
 		, TimestampUs(CloneFrom.TimestampUs)
 		, TimestampRTP(CloneFrom.TimestampRTP)
 		, NumReferences(0)
-		, Format(CloneFrom.Format)
 		, Width(CloneFrom.Width)
 		, Height(CloneFrom.Height)
 		, bFreeYUV420PData(false)
+		, Format(CloneFrom.Format)
 	{
 #if PLATFORM_WINDOWS
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		D3D11.EncoderDevice = CloneFrom.D3D11.EncoderDevice;
 		D3D11.Texture = CloneFrom.D3D11.Texture;
 		if ((D3D11.EncoderTexture = CloneFrom.D3D11.EncoderTexture) != nullptr)
@@ -710,37 +785,49 @@ namespace AVEncoder
 		{
 			D3D12.EncoderTexture->AddRef();
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		CUDA.EncoderDevice = CloneFrom.CUDA.EncoderDevice;
 		CUDA.EncoderTexture = CloneFrom.CUDA.EncoderTexture;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	FVideoEncoderInputFrame::~FVideoEncoderInputFrame()
 	{
 		if (bFreeYUV420PData)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			delete[] YUV420P.Data[0];
 			delete[] YUV420P.Data[1];
 			delete[] YUV420P.Data[2];
 			YUV420P.Data[0] = YUV420P.Data[1] = YUV420P.Data[2] = nullptr;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			bFreeYUV420PData = false;
 		}
 
 #if PLATFORM_WINDOWS
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (D3D11.EncoderTexture)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			// check to make sure this frame holds the last reference
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			auto	NumRef = D3D11.EncoderTexture->AddRef();
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			if (NumRef > 2)
 			{
 				UE_LOG(LogVideoEncoder, Warning, TEXT("VideoEncoderFame - D3D11 input texture still holds %d references."), NumRef);
 			}
 			// Need to call release twice as we have added an extra reference just above (only way to count how many references we have)
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			D3D11.EncoderTexture->Release();
 			D3D11.EncoderTexture->Release();
 			D3D11.EncoderTexture = nullptr;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (D3D11.SharedHandle)
 		{
 			CloseHandle(D3D11.SharedHandle);
@@ -768,22 +855,28 @@ namespace AVEncoder
 			OnReleaseD3D12Texture(D3D12.Texture);
 			D3D12.Texture = nullptr;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// D3D12 specific handle atm
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (CUDA.SharedHandle)
 		{
 			CloseHandle(CUDA.SharedHandle);
 			CUDA.SharedHandle = nullptr;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif 
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (CUDA.EncoderTexture)
 		{
 			OnReleaseCUDATexture(CUDA.EncoderTexture);
 			CUDA.EncoderTexture = nullptr;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 #if PLATFORM_DESKTOP && !PLATFORM_APPLE
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (Vulkan.EncoderTexture != VK_NULL_HANDLE)
 		{
 			OnReleaseVulkanTexture(Vulkan.EncoderTexture);
@@ -793,6 +886,7 @@ namespace AVEncoder
 		{
 			OnReleaseVulkanSurface(Vulkan.EncoderSurface);
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
@@ -800,45 +894,59 @@ namespace AVEncoder
 	{
 		if (!bFreeYUV420PData)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			YUV420P.StrideY = Width;
 			YUV420P.StrideU = (Width + 1) / 2;
 			YUV420P.StrideV = (Width + 1) / 2;;
 			YUV420P.Data[0] = new uint8[Height * YUV420P.StrideY];
 			YUV420P.Data[1] = new uint8[(Height + 1) / 2 * YUV420P.StrideU];
 			YUV420P.Data[2] = new uint8[(Height + 1) / 2 * YUV420P.StrideV];
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			bFreeYUV420PData = true;
 		}
 	}
 
 	void FVideoEncoderInputFrame::SetYUV420P(const uint8* InDataY, const uint8* InDataU, const uint8* InDataV, uint32 InStrideY, uint32 InStrideU, uint32 InStrideV)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (Format == EVideoFrameFormat::YUV420P)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			if (bFreeYUV420PData)
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				delete[] YUV420P.Data[0];
 				delete[] YUV420P.Data[1];
 				delete[] YUV420P.Data[2];
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				bFreeYUV420PData = false;
 			}
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			YUV420P.Data[0] = InDataY;
 			YUV420P.Data[1] = InDataU;
 			YUV420P.Data[2] = InDataV;
 			YUV420P.StrideY = InStrideY;
 			YUV420P.StrideU = InStrideU;
 			YUV420P.StrideV = InStrideV;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 
 	static FThreadSafeCounter	_VideoEncoderInputFrameCnt{ 0 };
 
 #if PLATFORM_WINDOWS
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderInputFrame::SetTexture(ID3D11Texture2D* InTexture, FReleaseD3D11TextureCallback InOnReleaseTexture)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (Format == EVideoFrameFormat::D3D11_R8G8B8A8_UNORM)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			check(D3D11.Texture == nullptr);
 			if (!D3D11.Texture)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				TRefCountPtr<IDXGIResource> DXGIResource;
 				HANDLE						SharedHandle;
@@ -858,28 +966,38 @@ namespace AVEncoder
 				{
 					UE_LOG(LogVideoEncoder, Error, TEXT("IDXGIResource::GetSharedHandle() failed to return a shared texture resource no created as shared? (D3D11_RESOURCE_MISC_SHARED)."));
 				}
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				else if ((Result = D3D11.EncoderDevice->OpenSharedResource(SharedHandle, __uuidof(ID3D11Texture2D), (LPVOID*)&D3D11.EncoderTexture)) != S_OK)
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				{
 					UE_LOG(LogVideoEncoder, Error, TEXT("ID3D11Device::OpenSharedResource() failed 0x%X - %s."), Result, *GetComErrorDescription(Result));
 				}
 				else
 				{
+					PRAGMA_DISABLE_DEPRECATION_WARNINGS
 					DEBUG_SET_D3D11_OBJECT_NAME(D3D11.EncoderTexture, "FVideoEncoderInputFrame::SetTexture()");
 					D3D11.Texture = InTexture;
+					PRAGMA_ENABLE_DEPRECATION_WARNINGS
 					OnReleaseD3D11Texture = InOnReleaseTexture;
 				}
 			}
 		}
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderInputFrame::SetTexture(ID3D12Resource* InTexture, FReleaseD3D12TextureCallback InOnReleaseTexture)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (Format == EVideoFrameFormat::D3D11_R8G8B8A8_UNORM)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			check(D3D12.Texture == nullptr)
-				check(D3D11.EncoderTexture == nullptr)
+			check(D3D11.EncoderTexture == nullptr)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-				TRefCountPtr<ID3D12Device>	OwnerDevice;
+			TRefCountPtr<ID3D12Device>	OwnerDevice;
 			HRESULT						Result;
 			if ((Result = InTexture->GetDevice(IID_PPV_ARGS(OwnerDevice.GetInitReference()))) != S_OK)
 			{
@@ -888,48 +1006,65 @@ namespace AVEncoder
 			//
 			// NOTE: ID3D12Device::CreateSharedHandle gives as an NT Handle, and so we need to call CloseHandle on it
 			//
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			else if ((Result = OwnerDevice->CreateSharedHandle(InTexture, NULL, GENERIC_ALL, *FString::Printf(TEXT("%s_FVideoEncoderInputFrame_%d"), *GetGUID(), _VideoEncoderInputFrameCnt.Increment()), &D3D11.SharedHandle)) != S_OK)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				UE_LOG(LogVideoEncoder, Error, TEXT("ID3D12Device::CreateSharedHandle() failed 0x%X - %s."), Result, *GetComErrorDescription(Result));
 			}
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			else if (D3D11.SharedHandle == nullptr)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				UE_LOG(LogVideoEncoder, Error, TEXT("ID3D12Device::CreateSharedHandle() failed to return a shared texture resource no created as shared? (D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS)."));
 			}
 			else
 			{
 				TRefCountPtr <ID3D11Device1> Device1;
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				if ((Result = D3D11.EncoderDevice->QueryInterface(IID_PPV_ARGS(Device1.GetInitReference()))) != S_OK)
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				{
 					UE_LOG(LogVideoEncoder, Error, TEXT("ID3D11Device::QueryInterface() failed 0x%X - %s."), Result, *GetComErrorDescription(Result));
 				}
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				else if ((Result = Device1->OpenSharedResource1(D3D11.SharedHandle, IID_PPV_ARGS(&D3D11.EncoderTexture))) != S_OK)
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				{
 					UE_LOG(LogVideoEncoder, Error, TEXT("ID3D11Device::OpenSharedResource1() failed 0x%X - %s."), Result, *GetComErrorDescription(Result));
 				}
 				else
 				{
+					PRAGMA_DISABLE_DEPRECATION_WARNINGS
 					DEBUG_SET_D3D11_OBJECT_NAME(D3D11.EncoderTexture, "FVideoEncoderInputFrame::SetTexture()");
 					D3D12.Texture = InTexture;
+					PRAGMA_ENABLE_DEPRECATION_WARNINGS
 					OnReleaseD3D12Texture = InOnReleaseTexture;
 				}
 			}
 		}
 		else
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			check(D3D12.Texture == nullptr);
 			check(D3D12.EncoderTexture == nullptr);
 			D3D12.Texture = InTexture;
 			D3D12.EncoderTexture = InTexture;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			OnReleaseD3D12Texture = InOnReleaseTexture;
 		}
 	}
 #endif
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderInputFrame::SetTexture(CUarray InTexture, EUnderlyingRHI UnderlyingRHI, void* SharedHandle, FReleaseCUDATextureCallback InOnReleaseTexture)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (Format == EVideoFrameFormat::CUDA_R8G8B8A8_UNORM)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			CUDA.UnderlyingRHI = UnderlyingRHI;
 			CUDA.SharedHandle = SharedHandle;
 			CUDA.EncoderTexture = InTexture;
@@ -938,28 +1073,40 @@ namespace AVEncoder
 			{
 				UE_LOG(LogVideoEncoder, Warning, TEXT("SetTexture | Cuda device pointer is null"));
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 
 
 #if PLATFORM_DESKTOP && !PLATFORM_APPLE
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderInputFrame::SetTexture(VkImage InTexture, FReleaseVulkanTextureCallback InOnReleaseTexture)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (Format == EVideoFrameFormat::VULKAN_R8G8B8A8_UNORM)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			Vulkan.EncoderTexture = InTexture;
 			OnReleaseVulkanTexture = InOnReleaseTexture;
 			if (!Vulkan.EncoderTexture)
 			{
 				UE_LOG(LogVideoEncoder, Warning, TEXT("SetTexture | Vulkan VkImage is null"));
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderInputFrame::SetTexture(VkImage InTexture, VkDeviceMemory InTextureDeviceMemory, uint64 InTextureMemorySize, FReleaseVulkanTextureCallback InOnReleaseTexture)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (Format == EVideoFrameFormat::VULKAN_R8G8B8A8_UNORM)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			Vulkan.EncoderTexture = InTexture;
 			Vulkan.EncoderDeviceMemory = InTextureDeviceMemory;
 			Vulkan.EncoderMemorySize = InTextureMemorySize;
@@ -969,17 +1116,21 @@ namespace AVEncoder
 			{
 				UE_LOG(LogVideoEncoder, Warning, TEXT("SetTexture | Vulkan VkImage or VkTextureDeviceMemory is null"));
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 #endif
 
 	// *** FVideoEncoderInputFrameImpl ****************************************************************
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderInputFrameImpl::FVideoEncoderInputFrameImpl(FVideoEncoderInputImpl* InInput)
 		: Input(InInput)
 	{
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderInputFrameImpl::FVideoEncoderInputFrameImpl(const FVideoEncoderInputFrameImpl& InCloneFrom, FCloneDestroyedCallback InCloneDestroyedCallback)
 		: FVideoEncoderInputFrame(InCloneFrom)
 		, Input(InCloneFrom.Input)
@@ -987,7 +1138,9 @@ namespace AVEncoder
 		, OnCloneDestroyed(MoveTemp(InCloneDestroyedCallback))
 	{
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderInputFrameImpl::~FVideoEncoderInputFrameImpl()
 	{
 		if (ClonedReference)
@@ -998,6 +1151,7 @@ namespace AVEncoder
 		{
 		}
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	void FVideoEncoderInputFrameImpl::Release() const
 	{
@@ -1006,7 +1160,9 @@ namespace AVEncoder
 		{
 			Input->ReleaseInputFrame(const_cast<FVideoEncoderInputFrameImpl*>(this));
 		}
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		else if (NumReferences.Decrement() == 0)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			if (ClonedReference)
 			{
@@ -1021,12 +1177,11 @@ namespace AVEncoder
 	}
 
 	// Clone frame - this will create a copy that references the original until destroyed
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	const FVideoEncoderInputFrame* FVideoEncoderInputFrameImpl::Clone(FCloneDestroyedCallback InCloneDestroyedCallback) const
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FVideoEncoderInputFrameImpl* ClonedFrame = new FVideoEncoderInputFrameImpl(*this, MoveTemp(InCloneDestroyedCallback));
 		return ClonedFrame;
 	}
-
-
-
 } /* namespace AVEncoder */

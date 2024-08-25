@@ -268,6 +268,11 @@ FRigVMFunction_MathDoubleAtan_Execute()
 	Result = FMath::Atan(Value);
 }
 
+FRigVMFunction_MathDoubleAtan2_Execute()
+{
+	Result = FMath::Atan2(A, B);
+}
+
 FRigVMFunction_MathDoubleLawOfCosine_Execute()
 {
 	if ((A <= 0.0) || (B <= 0.0) || (C <= 0.0) || (A + B < C) || (A + C < B) || (B + C < A))

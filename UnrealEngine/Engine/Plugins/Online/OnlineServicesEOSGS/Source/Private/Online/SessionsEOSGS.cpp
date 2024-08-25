@@ -3,11 +3,12 @@
 #include "Online/SessionsEOSGS.h"
 
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/AuthEOSGS.h"
 #include "Online/LobbiesCommonTypes.h"
-#include "Online/OnlineServicesEOSGS.h"
 #include "Online/NboSerializerEOSGSSvc.h"
 #include "Online/OnlineErrorEOSGS.h"
+#include "Online/OnlineServicesEOSGS.h"
 #include "Online/SessionsEOSGSTypes.h"
 
 #include "eos_sessions.h"
@@ -143,7 +144,7 @@ void FSessionsEOSGS::Initialize()
 {
 	Super::Initialize();
 
-	SessionsHandle = EOS_Platform_GetSessionsInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	SessionsHandle = EOS_Platform_GetSessionsInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(SessionsHandle);
 
 	RegisterEventHandlers();
@@ -324,8 +325,8 @@ TFuture<TOnlineResult<FCreateSession>> FSessionsEOSGS::CreateSessionImpl(const F
 	TFuture<TOnlineResult<FCreateSession>> Future = Promise.GetFuture();
 
 	EOS_Sessions_CreateSessionModificationOptions CreateSessionModificationOptions = {};
-	CreateSessionModificationOptions.ApiVersion = 4;
-	UE_EOS_CHECK_API_MISMATCH(EOS_SESSIONS_CREATESESSIONMODIFICATION_API_LATEST, 4);
+	CreateSessionModificationOptions.ApiVersion = 5;
+	UE_EOS_CHECK_API_MISMATCH(EOS_SESSIONS_CREATESESSIONMODIFICATION_API_LATEST, 5);
 
 	CreateSessionModificationOptions.bPresenceEnabled = Params.bPresenceEnabled;
 	CreateSessionModificationOptions.bSanctionsEnabled = !Params.bAllowSanctionedPlayers;
@@ -523,8 +524,8 @@ void FSessionsEOSGS::SetMaxPlayers(EOS_HSessionModification& SessionModification
 void FSessionsEOSGS::AddAttribute(EOS_HSessionModification& SessionModificationHandle, const FSchemaAttributeId& Key, const FCustomSessionSetting& Value)
 {
 	EOS_SessionModification_AddAttributeOptions Options = { };
-	Options.ApiVersion = 1;
-	UE_EOS_CHECK_API_MISMATCH(EOS_SESSIONMODIFICATION_ADDATTRIBUTE_API_LATEST, 1);
+	Options.ApiVersion = 2;
+	UE_EOS_CHECK_API_MISMATCH(EOS_SESSIONMODIFICATION_ADDATTRIBUTE_API_LATEST, 2);
 
 	Options.AdvertisementType = ToServiceType(Value.Visibility);
 

@@ -65,7 +65,7 @@ public:
 		, _HAlignIcon(HAlign_Left)
 		, _VAlignIcon(VAlign_Center)
 		, _RootPadding(FMargin(4.f))
-		, _ButtonAreaPadding(FMargin(20.f, 0.f, 0.f, 0.f))
+		, _ButtonAreaPadding(FMargin(20.f, 16.f, 0.f, 0.f))
 		, _UseScrollBox(true)
 		, _ScrollBoxMaxHeight(300)
 		, _HAlignContent(HAlign_Left)
@@ -121,7 +121,7 @@ public:
 		/** Padding to apply to the widget embedded in the window, i.e. to all widgets contained in the window (default: {4,4,4,4} )*/
 		SLATE_ATTRIBUTE(FMargin, RootPadding)
 
-		/** Padding to apply around the layout holding the buttons (default: {20,0,0,0}) */
+		/** Padding to apply around the layout holding the buttons (default: {20,16,0,0}) */
 		SLATE_ATTRIBUTE(FMargin, ButtonAreaPadding)
 
 		/** Padding to apply to DialogContent - you can use it to move away from the icon (default: {0,0,0,0}) */

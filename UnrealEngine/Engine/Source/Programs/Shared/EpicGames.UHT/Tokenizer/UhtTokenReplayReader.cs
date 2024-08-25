@@ -91,11 +91,7 @@ namespace EpicGames.UHT.Tokenizer
 		/// <exception cref="UhtIceException">Thrown if the TLS value can not be retrieved.</exception>
 		public static UhtTokenReplayReader GetThreadInstance(IUhtMessageSite messageSite, ReadOnlyMemory<char> data, ReadOnlyMemory<UhtToken> tokens, UhtTokenType endTokenType)
 		{
-			UhtTokenReplayReader? reader = s_tls.Value;
-			if (reader == null)
-			{
-				throw new UhtIceException("Unable to acquire a UhtTokenReplayReader");
-			}
+			UhtTokenReplayReader? reader = s_tls.Value ?? throw new UhtIceException("Unable to acquire a UhtTokenReplayReader");
 			reader.Reset(messageSite, data, tokens, endTokenType);
 			return reader;
 		}

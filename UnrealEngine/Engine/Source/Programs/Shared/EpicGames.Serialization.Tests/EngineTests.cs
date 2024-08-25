@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
+using EpicGames.Core;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace EpicGames.Serialization.Tests
 {
@@ -144,7 +144,7 @@ namespace EpicGames.Serialization.Tests
 				byte[] noneBytes = { (byte)fieldType, 4, (byte)'N', (byte)'a', (byte)'m', (byte)'e' };
 				CbField noneField = new CbField(noneBytes);
 				Assert.AreEqual(noneField.GetSize(), noneBytes.Length);
-				Assert.AreEqual(noneField.GetName(), "Name");
+				Assert.AreEqual(noneField.GetName(), new Utf8String("Name"));
 				Assert.IsTrue(noneField.HasName());
 				Assert.IsFalse(noneField.HasValue());
 				Assert.AreEqual(noneField.GetHash(), Blake3Hash.Compute(noneBytes));
@@ -176,7 +176,7 @@ namespace EpicGames.Serialization.Tests
 				byte[] noneBytes = { (byte)fieldType, 4, (byte)'N', (byte)'a', (byte)'m', (byte)'e' };
 				CbField noneField = new CbField(noneBytes.AsMemory(1), fieldType);
 				Assert.AreEqual(noneField.GetSize(), noneBytes.Length);
-				Assert.AreEqual(noneField.GetName(), "Name");
+				Assert.AreEqual(noneField.GetName(), new Utf8String("Name"));
 				Assert.IsTrue(noneField.HasName());
 				Assert.IsFalse(noneField.HasValue());
 				Assert.AreEqual(noneField.GetHash(), Blake3Hash.Compute(noneBytes));
@@ -192,8 +192,8 @@ namespace EpicGames.Serialization.Tests
 				CbFieldType fieldType = CbFieldType.None | CbFieldType.HasFieldName;
 				byte[] noneBytes = { (byte)fieldType, 0 };
 				CbField noneField = new CbField(noneBytes.AsMemory(1), fieldType);
-				Assert.AreEqual(noneField.GetSize(), noneBytes.Length);
-				Assert.AreEqual(noneField.GetName(), "");
+				Assert.AreEqual(noneBytes.Length, noneField.GetSize());
+				Assert.AreEqual(Utf8String.Empty, noneField.GetName());
 				Assert.IsTrue(noneField.HasName());
 				Assert.IsFalse(noneField.HasValue());
 				Assert.AreEqual(noneField.GetHash(), Blake3Hash.Compute(noneBytes));
@@ -244,16 +244,16 @@ namespace EpicGames.Serialization.Tests
 
 			// Test CbField(Object, Empty)
 			{
-				CbObject @object = CbObject.Empty;
-				TestIntObject(@object, 0, 1);
+				CbObject obj = CbObject.Empty;
+				TestIntObject(obj, 0, 1);
 
 				// Find fields that do not exist.
-				Assert.IsFalse(@object.Find("Field").HasValue());
-				Assert.IsFalse(@object.FindIgnoreCase("Field").HasValue());
-				Assert.IsFalse(@object["Field"].HasValue());
+				Assert.IsFalse(obj.Find("Field").HasValue());
+				Assert.IsFalse(obj.FindIgnoreCase("Field").HasValue());
+				Assert.IsFalse(obj["Field"].HasValue());
 
 				// Advance an iterator past the last field.
-				CbFieldIterator it = @object.CreateIterator();
+				CbFieldIterator it = obj.CreateIterator();
 				Assert.IsFalse((bool)it);
 				Assert.IsTrue(!it);
 				for (int count = 16; count > 0; --count)
@@ -341,7 +341,7 @@ namespace EpicGames.Serialization.Tests
 				for (CbFieldIterator it = objectClone.CreateIterator(); it; ++it)
 				{
 					CbField field = it.Current;
-					Assert.AreEqual(field.GetName(), "F");
+					Assert.AreEqual(field.GetName(), new Utf8String("F"));
 					Assert.AreEqual(field.AsInt32(), 8);
 				}
 				for (CbFieldIterator it = objectClone.CreateIterator(), end = new CbFieldIterator(); it != end; ++it)
@@ -399,7 +399,7 @@ namespace EpicGames.Serialization.Tests
 			}
 
 			// Test CbField(Array, Empty)
-			TestField(CbFieldType.Array, new byte[]{1, 0});
+			TestField(CbFieldType.Array, new byte[] { 1, 0 });
 
 			// Test CbField(Array, Empty)
 			{
@@ -422,7 +422,7 @@ namespace EpicGames.Serialization.Tests
 			// Test CbField(Array, NotEmpty)
 			{
 				byte intType = (byte)CbFieldType.IntegerPositive;
-				byte[] payload = new byte[]{ 7, 3, intType, 1, intType, 2, intType, 3 };
+				byte[] payload = new byte[] { 7, 3, intType, 1, intType, 2, intType, 3 };
 				CbField field = new CbField(payload, CbFieldType.Array);
 				TestField(CbFieldType.Array, field, new CbArray(payload, CbFieldType.Array));
 				CbArray array = field.AsArray();
@@ -434,7 +434,7 @@ namespace EpicGames.Serialization.Tests
 			// Test CbField(UniformArray)
 			{
 				byte intType = (byte)(CbFieldType.IntegerPositive);
-				byte[] payload = new byte[]{ 5, 3, intType, 1, 2, 3 };
+				byte[] payload = new byte[] { 5, 3, intType, 1, 2, 3 };
 				CbField field = new CbField(payload, CbFieldType.UniformArray);
 				TestField(CbFieldType.UniformArray, field, new CbArray(payload, CbFieldType.UniformArray));
 				CbArray array = field.AsArray();
@@ -442,10 +442,10 @@ namespace EpicGames.Serialization.Tests
 				TestIntArray(field.AsArray(), 3, payload.Length);
 				Assert.IsTrue(array.Equals(field.AsArray()));
 
-//				Assert.IsTrue(Array.GetOuterBuffer() == Array.AsField().AsArray().GetOuterBuffer());
+				//				Assert.IsTrue(Array.GetOuterBuffer() == Array.AsField().AsArray().GetOuterBuffer());
 
 				// Equals
-				byte[] namedPayload = new byte[]{ 1, (byte)'A', 5, 3, intType, 1, 2, 3 };
+				byte[] namedPayload = new byte[] { 1, (byte)'A', 5, 3, intType, 1, 2, 3 };
 				CbField namedField = new CbField(namedPayload, CbFieldType.UniformArray | CbFieldType.HasFieldName);
 				Assert.IsTrue(field.AsArray().Equals(namedField.AsArray()));
 				Assert.IsTrue(field.Equals(field.AsArray().AsField()));
@@ -459,20 +459,20 @@ namespace EpicGames.Serialization.Tests
 				Assert.IsTrue(payload.AsSpan().SequenceEqual(copyBytes.AsSpan(1)));
 
 				// TryGetView
-//				Assert.IsTrue(Array.TryGetView(out View) && View == Array.GetOuterBuffer().GetView());
+				//				Assert.IsTrue(Array.TryGetView(out View) && View == Array.GetOuterBuffer().GetView());
 				Assert.IsFalse(field.AsArray().TryGetView(out _));
 				Assert.IsFalse(namedField.AsArray().TryGetView(out _));
 
-//				// GetBuffer
-//				Assert.IsTrue(Array.GetBuffer().Flatten().GetView() == Array.GetOuterBuffer().GetView());
-//				Assert.IsTrue(CbField.MakeView(Field).AsArray().GetBuffer().Flatten().GetView().Span.SequenceEqual(Array.GetOuterBuffer().GetView()));
-//				Assert.IsTrue(CbField.MakeView(NamedField).AsArray().GetBuffer().Flatten().GetView().Span.SequenceEqual(Array.GetOuterBuffer().GetView()));
+				//				// GetBuffer
+				//				Assert.IsTrue(Array.GetBuffer().Flatten().GetView() == Array.GetOuterBuffer().GetView());
+				//				Assert.IsTrue(CbField.MakeView(Field).AsArray().GetBuffer().Flatten().GetView().Span.SequenceEqual(Array.GetOuterBuffer().GetView()));
+				//				Assert.IsTrue(CbField.MakeView(NamedField).AsArray().GetBuffer().Flatten().GetView().Span.SequenceEqual(Array.GetOuterBuffer().GetView()));
 			}
 
 			// Test CbField(None) as Array
 			{
 				CbField field = new CbField();
-//				TestFieldError(CbFieldType.Array, Field, CbFieldError.TypeError);
+				//				TestFieldError(CbFieldType.Array, Field, CbFieldError.TypeError);
 				field.AsArray();
 			}
 
@@ -490,7 +490,7 @@ namespace EpicGames.Serialization.Tests
 				{
 					CbField field = it.Current;
 					Assert.AreEqual(field.AsInt32(), 8);
-//					Assert.IsTrue(Field.IsOwned());
+					//					Assert.IsTrue(Field.IsOwned());
 				}
 				for (CbFieldIterator it = arrayClone.CreateIterator(), end = new CbFieldIterator(); it != end; ++it)
 				{
@@ -502,14 +502,14 @@ namespace EpicGames.Serialization.Tests
 				// CopyTo
 				byte[] copyBytes = new byte[5];
 				array.CopyTo(copyBytes);
-//				Assert.IsTrue(ArrayClone.GetOuterBuffer().GetView().Span.SequenceEqual(CopyBytes));
+				//				Assert.IsTrue(ArrayClone.GetOuterBuffer().GetView().Span.SequenceEqual(CopyBytes));
 				arrayClone.CopyTo(copyBytes);
-//				Assert.IsTrue(ArrayClone.GetOuterBuffer().GetView().Span.SequenceEqual(CopyBytes));
+				//				Assert.IsTrue(ArrayClone.GetOuterBuffer().GetView().Span.SequenceEqual(CopyBytes));
 
-//				// GetBuffer
-//				Assert.IsTrue(CbField(FSharedBuffer.MakeView(Buffer)).GetBuffer().Flatten().GetView().Span.SequenceEqual(Buffer));
-//				Assert.IsTrue(TEXT("CbField(ArrayWithNameNoType).GetBuffer()"),
-//					CbField(CbField(Buffer + 1, CbFieldType(ArrayType)), FSharedBuffer.MakeView(Buffer)).GetBuffer().Flatten().GetView().Span.SequenceEqual(Buffer));
+				//				// GetBuffer
+				//				Assert.IsTrue(CbField(FSharedBuffer.MakeView(Buffer)).GetBuffer().Flatten().GetView().Span.SequenceEqual(Buffer));
+				//				Assert.IsTrue(TEXT("CbField(ArrayWithNameNoType).GetBuffer()"),
+				//					CbField(CbField(Buffer + 1, CbFieldType(ArrayType)), FSharedBuffer.MakeView(Buffer)).GetBuffer().Flatten().GetView().Span.SequenceEqual(Buffer));
 			}
 
 			// Test CbArray as CbFieldIterator
@@ -529,8 +529,8 @@ namespace EpicGames.Serialization.Tests
 			{
 				uint count = 0;
 				CbArray array = new CbArray();
-//				Array.MakeOwned();
-				for(CbFieldIterator iter = CbFieldIterator.MakeSingle(array.AsField()); iter; ++iter)
+				//				Array.MakeOwned();
+				for (CbFieldIterator iter = CbFieldIterator.MakeSingle(array.AsField()); iter; ++iter)
 				{
 					CbField field = iter.Current;
 					Assert.IsTrue(field.IsArray());
@@ -544,7 +544,7 @@ namespace EpicGames.Serialization.Tests
 		public void CbFieldBinaryTest()
 		{
 			// Test CbField(Binary, Empty)
-			TestField(CbFieldType.Binary, new byte[]{0});
+			TestField(CbFieldType.Binary, new byte[] { 0 });
 
 			// Test CbField(Binary, Value)
 			{
@@ -554,9 +554,9 @@ namespace EpicGames.Serialization.Tests
 
 				CbField field = fieldView;
 				field.AsBinary();
-//				Assert.IsFalse(Field.GetOuterBuffer().IsNull());
-//				MoveTemp(Field).AsBinary();
-//				Assert.IsTrue(Field.GetOuterBuffer().IsNull());
+				//				Assert.IsFalse(Field.GetOuterBuffer().IsNull());
+				//				MoveTemp(Field).AsBinary();
+				//				Assert.IsTrue(Field.GetOuterBuffer().IsNull());
 			}
 
 			// Test CbField(None) as Binary
@@ -565,8 +565,8 @@ namespace EpicGames.Serialization.Tests
 				byte[] @default = { 1, 2, 3 };
 				TestFieldError(CbFieldType.Binary, fieldView, CbFieldError.TypeError, (ReadOnlyMemory<byte>)@default);
 
-//				CbField Field = CbField.Clone(FieldView);
-//				TestFieldError(CbFieldType.Binary, FSharedBuffer, Field, CbFieldError.TypeError, FSharedBuffer.MakeView(Default), FCbBinaryAccessors());
+				//				CbField Field = CbField.Clone(FieldView);
+				//				TestFieldError(CbFieldType.Binary, FSharedBuffer, Field, CbFieldError.TypeError, FSharedBuffer.MakeView(Default), FCbBinaryAccessors());
 			}
 		}
 
@@ -574,7 +574,7 @@ namespace EpicGames.Serialization.Tests
 		public void CbFieldStringTest()
 		{
 			// Test CbField(String, Empty)
-			TestField(CbFieldType.String, new byte[]{0});
+			TestField(CbFieldType.String, new byte[] { 0 });
 
 			// Test CbField(String, Value)
 			{
@@ -599,29 +599,29 @@ namespace EpicGames.Serialization.Tests
 		[Flags]
 		enum EIntType : byte
 		{
-			None   = 0x00,
-			Int8   = 0x01,
-			Int16  = 0x02,
-			Int32  = 0x04,
-			Int64  = 0x08,
-			UInt8  = 0x10,
+			None = 0x00,
+			Int8 = 0x01,
+			Int16 = 0x02,
+			Int32 = 0x04,
+			Int64 = 0x08,
+			UInt8 = 0x10,
 			UInt16 = 0x20,
 			UInt32 = 0x40,
 			UInt64 = 0x80,
 			// Masks for positive values requiring the specified number of bits.
 			Pos64 = UInt64,
-			Pos63 = Pos64 |  Int64,
+			Pos63 = Pos64 | Int64,
 			Pos32 = Pos63 | UInt32,
-			Pos31 = Pos32 |  Int32,
+			Pos31 = Pos32 | Int32,
 			Pos16 = Pos31 | UInt16,
-			Pos15 = Pos16 |  Int16,
-			Pos8  = Pos15 | UInt8,
-			Pos7  = Pos8  |  Int8,
+			Pos15 = Pos16 | Int16,
+			Pos8 = Pos15 | UInt8,
+			Pos7 = Pos8 | Int8,
 			// Masks for negative values requiring the specified number of bits.
 			Neg63 = Int64,
 			Neg31 = Neg63 | Int32,
 			Neg15 = Neg31 | Int16,
-			Neg7  = Neg15 | Int8,
+			Neg7 = Neg15 | Int8,
 		};
 
 		void TestIntegerField(CbFieldType fieldType, EIntType expectedMask, ulong magnitude)
@@ -630,41 +630,41 @@ namespace EpicGames.Serialization.Tests
 			ulong negative = (ulong)((byte)fieldType & 1);
 			VarInt.WriteUnsigned(payload, magnitude - negative);
 			ulong defaultValue = 8;
-			ulong expectedValue = (negative != 0)? (ulong)(-(long)(magnitude)) : magnitude;
+			ulong expectedValue = (negative != 0) ? (ulong)(-(long)(magnitude)) : magnitude;
 			CbField field = new CbField(payload, fieldType);
 
 			TestField(CbFieldType.IntegerNegative, field, (sbyte)(((expectedMask & EIntType.Int8) != 0) ? expectedValue : defaultValue),
-				(sbyte)(defaultValue), ((expectedMask & EIntType.Int8) != 0)? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<sbyte>(x => x.IsInteger(), (x, y) => x.AsInt8(y)));
+				(sbyte)(defaultValue), ((expectedMask & EIntType.Int8) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<sbyte>(x => x.IsInteger(), (x, y) => x.AsInt8(y)));
 
-			TestField(CbFieldType.IntegerNegative, field, (short)(((expectedMask & EIntType.Int16) != 0)? expectedValue : defaultValue),
-				(short)(defaultValue), ((expectedMask & EIntType.Int16) != 0)? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<short>(x => x.IsInteger(), (x, y) => x.AsInt16(y)));
+			TestField(CbFieldType.IntegerNegative, field, (short)(((expectedMask & EIntType.Int16) != 0) ? expectedValue : defaultValue),
+				(short)(defaultValue), ((expectedMask & EIntType.Int16) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<short>(x => x.IsInteger(), (x, y) => x.AsInt16(y)));
 
-			TestField(CbFieldType.IntegerNegative, field, (int)(((expectedMask & EIntType.Int32) != 0)? expectedValue : defaultValue),
-				(int)(defaultValue), ((expectedMask & EIntType.Int32) != 0)? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<int>(x => x.IsInteger(), (x, y) => x.AsInt32(y)));
+			TestField(CbFieldType.IntegerNegative, field, (int)(((expectedMask & EIntType.Int32) != 0) ? expectedValue : defaultValue),
+				(int)(defaultValue), ((expectedMask & EIntType.Int32) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<int>(x => x.IsInteger(), (x, y) => x.AsInt32(y)));
 
-			TestField(CbFieldType.IntegerNegative, field, (long)(((expectedMask & EIntType.Int64) != 0)? expectedValue : defaultValue),
-				(long)(defaultValue), ((expectedMask & EIntType.Int64) != 0)? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<long>(x => x.IsInteger(), (x, y) => x.AsInt64(y)));
+			TestField(CbFieldType.IntegerNegative, field, (long)(((expectedMask & EIntType.Int64) != 0) ? expectedValue : defaultValue),
+				(long)(defaultValue), ((expectedMask & EIntType.Int64) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<long>(x => x.IsInteger(), (x, y) => x.AsInt64(y)));
 
 			TestField(CbFieldType.IntegerPositive, field, (byte)(((expectedMask & EIntType.UInt8) != 0) ? expectedValue : defaultValue),
 				(byte)(defaultValue), ((expectedMask & EIntType.UInt8) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<byte>(x => x.IsInteger(), (x, y) => x.AsUInt8(y)));
 
-			TestField(CbFieldType.IntegerPositive, field, (ushort)(((expectedMask & EIntType.UInt16) != 0)? expectedValue : defaultValue),
+			TestField(CbFieldType.IntegerPositive, field, (ushort)(((expectedMask & EIntType.UInt16) != 0) ? expectedValue : defaultValue),
 				(ushort)(defaultValue), ((expectedMask & EIntType.UInt16) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<ushort>(x => x.IsInteger(), (x, y) => x.AsUInt16(y)));
 
 			TestField(CbFieldType.IntegerPositive, field, (uint)(((expectedMask & EIntType.UInt32) != 0) ? expectedValue : defaultValue),
 				(uint)(defaultValue), ((expectedMask & EIntType.UInt32) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<uint>(x => x.IsInteger(), (x, y) => x.AsUInt32(y)));
 			TestField(CbFieldType.IntegerPositive, field, (ulong)(((expectedMask & EIntType.UInt64) != 0) ? expectedValue : defaultValue),
-				(ulong)(defaultValue), ((expectedMask & EIntType.UInt64) != 0)? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<ulong>(x => x.IsInteger(), (x, y) => x.AsUInt64(y)));
+				(ulong)(defaultValue), ((expectedMask & EIntType.UInt64) != 0) ? CbFieldError.None : CbFieldError.RangeError, CbFieldAccessors.FromStruct<ulong>(x => x.IsInteger(), (x, y) => x.AsUInt64(y)));
 		}
 
 		[TestMethod]
 		public void CbFieldIntegerTest()
 		{
 			// Test CbField(IntegerPositive)
-			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos7,  0x00);
-			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos7,  0x7f);
-			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos8,  0x80);
-			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos8,  0xff);
+			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos7, 0x00);
+			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos7, 0x7f);
+			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos8, 0x80);
+			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos8, 0xff);
 			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos15, 0x0100);
 			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos15, 0x7fff);
 			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos16, 0x8000);
@@ -679,16 +679,16 @@ namespace EpicGames.Serialization.Tests
 			TestIntegerField(CbFieldType.IntegerPositive, EIntType.Pos64, 0xffff_ffff_ffff_ffff);
 
 			// Test CbField(IntegerNegative)
-			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg7,  0x01);
-			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg7,  0x80);
+			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg7, 0x01);
+			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg7, 0x80);
 			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg15, 0x81);
 			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg15, 0x8000);
 			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg31, 0x8001);
 			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg31, 0x8000_0000);
 			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg63, 0x8000_0001);
 			TestIntegerField(CbFieldType.IntegerNegative, EIntType.Neg63, 0x8000_0000_0000_0000);
-			TestIntegerField(CbFieldType.IntegerNegative, EIntType.None,  0x8000_0000_0000_0001);
-			TestIntegerField(CbFieldType.IntegerNegative, EIntType.None,  0xffff_ffff_ffff_ffff);
+			TestIntegerField(CbFieldType.IntegerNegative, EIntType.None, 0x8000_0000_0000_0001);
+			TestIntegerField(CbFieldType.IntegerNegative, EIntType.None, 0xffff_ffff_ffff_ffff);
 
 			// Test CbField(None) as Integer
 			{
@@ -703,7 +703,7 @@ namespace EpicGames.Serialization.Tests
 		{
 			// Test CbField(Float, 32-bit)
 			{
-				byte[] payload = new byte[]{ 0xc0, 0x12, 0x34, 0x56 }; // -2.28444433f
+				byte[] payload = new byte[] { 0xc0, 0x12, 0x34, 0x56 }; // -2.28444433f
 				TestField(CbFieldType.Float32, payload, -2.28444433f);
 
 				CbField field = new CbField(payload, CbFieldType.Float32);
@@ -712,7 +712,7 @@ namespace EpicGames.Serialization.Tests
 
 			// Test CbField(Float, 64-bit)
 			{
-				byte[] payload = new byte[]{ 0xc1, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef }; // -631475.76888888876
+				byte[] payload = new byte[] { 0xc1, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef }; // -631475.76888888876
 				TestField(CbFieldType.Float64, payload, -631475.76888888876);
 
 				CbField field = new CbField(payload, CbFieldType.Float64);
@@ -829,7 +829,7 @@ namespace EpicGames.Serialization.Tests
 		public void CbFieldObjectAttachmentTest()
 		{
 			byte[] zeroBytes = new byte[20];
-			byte[] sequentialBytes = new byte[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+			byte[] sequentialBytes = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
 
 			// Test CbField(ObjectAttachment, Zero)
 			TestField(CbFieldType.ObjectAttachment, zeroBytes);
@@ -854,7 +854,7 @@ namespace EpicGames.Serialization.Tests
 		public void CbFieldBinaryAttachmentTest()
 		{
 			byte[] zeroBytes = new byte[20];
-			byte[] sequentialBytes = new byte[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+			byte[] sequentialBytes = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
 
 			// Test CbField(BinaryAttachment, Zero)
 			TestField(CbFieldType.BinaryAttachment, zeroBytes);
@@ -879,7 +879,7 @@ namespace EpicGames.Serialization.Tests
 		public void CbFieldHashTest()
 		{
 			byte[] zeroBytes = new byte[20];
-			byte[] sequentialBytes = new byte[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+			byte[] sequentialBytes = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
 
 			// Test CbField(Hash, Zero)
 			TestField(CbFieldType.Hash, zeroBytes);
@@ -909,8 +909,8 @@ namespace EpicGames.Serialization.Tests
 		[TestMethod]
 		public void CbFieldUuidTest()
 		{
-			byte[] zeroBytes = new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-			byte[] sequentialBytes = new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+			byte[] zeroBytes = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+			byte[] sequentialBytes = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
 			Guid sequentialGuid = Guid.Parse("00010203-0405-0607-0809-0a0b0c0d0e0f");
 
 			// Test CbField(Uuid, Zero)
@@ -930,14 +930,14 @@ namespace EpicGames.Serialization.Tests
 		public void CbFieldDateTimeTest()
 		{
 			// Test CbField(DateTime, Zero)
-			TestField(CbFieldType.DateTime, new byte[]{0, 0, 0, 0, 0, 0, 0, 0});
+			TestField(CbFieldType.DateTime, new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 });
 
 			// Test CbField(DateTime, 0x1020_3040_5060_7080)
-			TestField(CbFieldType.DateTime, new byte[]{0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80}, new DateTime(0x1020_3040_5060_7080L, DateTimeKind.Utc));
+			TestField(CbFieldType.DateTime, new byte[] { 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80 }, new DateTime(0x1020_3040_5060_7080L, DateTimeKind.Utc));
 
 			// Test CbField(DateTime, Zero) as FDateTime
 			{
-				byte[] payload = new byte[]{0, 0, 0, 0, 0, 0, 0, 0};
+				byte[] payload = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 };
 				CbField field = new CbField(payload, CbFieldType.DateTime);
 				Assert.AreEqual(field.AsDateTime(), new DateTime(0));
 			}
@@ -955,14 +955,14 @@ namespace EpicGames.Serialization.Tests
 		public void CbFieldTimeSpanTest()
 		{
 			// Test CbField(TimeSpan, Zero)
-			TestField(CbFieldType.TimeSpan, new byte[] {0, 0, 0, 0, 0, 0, 0, 0});
+			TestField(CbFieldType.TimeSpan, new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 });
 
 			// Test CbField(TimeSpan, 0x1020_3040_5060_7080)
-			TestField(CbFieldType.TimeSpan, new byte[] {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80}, new TimeSpan(0x1020_3040_5060_7080L));
+			TestField(CbFieldType.TimeSpan, new byte[] { 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80 }, new TimeSpan(0x1020_3040_5060_7080L));
 
 			// Test CbField(TimeSpan, Zero) as FTimeSpan
 			{
-				byte[] payload = new byte[]{0, 0, 0, 0, 0, 0, 0, 0};
+				byte[] payload = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 };
 				CbField field = new CbField(payload, CbFieldType.TimeSpan);
 				Assert.AreEqual(field.AsTimeSpan(), new TimeSpan(0));
 			}
@@ -1621,22 +1621,22 @@ namespace EpicGames.Serialization.Tests
 				for (CbFieldIterator it = obj.CreateIterator(); it;)
 				{
 					CbFieldIterator last = it;
-					if (it.Current.GetName().Equals("A"))
+					if (it.Current.GetName() == new Utf8String("A"))
 					{
 						a = it.Current.AsUInt32();
 						++it;
 					}
-					if (it.Current.GetName().Equals("B"))
+					if (it.Current.GetName() == new Utf8String("B"))
 					{
 						b = it.Current.AsUInt32();
 						++it;
 					}
-					if (it.Current.GetName().Equals("C"))
+					if (it.Current.GetName() == new Utf8String("C"))
 					{
 						c = it.Current.AsUInt32();
 						++it;
 					}
-					if (it.Current.GetName().Equals("D"))
+					if (it.Current.GetName() == new Utf8String("D"))
 					{
 						d = it.Current.AsUInt32();
 						++it;
@@ -1656,14 +1656,14 @@ namespace EpicGames.Serialization.Tests
 			}
 
 			byte t = (byte)(CbFieldType.IntegerPositive | CbFieldType.HasFieldName);
-			Assert.IsTrue(TestParseObject(new byte[]{0}, 0, 0, 0, 0));
-			Assert.IsTrue(TestParseObject(new byte[] { 16, t, 1, (byte)'A', 1, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4}, 1, 2, 3, 4));
-			Assert.IsTrue(TestParseObject(new byte[]{16, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4, t, 1, (byte)'A', 1}, 1, 2, 3, 4));
-			Assert.IsTrue(TestParseObject(new byte[]{12, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4}, 0, 2, 3, 4));
-			Assert.IsTrue(TestParseObject(new byte[]{8, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3}, 0, 2, 3, 0));
-			Assert.IsTrue(TestParseObject(new byte[]{20, t, 1, (byte)'A', 1, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4, t, 1, (byte)'E', 5}, 1, 2, 3, 4));
-			Assert.IsTrue(TestParseObject(new byte[]{20, t, 1, (byte)'E', 5, t, 1, (byte)'A', 1, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4}, 1, 2, 3, 4));
-			Assert.IsTrue(TestParseObject(new byte[] { 16, t, 1, (byte)'D', 4, t, 1, (byte)'C', 3, t, 1, (byte)'B', 2, t, 1, (byte)'A', 1}, 1, 2, 3, 4));
+			Assert.IsTrue(TestParseObject(new byte[] { 0 }, 0, 0, 0, 0));
+			Assert.IsTrue(TestParseObject(new byte[] { 16, t, 1, (byte)'A', 1, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4 }, 1, 2, 3, 4));
+			Assert.IsTrue(TestParseObject(new byte[] { 16, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4, t, 1, (byte)'A', 1 }, 1, 2, 3, 4));
+			Assert.IsTrue(TestParseObject(new byte[] { 12, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4 }, 0, 2, 3, 4));
+			Assert.IsTrue(TestParseObject(new byte[] { 8, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3 }, 0, 2, 3, 0));
+			Assert.IsTrue(TestParseObject(new byte[] { 20, t, 1, (byte)'A', 1, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4, t, 1, (byte)'E', 5 }, 1, 2, 3, 4));
+			Assert.IsTrue(TestParseObject(new byte[] { 20, t, 1, (byte)'E', 5, t, 1, (byte)'A', 1, t, 1, (byte)'B', 2, t, 1, (byte)'C', 3, t, 1, (byte)'D', 4 }, 1, 2, 3, 4));
+			Assert.IsTrue(TestParseObject(new byte[] { 16, t, 1, (byte)'D', 4, t, 1, (byte)'C', 3, t, 1, (byte)'B', 2, t, 1, (byte)'A', 1 }, 1, 2, 3, 4));
 		}
 	}
 }

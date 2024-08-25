@@ -213,6 +213,19 @@ enum class EDataRegistryCacheGetStatus : uint8
 	FoundPersistent,
 };
 
+/** Error code returned when attempting to register a specific asset. */
+enum class EDataRegistryRegisterAssetResult: uint8
+{
+	/** Asset was not registered */
+	NotRegistered,
+
+	/** Asset already registered in the data registry*/
+	AssetAlreadyRegistered,
+
+	/** Asset was successfully registered */
+	RegisteredSuccesfully, // Maintain as highest result.
+};
+
 /** Where the cache version comes from, the upper values of this can be used for game-specific sources */
 enum class EDataRegistryCacheVersionSource : uint8
 {
@@ -458,6 +471,9 @@ struct FDataRegistryResolver
 /** Scope object to set a temporary resolver, or register a global one */
 struct DATAREGISTRY_API FDataRegistryResolverScope
 {
+	/** Creates a temporary resolver scope without requiring a dynamically allocated object. Only valid on game thread */
+	FDataRegistryResolverScope(FDataRegistryResolver& ScopeResolver);
+
 	/** Creates a temporary resolver scope, will use the passed in resolver until scope returns. Only valid on game thread */
 	FDataRegistryResolverScope(const TSharedPtr<FDataRegistryResolver>& ScopeResolver);
 
@@ -471,17 +487,39 @@ struct DATAREGISTRY_API FDataRegistryResolverScope
 	static void UnregisterGlobalResolver(const TSharedPtr<FDataRegistryResolver>& ScopeResolver);
 
 	/** Use the stack to resolve an ID, will return the resolver used if found */
+	UE_DEPRECATED(5.3, "Use ResolveNameFromId instead to allow support temporary scope resolvers by raw pointer.")
 	static TSharedPtr<FDataRegistryResolver> ResolveIdToName(FName& OutResolvedName, const FDataRegistryId& ItemId, const class UDataRegistry* Registry, const class UDataRegistrySource* RegistrySource);
+
+	/** Use the stack to resolve an ID, will return the resolver as raw pointer if found */
+	static FDataRegistryResolver* ResolveNameFromId(FName& OutResolvedName, const FDataRegistryId& ItemId, const class UDataRegistry* Registry, const class UDataRegistrySource* RegistrySource);
 
 	/** Returns true if there are any volatile resolvers on the stack */
 	static bool IsStackVolatile();
 
 private:
 	// Stack depth at point this was added
-	int32 StackAtAdd = 0;
+	FDataRegistryResolver* AddedScopeResolver;
 
-	// Global and temporary resolver stack, will go from last added back to 0
-	static TArray<TSharedPtr<FDataRegistryResolver> > ResolverStack;
+	// Global and temporary resolver stack, will go from last added back to 0, optionally able to push stack objects
+	struct FResolverStackEntry
+	{
+		FResolverStackEntry(const TSharedPtr<FDataRegistryResolver>& ScopeResolver)
+			: AsSharedPtr(ScopeResolver)
+			, AsRawPtr(ScopeResolver.Get())
+		{
+		}
+
+		FResolverStackEntry(FDataRegistryResolver& ScopeResolver)
+			: AsSharedPtr()
+			, AsRawPtr(&ScopeResolver)
+		{
+		}
+
+		TSharedPtr<FDataRegistryResolver> AsSharedPtr;
+		FDataRegistryResolver* AsRawPtr;
+	};
+
+	static TArray<FResolverStackEntry> ResolverStack;
 
 };
 
@@ -497,6 +535,9 @@ DECLARE_DELEGATE_OneParam(FDataRegistryBatchAcquireCallback, EDataRegistryAcquir
 
 /** Multicast delegate broadcast called when a data registry's cache version has changed */
 DECLARE_MULTICAST_DELEGATE_OneParam(FDataRegistryCacheVersionCallback, class UDataRegistry*);
+
+/** Multicast delegate broadcast called when the data registry subsystem has finished scanning for and initializing all known data registries */
+DECLARE_MULTICAST_DELEGATE(FDataRegistrySubsystemInitializedCallback);
 
 
 DECLARE_LOG_CATEGORY_EXTERN(LogDataRegistry, Log, All);

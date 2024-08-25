@@ -12,6 +12,7 @@
 #include "ScrollBox.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnUserScrolledEvent, float, CurrentOffset);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnScrollBarVisibilityChangedEvent, ESlateVisibility , NewVisibility);
 
 /**
  * An arbitrary scrollable collection of widgets.  Great for presenting 10-100 widgets in a list.  Doesn't support virtualization.
@@ -202,6 +203,10 @@ public:
 	/** Called when the scroll has changed */
 	UPROPERTY(BlueprintAssignable, Category = "Button|Event")
 	FOnUserScrolledEvent OnUserScrolled;
+	
+	/** Called when the scrollbar visibility has changed */
+	UPROPERTY(BlueprintAssignable, Category = "Button|Event")
+	FOnScrollBarVisibilityChangedEvent OnScrollBarVisibilityChanged;
 
 	/**
 	 * Updates the scroll offset of the scrollbox.
@@ -270,6 +275,8 @@ protected:
 	// End UPanelWidget
 
 	UMG_API void SlateHandleUserScrolled(float CurrentOffset);
+
+	UMG_API void SlateHandleScrollBarVisibilityChanged(EVisibility NewVisibility);
 
 	// Initialize IsFocusable in the constructor before the SWidget is constructed.
 	UMG_API void InitBackPadScrolling(bool InBackPadScrolling);

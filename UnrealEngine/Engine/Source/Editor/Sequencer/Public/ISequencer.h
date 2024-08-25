@@ -67,6 +67,7 @@ struct FQualifiedFrameTime;
 template <typename NumericType> struct INumericTypeInterface;
 
 enum class EMapChangeType : uint8;
+enum class EPropertyKeyedStatus : uint8;
 class FCurveEditor;
 class FCurveModel;
 class IToolkitHost;
@@ -195,7 +196,6 @@ enum class EMovieSceneDataChangeType
 	Unknown,
 	/** Refresh Tree on Next Tick */
 	RefreshTree
-
 };
 
 /**
@@ -318,6 +318,16 @@ public:
 	 * @return The posssessable guids for the newly added actors.
 	 */
 	virtual TArray<FGuid> AddActors(const TArray<TWeakObjectPtr<AActor> >& InActors, bool bSelectActors = true) = 0;
+
+	/**
+	* Add a new empty binding to Sequencer which can be then connected to an object or actor afterwards in the binding properties menu.
+	*/
+	virtual FGuid AddEmptyBinding() = 0;
+
+	/**
+	 * Should be called after adding a binding to the MovieScene.
+	 */
+	virtual void OnAddBinding(const FGuid& ObjectBinding, UMovieScene* MovieScene) = 0;
 
 	/**
 	 * Should be called after adding a track to the MovieScene. This will set the specified track as your current selection
@@ -573,9 +583,16 @@ public:
 	 */
 	virtual class ISequencerObjectChangeListener& GetObjectChangeListener() = 0;
 
+	/**
+	 * @return Returns the property keyed status handler for this sequencer instance
+	 */
+	virtual class ISequencerPropertyKeyedStatusHandler& GetPropertyKeyedStatusHandler() = 0;
+
 	virtual bool CanKeyProperty(FCanKeyPropertyParams CanKeyPropertyParams) const = 0;
 
 	virtual void KeyProperty(FKeyPropertyParams KeyPropertyParams) = 0;
+
+	virtual EPropertyKeyedStatus GetPropertyKeyedStatus(const IPropertyHandle& PropertyHandle) const = 0;
 
 	/** Refresh the sequencer tree view */
 	virtual void RefreshTree() = 0;
@@ -598,6 +615,7 @@ public:
 
 	/** Get all the keys for the current sequencer selection */
 	virtual void GetKeysFromSelection(TUniquePtr<FSequencerKeyCollection>& KeyCollection, float DuplicateThresoldTime) = 0;
+	virtual FSequencerKeyCollection* GetKeyCollection() = 0;
 
 	virtual TArray<FMovieSceneMarkedFrame> GetMarkedFrames() const = 0;
 
@@ -721,6 +739,9 @@ public:
 
 	/** Whether the sequence is read-only */
 	virtual bool IsReadOnly() const = 0;
+
+	/** @return Whether or not this sequencer is used in the level editor */
+	virtual bool IsLevelEditorSequencer() const = 0;
 
 	/**
 	 * Create a widget containing the spinboxes for setting the working and playback range

@@ -45,6 +45,20 @@ PUBLIC_TYPE ReadValue_{DataInterfaceName}(uint Index)
 	return ReturnValue;
 }
 
+PUBLIC_TYPE ReadValueUAV_{DataInterfaceName}(uint Index)
+{
+	uint BufferIndex = {DataInterfaceName}_StartOffset + Index;
+	PUBLIC_TYPE ReturnValue;
+
+#if BUFFER_TYPE_RAW
+	ReadRawBuffer({DataInterfaceName}_BufferUAV, BufferIndex, ReturnValue);
+#else
+	ReturnValue = {DataInterfaceName}_BufferUAV[BufferIndex];
+#endif
+	
+	return ReturnValue;
+}
+
 void WriteValue_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
 {
 	uint BufferIndex = {DataInterfaceName}_StartOffset + Index;
@@ -55,31 +69,37 @@ void WriteValue_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
 #endif
 }
 
-void WriteAtomicAdd_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
+PUBLIC_TYPE WriteAtomicAdd_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
 {
 #if BUFFER_TYPE_SUPPORTS_ATOMIC
 	uint BufferIndex = {DataInterfaceName}_StartOffset + Index;
 	PUBLIC_TYPE OldValue;
 	InterlockedAdd({DataInterfaceName}_BufferUAV[BufferIndex], Value, OldValue);
+	return OldValue;
 #endif
+	return 0;
 }
 
-void WriteAtomicMin_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
+PUBLIC_TYPE WriteAtomicMin_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
 {
 #if BUFFER_TYPE_SUPPORTS_ATOMIC
 	uint BufferIndex = {DataInterfaceName}_StartOffset + Index;
 	PUBLIC_TYPE OldValue;
 	InterlockedMin({DataInterfaceName}_BufferUAV[BufferIndex], Value, OldValue);
+	return OldValue;
 #endif
+	return 0;
 }
 
-void WriteAtomicMax_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
+PUBLIC_TYPE WriteAtomicMax_{DataInterfaceName}(uint Index, PUBLIC_TYPE Value)
 {
 #if BUFFER_TYPE_SUPPORTS_ATOMIC
 	uint BufferIndex = {DataInterfaceName}_StartOffset + Index;
 	PUBLIC_TYPE OldValue;
 	InterlockedMax({DataInterfaceName}_BufferUAV[BufferIndex], Value, OldValue);
+	return OldValue;
 #endif
+	return 0;
 }
 
 #undef PUBLIC_TYPE

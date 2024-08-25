@@ -68,13 +68,13 @@ protected:
 
 	/**
 	 * Gets the display text of the specified size preset
-	 * @oaram Preset - The preset to get the display text for
+	 * @param Preset - The preset to get the display text for
 	 */
 	FText GetPresetDisplayText(const TSharedPtr<FDisplayClusterConfiguratorAspectRatioPresetSize>& Preset) const;
 
 	/**
 	 * Gets the text to display for the specified preset when it is the currently selected preset
-	 * @oaram Preset - The preset to get the display text for when it is the selected preset
+	 * @param Preset - The preset to get the display text for when it is the selected preset
 	 */
 	FText GetSelectedPresetDisplayText(const TSharedPtr<FDisplayClusterConfiguratorAspectRatioPresetSize>& Preset) const;
 

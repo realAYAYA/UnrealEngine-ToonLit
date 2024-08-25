@@ -27,6 +27,14 @@ enum class ESteamAuthStatus : uint8
 
 ENUM_CLASS_FLAGS(ESteamAuthStatus);
 
+/**
+ * Delegate executed when we complete a GetAuthTicketForWebApi call
+ *
+ * @param AuthTokenHandle The handle for the auth ticket
+ * @param AuthTicket the auth ticket returned by the api
+ */
+DECLARE_DELEGATE_TwoParams(FOnGetAuthTicketForWebApiCompleteDelegate, uint32 /*AuthTokenHandle*/, const FString& /*AuthTicket*/);
+
 class FOnlineAuthSteam
 {
 PACKAGE_SCOPE:
@@ -56,11 +64,13 @@ PACKAGE_SCOPE:
 
 	/** Generates Steam auth tickets */
 	FString GetAuthTicket(uint32& AuthTokenHandle);
+	void GetAuthTicketForWebApi(const FString& RemoteServiceIdentity, FOnGetAuthTicketForWebApiCompleteDelegate CompletionDelegate);
 
 	bool Tick(float DeltaTime);
 	bool Exec(const TCHAR* Cmd);
 
-	/** Callback from Steam messaging */
+	/** Callbacks from Steam */
+	void OnGetTicketForWebResponse(uint32 AuthTicketHandle, const FString& ResultToken);
 	void OnAuthResult(const FUniqueNetId& TargetId, int32 Response);
 
 	void ExecuteResultDelegate(const FUniqueNetId& TargetId, bool bWasSuccessful, ESteamAuthResponseCode ResponseCode);
@@ -69,6 +79,7 @@ private:
 	typedef TUniqueNetIdMap<SharedAuthUserSteamPtr> SteamAuthentications;
 	SteamAuthentications AuthUsers;
 	TArray<uint32> SteamTicketHandles;
+	TMap<uint32, FOnGetAuthTicketForWebApiCompleteDelegate> ActiveAuthTicketForWebApiRequests;
 
 	/** Utility functions */
 	FORCEINLINE bool IsServer() const

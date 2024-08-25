@@ -17,11 +17,11 @@ namespace UE
 		{
 		public:
 			//Major version should be updated when there is an existing API that has been change.
-			static int32 GetMajor() { return 15; }
+			static int32 GetMajor();
 			//Minor version must be updated when there is an addition to the API.
-			static int32 GetMinor() { return 0; }
+			static int32 GetMinor();
 			//Patch version should be update if there is some bug fixes in the private code.
-			static int32 GetPatch() { return 0; }
+			static int32 GetPatch();
 
 			//LWCDisabled version tell if the code was compile with serialization compatibility.
 			static bool GetLWCDisabled()

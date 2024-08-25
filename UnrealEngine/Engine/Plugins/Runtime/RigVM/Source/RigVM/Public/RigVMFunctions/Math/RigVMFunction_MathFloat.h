@@ -875,6 +875,18 @@ struct RIGVM_API FRigVMFunction_MathFloatAtan : public FRigVMFunction_MathFloatU
 };
 
 /**
+ * Returns the arctangent of the specified A and B coordinates.
+ */
+USTRUCT(meta=(DisplayName="Atan2", TemplateName="Atan2", Keywords="Arctan"))
+struct RIGVM_API FRigVMFunction_MathFloatAtan2 : public FRigVMFunction_MathFloatBinaryOp
+{
+	GENERATED_BODY()
+
+	RIGVM_METHOD()
+	virtual void Execute() override;
+};
+
+/**
  * Computes the angles alpha, beta and gamma (in radians) between the three sides A, B and C
  */
 USTRUCT(meta = (DisplayName = "Law Of Cosine", TemplateName="LawOfCosine"))

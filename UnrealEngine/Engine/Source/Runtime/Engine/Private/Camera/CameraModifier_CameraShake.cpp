@@ -278,7 +278,13 @@ UCameraShakeBase* UCameraModifier_CameraShake::AddCameraShake(TSubclassOf<UCamer
 			}
 
 			// Initialize new shake and add it to the list of active shakes
-			NewInst->StartShake(CameraOwner, Scale, Params.PlaySpace, Params.UserPlaySpaceRot);
+			FCameraShakeBaseStartParams StartParams;
+			StartParams.CameraManager = CameraOwner;
+			StartParams.Scale = Scale;
+			StartParams.PlaySpace = Params.PlaySpace;
+			StartParams.UserPlaySpaceRot = Params.UserPlaySpaceRot;
+			StartParams.DurationOverride = Params.DurationOverride;
+			NewInst->StartShake(StartParams);
 
 			// Look for nulls in the array to replace first -- keeps the array compact
 			bool bReplacedNull = false;

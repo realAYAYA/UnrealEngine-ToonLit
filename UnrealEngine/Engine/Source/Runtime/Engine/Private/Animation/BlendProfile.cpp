@@ -3,6 +3,8 @@
 #include "Animation/BlendProfile.h"
 #include "AlphaBlend.h"
 #include "Animation/AnimationAsset.h"
+#include "Animation/SkeletonRemapping.h"
+#include "Animation/SkeletonRemappingRegistry.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BlendProfile)
 
@@ -205,6 +207,11 @@ int32 UBlendProfile::GetPerBoneInterpolationIndex(const FCompactPoseBoneIndex& I
 	return GetEntryIndex(BoneContainer.GetSkeletonPoseIndexFromCompactPoseIndex(InCompactPoseBoneIndex));
 }
 
+int32 UBlendProfile::GetPerBoneInterpolationIndex(const FSkeletonPoseBoneIndex InSkeletonBoneIndex, const USkeleton* TargetSkeleton, const IInterpolationIndexProvider::FPerBoneInterpolationData* Data) const
+{
+	return GetEntryIndex(InSkeletonBoneIndex);
+}
+
 void UBlendProfile::SetSingleBoneBlendScale(int32 InBoneIdx, float InScale, bool bCreate /*= false*/)
 {
 	FBlendProfileBoneEntry* Entry = ProfileEntries.FindByPredicate([InBoneIdx](const FBlendProfileBoneEntry& InEntry)
@@ -249,27 +256,48 @@ void UBlendProfile::FillBoneScalesArray(TArray<float>& OutBoneBlendProfileFactor
 
 	// Overwrite the values of the bones that are inside the blend profile.
 	// Since the bones in the blend profile are stored as skeleton indices we need to remap them into our compact pose.
-	for (int32 Index = 0; Index < ProfileEntries.Num(); Index++)
+	const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry::Get().GetRemapping(OwningSkeleton, BoneContainer.GetSkeletonAsset());
+	if (SkeletonRemapping.IsValid())
 	{
-		const int32 SkeletonBoneIndex = ProfileEntries[Index].BoneReference.BoneIndex;
-		const FCompactPoseBoneIndex PoseBoneIndex = BoneContainer.GetCompactPoseIndexFromSkeletonIndex(SkeletonBoneIndex);
-		if (PoseBoneIndex.IsValid())
+		for (int32 Index = 0; Index < ProfileEntries.Num(); Index++)
 		{
-			OutBoneBlendProfileFactors[PoseBoneIndex.GetInt()] = GetEntryBlendScale(Index);
+			const int32 SkeletonBoneIndex = ProfileEntries[Index].BoneReference.BoneIndex;
+			const int32 TargetBoneIndex = SkeletonRemapping.GetTargetSkeletonBoneIndex(SkeletonBoneIndex);
+			const FCompactPoseBoneIndex PoseBoneIndex = BoneContainer.GetCompactPoseIndexFromSkeletonIndex(TargetBoneIndex);
+			if (PoseBoneIndex.IsValid())
+			{
+				OutBoneBlendProfileFactors[PoseBoneIndex.GetInt()] = GetEntryBlendScale(Index);
+			}
+		}
+	}
+	else // We don't use skeleton remapping, slightly more optimized.
+	{
+		for (int32 Index = 0; Index < ProfileEntries.Num(); Index++)
+		{
+			const int32 SkeletonBoneIndex = ProfileEntries[Index].BoneReference.BoneIndex;
+			const FCompactPoseBoneIndex PoseBoneIndex = BoneContainer.GetCompactPoseIndexFromSkeletonIndex(SkeletonBoneIndex);
+			if (PoseBoneIndex.IsValid())
+			{
+				OutBoneBlendProfileFactors[PoseBoneIndex.GetInt()] = GetEntryBlendScale(Index);
+			}
 		}
 	}
 }
 
 void UBlendProfile::FillSkeletonBoneDurationsArray(TCustomBoneIndexArrayView<float, FSkeletonPoseBoneIndex> OutDurationPerBone, float Duration) const
 {
+	FillSkeletonBoneDurationsArray(OutDurationPerBone, Duration, OwningSkeleton);
+}
+
+void UBlendProfile::FillSkeletonBoneDurationsArray(TCustomBoneIndexArrayView<float, FSkeletonPoseBoneIndex> OutDurationPerBone, float Duration, const USkeleton* TargetSkeleton) const
+{
 	check(OwningSkeleton != nullptr);
-	const FReferenceSkeleton& RefSkeleton = OwningSkeleton->GetReferenceSkeleton();
-	const int32 NumSkeletonBones = RefSkeleton.GetNum();
-	if (!ensureMsgf(OutDurationPerBone.Num() == NumSkeletonBones, 
-		TEXT("UBlendProfile::FillSkeletonBoneDurationsArray received OutDurationPerBone(%d) vs NumSkeletonBones(%d) for %s"), OutDurationPerBone.Num(), NumSkeletonBones, *GetNameSafe(OwningSkeleton)))
+	if (TargetSkeleton == nullptr)
 	{
-		return;
+		TargetSkeleton = OwningSkeleton;
 	}
+
+	const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry::Get().GetRemapping(OwningSkeleton, TargetSkeleton);
 
 	for(float& BoneDuration: OutDurationPerBone)
 	{
@@ -280,22 +308,47 @@ void UBlendProfile::FillSkeletonBoneDurationsArray(TCustomBoneIndexArrayView<flo
 	{
 		case EBlendProfileMode::TimeFactor:
 		{
-			for (const FBlendProfileBoneEntry& Entry : ProfileEntries)
+			if (SkeletonRemapping.IsValid())
 			{
-				const FSkeletonPoseBoneIndex SkeletonBoneIndex(Entry.BoneReference.BoneIndex);
-				OutDurationPerBone[SkeletonBoneIndex] *= Entry.BlendScale;
+				for (const FBlendProfileBoneEntry& Entry : ProfileEntries)
+				{
+					const FSkeletonPoseBoneIndex SkeletonBoneIndex(SkeletonRemapping.GetTargetSkeletonBoneIndex(Entry.BoneReference.BoneIndex));
+					OutDurationPerBone[SkeletonBoneIndex] *= Entry.BlendScale;
+				}
+			}
+			else
+			{
+				for (const FBlendProfileBoneEntry& Entry : ProfileEntries)
+				{
+					const FSkeletonPoseBoneIndex SkeletonBoneIndex(Entry.BoneReference.BoneIndex);
+					OutDurationPerBone[SkeletonBoneIndex] *= Entry.BlendScale;
+				}
 			}
 		}
 		break;
 
 		case EBlendProfileMode::WeightFactor:
 		{
-			for (const FBlendProfileBoneEntry& Entry : ProfileEntries)
+			if (SkeletonRemapping.IsValid())
 			{
-				const FSkeletonPoseBoneIndex SkeletonBoneIndex(Entry.BoneReference.BoneIndex);
-				if (Entry.BlendScale > UE_SMALL_NUMBER)
+				for (const FBlendProfileBoneEntry& Entry : ProfileEntries)
 				{
-					OutDurationPerBone[SkeletonBoneIndex] /= Entry.BlendScale;
+					const FSkeletonPoseBoneIndex SkeletonBoneIndex(SkeletonRemapping.GetTargetSkeletonBoneIndex(Entry.BoneReference.BoneIndex));
+					if (Entry.BlendScale > UE_SMALL_NUMBER)
+					{
+						OutDurationPerBone[SkeletonBoneIndex] /= Entry.BlendScale;
+					}
+				}
+			}
+			else
+			{
+				for (const FBlendProfileBoneEntry& Entry : ProfileEntries)
+				{
+					const FSkeletonPoseBoneIndex SkeletonBoneIndex(Entry.BoneReference.BoneIndex);
+					if (Entry.BlendScale > UE_SMALL_NUMBER)
+					{
+						OutDurationPerBone[SkeletonBoneIndex] /= Entry.BlendScale;
+					}
 				}
 			}
 		}

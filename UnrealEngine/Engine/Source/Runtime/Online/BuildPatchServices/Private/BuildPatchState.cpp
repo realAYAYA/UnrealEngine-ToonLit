@@ -4,55 +4,7 @@
 
 #define LOCTEXT_NAMESPACE "BuildPatchInstallProgress"
 
-const FString& BuildPatchServices::StateToString(const BuildPatchServices::EBuildPatchState& State)
-{
-	// Static const fixed FString values so that they are not constantly constructed
-	static const FString Queued(TEXT("Queued"));
-	static const FString Initializing(TEXT("Initialising"));
-	static const FString Resuming(TEXT("Resuming"));
-	static const FString Downloading(TEXT("Downloading"));
-	static const FString Recycling(TEXT("Recycling"));
-	static const FString Installing(TEXT("Installing"));
-	static const FString MovingToInstall(TEXT("MovingToInstall"));
-	static const FString SettingAttributes(TEXT("SettingAttributes"));
-	static const FString BuildVerification(TEXT("BuildVerification"));
-	static const FString CleanUp(TEXT("CleanUp"));
-	static const FString PrerequisitesInstall(TEXT("PrerequisitesInstall"));
-	static const FString Completed(TEXT("Completed"));
-	static const FString Paused(TEXT("Paused"));
-	static const FString Default(TEXT("InvalidOrMax"));
-
-	switch (State)
-	{
-	case BuildPatchServices::EBuildPatchState::Queued:
-		return Queued;
-	case BuildPatchServices::EBuildPatchState::Initializing:
-		return Initializing;
-	case BuildPatchServices::EBuildPatchState::Resuming:
-		return Resuming;
-	case BuildPatchServices::EBuildPatchState::Downloading:
-		return Downloading;
-	case BuildPatchServices::EBuildPatchState::Installing:
-		return Installing;
-	case BuildPatchServices::EBuildPatchState::MovingToInstall:
-		return MovingToInstall;
-	case BuildPatchServices::EBuildPatchState::SettingAttributes:
-		return SettingAttributes;
-	case BuildPatchServices::EBuildPatchState::BuildVerification:
-		return BuildVerification;
-	case BuildPatchServices::EBuildPatchState::CleanUp:
-		return CleanUp;
-	case BuildPatchServices::EBuildPatchState::PrerequisitesInstall:
-		return PrerequisitesInstall;
-	case BuildPatchServices::EBuildPatchState::Completed:
-		return Completed;
-	case BuildPatchServices::EBuildPatchState::Paused:
-		return Paused;
-	default:
-		return Default;
-	}
-}
-
+// Deprecated in header
 const FText& BuildPatchServices::StateToText(const BuildPatchServices::EBuildPatchState& State)
 {
 	// Static const fixed FText values so that they are not constantly constructed

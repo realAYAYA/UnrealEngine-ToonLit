@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*=============================================================================
 	ShaderPrint.ush:
 	Include this to be able to use ShaderPrint with the global uniforms and buffers.
@@ -14,61 +16,165 @@
 #define SHADER_PRINT_USE_GLOBAL_RESOURCE 0
 #endif
 
-// Global buffers for ShaderPrint collection.
-StructuredBuffer<uint> ShaderPrint_StateBuffer;
-RWStructuredBuffer<uint> ShaderPrint_RWEntryBuffer;
+#ifndef SHADER_PRINT_EXPLICIT_BINDING
+#define SHADER_PRINT_EXPLICIT_BINDING 0
+#endif
 
-#if SHADER_PRINT_USE_GLOBAL_RESOURCE
-// Use global buffers directly instead of using FShaderPrintContext::Buffers.
-#define SHADER_PRINT_RWENTRYBUFFER(Ctx) ShaderPrint_RWEntryBuffer
-#define SHADER_PRINT_RWSTATEBUFFER(Ctx) ShaderPrint_StateBuffer
+// Shader print data can be stored with 3 differents methods:
+// * ShaderPrintData binding: Shader print data are explicity setup on the CPP side, and the ShaderPrintData buffer are used for storing the data
+// * Custom binding         : Shader print data are explicity setup on the CPP side, and the ShaderPrintData buffer are stored into a custom buffer)
+// * Diagnostic buffer      : Shader print data & buffer are stored into the Diagnostic buffer, which is always bound and does not require any explicit binding. This is only supported on certain platforms	
+
+// Experimental feature, disabled by default
+#define SHADER_PRINT_EXPERIMENTAL_DIAGNOSTIC_BUFFER 0
+
+// On platform supporting diagnostic buffer, shader print data are stored into the diagnostic buffer which is always 
+// bound. This allows to access shader print functionality in any shader without explicit shader binding
+#define SHADER_PRINT_USE_DIAGNOSTIC_BUFFER (PLATFORM_SUPPORTS_DIAGNOSTIC_BUFFER && (PIXELSHADER || COMPUTESHADER || RAYGENSHADER) && !SHADER_PRINT_USE_GLOBAL_RESOURCE && SHADER_PRINT_EXPERIMENTAL_DIAGNOSTIC_BUFFER)
+// Offset to the ShaderPrint parameters
+#define SHADER_PRINT_DIAGNOSTIC_BUFFER_PARAMETERS_OFFSET 6u
+// Offset to the ShaderPrint entries
+#define SHADER_PRINT_DIAGNOSTIC_BUFFER_ENTRY_OFFSET (SHADER_PRINT_DIAGNOSTIC_BUFFER_PARAMETERS_OFFSET + 12u)
+
+// Global buffers for ShaderPrint collection.
+#if SHADER_PRINT_USE_DIAGNOSTIC_BUFFER
+	// When a shader pass use explicit ShaderPrint parameter binding, it is possible that the only output of that pass is the shader print entry buffer. 
+	// When using Diagnostic buffer as output, the regular shader entry output won't be used, and the pass will be culled. 
+	// To prevent this we add a dummy write, so that the pass does get culled
+	#if SHADER_PRINT_EXPLICIT_BINDING
+	RWBuffer<uint> ShaderPrint_RWEntryBuffer;
+	#endif
+
+	#define SHADER_PRINT_RWENTRYBUFFER(Ctx, Idx) UEDiagnosticBuffer[SHADER_PRINT_DIAGNOSTIC_BUFFER_ENTRY_OFFSET + (Idx)]
+	#define SHADER_PRINT_RWSTATEBUFFER(Ctx, Idx) UEDiagnosticBuffer[SHADER_PRINT_DIAGNOSTIC_BUFFER_ENTRY_OFFSET + (Idx)]
+#else
+	Buffer<uint> ShaderPrint_StateBuffer;
+	RWBuffer<uint> ShaderPrint_RWEntryBuffer;
+
+	// Use global buffers directly instead of using FShaderPrintContext::Buffers.
+	#if SHADER_PRINT_USE_GLOBAL_RESOURCE
+	#define SHADER_PRINT_RWENTRYBUFFER(Ctx, Idx) ShaderPrint_RWEntryBuffer[Idx]
+	#define SHADER_PRINT_RWSTATEBUFFER(Ctx, Idx) ShaderPrint_StateBuffer[Idx]
+	#endif
 #endif
 
 #include "ShaderPrintCommon.ush"
 #include "MiniFontCommon.ush"
+#include "PackUnpack.ush"
+
+#if SHADER_PRINT_USE_DIAGNOSTIC_BUFFER
+void PackShaderPrintConfig(FShaderPrintConfig In)
+{
+	const uint Offset = SHADER_PRINT_DIAGNOSTIC_BUFFER_PARAMETERS_OFFSET;
+
+	UEDiagnosticBuffer[Offset+0] = PackUInt2ToUInt(In.Resolution.x, In.Resolution.y);
+	UEDiagnosticBuffer[Offset+1] = PackFloat2ToUInt(In.CursorCoord);
+	UEDiagnosticBuffer[Offset+2] = asuint(In.TranslatedWorldOffset.x); 
+	UEDiagnosticBuffer[Offset+3] = asuint(In.TranslatedWorldOffset.y); 
+	UEDiagnosticBuffer[Offset+4] = asuint(In.TranslatedWorldOffset.z);
+	UEDiagnosticBuffer[Offset+5] = PackFloat2ToUInt(In.FontSize);
+	UEDiagnosticBuffer[Offset+6] = PackFloat2ToUInt(In.FontSpacing);
+	UEDiagnosticBuffer[Offset+7] = In.MaxCharacterCount;
+	UEDiagnosticBuffer[Offset+8] = In.MaxSymbolCount;
+	UEDiagnosticBuffer[Offset+9] = In.MaxStateCount;
+	UEDiagnosticBuffer[Offset+10]= In.MaxLineCount;
+	UEDiagnosticBuffer[Offset+11]= In.MaxTriangleCount;
+}
+
+FShaderPrintConfig UnpackShaderPrintConfig()
+{
+	const uint Offset = SHADER_PRINT_DIAGNOSTIC_BUFFER_PARAMETERS_OFFSET;
+
+	FShaderPrintConfig Out;
+	Out.Resolution 				= UnpackUInt2FromUInt(UEDiagnosticBuffer[Offset+0]);
+	Out.CursorCoord 			= UnpackFloat2FromUInt(UEDiagnosticBuffer[Offset+1]);
+	Out.TranslatedWorldOffset.x = asfloat(UEDiagnosticBuffer[Offset+2]);
+	Out.TranslatedWorldOffset.y = asfloat(UEDiagnosticBuffer[Offset+3]);
+	Out.TranslatedWorldOffset.z = asfloat(UEDiagnosticBuffer[Offset+4]);
+	Out.FontSize 				= UnpackFloat2FromUInt(UEDiagnosticBuffer[Offset+5]);
+	Out.FontSpacing 			= UnpackFloat2FromUInt(UEDiagnosticBuffer[Offset+6]);
+	Out.MaxCharacterCount		= UEDiagnosticBuffer[Offset+7];
+	Out.MaxSymbolCount			= UEDiagnosticBuffer[Offset+8];
+	Out.MaxStateCount			= UEDiagnosticBuffer[Offset+9];
+	Out.MaxLineCount			= UEDiagnosticBuffer[Offset+10];
+	Out.MaxTriangleCount		= UEDiagnosticBuffer[Offset+11];
+
+	// Dummy write to avoid the pass to be culled when using explicit ShaderPrint parameter bindings
+	#if SHADER_PRINT_EXPLICIT_BINDING
+	if (Out.Resolution.x > 15999)
+	{
+		ShaderPrint_RWEntryBuffer[0] = 0;
+	}
+	#endif
+
+	return Out;
+}
+#endif
 
 FShaderPrintBuffers InitShaderPrintContextBuffers()
 {
 	FShaderPrintBuffers Buffers;
+#if SHADER_PRINT_USE_DIAGNOSTIC_BUFFER
+	// Nothing to do as Buffers.RWEntryBuffer is never used when using diagnostic buffer. 
+	// This is ensured by the macro SHADER_PRINT_RWENTRYBUFFER, which defines how writing is handled.
+#else
 	Buffers.StateBuffer = ShaderPrint_StateBuffer;
 	Buffers.RWEntryBuffer = ShaderPrint_RWEntryBuffer;
+#endif
 	return Buffers;
 }
 
 // Initialise FShaderPrintConfig from the ShaderPrintData uniform buffer.
 FShaderPrintConfig InitShaderPrintContextConfig()
 {
+#if SHADER_PRINT_USE_DIAGNOSTIC_BUFFER
+	return UnpackShaderPrintConfig();
+#else
 	FShaderPrintConfig Config;
 	Config.Resolution = ShaderPrintData.Resolution;
 	Config.CursorCoord = ShaderPrintData.CursorCoord;
 	Config.TranslatedWorldOffset = ShaderPrintData.TranslatedWorldOffset;
 	Config.FontSize = ShaderPrintData.FontSize;
 	Config.FontSpacing = ShaderPrintData.FontSpacing;
-	Config.MaxValueCount = ShaderPrintData.MaxValueCount;
+	Config.MaxCharacterCount = ShaderPrintData.MaxCharacterCount;
 	Config.MaxSymbolCount = ShaderPrintData.MaxSymbolCount;
 	Config.MaxStateCount = ShaderPrintData.MaxStateCount;
 	Config.MaxLineCount = ShaderPrintData.MaxLineCount;
 	Config.MaxTriangleCount = ShaderPrintData.MaxTriangleCount;
 	return Config;
+#endif
 }
 
 // Initialise FShaderPrintContext.
 FShaderPrintContext InitShaderPrintContext(bool bActive, float2 InStartPos)
 {
-	FShaderPrintContext Context;
-	Context.bIsActive = bActive;
-	Context.StartPos = InStartPos;
-	Context.Pos = InStartPos;
-	Context.Config = InitShaderPrintContextConfig();
-#if !SHADER_PRINT_USE_GLOBAL_RESOURCE
-	Context.Buffers = InitShaderPrintContextBuffers();
-#endif
-	return Context;
+	FShaderPrintContext Out;
+	Out.bIsActive = bActive;
+	Out.StartPos = InStartPos;
+	Out.Pos = InStartPos;
+	Out.Config = InitShaderPrintContextConfig();
+	#if !SHADER_PRINT_USE_GLOBAL_RESOURCE
+	Out.Buffers = InitShaderPrintContextBuffers();
+	#endif
+	return Out;
 }
 
 FShaderPrintContext InitShaderPrintContext(bool bActive, uint2 InStartCoord) 
 {
-	return InitShaderPrintContext(bActive, float2(InStartCoord) / float2(ShaderPrintData.Resolution));
+	FShaderPrintConfig Config = InitShaderPrintContextConfig();
+	return InitShaderPrintContext(bActive, float2(InStartCoord) / float2(Config.Resolution));
+}
+
+FShaderPrintContext InitShaderPrintContextAtCursor(uint2 InCurrentCoord, uint2 InStartCoord) 
+{
+	FShaderPrintConfig Config = InitShaderPrintContextConfig();
+	const bool bActive = all(InCurrentCoord == Config.CursorCoord);
+	return InitShaderPrintContext(bActive, float2(InStartCoord) / float2(Config.Resolution));
+}
+
+FShaderPrintContext InitShaderPrintContextAtCursor(uint2 InStartCoord) 
+{
+	return InitShaderPrintContextAtCursor(GetShaderPrintCurrentPixelCoord(), InStartCoord);
 }
 
 FShaderPrintContext InitShaderPrintContext()
@@ -202,32 +308,57 @@ void AddOBB(float3 Min, float3 Max, float4 Color, float4x4 Transform)
 	AddOBB(InitShaderPrintContext(), Min, Max, Color, Transform);
 }
 
-// Assert (experimental)
+// Verify/Assert (experimental)
 // Can be used in any shader binding ShaderPrint uniform buffer. It will print the 
 // assert for all pixels/threads not complying to the condition. All print will be 
 // stacked correctly.
 // 
 // Example:
-//  Assert(DispatchThreadId < MaxThread, TEXT("Error: ThreadId higher than MaxThread");
-// 
+//  verify(DispatchThreadId < MaxThread);
+//  verifyf(DispatchThreadId < MaxThread, TEXT("Error: ThreadId higher than MaxThread");
+//
 // This function also returns a FShaderPrintContext so that one can add more details if needed.
 //
 // Example:
-//  FShaderPrintContext Ctx = Assert(DispatchThreadId < MaxThread, TEXT("Error: thread higher MaxThread");
+//  FShaderPrintContext Ctx = verify(DispatchThreadId < MaxThread, TEXT("Error: thread higher MaxThread");
 //  Print(Ctx, DispatchThreadId, FontWhite);
 //
-FShaderPrintContext Assert(bool Condition, FShaderPrintText Text, uint2 InWritePos = uint2(50, 150))
+FShaderPrintContext Assert(bool InCondition, FShaderPrintText InText, uint2 InWritePos = uint2(50, 150))
 {
 	FShaderPrintContext OutCtx = InitShaderPrintContext(false, InWritePos);
-	if (!Condition)
+	if (!InCondition)
 	{
 		uint LineOffset = 0;
-		InterlockedAdd(ShaderPrint_RWEntryBuffer[3] /* Free counter */, 1, LineOffset);
+		SHADER_PRINT_INTERLOCKEDADD(SHADER_PRINT_RWENTRYBUFFER(OutCtx, 3) /* Free counter */, 1, LineOffset);
 		InWritePos.y += LineOffset * 12;
 
 		OutCtx = InitShaderPrintContext(true, InWritePos);
-		Print(OutCtx, Text, FontRed);
+		Print(OutCtx, InText, FontRed);
 	}
 
 	return OutCtx;
 }
+
+FShaderPrintContext Assert(bool InCondition, FShaderPrintText InText, FShaderPrintText InFile, uint InLine, FShaderPrintText InSeparator, uint2 InWritePos = uint2(50, 150))
+{
+	FShaderPrintContext OutCtx = InitShaderPrintContext(false, InWritePos);
+	if (!InCondition)
+	{
+		uint LineOffset = 0;
+		SHADER_PRINT_INTERLOCKEDADD(SHADER_PRINT_RWENTRYBUFFER(OutCtx, 3) /* Free counter */, 1, LineOffset);
+		InWritePos.y += LineOffset * 12;
+
+		OutCtx = InitShaderPrintContext(true, InWritePos);
+		Print(OutCtx, InText, FontRed);
+		Print(OutCtx, InSeparator, FontRed);
+		Print(OutCtx, InFile, FontRed);
+		Print(OutCtx, InSeparator, FontRed);
+		Print(OutCtx, InLine, FontRed);
+	}
+
+	return OutCtx;
+}
+
+// Non-blocking shader check (unlike check()/checkf() which terminate the GPU execution)
+#define verify(Condition) 			Assert(Condition, TEXT(#Condition), TEXT(__FILE__), __LINE__, TEXT(" - "));
+#define verifyf(Condition, Message) Assert(Condition, Message, TEXT(__FILE__), __LINE__, TEXT(" - "));

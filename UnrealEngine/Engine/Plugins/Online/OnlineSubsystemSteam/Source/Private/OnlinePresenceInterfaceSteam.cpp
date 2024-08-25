@@ -4,12 +4,19 @@
 #include "OnlineSubsystemSteam.h"
 #include "OnlineSessionInterfaceSteam.h"
 #include <steam/isteamutils.h>
+#include "Misc/ConfigCacheIni.h"
 
 /** The default key that will contain the launch parameters for joining the game */
 const FString DefaultSteamConnectionKey = TEXT("connect");
 
 /** The default key that will update presence text in the platform's UI */
-const FString DefaultSteamPresenceKey = TEXT("status");
+const FString DefaultSteamPresenceKey = TEXT("steam_display");
+
+/** The default key that will group players in the platform's UI */
+const char* DefaultSteamPlayerGroupingKey = "steam_player_group";
+
+/** The default key that specifies the amount of players are in the party for the platform's UI */
+const char* DefaultSteamPlayerGroupSizeKey = "steam_player_group_size";
 
 void FOnlineUserPresenceSteam::Update(const FUniqueNetIdSteam& FriendId)
 {
@@ -55,6 +62,15 @@ void FOnlineUserPresenceSteam::Update(const FUniqueNetIdSteam& FriendId)
 		SessionId = FUniqueNetIdSteam::Create(FriendInfo.m_steamIDLobby); 
 		bIsPlayingThisGame = (FriendInfo.m_gameID.AppID() == SteamUtils()->GetAppID());
 	}
+	else
+	{
+		bIsPlaying = false;
+		SessionId = nullptr;
+		bIsPlayingThisGame = false;
+	}
+
+	bIsJoinable = false;
+	bHasVoiceSupport = false;
 
 	// Processing presence
 	for (int32 RPIdx = 0; RPIdx < SteamFriendPtr->GetFriendRichPresenceKeyCount(FriendId); ++RPIdx)
@@ -66,12 +82,20 @@ void FOnlineUserPresenceSteam::Update(const FUniqueNetIdSteam& FriendId)
 		if (Key == DefaultSteamConnectionKey)
 		{
 			bIsJoinable = true;
+			continue;
 		}
 
 		// This key has it's own entry, there's no need to push it to the property field
 		if (Key == DefaultSteamPresenceKey)
 		{
 			Status.StatusStr = Value;
+			continue;
+		}
+
+		// Determine if the user has voice support
+		if (Key == "HasVoice" && Value == "true")
+		{
+			bHasVoiceSupport = true;
 			continue;
 		}
 
@@ -117,11 +141,18 @@ void FOnlinePresenceSteam::SetPresence(const FUniqueNetId& User, const FOnlineUs
 	}
 
 	// Push presence string
-	if (!SteamFriendsPtr->SetRichPresence(TCHAR_TO_UTF8(*DefaultSteamPresenceKey), TCHAR_TO_UTF8(*Status.StatusStr)))
+	// Steam status keys must begin with #, so insert it if not present
+	FString StatusString = Status.StatusStr;
+	if(!StatusString.StartsWith(TEXT("#")))
+	{
+		StatusString = FString::Printf(TEXT("#%s"), *StatusString);
+	}
+
+	if (!SteamFriendsPtr->SetRichPresence(TCHAR_TO_UTF8(*DefaultSteamPresenceKey), TCHAR_TO_UTF8(*StatusString)))
 	{
 		if (Status.StatusStr.Len() >= k_cchMaxRichPresenceValueLength)
 		{
-			UE_LOG_ONLINE_PRESENCE(Warning, TEXT("Cannot push rich presence status to steam, string is too long (%d)"), Status.StatusStr.Len());
+			UE_LOG_ONLINE_PRESENCE(Warning, TEXT("Cannot push rich presence status to steam, string is too long (%d)"), StatusString.Len());
 		}
 		else
 		{
@@ -140,6 +171,23 @@ void FOnlinePresenceSteam::SetPresence(const FUniqueNetId& User, const FOnlineUs
 			if (!SteamConnectString.IsEmpty() && !SteamFriendsPtr->SetRichPresence(TCHAR_TO_UTF8(*DefaultSteamConnectionKey), TCHAR_TO_UTF8(*SteamConnectString)))
 			{
 				UE_LOG_ONLINE_PRESENCE(Warning, TEXT("Could not push the connection information to Steam"));
+			}
+		}
+
+		bool bDisableSteamAdvancedPresence = false;
+		GConfig->GetBool(TEXT("OnlineSubsystemSteam"), TEXT("DisableAdvancedPresence"), bDisableSteamAdvancedPresence, GEngineIni);
+		if (CurrentSession != NULL && CurrentSession->SessionSettings.bUsesPresence && !bDisableSteamAdvancedPresence)
+		{
+			FString SteamPlayerGroupingKeyString = CurrentSession->GetSessionIdStr();
+			if (!SteamPlayerGroupingKeyString.IsEmpty() && !SteamFriendsPtr->SetRichPresence(DefaultSteamPlayerGroupingKey, TCHAR_TO_UTF8(*SteamPlayerGroupingKeyString)))
+			{
+				UE_LOG_ONLINE_PRESENCE(Warning, TEXT("Could not push the player grouping key information to Steam"));
+			}
+
+			FString SteamPlayerGroupSizeString = FString::FromInt(CurrentSession->RegisteredPlayers.Num());
+			if (!SteamPlayerGroupSizeString.IsEmpty() && !SteamFriendsPtr->SetRichPresence(DefaultSteamPlayerGroupSizeKey, TCHAR_TO_UTF8(*SteamPlayerGroupSizeString)))
+			{
+				UE_LOG_ONLINE_PRESENCE(Warning, TEXT("Could not push the player group size information to Steam"));
 			}
 		}
 	}

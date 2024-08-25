@@ -25,7 +25,7 @@ private:
 private:
 
 	/** Remember last Aruco dictionary used so that it can be pre-chosen next time */
-	TEnumAsByte<EArucoDictionary> PreviousArucoDictionaryUsed = EArucoDictionary::DICT_6X6_1000;
+	EArucoDictionary PreviousArucoDictionaryUsed = EArucoDictionary::DICT_6X6_1000;
 
 	/** 
 	 * Remember next marker id so that it can pre-choose the next starting marker id. 

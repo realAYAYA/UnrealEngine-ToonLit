@@ -47,6 +47,15 @@ void UNiagaraHierarchyAssignmentInput::Initialize(const UNiagaraNodeAssignment& 
 	SetIdentity(InputIdentity);
 }
 
+void UNiagaraHierarchyEmitterProperties::Initialize(const FVersionedNiagaraEmitter& Emitter)
+{
+	FNiagaraHierarchyIdentity InputIdentity;
+	InputIdentity.Names.Add(FName(Emitter.Emitter->GetUniqueEmitterName()));
+	InputIdentity.Names.Add("Category");
+	InputIdentity.Names.Add("Properties");
+	SetIdentity(InputIdentity);
+}
+
 void UNiagaraHierarchyRenderer::Initialize(const UNiagaraRendererProperties& Renderer)
 {
 	FNiagaraHierarchyIdentity RendererIdentity;
@@ -108,11 +117,15 @@ void UNiagaraSummaryViewViewModel::Initialize(TSharedRef<FNiagaraEmitterViewMode
 {
 	EmitterViewModelWeak = EmitterViewModel;
 	EmitterViewModel->OnScriptGraphChanged().AddUObject(this, &UNiagaraSummaryViewViewModel::OnScriptGraphChanged);
-	EmitterViewModel->GetEmitter().Emitter->OnRenderersChanged().AddUObject(this, &UNiagaraSummaryViewViewModel::OnRenderersChanged);
-	EmitterViewModel->GetEmitter().Emitter->OnSimStagesChanged().AddUObject(this, &UNiagaraSummaryViewViewModel::OnSimStagesChanged);
-	EmitterViewModel->GetEmitter().Emitter->OnEventHandlersChanged().AddUObject(this, &UNiagaraSummaryViewViewModel::OnEventHandlersChanged);
+	//-TODO:Stateless: Do we need stateless support here?
+	if (EmitterViewModel->GetEmitter().Emitter)
+	{
+		EmitterViewModel->GetEmitter().Emitter->OnRenderersChanged().AddUObject(this, &UNiagaraSummaryViewViewModel::OnRenderersChanged);
+		EmitterViewModel->GetEmitter().Emitter->OnSimStagesChanged().AddUObject(this, &UNiagaraSummaryViewViewModel::OnSimStagesChanged);
+		EmitterViewModel->GetEmitter().Emitter->OnEventHandlersChanged().AddUObject(this, &UNiagaraSummaryViewViewModel::OnEventHandlersChanged);
 
-	UNiagaraHierarchyViewModelBase::Initialize();
+		UNiagaraHierarchyViewModelBase::Initialize();
+	}
 }
 
 void UNiagaraSummaryViewViewModel::FinalizeInternal()
@@ -901,6 +914,34 @@ const UNiagaraHierarchySection* FNiagaraHierarchyRendererViewModel::GetSectionIn
 	return Section.IsValid() ? Section.Get() : nullptr;
 }
 
+FString FNiagaraHierarchyEmitterPropertiesViewModel::ToString() const
+{
+	return TEXT("Emitter Properties");
+}
+
+bool FNiagaraHierarchyEmitterPropertiesViewModel::IsFromBaseEmitter() const
+{
+	if(!IsFromBaseEmitterCache.IsSet())
+	{
+		UNiagaraSummaryViewViewModel* ViewModel = Cast<UNiagaraSummaryViewViewModel>(GetHierarchyViewModel());
+		IsFromBaseEmitterCache = GetIsFromBaseEmitter(ViewModel->GetEmitterViewModel()->GetEmitter(), GetData()->GetPersistentIdentity());
+	}
+
+	return IsFromBaseEmitterCache.GetValue();
+}
+
+FNiagaraHierarchyItemViewModelBase::FCanPerformActionResults FNiagaraHierarchyEmitterPropertiesViewModel::IsEditableByUser()
+{
+	FCanPerformActionResults CanEditResults(IsFromBaseEmitter() == false);
+	CanEditResults.CanPerformMessage = CanEditResults.bCanPerform == false ? LOCTEXT("EmitterPropertiesIsFromBaseEmitter", "These emitter properties were added in the parent emitter and can not be edited.") : FText::GetEmpty();
+	return CanEditResults;
+}
+
+const UNiagaraHierarchySection* FNiagaraHierarchyEmitterPropertiesViewModel::GetSectionInternal() const
+{
+	return Section.IsValid() ? Section.Get() : nullptr;
+}
+
 FString FNiagaraHierarchyEventHandlerViewModel::ToString() const
 {
 	FNiagaraEventScriptProperties* ScriptProperties = GetEventScriptProperties();
@@ -1340,6 +1381,10 @@ TSharedPtr<FNiagaraHierarchyItemViewModelBase> UNiagaraSummaryViewViewModel::Cre
 	{
 		return MakeShared<FNiagaraHierarchyRendererViewModel>(Renderer, Parent, this, bIsForHierarchy);
 	}
+	else if(UNiagaraHierarchyEmitterProperties* EmitterProperties = Cast<UNiagaraHierarchyEmitterProperties>(ItemBase))
+	{
+		return MakeShared<FNiagaraHierarchyEmitterPropertiesViewModel>(EmitterProperties, Parent, this, bIsForHierarchy);
+	}
 	else if(UNiagaraHierarchyEventHandler* EventHandler = Cast<UNiagaraHierarchyEventHandler>(ItemBase))
 	{
 		return MakeShared<FNiagaraHierarchyEventHandlerViewModel>(EventHandler, Parent, this, bIsForHierarchy);
@@ -1392,6 +1437,30 @@ void UNiagaraSummaryViewViewModel::PrepareSourceItems(UNiagaraHierarchyRoot* Sou
 	TArray<UNiagaraNodeFunctionCall*> SimStageModules = FNiagaraStackGraphUtilities::GetAllSimStagesModuleNodes(EmitterViewModel.ToSharedRef());
 	TArray<UNiagaraNodeFunctionCall*> EventHandlerModules = FNiagaraStackGraphUtilities::GetAllEventHandlerModuleNodes(EmitterViewModel.ToSharedRef());
 
+	FNiagaraHierarchyIdentity EmitterPropertiesIdentity;
+	EmitterPropertiesIdentity.Guids.Add(EmitterViewModel->GetEmitter().Version);
+	EmitterPropertiesIdentity.Names.Add("Category");
+	EmitterPropertiesIdentity.Names.Add("Properties");
+
+	UNiagaraHierarchyEmitterProperties* EmitterProperties = nullptr;
+	
+	auto* FoundEmitterProperties = SourceRoot->GetChildrenMutable().FindByPredicate([EmitterPropertiesIdentity](UNiagaraHierarchyItemBase* ItemBase)
+		{
+			return ItemBase->GetPersistentIdentity() == EmitterPropertiesIdentity;
+		});
+
+	if(FoundEmitterProperties == nullptr)
+	{
+		EmitterProperties = SourceRoot->AddChild<UNiagaraHierarchyEmitterProperties>();
+		EmitterProperties->Initialize(EmitterViewModel->GetEmitter());
+	}
+	else
+	{
+		EmitterProperties = CastChecked<UNiagaraHierarchyEmitterProperties>(*FoundEmitterProperties);	
+	}
+
+	NewItems.Add(EmitterProperties);
+	
 	// We create hierarchy modules here. We attempt to maintain as many previous elements as possible in order to maintain UI state
 	TArray<UNiagaraNodeFunctionCall*> ModuleNodes = FNiagaraStackGraphUtilities::GetAllModuleNodes(EmitterViewModel.ToSharedRef());
 	for(UNiagaraNodeFunctionCall* ModuleNode : ModuleNodes)

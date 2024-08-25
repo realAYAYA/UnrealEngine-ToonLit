@@ -41,7 +41,7 @@
         static void console_handleevents() {}
         #define CONSOLE_MAIN extern "C" int main(int argc, char** argv)
         
-    #elif defined(__RADNT__)
+    #elif defined(__RADNT__) || defined(__RADWINRT__)
         #include <conio.h>
         #include <windows.h>
         #include <stdio.h>

@@ -13,6 +13,7 @@
 #include "UObject/ObjectPtr.h"
 #include "UObject/WeakObjectPtr.h"
 #include "UObject/WeakObjectPtrTemplates.h"
+#include "UObject/SoftObjectPtr.h"
 
 #include "MovieSceneEvent.generated.h"
 
@@ -32,6 +33,10 @@ USTRUCT(BlueprintType)
 struct FMovieSceneEventPayloadVariable
 {
 	GENERATED_BODY()
+
+	UPROPERTY()
+	/** If the value for this pin should be an object, we store a pointer to it */
+	FSoftObjectPath ObjectValue;
 
 	UPROPERTY(EditAnywhere, Category="Sequencer|Event")
 	FString Value;

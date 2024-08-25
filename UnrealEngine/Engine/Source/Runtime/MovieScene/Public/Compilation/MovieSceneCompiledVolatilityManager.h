@@ -7,7 +7,6 @@
 #include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
 #include "Templates/UniquePtr.h"
 
-class IMovieScenePlayer;
 class UMovieSceneCompiledDataManager;
 struct FGuid;
 struct FMovieSceneCompiledDataID;
@@ -18,22 +17,27 @@ namespace UE
 namespace MovieScene
 {
 
+struct FSharedPlaybackState;
+
 struct FCompiledDataVolatilityManager
 {
-	static TUniquePtr<FCompiledDataVolatilityManager> Construct(IMovieScenePlayer& Player, FMovieSceneCompiledDataID RootDataID, UMovieSceneCompiledDataManager* CompiledDataManager);
+	static TUniquePtr<FCompiledDataVolatilityManager> Construct(TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
 
-	bool ConditionalRecompile(IMovieScenePlayer& Player, FMovieSceneCompiledDataID RootDataID, UMovieSceneCompiledDataManager* CompiledDataManager);
+	FCompiledDataVolatilityManager(TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
 
-private:
-
-	bool HasBeenRecompiled(FMovieSceneCompiledDataID RootDataID, UMovieSceneCompiledDataManager* CompiledDataManager) const;
-
-	bool HasSequenceBeenRecompiled(FMovieSceneCompiledDataID DataID, FMovieSceneSequenceID SequenceID, UMovieSceneCompiledDataManager* CompiledDataManager) const;
-
-	void UpdateCachedSignatures(IMovieScenePlayer& Player, FMovieSceneCompiledDataID RootDataID, UMovieSceneCompiledDataManager* CompiledDataManager);
+	bool ConditionalRecompile();
 
 private:
 
+	bool HasBeenRecompiled() const;
+
+	bool HasSequenceBeenRecompiled(FMovieSceneCompiledDataID DataID, FMovieSceneSequenceID SequenceID) const;
+
+	void UpdateCachedSignatures();
+
+private:
+
+	TWeakPtr<const FSharedPlaybackState> WeakSharedPlaybackState;
 	TSortedMap<FMovieSceneSequenceID, FGuid, TInlineAllocator<16>> CachedCompilationSignatures;
 };
 

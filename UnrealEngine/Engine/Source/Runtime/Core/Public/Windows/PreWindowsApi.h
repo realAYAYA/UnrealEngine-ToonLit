@@ -6,6 +6,11 @@
 	#include "Microsoft/PreWindowsApi.h"
 #else
 
+// this file should only be included from WindowsHWrapper.h
+#if !defined(WINDOWS_H_WRAPPER_GUARD) 
+#pragma message("WARNING: do not include Windows/PreWindowsApi.h directly. Use Windows/WindowsHWrapper.h or Windows/AllowWindowsPlatformTypes.h instead") 
+#endif
+
 // Disable the warning that the pack size is changed in this header. We do this globally for
 // clang, since the mechanism of using a sub-header to modify packing generates a -Wpragma-pack
 // warning about modifying packing alignemnt in a header.

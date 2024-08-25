@@ -15,8 +15,8 @@
 // UTypedElementExportedTextWidgetFactory
 //
 
-static void UpdateExportedTextWidget(ITypedElementDataStorageInterface& DataStorage, FTypedElementSlateWidgetReferenceColumn& Widget,
-	const FTypedElementScriptStructTypeInfoColumn& TypeInfo, const FTypedElementRowReferenceColumn& ReferencedRow)
+static void UpdateExportedTextWidget(const void* Data, FTypedElementSlateWidgetReferenceColumn& Widget, 
+	const FTypedElementScriptStructTypeInfoColumn& TypeInfo)
 {
 	TSharedPtr<SWidget> WidgetPointer = Widget.Widget.Pin();
 	checkf(WidgetPointer, TEXT("Referenced widget is not valid. A constructed widget may not have been cleaned up. This can "
@@ -27,45 +27,61 @@ static void UpdateExportedTextWidget(ITypedElementDataStorageInterface& DataStor
 		*(STextBlock::StaticWidgetClass().GetWidgetType().ToString()),
 		*(WidgetPointer->GetTypeAsString()));
 
+	FString Label;
+	TypeInfo.TypeInfo->ExportText(Label, Data, nullptr, nullptr, PPF_None, nullptr);
+	STextBlock* TextWidget = static_cast<STextBlock*>(WidgetPointer.Get());
+	FText Text = FText::FromString(MoveTemp(Label));
+	TextWidget->SetToolTipText(Text);
+	TextWidget->SetText(MoveTemp(Text));
+}
+
+static void UpdateExportedTextWidget(ITypedElementDataStorageInterface& DataStorage, FTypedElementSlateWidgetReferenceColumn& Widget,
+	const FTypedElementScriptStructTypeInfoColumn& TypeInfo, const FTypedElementRowReferenceColumn& ReferencedRow)
+{
 	if (void* Data = DataStorage.GetColumnData(ReferencedRow.Row, TypeInfo.TypeInfo.Get()))
 	{
-		FString Label;
-		TypeInfo.TypeInfo->ExportText(Label, Data, nullptr, nullptr, PPF_None, nullptr);
-		STextBlock* TextWidget = static_cast<STextBlock*>(WidgetPointer.Get());
-		FText Text = FText::FromString(MoveTemp(Label));
-		TextWidget->SetToolTipText(Text);
-		TextWidget->SetText(MoveTemp(Text));
+		UpdateExportedTextWidget(Data, Widget, TypeInfo);
 	}
 }
 
-void UTypedElementExportedTextWidgetFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const
+static TypedElementQueryHandle RegisterUpdateCallback(ITypedElementDataStorageInterface& DataStorage, const UScriptStruct* Target)
 {
 	using namespace TypedElementQueryBuilder;
 	using DSI = ITypedElementDataStorageInterface;
+	namespace DS = TypedElementDataStorage;
+	
+	TypedElementQueryHandle TypeDataQuery = DataStorage.RegisterQuery(
+		Select()
+			.ReadOnly(Target)
+		.Where()
+			.Any<FTypedElementSyncFromWorldTag, FTypedElementSyncBackToWorldTag>()
+		.Compile());
 
-	DataStorage.RegisterQuery(
-		Select(TEXT("Sync exported text widgets"),
-		FProcessor(DSI::EQueryTickPhase::FrameEnd, DataStorage.GetQueryTickGroupName(DSI::EQueryTickGroups::SyncWidgets))
-			.ForceToGameThread(true),
-			[](FCachedQueryContext<UTypedElementDataStorageSubsystem>& Context, FTypedElementSlateWidgetReferenceColumn& Widget,
-				const FTypedElementScriptStructTypeInfoColumn& TypeInfo, const FTypedElementRowReferenceColumn& ReferencedRow)
+	FString Name = TEXT("Sync exported text widgets (");
+	Target->AppendName(Name);
+	Name += ')';
+
+	return DataStorage.RegisterQuery(
+		Select(FName(Name),
+			FProcessor(DSI::EQueryTickPhase::FrameEnd, DataStorage.GetQueryTickGroupName(DSI::EQueryTickGroups::SyncWidgets))
+				.ForceToGameThread(true),
+			[](
+				DS::IQueryContext& Context, 
+				FTypedElementSlateWidgetReferenceColumn& Widget,
+				const FTypedElementScriptStructTypeInfoColumn& TypeInfo,
+				const FTypedElementRowReferenceColumn& ReferencedRow)
 			{
-				UTypedElementDataStorageSubsystem& Subsystem = Context.GetCachedMutableDependency<UTypedElementDataStorageSubsystem>();
-				DSI* DataStorage = Subsystem.Get();
-				checkf(DataStorage, TEXT("FTypedElementsDataStorageUiModule tried to process widgets before the "
-					"Typed Elements Data Storage interface is available."));
-				
-				if (DataStorage->HasColumns<FTypedElementSyncFromWorldTag>(ReferencedRow.Row) ||
-					DataStorage->HasColumns<FTypedElementSyncBackToWorldTag>(ReferencedRow.Row))
-				{
-					UpdateExportedTextWidget(*DataStorage, Widget, TypeInfo, ReferencedRow);
-				}
-			}
-		)
-	.Where()
-		.All<FTypedElementExportedTextWidgetTag>()
-	.Compile());
-
+				Context.RunSubquery(0, ReferencedRow.Row, 
+					[&Widget, &TypeInfo](const DS::FQueryDescription&, DS::ISubqueryContext& SubqueryContext)
+					{
+						UpdateExportedTextWidget(SubqueryContext.GetColumn(TypeInfo.TypeInfo.Get()), Widget, TypeInfo);
+					});
+			})
+		.Where()
+			.All<FTypedElementExportedTextWidgetTag>()
+		.DependsOn()
+			.SubQuery(TypeDataQuery)
+		.Compile());
 }
 
 void UTypedElementExportedTextWidgetFactory::RegisterWidgetConstructors(ITypedElementDataStorageInterface& DataStorage,
@@ -94,12 +110,7 @@ TConstArrayView<const UScriptStruct*> FTypedElementExportedTextWidgetConstructor
 	return Columns;
 }
 
-bool FTypedElementExportedTextWidgetConstructor::CanBeReused() const
-{
-	return true;
-}
-
-TSharedPtr<SWidget> FTypedElementExportedTextWidgetConstructor::CreateWidget()
+TSharedPtr<SWidget> FTypedElementExportedTextWidgetConstructor::CreateWidget(const TypedElementDataStorage::FMetaDataView& Arguments)
 {
 	return SNew(STextBlock);
 }
@@ -110,11 +121,22 @@ bool FTypedElementExportedTextWidgetConstructor::FinalizeWidget(
 	TypedElementRowHandle Row,
 	const TSharedPtr<SWidget>& Widget)
 {
+	FTypedElementScriptStructTypeInfoColumn& TypeInfoColumn = *DataStorage->GetColumn<FTypedElementScriptStructTypeInfoColumn>(Row);
+
 	UpdateExportedTextWidget(
 		*DataStorage,
 		*DataStorage->GetColumn<FTypedElementSlateWidgetReferenceColumn>(Row),
-		*DataStorage->GetColumn<FTypedElementScriptStructTypeInfoColumn>(Row),
+		TypeInfoColumn,
 		*DataStorage->GetColumn<FTypedElementRowReferenceColumn>(Row));
+	
+	UTypedElementExportedTextWidgetFactory* Factory = 
+		UTypedElementExportedTextWidgetFactory::StaticClass()->GetDefaultObject<UTypedElementExportedTextWidgetFactory>();
+	if (Factory && !Factory->RegisteredTypes.Contains(TypeInfoColumn.TypeInfo))
+	{
+		RegisterUpdateCallback(*DataStorage, TypeInfoColumn.TypeInfo.Get());
+		Factory->RegisteredTypes.Add(TypeInfoColumn.TypeInfo);
+	}
+	
 	return true;
 }
 

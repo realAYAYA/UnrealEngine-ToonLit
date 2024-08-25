@@ -8,9 +8,13 @@
 #include "Chaos/PullPhysicsDataImp.h"
 #include "Math/UnrealMathUtility.h"
 #include "PBDRigidsSolver.h"
+#include "Chaos/DebugDrawQueue.h"
 
 namespace Chaos
 {
+	static int32 GShallowCopyClusterUnionGeometryOnUpdate = 1;
+	FAutoConsoleVariableRef CVar_ShallowCopyClusterUnionGeometryOnUpdate(TEXT("p.ShallowCopyOnClusterUnionUpdate"), GShallowCopyClusterUnionGeometryOnUpdate, TEXT("If 1, shallow copy the root union geometry of a cluster union when its geometry updates, otherwise deep copy the geometry hierarchy"));
+
 	namespace
 	{
 		FPBDRigidsEvolutionGBF* GetEvolution(FClusterUnionPhysicsProxy* Proxy)
@@ -38,11 +42,14 @@ namespace Chaos
 			}
 
 			BufferData.SetProxy(*Proxy);
-			BufferData.X = Particle->X();
-			BufferData.R = Particle->R();
-			BufferData.V = Particle->V();
-			BufferData.W = Particle->W();
+			BufferData.X = Particle->GetX();
+			BufferData.R = Particle->GetR();
+			BufferData.V = Particle->GetV();
+			BufferData.W = Particle->GetW();
+			BufferData.Mass = FRealSingle(Particle->M());
+			BufferData.Inertia = FVec3f(Particle->I());
 			BufferData.ObjectState = Particle->ObjectState();
+			BufferData.Geometry = nullptr;
 
 			const FShapesArray& ShapeArray = Particle->ShapesArray();
 			BufferData.CollisionData.Empty(ShapeArray.Num());
@@ -59,11 +66,6 @@ namespace Chaos
 			if constexpr (std::is_base_of_v<FClusterUnionPhysicsProxy::FInternalParticle, TParticle>)
 			{
 				BufferData.bIsAnchored = Particle->IsAnchored();
-				BufferData.SharedGeometry = ConstCastSharedPtr<FImplicitObject, const FImplicitObject, ESPMode::ThreadSafe>(Particle->SharedGeometry());
-			}
-			else if constexpr (std::is_base_of_v<FClusterUnionPhysicsProxy::FExternalParticle, TParticle>)
-			{
-				BufferData.SharedGeometry = ConstCastSharedPtr<FImplicitObject, const FImplicitObject, ESPMode::ThreadSafe>(Particle->SharedGeometryLowLevel());
 			}
 		}
 	}
@@ -81,8 +83,14 @@ namespace Chaos
 		Particle_External = FExternalParticle::CreateParticle();
 		check(Particle_External != nullptr);
 
+#if CHAOS_DEBUG_NAME
+		Particle_External->SetDebugName(InitData.DebugName);
+#endif
+
 		Particle_External->SetProxy(this);
 		Particle_External->SetUserData(InitData.UserData);
+		Particle_External->SetX(InitData.InitialTransform.GetTranslation());
+		Particle_External->SetR(InitData.InitialTransform.GetRotation());
 
 		// NO DIRTY FLAGS ALLOWED. We must strictly manage the dirty flags on the particle.
 		// Setting the particle's XR on the particle will set the XR dirty flag but that isn't
@@ -102,6 +110,8 @@ namespace Chaos
 
 		bIsInitializedOnPhysicsThread = true;
 
+		bEnableStrainOnCollision_Internal = ClusterParameters.bEnableStrainOnCollision;
+
 		FPBDRigidsEvolutionGBF* Evolution = RigidsSolver->GetEvolution();
 		if (!ensure(Evolution))
 		{
@@ -115,6 +125,7 @@ namespace Chaos
 		ClusterUnionParameters.UniqueIndex = &UniqueIndex;
 		ClusterUnionParameters.ActorId = InitData.ActorId;
 		ClusterUnionParameters.ComponentId = InitData.ComponentId;
+		ClusterUnionParameters.GravityGroupOverride = InitData.GravityGroupOverride;
 
 		ClusterUnionIndex = ClusterUnionManager.CreateNewClusterUnion(ClusterParameters, ClusterUnionParameters);
 		if (FClusterUnion* ClusterUnion = ClusterUnionManager.FindClusterUnion(ClusterUnionIndex); ensure(ClusterUnion != nullptr))
@@ -122,14 +133,29 @@ namespace Chaos
 			Particle_Internal = ClusterUnion->InternalCluster;
 			Particle_Internal->SetPhysicsProxy(this);
 			Particle_Internal->GTGeometryParticle() = Particle_External.Get();
+			Particle_Internal->SetUnbreakable(InitData.bUnbreakable);
+			Particle_Internal->SetX(InitData.InitialTransform.GetTranslation());
+			Particle_Internal->SetR(InitData.InitialTransform.GetRotation());
+			Particle_Internal->SetVf(Chaos::FVec3f(0.f));
+			Particle_Internal->SetWf(Chaos::FVec3f(0.f));
+			Particle_Internal->SetP(Particle_Internal->GetX());
+			Particle_Internal->SetQf(Particle_Internal->GetRf());
+			Particle_Internal->SetCenterOfMass(FVector3f::ZeroVector);
+			Particle_Internal->SetRotationOfMass(FQuat::Identity);
 
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-			Particle_Internal->SetDebugName(MakeShared<FString, ESPMode::ThreadSafe>(FString::Printf(TEXT("%s"), *GetOwner()->GetName())));
+#if CHAOS_DEBUG_NAME
+			if (Particle_External.IsValid())
+			{
+				Particle_Internal->SetDebugName(Particle_External->DebugName());
+			}
 #endif
 
-			// On the client, we'd rather wait for the server to initialize the particle properly.
-			ClusterUnion->bNeedsXRInitialization = InitData.bNeedsClusterXRInitialization;
+			// For explicit cluster unions (i.e. cluster unions created via a cluster union component rather than the cluster group index), the cluster union itself is responsible for initializing
+			// the particle's XR from the component's transform. Therefore, we never want the PT to try and initialize the XR of the cluster union - the only changes to XR from the PT should
+			// be a result of physical simulation.
+			ClusterUnion->bNeedsXRInitialization = false;
 			ClusterUnion->bCheckConnectivity = InitData.bCheckConnectivity;
+			ClusterUnion->bGenerateConnectivityEdges = InitData.bGenerateConnectivityEdges;
 		}
 	}
 
@@ -250,7 +276,101 @@ namespace Chaos
 		);
 	}
 
-	void FClusterUnionPhysicsProxy::SetSharedGeometry_External(const TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>& Geometry, const TArray<FPBDRigidParticle*>& ShapeParticles)
+	void FClusterUnionPhysicsProxy::Wake_External()
+	{
+		if (!Solver || !ensure(Particle_External))
+		{
+			return;
+		}
+
+		Solver->EnqueueCommandImmediate(
+			[this]() mutable
+			{
+				if (Particle_Internal)
+				{
+					if (FPBDRigidsEvolutionGBF* Evolution = GetEvolution(this))
+					{
+						Evolution->WakeParticle(Particle_Internal);
+					}
+				}
+			}
+		);
+	}
+
+	void FClusterUnionPhysicsProxy::SetMass_External(Chaos::FReal InMass)
+	{
+		if (!Solver || !ensure(Particle_External))
+		{
+			return;
+		}
+
+		Chaos::FRealSingle Mass = Chaos::FRealSingle(InMass);
+		Chaos::FRealSingle InvMass = 0;
+		Chaos::FVec3f Inertia = FVec3f(0);
+		Chaos::FVec3f InvInertia = FVec3f(0);
+		if (Mass > 0)
+		{
+			InvMass = 1.0f / Mass;
+
+			Chaos::FRealSingle OldMass = Chaos::FRealSingle(Particle_External->M());
+			if (OldMass > 0)
+			{
+				const Chaos::FRealSingle MassScale = Mass / OldMass;
+				Inertia = Particle_External->I() * MassScale;
+				InvInertia = Particle_External->InvI() / MassScale;
+			}
+		}
+
+		if (Particle_External)
+		{
+			Particle_External->SetM(Mass);
+			Particle_External->SetInvM(InvMass);
+			Particle_External->SetI(Inertia);
+			Particle_External->SetInvI(InvInertia);
+		}
+
+		Solver->EnqueueCommandImmediate(
+			[this, Mass, InvMass, Inertia, InvInertia]()
+			{
+				if (Particle_Internal)
+				{
+					Particle_Internal->SetM(Mass);
+					Particle_Internal->SetInvM(InvMass);
+					Particle_Internal->SetI(Inertia);
+					Particle_Internal->SetInvI(InvInertia);
+				}
+			}
+		);
+	}
+
+	void FClusterUnionPhysicsProxy::RemoveShapes_External(const TArray<FPBDRigidParticle*>& ShapeParticles)
+    {
+		RemoveParticlesFromClusterUnionGeometry(Particle_External.Get(), ShapeParticles, GeometryChildParticles_External);
+    }
+	
+	void FClusterUnionPhysicsProxy::MergeGeometry_External(TArray<Chaos::FImplicitObjectPtr>&& ImplicitGeometries, const TArray<FPBDRigidParticle*>& ShapeParticles)
+	{
+		if (!ensure(Particle_External) || !ensure(ImplicitGeometries.Num() == ShapeParticles.Num()))
+		{
+			return;
+		}
+		
+		// In the cases where this is necessary, the SQ should have a valid state - it's just the geometry itself that isn't valid.
+		ModifyAdditionOfChildrenToClusterUnionGeometry(
+			Particle_External.Get(),
+			ShapeParticles,
+			InitData.ActorId,
+			InitData.ComponentId,
+			[this, ImplicitGeometries=MoveTemp(ImplicitGeometries)]() mutable
+			{
+				Particle_External->MergeGeometry(MoveTemp(ImplicitGeometries));
+			}
+		);
+
+		GeometryChildParticles_External.Append(ShapeParticles);
+	}
+
+	void FClusterUnionPhysicsProxy::SetGeometry_External(const Chaos::FImplicitObjectPtr& Geometry, const TArray<FPBDRigidParticle*>& ShapeParticles)
 	{
 		if (!ensure(Particle_External))
 		{
@@ -258,47 +378,18 @@ namespace Chaos
 		}
 
 		// In the cases where this is necessary, the SQ should have a valid state - it's just the geometry itself that isn't valid.
-		Particle_External->SetGeometry(Geometry);
-
-		// Need to fill in query/sim data because the input geometry will not have it set properly.
-		// TODO: This duplicates some code in Chaos::FClusterUnionManager and has the same assumptions.
-		if (ShapeParticles.Num() == Particle_External->ShapesArray().Num())
-		{
-			int32 Index = 0;
-			for (const TUniquePtr<FPerShapeData>& ShapeData : Particle_External->ShapesArray())
+		ModifyAdditionOfChildrenToClusterUnionGeometry(
+			Particle_External.Get(),
+			ShapeParticles,
+			InitData.ActorId,
+			InitData.ComponentId,
+			[this, &Geometry]()
 			{
-				if (Index >= ShapeParticles.Num() || ShapeParticles[Index]->ShapesArray().IsEmpty())
-				{
-					++Index;
-					continue;
-				}
-
-				const TUniquePtr<Chaos::FPerShapeData>& TemplateShape = ShapeParticles[Index]->ShapesArray()[0];
-				if (ShapeData && TemplateShape)
-				{
-					{
-						FCollisionData Data = TemplateShape->GetCollisionData();
-						Data.UserData = nullptr;
-						ShapeData->SetCollisionData(Data);
-					}
-
-					{
-						FCollisionFilterData Data = TemplateShape->GetQueryData();
-						Data.Word0 = InitData.ActorId;
-						ShapeData->SetQueryData(Data);
-					}
-
-					{
-						FCollisionFilterData Data = TemplateShape->GetSimData();
-						Data.Word0 = 0;
-						Data.Word2 = InitData.ComponentId;
-						ShapeData->SetSimData(Data);
-					}
-				}
-
-				++Index;
+				Particle_External->SetGeometry(Geometry);
 			}
-		}
+		);
+
+		GeometryChildParticles_External = ShapeParticles;
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionPhysicsProxy::PushToPhysicsState"), STAT_ClusterUnionPhysicsProxyPushToPhysicsState, STATGROUP_Chaos);
@@ -339,14 +430,14 @@ namespace Chaos
 						{
 							ParticlesToUpdate.Add(Particle);
 
-							const FRigidTransform3 ChildWorldTM(Particle->X(), Particle->R());
+							const FRigidTransform3 ChildWorldTM(Particle->GetX(), Particle->GetR());
 							NewChildToParent.Add(ChildWorldTM.GetRelativeTransform(NewTransform));
 						}
 					}
 				}
 			}
 
-			Evolution.SetParticleTransform(Particle_Internal, NewXR->X(), NewXR->R(), true);
+			Evolution.SetParticleTransform(Particle_Internal, NewXR->GetX(), NewXR->R(), true);
 
 			if (!ParticlesToUpdate.IsEmpty() && !NewChildToParent.IsEmpty())
 			{
@@ -359,7 +450,7 @@ namespace Chaos
 			// but this is primarily for proxies within the cluster union. They (i.e. GCs) need to see this change to the particle's transform.
 			Evolution.GetParticles().MarkTransientDirtyParticle(Particle_Internal);
 
-			const FRigidTransform3 WorldTransform{ Particle_Internal->X(), Particle_Internal->R() };
+			const FRigidTransform3 WorldTransform{ Particle_Internal->GetX(), Particle_Internal->GetR() };
 			Particle_Internal->UpdateWorldSpaceState(WorldTransform, FVec3(0));
 
 			Evolution.DirtyParticle(*Particle_Internal);
@@ -367,12 +458,12 @@ namespace Chaos
 
 		if (const FParticleVelocities* NewVelocities = ParticleData.FindClusterVelocities(Manager, DataIdx))
 		{
-			Particle_Internal->SetVelocities(*NewVelocities);
+			Evolution.SetParticleVelocities(Particle_Internal, NewVelocities->V(), NewVelocities->W());
 		}
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionPhysicsProxy::PullFromPhysicsState"), STAT_ClusterUnionPhysicsProxyPullFromPhysicsState, STATGROUP_Chaos);
-	bool FClusterUnionPhysicsProxy::PullFromPhysicsState(const FDirtyClusterUnionData& PullData, int32 SolverSyncTimestamp, const FDirtyClusterUnionData* NextPullData, const FRealSingle* Alpha)
+	bool FClusterUnionPhysicsProxy::PullFromPhysicsState(const FDirtyClusterUnionData& PullData, int32 SolverSyncTimestamp, const FDirtyClusterUnionData* NextPullData, const FRealSingle* Alpha, const FDirtyRigidParticleReplicationErrorData* Error, const Chaos::FReal AsyncFixedTimeStep)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ClusterUnionPhysicsProxyPullFromPhysicsState);
 		if (!ensure(Particle_External))
@@ -387,17 +478,50 @@ namespace Chaos
 			return false;
 		}
 
+		if (Error)
+		{
+			const FReal ErrorMagSq = Error->ErrorX.SizeSquared();
+			const FReal MaxErrorCorrection = GetRenderInterpMaximumErrorCorrectionBeforeSnapping();
+			int32 RenderInterpErrorCorrectionDurationTicks = 0;
+			if (ErrorMagSq < MaxErrorCorrection * MaxErrorCorrection)
+			{
+				RenderInterpErrorCorrectionDurationTicks = FMath::FloorToInt32(GetRenderInterpErrorCorrectionDuration() / AsyncFixedTimeStep); // Convert duration from seconds to simulation ticks
+			}
+			InterpolationData.AccumlateErrorXR(Error->ErrorX, Error->ErrorR, SolverSyncTimestamp, RenderInterpErrorCorrectionDurationTicks);
+		}
+
 		SyncedData_External.bIsAnchored = CurrentPullData.bIsAnchored;
+		SyncedData_External.bDidSyncGeometry = false;
 		SyncedData_External.ChildParticles.Empty(CurrentPullData.ChildParticles.Num());
+
+		// I question the need to do this individual copy one by one...maybe we should've used the same type for the synced data.
 		for (const FDirtyClusterUnionParticleData& InData : CurrentPullData.ChildParticles)
 		{
 			FClusterUnionChildData ConvertedData;
 			ConvertedData.ParticleIdx = InData.ParticleIdx;
 			ConvertedData.ChildToParent = InData.ChildToParent;
+			ConvertedData.Proxy = InData.Proxy;
+			ConvertedData.CachedOwner = InData.CachedOwner;
+			ConvertedData.BoneId = InData.BoneId;
 			SyncedData_External.ChildParticles.Add(ConvertedData);
 		}
 
-		Particle_External->SetGeometry(CurrentPullData.SharedGeometry);
+		if (CurrentPullData.Geometry)
+		{
+			Particle_External->SetGeometry(CurrentPullData.Geometry);
+			SyncedData_External.bDidSyncGeometry = true;
+		}
+
+		FReal M = FReal(CurrentPullData.Mass);
+		FReal InvM = (M > 0.0) ? (1.0 / M) : 0.0;
+		Particle_External->SetM(M, /*bInvalidate=*/false);
+		Particle_External->SetInvM(InvM, /*bInvalidate=*/false);
+
+		FVec3 I = FVec3(CurrentPullData.Inertia);
+		FVec3 InvI = (!I.IsZero()) ? FVec3(1) / I : FVec3(0);
+		Particle_External->SetI(I, /*bInvalidate=*/false);
+		Particle_External->SetInvI(InvI, /*bInvalidate=*/false);
+
 		Particle_External->SetObjectState(CurrentPullData.ObjectState, true, /*bInvalidate=*/false);
 
 		const FShapesArray& ShapeArray = Particle_External->ShapesArray();
@@ -435,15 +559,30 @@ namespace Chaos
 				return OverwriteProperty.Timestamp <= SolverSyncTimestamp ? (OverwriteProperty.Timestamp < SolverSyncTimestamp ? &Prev : &OverwriteProperty.Value) : nullptr;
 			};
 
+			const bool bIsReplicationErrorSmoothing = InterpolationData.IsErrorSmoothing();
+			bool DirectionalDecayPerformed = false;
+			InterpolationData.UpdateError(SolverSyncTimestamp, AsyncFixedTimeStep);
+
 			if (const FVec3* Prev = LerpHelper(PullData.X, ProxyTimestamp->OverWriteX))
 			{
-				const FVec3 NewX = FMath::Lerp(*Prev, NextPullData->X, *Alpha);
+				if (GetRenderInterpErrorDirectionalDecayMultiplier() > 0.0f)
+				{
+					DirectionalDecayPerformed = InterpolationData.DirectionalDecay(NextPullData->X - *Prev);
+				}
+
+				const FVec3 NewX = bIsReplicationErrorSmoothing ?
+					FMath::Lerp(*Prev, NextPullData->X, *Alpha) + InterpolationData.GetErrorX(*Alpha) :
+					FMath::Lerp(*Prev, NextPullData->X, *Alpha);
+
 				Particle_External->SetX(NewX, false);
 			}
 
 			if (const FQuat* Prev = LerpHelper(PullData.R, ProxyTimestamp->OverWriteR))
 			{
-				const FQuat NewR = FMath::Lerp(*Prev, NextPullData->R, *Alpha);
+				const FQuat NewR = bIsReplicationErrorSmoothing ? 
+					InterpolationData.GetErrorR(*Alpha) * FMath::Lerp(*Prev, NextPullData->R, *Alpha) : 
+					FMath::Lerp(*Prev, NextPullData->R, *Alpha);
+		
 				Particle_External->SetR(NewR, false);
 			}
 
@@ -458,6 +597,26 @@ namespace Chaos
 				const FVec3 NewW = FMath::Lerp(*Prev, NextPullData->W, *Alpha);
 				Particle_External->SetW(NewW, false);
 			}
+
+#if CHAOS_DEBUG_DRAW
+			if (GetRenderInterpDebugDraw())
+			{
+				Chaos::FDebugDrawQueue::GetInstance().DrawDebugBox(NextPullData->X, FVector(2, 1, 1), NextPullData->R, FColor::Yellow, false, 5.f, 0, 0.5f);
+				Chaos::FDebugDrawQueue::GetInstance().DrawDebugDirectionalArrow(PullData.X, NextPullData->X, 0.5f, FColor::Yellow, false, 5.0f, 0, 0.5f);
+				Chaos::FDebugDrawQueue::GetInstance().DrawDebugBox(Particle_External->GetX(), FVector(2, 1, 1), Particle_External->R(), DirectionalDecayPerformed ? FColor::Cyan : FColor::Green, false, 5.f, 0, 0.5f);
+
+				if (bIsReplicationErrorSmoothing)
+				{
+					if (Error)
+					{
+						Chaos::FDebugDrawQueue::GetInstance().DrawDebugBox(PullData.X, FVector(4, 2, 2), PullData.R, FColor::Red, false, 5.f, 0, 0.5f);
+						Chaos::FDebugDrawQueue::GetInstance().DrawDebugDirectionalArrow(PullData.X, (PullData.X + InterpolationData.GetErrorX(0)), 1, FColor::Red, false, 5.0f, 0, 0.5f);
+					}
+
+					Chaos::FDebugDrawQueue::GetInstance().DrawDebugDirectionalArrow((Particle_External->GetX() - InterpolationData.GetErrorX(*Alpha)), Particle_External->GetX(), 1, FColor::Blue, false, 5.0f, 0, 0.5f);
+				}
+			}
+#endif // CHAOS_DEBUG_DRAW
 		}
 		else
 		{
@@ -506,20 +665,52 @@ namespace Chaos
 					continue;
 				}
 
-				FDirtyClusterUnionParticleData Data;
-				Data.ParticleIdx = Particle->UniqueIdx();
-				if (FPBDRigidClusteredParticleHandle* ClusteredParticle = Particle->CastToClustered())
+				if (IPhysicsProxyBase* Proxy = Particle->PhysicsProxy())
 				{
-					Data.ChildToParent = ClusteredParticle->ChildToParent();
+					FDirtyClusterUnionParticleData Data;
+					Data.ParticleIdx = Particle->UniqueIdx();
+					if (FPBDRigidClusteredParticleHandle* ClusteredParticle = Particle->CastToClustered())
+					{
+						Data.ChildToParent = ClusteredParticle->ChildToParent();
+					}
+					else
+					{
+						Data.ChildToParent = FRigidTransform3::Identity;
+					}
+					Data.Proxy = Proxy;
+					Data.CachedOwner = reinterpret_cast<void*>(Proxy->GetOwner());
+					
+					if (Proxy->GetType() == EPhysicsProxyType::GeometryCollectionType)
+					{
+						// A bit hacky, but the only way we can communicate what particle we care about back to the cluster union on the GT.
+						FGeometryCollectionPhysicsProxy* GCProxy = static_cast<FGeometryCollectionPhysicsProxy*>(Proxy);
+						Data.BoneId = GCProxy->GetTransformGroupIndexFromHandle(Particle);
+					}
+
+					BufferData.ChildParticles.Add(Data);
+				}
+			}
+
+			if (ClusterUnion->bGeometryModified && !ClusterUnion->ChildParticles.IsEmpty())
+			{
+				if(FImplicitObjectUnion* AsUnion = ClusterUnion->Geometry->AsA<FImplicitObjectUnion>();
+				   GShallowCopyClusterUnionGeometryOnUpdate && AsUnion)
+				{
+					// Shallow copy the root union for the GT update
+					// This ensures the GT has a snapshot of the union as it is now for this results data. The PT is free to
+					// continue modifying its geometry without potentially disrupting GT reads. Internally we don't want
+					// to duplicate all the geometry - we essentially just need the list of objects in the root union to
+					// point to the correct internal geometries, but have a separate list on GT and PT.
+					TArray<FImplicitObjectPtr> ObjectsCopy = AsUnion->GetObjects();
+					BufferData.Geometry = MakeImplicitObjectPtr<FImplicitObjectUnion>(MoveTemp(ObjectsCopy));
 				}
 				else
 				{
-					Data.ChildToParent = FRigidTransform3::Identity;
+					// Fallback to deep copy geometry hierarchy
+					BufferData.Geometry = ClusterUnion->Geometry->DeepCopyGeometry();
 				}
-				BufferData.ChildParticles.Add(Data);
+				ClusterUnion->bGeometryModified = false;
 			}
-
-			BufferData.SharedGeometry = ClusterUnion->SharedGeometry;
 		}
 	}
 
@@ -536,6 +727,9 @@ namespace Chaos
 			FDirtyClusterUnionParticleData ConvertedData;
 			ConvertedData.ParticleIdx = Data.ParticleIdx;
 			ConvertedData.ChildToParent = Data.ChildToParent;
+			ConvertedData.Proxy = Data.Proxy;
+			ConvertedData.CachedOwner = Data.CachedOwner;
+			ConvertedData.BoneId = Data.BoneId;
 			BufferData.ChildParticles.Add(ConvertedData);
 		}
 	}
@@ -630,7 +824,10 @@ namespace Chaos
 
 	void FClusterUnionPhysicsProxy::SetChildToParent_External(FPhysicsObjectHandle Child, const FTransform& RelativeTransform, bool bLock)
 	{
-		BulkSetChildToParent_External({ Child }, { RelativeTransform }, bLock);
+		if (ensure(Child != nullptr))
+		{
+			BulkSetChildToParent_External({ Child }, { RelativeTransform }, bLock);
+		}
 	}
 
 	void FClusterUnionPhysicsProxy::BulkSetChildToParent_External(const TArray<FPhysicsObjectHandle>& Objects, const TArray<FTransform>& Transforms, bool bLock)
@@ -650,6 +847,49 @@ namespace Chaos
 					FPBDRigidsEvolutionGBF& Evolution = *static_cast<FPBDRigidsSolver*>(Solver)->GetEvolution();
 					FClusterUnionManager& ClusterUnionManager = Evolution.GetRigidClustering().GetClusterUnionManager();
 					ClusterUnionManager.UpdateClusterUnionParticlesChildToParent(ClusterUnionIndex, Particles, Transforms, bLock);
+				}
+			}
+		);
+	}
+
+	void FClusterUnionPhysicsProxy::SetEnableStrainOnCollision_External(bool bEnable)
+	{
+		if (Solver && ensure(Particle_External))
+		{
+			Solver->EnqueueCommandImmediate(
+				[this, bEnable]() mutable
+				{
+					bEnableStrainOnCollision_Internal = bEnable;
+				}
+			);
+		}
+	}
+
+	void FClusterUnionPhysicsProxy::ChangeMainParticleStatus_External(const TArray<FPhysicsObjectHandle>& Objects, bool bIsMain)
+	{
+		if (!Solver)
+		{
+			return;
+		}
+
+		Solver->EnqueueCommandImmediate(
+			[this, Objects, bIsMain]() mutable
+			{
+				FReadPhysicsObjectInterface_Internal Interface = FPhysicsObjectInternalInterface::GetRead();
+				TArray<FPBDRigidParticleHandle*> Particles = Interface.GetAllRigidParticles(Objects);
+
+				FPBDRigidsEvolutionGBF& Evolution = *static_cast<FPBDRigidsSolver*>(Solver)->GetEvolution();
+				FClusterUnionManager& ClusterUnionManager = Evolution.GetRigidClustering().GetClusterUnionManager();
+
+				if (FClusterUnion* Union = ClusterUnionManager.FindClusterUnion(ClusterUnionIndex))
+				{
+					for (FPBDRigidParticleHandle* Particle : Particles)
+					{
+						if (FClusterUnionParticleProperties* Props = Union->ChildProperties.Find(Particle))
+						{
+							Props->bIsAuxiliaryParticle = !bIsMain;
+						}
+					}
 				}
 			}
 		);

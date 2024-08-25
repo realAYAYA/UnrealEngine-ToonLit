@@ -2,7 +2,6 @@
 
 #include "Misc/NamePermissionList.h"
 
-#include "Templates/ChooseClass.h"
 #include "Templates/Tuple.h"
 #include "Templates/UnrealTemplate.h"
 

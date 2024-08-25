@@ -6,46 +6,45 @@
 
 FHttpRequestCompleteDelegate& FHttpRequestImpl::OnProcessRequestComplete()
 {
-	UE_LOG(LogHttp, VeryVerbose, TEXT("FHttpRequestImpl::OnProcessRequestComplete()"));
 	return RequestCompleteDelegate;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FHttpRequestProgressDelegate& FHttpRequestImpl::OnRequestProgress() 
 {
-	UE_LOG(LogHttp, VeryVerbose, TEXT("FHttpRequestImpl::OnRequestProgress()"));
 	return RequestProgressDelegate;
+}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+FHttpRequestProgressDelegate64& FHttpRequestImpl::OnRequestProgress64() 
+{
+	return RequestProgressDelegate64;
+}
+
+FHttpRequestStatusCodeReceivedDelegate& FHttpRequestImpl::OnStatusCodeReceived()
+{
+	return StatusCodeReceivedDelegate;
 }
 
 FHttpRequestHeaderReceivedDelegate& FHttpRequestImpl::OnHeaderReceived()
 {
-	UE_LOG(LogHttp, VeryVerbose, TEXT("FHttpRequestImpl::OnHeaderReceived()"));
 	return HeaderReceivedDelegate;
 }
 
 FHttpRequestWillRetryDelegate& FHttpRequestImpl::OnRequestWillRetry()
 {
-	UE_LOG(LogHttp, VeryVerbose, TEXT("FHttpRequestImpl::OnRequestWillRetry()"));
 	return OnRequestWillRetryDelegate;
 }
 
-void FHttpRequestImpl::SetTimeout(float InTimeoutSecs)
+void FHttpRequestImpl::Shutdown()
 {
-	TimeoutSecs = InTimeoutSecs;
-}
-
-void FHttpRequestImpl::ClearTimeout()
-{
-	TimeoutSecs.Reset();
-}
-
-TOptional<float> FHttpRequestImpl::GetTimeout() const
-{
-	return TimeoutSecs;
-}
-
-float FHttpRequestImpl::GetTimeoutOrDefault() const
-{
-	return GetTimeout().Get(FHttpModule::Get().GetHttpTimeout());
+	OnProcessRequestComplete().Unbind();
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	OnRequestProgress().Unbind();
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	OnRequestProgress64().Unbind();
+	OnStatusCodeReceived().Unbind();
+	OnHeaderReceived().Unbind();
 }
 
 void FHttpRequestImpl::BroadcastResponseHeadersReceived()

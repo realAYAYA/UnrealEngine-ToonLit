@@ -4,6 +4,7 @@
 
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/STextComboBox.h"
@@ -90,7 +91,7 @@ void SCustomizableObjectPopulationClassTagsManager::BuildTagSelector()
 		.Padding(0.0f, 3.0f, 0.0f, 0.0f)
 		[
 			SNew(STextBlock)
-			.Text(FText::FromString(FString::Printf(TEXT("%d Tags"),CustomizableObject->CustomizableObjectClassTags.Num())))
+			.Text(FText::FromString(FString::Printf(TEXT("%d Tags"),CustomizableObject->GetPrivate()->GetCustomizableObjectClassTags().Num())))
 		]
 		
 		+ SHorizontalBox::Slot()
@@ -107,21 +108,21 @@ void SCustomizableObjectPopulationClassTagsManager::BuildTagSelector()
 		]
 	];
 
-	for (int32 i = 0; i < RootObject->PopulationClassTags.Num(); ++i)
+	for (int32 i = 0; i < RootObject->GetPrivate()->GetPopulationClassTags().Num(); ++i)
 	{
-		TagOptions.Add(MakeShareable(new FString(RootObject->PopulationClassTags[i])));
+		TagOptions.Add(MakeShareable(new FString(RootObject->GetPrivate()->GetPopulationClassTags()[i])));
 	}
 
 	TagOptions.Add(MakeShareable(new FString("None")));
 
-	for (int32 i = 0; i < CustomizableObject->CustomizableObjectClassTags.Num(); ++i)
+	for (int32 i = 0; i < CustomizableObject->GetPrivate()->GetCustomizableObjectClassTags().Num(); ++i)
 	{
 		int32 TagIndex = TagOptions.Num()-1;
 		TSharedPtr<FString > SelectedOption;
 
-		for (int32 j = 0; j < RootObject->PopulationClassTags.Num(); ++j)
+		for (int32 j = 0; j < RootObject->GetPrivate()->GetPopulationClassTags().Num(); ++j)
 		{
-			if (CustomizableObject->CustomizableObjectClassTags[i] == RootObject->PopulationClassTags[j])
+			if (CustomizableObject->GetPrivate()->GetCustomizableObjectClassTags()[i] == RootObject->GetPrivate()->GetPopulationClassTags()[j])
 			{
 				TagIndex = j;
 			}
@@ -161,7 +162,7 @@ void SCustomizableObjectPopulationClassTagsManager::BuildTagSelector()
 
 FReply SCustomizableObjectPopulationClassTagsManager::OnAddTagSelectorButtonPressed()
 {
-	CustomizableObject->CustomizableObjectClassTags.Add("");
+	CustomizableObject->GetPrivate()->GetCustomizableObjectClassTags().Add("");
 	CustomizableObject->MarkPackageDirty();
 
 	RebuildWidget();
@@ -174,14 +175,14 @@ void SCustomizableObjectPopulationClassTagsManager::OnComboBoxSelectionChanged(T
 {
 	if (Selection.IsValid())
 	{
-		CustomizableObject->CustomizableObjectClassTags[Index] = *Selection;
+		CustomizableObject->GetPrivate()->GetCustomizableObjectClassTags()[Index] = *Selection;
 		CustomizableObject->MarkPackageDirty();
 	}
 }
 
 FReply SCustomizableObjectPopulationClassTagsManager::OnRemoveTagSelectorClicked(int32 Index)
 {
-	CustomizableObject->CustomizableObjectClassTags.RemoveAt(Index);
+	CustomizableObject->GetPrivate()->GetCustomizableObjectClassTags().RemoveAt(Index);
 	CustomizableObject->MarkPackageDirty();
 
 	RebuildWidget();
@@ -212,7 +213,7 @@ void SCustomizableObjectPopulationClassTagsManager::BuildTagManager()
 		.Padding(0.0f, 3.0f, 0.0f, 0.0f)
 		[
 			SNew(STextBlock)
-			.Text(FText::FromString(FString::Printf(TEXT("%d Tags"), RootObject->PopulationClassTags.Num())))
+			.Text(FText::FromString(FString::Printf(TEXT("%d Tags"), RootObject->GetPrivate()->GetPopulationClassTags().Num())))
 		]
 
 		+ SHorizontalBox::Slot()
@@ -229,7 +230,7 @@ void SCustomizableObjectPopulationClassTagsManager::BuildTagManager()
 		]
 	];
 
-	for (int32 i = 0; i < RootObject->PopulationClassTags.Num(); ++i)
+	for (int32 i = 0; i < RootObject->GetPrivate()->GetPopulationClassTags().Num(); ++i)
 	{
 		TagManager->AddSlot()
 		.AutoHeight()
@@ -249,7 +250,7 @@ void SCustomizableObjectPopulationClassTagsManager::BuildTagManager()
 			.Padding(10.0f, 0.0f, 0.0f, 0.0f)
 			[
 				SNew(SEditableTextBox)
-				.Text(FText::FromString(RootObject->PopulationClassTags[i]))
+				.Text(FText::FromString(RootObject->GetPrivate()->GetPopulationClassTags()[i]))
 				.OnTextCommitted(this, &SCustomizableObjectPopulationClassTagsManager::OnTextCommited, i)
 			]
 
@@ -272,7 +273,7 @@ void SCustomizableObjectPopulationClassTagsManager::BuildTagManager()
 
 FReply SCustomizableObjectPopulationClassTagsManager::OnAddTagButtonPressed()
 {
-	RootObject->PopulationClassTags.Add("");
+	RootObject->GetPrivate()->GetPopulationClassTags().Add("");
 	RootObject->MarkPackageDirty();
 
 	RebuildWidget();
@@ -283,7 +284,7 @@ FReply SCustomizableObjectPopulationClassTagsManager::OnAddTagButtonPressed()
 
 FReply SCustomizableObjectPopulationClassTagsManager::OnRemoveTagClicked(int32 Index)
 {
-	RootObject->PopulationClassTags.RemoveAt(Index);
+	RootObject->GetPrivate()->GetPopulationClassTags().RemoveAt(Index);
 	RootObject->MarkPackageDirty();
 
 	RebuildWidget();
@@ -296,7 +297,7 @@ void SCustomizableObjectPopulationClassTagsManager::OnTextCommited(const FText& 
 {
 	if (InTextCommit == ETextCommit::OnEnter || InTextCommit == ETextCommit::OnUserMovedFocus)
 	{
-		RootObject->PopulationClassTags[Index] = NewText.ToString();
+		RootObject->GetPrivate()->GetPopulationClassTags()[Index] = NewText.ToString();
 		RootObject->MarkPackageDirty();
 
 		RebuildWidget();

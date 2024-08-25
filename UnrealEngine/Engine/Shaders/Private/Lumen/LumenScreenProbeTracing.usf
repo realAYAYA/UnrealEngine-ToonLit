@@ -132,7 +132,7 @@ void ScreenProbeTraceScreenTexturesCS(
 			{
 				bool bCoveredByRadianceCache = false;
 				#if RADIANCE_CACHE
-					FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation), RayWorldDirection, 0);
+					FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation), RayWorldDirection, 0);
 
 					if (Coverage.bValid)
 					{
@@ -205,7 +205,7 @@ void ScreenProbeTraceScreenTexturesCS(
 				float MaxScreenTraceFraction = .2f;
 
 				// Can only get decent quality out of fixed step count screen traces by limiting the trace distance
-				float MaxWorldTraceDistance = SceneDepth * MaxScreenTraceFraction * 2.0 * GetTanHalfFieldOfView().x;
+				float MaxWorldTraceDistance = MaxScreenTraceFraction * 2.0 * GetScreenRayLengthMultiplierForProjectionType(SceneDepth).x;
 				TraceDistance = min(TraceDistance, MaxWorldTraceDistance);
 
 				uint2 NoiseCoord = ScreenProbeAtlasCoord * ProbeTracingResolution + TraceTexelCoord;
@@ -292,7 +292,7 @@ void ScreenProbeTraceScreenTexturesCS(
 					float2 HitScreenPosition = (HitUVz.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
 					float HitDeviceZ = HitUVz.z;
 
-					float3 HitHistoryScreenPosition = GetPrevScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+					float3 HitHistoryScreenPosition = GetHistoryScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
 
 					float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
 					float Noise = InterleavedGradientNoise(TraceBufferCoord + 0.5f, View.StateFrameIndexMod8);
@@ -493,7 +493,7 @@ void TraceMeshSDFs(
 
 		uint2 TraceBufferCoord = GetTraceBufferCoord(ScreenProbeAtlasCoord, TraceTexelCoord);
 		float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
-		float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+		float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 
 		float TraceHitDistance = DecodeProbeRayDistance(RWTraceHit[TraceBufferCoord]).HitDistance;
 
@@ -517,7 +517,7 @@ void TraceMeshSDFs(
 			float3 TranslatedSamplePosition = TranslatedWorldPosition + SurfaceBias * RayWorldDirection;
 			TranslatedSamplePosition += SurfaceBias * GetScreenProbeNormalForBiasing(ScreenProbeAtlasCoord, RayWorldDirection);
 
-			float3 SamplePosition = TranslatedSamplePosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+			float3 SamplePosition = TranslatedSamplePosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 
 			FConeTraceInput TraceInput;
 			TraceInput.Setup(SamplePosition, TranslatedSamplePosition, RayWorldDirection, ConeHalfAngle, MinSampleRadius, max(MinTraceDistance, TraceHitDistance - SurfaceBias * 2), MaxTraceDistance, StepFactor);
@@ -578,7 +578,7 @@ void TraceMeshSDFs(
 				bMoving = IsTraceMoving(WorldPosition, SceneDepth, ScreenProbeAtlasCoord, HitWorldPosition, TraceResult.WorldVelocity);
 			}
 
-			float DistanceFromViewpoint = length(LWCHackToFloat(PrimaryView.WorldCameraOrigin) - WorldPosition);
+			float DistanceFromViewpoint = GetDistanceToCameraFromViewVector(DFHackToFloat(PrimaryView.WorldCameraOrigin) - WorldPosition);
 			float DistanceFade = saturate(6 * DistanceFromViewpoint / CardTraceEndDistanceFromCamera - 5);
 
 			float CoverageForFog = saturate(1.0 - Transparency);	// LUMEN_TODO single evaluation for now even if we can hit translucent hair above.
@@ -663,7 +663,7 @@ void TraceVoxels(
 
 		{
 			float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
-			float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+			float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 
 			float3 RayWorldDirection = 0;
 			float TraceDistance = MaxTraceDistance;
@@ -681,7 +681,7 @@ void TraceVoxels(
 			float3 TranslatedSamplePosition = TranslatedWorldPosition + SurfaceBias * RayWorldDirection;
 			TranslatedSamplePosition += SurfaceBias * GetScreenProbeNormalForBiasing(ScreenProbeAtlasCoord, RayWorldDirection);
 
-			float3 SamplePosition = TranslatedSamplePosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+			float3 SamplePosition = TranslatedSamplePosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 
 			FRadianceCacheCoverage Coverage;
 			Coverage.bValid = false;
@@ -878,8 +878,8 @@ void ScreenProbeSetupVisualizeTraces(
 		ProbeWorldPosition = GetWorldPositionFromScreenUV(ProbeScreenUV, ProbeSceneDepth);
 		ProbeTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ProbeScreenUV, ProbeSceneDepth);
 	}
-
-	float3 PreViewTranslation = LWCToFloat(MakeLWCVector3(View.ViewTilePosition, View.RelativePreViewTranslation));
+	
+	float3 PreViewTranslation = DFDemote(MakeDFVector3(View.PreViewTranslationHigh, View.PreViewTranslationLow));
 
 	{
 		float2 CursorSceneBufferUV = SvPositionToBufferUV(float4(floor((View.CursorPosition) * View.ViewResolutionFraction) + .5f, 0, 0)).xy;

@@ -36,6 +36,12 @@ struct MASSENTITY_API FMassEntityView
 	 */
 	FMassEntityView(const FMassEntityManager& EntityManager, FMassEntityHandle Entity);
 
+	/** 
+	 * If the given handle represents a valid entity the function will create a FMassEntityView just like a constructor 
+	 * would. If the entity is not valid the produced view will be "unset".
+	 */
+	static FMassEntityView TryMakeView(const FMassEntityManager& EntityManager, FMassEntityHandle Entity);
+
 	FMassEntityHandle GetEntity() const	{ return Entity; }
 
 	/** will fail a check if the viewed entity doesn't have the given fragment */	
@@ -121,8 +127,9 @@ struct MASSENTITY_API FMassEntityView
 		return HasTag(*T::StaticStruct());
 	}
 
-	bool IsSet() const { return Archetype != nullptr && EntityHandle.IsValid(); }
-	bool operator==(const FMassEntityView& Other) const { return Archetype == Other.Archetype && EntityHandle == Other.EntityHandle; }
+	bool IsSet() const { return Archetype != nullptr && EntityDataHandle.IsValid(); }
+	bool IsValid() const { return IsSet(); }
+	bool operator==(const FMassEntityView& Other) const { return Archetype == Other.Archetype && EntityDataHandle == Other.EntityDataHandle; }
 
 protected:
 	void* GetFragmentPtr(const UScriptStruct& FragmentType) const;
@@ -135,6 +142,6 @@ protected:
 
 private:
 	FMassEntityHandle Entity;
-	FMassRawEntityInChunkData EntityHandle;
+	FMassRawEntityInChunkData EntityDataHandle;
 	FMassArchetypeData* Archetype = nullptr;
 };

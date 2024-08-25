@@ -21,8 +21,10 @@ namespace UnrealBuildTool.Rules
 				, "InputDevice"
 				, "RHI"
 				, "DeveloperSettings"
+				, "MetalRHI"
 			});
 
+			AddEngineThirdPartyPrivateStaticDependencies(Target, "MetalCPP");
 			PublicWeakFrameworks.Add("Metal");
 
 			if (Target.bBuildEditor == true)

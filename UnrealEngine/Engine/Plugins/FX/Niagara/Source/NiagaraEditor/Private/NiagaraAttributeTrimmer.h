@@ -26,7 +26,6 @@ class FNiagaraAttributeTrimmerHelper : public GraphBridge
 	using FDependencySet = TSet<FModuleScopedPin>;
 	struct FCustomHlslNodeInfo
 	{
-		bool bHasDataInterfaceInputs = false;
 		bool bHasImpureFunctionText = false;
 	};
 
@@ -36,6 +35,11 @@ class FNiagaraAttributeTrimmerHelper : public GraphBridge
 	{
 		FDependencySet Pins;
 		FCustomHlslNodeMap CustomNodes;
+	};
+
+	struct FTrimAttributeCache
+	{
+		FCustomHlslNodeMap CustomNodeCache;
 	};
 
 	using FDependencyMap = TMap<FModuleScopedPin, FDependencyChain>;
@@ -52,8 +56,13 @@ class FNiagaraAttributeTrimmerHelper : public GraphBridge
 	// for a specific read of a variable finds the actual name of the attribute being read
 	static FName FindAttributeForRead(const FParamMapHistory& ParamMap, const FModuleScopedPin& ReadPin);
 
+	// for a given pin search through the variables of the parameter map and try to resolve any potential ambiguity with module namespaces
+	static FName FindParameterMapVariable(const FParamMapHistory& ParamMap, const FModuleScopedPin& Pin);
+
 	// given the set of expressions (as defined in FindDependencies above) we resolve the named attribute aggregating the dependent reads and custom nodes
 	static void ResolveDependencyChain(const FParamMapHistory& ParamMap, const FDependencyMap& DependencyData, const FName& AttributeName, FDependencyChain& ResolvedDependencies);
+
+	static void BuildCustomHlslNodeInfo(FTrimAttributeCache& Cache, const FCustomHlslNode* CustomNode, FCustomHlslNodeInfo& NodeInfo);
 
 public:
 	static void TrimAttributes_Safe(TConstArrayView<const FParamMapHistory*> LocalParamHistories, TSet<FName>& AttributesToPreserve, TArray<FNiagaraVariable>& Attributes);

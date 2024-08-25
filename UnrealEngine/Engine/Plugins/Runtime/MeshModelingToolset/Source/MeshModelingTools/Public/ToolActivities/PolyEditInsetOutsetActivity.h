@@ -20,21 +20,21 @@ class MESHMODELINGTOOLS_API UPolyEditInsetOutsetProperties : public UInteractive
 
 public:
 	/** Amount of smoothing applied to outset boundary */
-	UPROPERTY(EditAnywhere, Category = "Inset/Outset", 
+	UPROPERTY(EditAnywhere, Category = "Region", 
 		meta = (UIMin = "0.0", UIMax = "1.0", EditCondition = "bBoundaryOnly == false"))
 	float Softness = 0.5;
 
 	/** Controls whether outset operation will move interior vertices as well as border vertices */
-	UPROPERTY(EditAnywhere, Category = "Inset/Outset", AdvancedDisplay)
+	UPROPERTY(EditAnywhere, Category = "Region", AdvancedDisplay)
 	bool bBoundaryOnly = false;
 
 	/** Tweak area scaling when solving for interior vertices */
-	UPROPERTY(EditAnywhere, Category = "Inset/Outset", AdvancedDisplay, 
+	UPROPERTY(EditAnywhere, Category = "Region", AdvancedDisplay, 
 		meta = (UIMin = "0.0", UIMax = "1.0", EditCondition = "bBoundaryOnly == false"))
 	float AreaScale = true;
 
 	/** When insetting, determines whether vertices in inset region should be projected back onto input surface */
-	UPROPERTY(EditAnywhere, Category = "Inset/Outset", Meta = (EditCondition = "!bOutset", HideEditConditionToggle, EditConditionHides))
+	UPROPERTY(EditAnywhere, Category = "Region", Meta = (EditCondition = "!bOutset", HideEditConditionToggle, EditConditionHides))
 	bool bReproject = true;
 
 	//~ This is not user editable- it gets set by PolyEdit depending on whether the user clicks

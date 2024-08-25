@@ -337,15 +337,17 @@ void ScatterTilesToObjects(
 
 FIntPoint GetTileListGroupSizeForView(const FViewInfo& View)
 {
+	const FIntPoint AOViewSize = View.ViewRect.Size() / GAODownsampleFactor;
 	return FIntPoint(
-		FMath::DivideAndRoundUp(FMath::Max(View.ViewRect.Size().X / GAODownsampleFactor, 1), GDistanceFieldAOTileSizeX),
-		FMath::DivideAndRoundUp(FMath::Max(View.ViewRect.Size().Y / GAODownsampleFactor, 1), GDistanceFieldAOTileSizeY));
+		FMath::DivideAndRoundUp(FMath::Max(AOViewSize.X, 1), GDistanceFieldAOTileSizeX),
+		FMath::DivideAndRoundUp(FMath::Max(AOViewSize.Y, 1), GDistanceFieldAOTileSizeY));
 }
 
 void BuildTileObjectLists(
 	FRDGBuilder& GraphBuilder,
 	const FScene& Scene,
-	TArray<FViewInfo>& Views,
+	const FViewInfo& View,
+	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTexturesUniformBuffer,
 	FRDGBufferRef ObjectIndirectArguments,
 	const FDistanceFieldCulledObjectBufferParameters& CulledObjectBufferParameters,
 	FTileIntersectionParameters TileIntersectionParameters,
@@ -355,64 +357,57 @@ void BuildTileObjectLists(
 	ensure(GAOScatterTileCulling);
 
 	RDG_EVENT_SCOPE(GraphBuilder, "BuildTileList");
+	RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
 
-	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTexturesUniformBuffer = GetViewFamilyInfo(Views).GetSceneTextures().UniformBuffer;
+	const FIntPoint TileListGroupSize = GetTileListGroupSizeForView(View);
 
-	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
-		const FViewInfo& View = Views[ViewIndex];
-		RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
+		auto* PassParameters = GraphBuilder.AllocParameters<FBuildTileConesCS::FParameters>();
+		PassParameters->View = View.ViewUniformBuffer;
+		PassParameters->RWTileConeAxisAndCos = TileIntersectionParameters.RWTileConeAxisAndCos;
+		PassParameters->RWTileConeDepthRanges = TileIntersectionParameters.RWTileConeDepthRanges;
+		PassParameters->SceneTextures = SceneTexturesUniformBuffer;
+		PassParameters->DistanceFieldNormalTexture = DistanceFieldNormal;
+		PassParameters->DistanceFieldNormalSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+		PassParameters->AOParameters = DistanceField::SetupAOShaderParameters(Parameters);
+		PassParameters->NumGroups = FVector2f(TileListGroupSize.X, TileListGroupSize.Y);
 
-		const FIntPoint TileListGroupSize = GetTileListGroupSizeForView(View);
+		auto ComputeShader = View.ShaderMap->GetShader<FBuildTileConesCS>();
 
-		{
-			auto* PassParameters = GraphBuilder.AllocParameters<FBuildTileConesCS::FParameters>();
-			PassParameters->View = View.ViewUniformBuffer;
-			PassParameters->RWTileConeAxisAndCos = TileIntersectionParameters.RWTileConeAxisAndCos;
-			PassParameters->RWTileConeDepthRanges = TileIntersectionParameters.RWTileConeDepthRanges;
-			PassParameters->SceneTextures = SceneTexturesUniformBuffer;
-			PassParameters->DistanceFieldNormalTexture = DistanceFieldNormal;
-			PassParameters->DistanceFieldNormalSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-			PassParameters->AOParameters = DistanceField::SetupAOShaderParameters(Parameters);
-			PassParameters->NumGroups = FVector2f(TileListGroupSize.X, TileListGroupSize.Y);
-
-			auto ComputeShader = View.ShaderMap->GetShader<FBuildTileConesCS>();
-
-			FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("BuildTileCones"), ComputeShader, PassParameters, FIntVector(TileListGroupSize.X, TileListGroupSize.Y, 1));
-		}
-
-		// Start at 0 tiles per object
-		AddClearUAVPass(GraphBuilder, TileIntersectionParameters.RWNumCulledTilesArray, 0);
-
-		// Rasterize object bounding shapes and intersect with screen tiles to compute how many tiles intersect each object
-		ScatterTilesToObjects(GraphBuilder, true, View, Scene.DistanceFieldSceneData, TileListGroupSize, Parameters, ObjectIndirectArguments, CulledObjectBufferParameters, TileIntersectionParameters, SceneTexturesUniformBuffer);
-
-		// Start at 0 threadgroups
-		AddClearUAVPass(GraphBuilder, TileIntersectionParameters.RWObjectTilesIndirectArguments, 0);
-
-		{
-			auto* PassParameters = GraphBuilder.AllocParameters<FComputeCulledTilesStartOffsetCS::FParameters>();
-			PassParameters->View = View.ViewUniformBuffer;
-			PassParameters->TileIntersectionParameters = TileIntersectionParameters;
-			PassParameters->DistanceFieldCulledObjectBuffers = CulledObjectBufferParameters;
-			PassParameters->DistanceFieldAtlas = DistanceField::SetupAtlasParameters(GraphBuilder, Scene.DistanceFieldSceneData);
-			PassParameters->SceneTextures = SceneTexturesUniformBuffer;
-
-			auto ComputeShader = View.ShaderMap->GetShader<FComputeCulledTilesStartOffsetCS>();
-			const FIntVector GroupCount = FComputeShaderUtils::GetGroupCountWrapped(Scene.DistanceFieldSceneData.NumObjectsInBuffer, ComputeStartOffsetGroupSize);
-
-			FComputeShaderUtils::AddPass(
-				GraphBuilder,
-				RDG_EVENT_NAME("ComputeStartOffsets"),
-				ComputeShader,
-				PassParameters,
-				GroupCount);
-		}
-
-		// Start at 0 tiles per object
-		AddClearUAVPass(GraphBuilder, TileIntersectionParameters.RWNumCulledTilesArray, 0);
-
-		// Rasterize object bounding shapes and intersect with screen tiles, and write out intersecting tile indices for the cone tracing pass
-		ScatterTilesToObjects(GraphBuilder, false, View, Scene.DistanceFieldSceneData, TileListGroupSize, Parameters, ObjectIndirectArguments, CulledObjectBufferParameters, TileIntersectionParameters, SceneTexturesUniformBuffer);
+		FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("BuildTileCones"), ComputeShader, PassParameters, FIntVector(TileListGroupSize.X, TileListGroupSize.Y, 1));
 	}
+
+	// Start at 0 tiles per object
+	AddClearUAVPass(GraphBuilder, TileIntersectionParameters.RWNumCulledTilesArray, 0);
+
+	// Start at 0 threadgroups
+	AddClearUAVPass(GraphBuilder, TileIntersectionParameters.RWObjectTilesIndirectArguments, 0);
+
+	// Rasterize object bounding shapes and intersect with screen tiles to compute how many tiles intersect each object
+	ScatterTilesToObjects(GraphBuilder, true, View, Scene.DistanceFieldSceneData, TileListGroupSize, Parameters, ObjectIndirectArguments, CulledObjectBufferParameters, TileIntersectionParameters, SceneTexturesUniformBuffer);
+
+	{
+		auto* PassParameters = GraphBuilder.AllocParameters<FComputeCulledTilesStartOffsetCS::FParameters>();
+		PassParameters->View = View.ViewUniformBuffer;
+		PassParameters->TileIntersectionParameters = TileIntersectionParameters;
+		PassParameters->DistanceFieldCulledObjectBuffers = CulledObjectBufferParameters;
+		PassParameters->DistanceFieldAtlas = DistanceField::SetupAtlasParameters(GraphBuilder, Scene.DistanceFieldSceneData);
+		PassParameters->SceneTextures = SceneTexturesUniformBuffer;
+
+		auto ComputeShader = View.ShaderMap->GetShader<FComputeCulledTilesStartOffsetCS>();
+		const FIntVector GroupCount = FComputeShaderUtils::GetGroupCountWrapped(Scene.DistanceFieldSceneData.NumObjectsInBuffer, ComputeStartOffsetGroupSize);
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("ComputeStartOffsets"),
+			ComputeShader,
+			PassParameters,
+			GroupCount);
+	}
+
+	// Start at 0 tiles per object
+	AddClearUAVPass(GraphBuilder, TileIntersectionParameters.RWNumCulledTilesArray, 0);
+
+	// Rasterize object bounding shapes and intersect with screen tiles, and write out intersecting tile indices for the cone tracing pass
+	ScatterTilesToObjects(GraphBuilder, false, View, Scene.DistanceFieldSceneData, TileListGroupSize, Parameters, ObjectIndirectArguments, CulledObjectBufferParameters, TileIntersectionParameters, SceneTexturesUniformBuffer);
 }

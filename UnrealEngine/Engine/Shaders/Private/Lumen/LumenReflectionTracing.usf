@@ -22,22 +22,25 @@
 
 #define DEBUG_VISUALIZE_TRACE_TYPES 0
 
-RWTexture2D<float> RWTraceHit;
-RWTexture2D<float3> RWTraceRadiance;
-RWTexture2D<uint> RWTraceMaterialId;
+RWTexture2DArray<float>  RWTraceHit;
+RWTexture2DArray<float3> RWTraceRadiance;
+RWTexture2DArray<uint>   RWTraceMaterialId;
 
 [numthreads(REFLECTION_THREADGROUP_SIZE_1D, 1, 1)]
 void ReflectionClearTracesCS(
 	uint GroupId : SV_GroupID,
 	uint GroupThreadId : SV_GroupThreadID)
 {
-	uint2 ReflectionTracingCoord = GetReflectionTracingScreenCoord(GroupId, GroupThreadId);
-	RWTraceRadiance[ReflectionTracingCoord] = 0.0f;
-	RWTraceHit[ReflectionTracingCoord] = EncodeRayDistance(0.0f, false);
+	FReflectionTileData TileData;
+	uint2 TmpReflectionTracingCoord = GetReflectionTracingScreenCoord(GroupId/*TileCoord*/, GroupThreadId/*InnerTileCoord*/, TileData).xy;
+	const FReflectionTracingCoord ReflectionTracingCoord = GetReflectionTracingCoord(TmpReflectionTracingCoord, TileData.ClosureIndex);
+
+	RWTraceRadiance[ReflectionTracingCoord.CoordFlatten] = 0.0f;
+	RWTraceHit[ReflectionTracingCoord.CoordFlatten] = EncodeRayDistance(0.0f, false);
 
 	#if CLEAT_TRACE_MATERIAL_ID
 	{
-		RWTraceMaterialId[ReflectionTracingCoord] = PackTraceMaterialId(false, 0);
+		RWTraceMaterialId[ReflectionTracingCoord.CoordFlatten] = PackTraceMaterialId(false, 0);
 	}
 	#endif
 }
@@ -54,30 +57,34 @@ void ReflectionTraceScreenTexturesCS(
 	uint GroupId : SV_GroupID,
 	uint GroupThreadId : SV_GroupThreadID)
 {
-	const FReflectionTracingCoord ReflectionTracingCoord = GetReflectionTracingCoord(GetReflectionTracingScreenCoord(GroupId, GroupThreadId));
+	FReflectionTileData TileData;
+	const uint2 TmpReflectionTracingCoord = GetReflectionTracingScreenCoord(GroupId/*TileCoord*/, GroupThreadId/*InnerTileCoord*/, TileData).xy;
+	const FReflectionTracingCoord ReflectionTracingCoord = GetReflectionTracingCoord(TmpReflectionTracingCoord, TileData.ClosureIndex);
 
 	if (all(ReflectionTracingCoord.Coord < ReflectionTracingViewSize))
 	{
 		float2 ScreenUV = GetScreenUVFromReflectionTracingCoord(ReflectionTracingCoord.Coord);
-		float SceneDepth = DownsampledDepth.Load(int3(ReflectionTracingCoord.CoordFlatten, 0)).x;
+		float SceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten, 0)).x;
 
 		if (SceneDepth > 0.0f)
 		{
 			float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
-			float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+			float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 			FRayData RayData = GetRayData(ReflectionTracingCoord.CoordFlatten);
 
 			float3 TranslatedRayOrigin = TranslatedWorldPosition;
 
-#if !STRATA_ENABLED
 			// Bias along the normal to avoid self-intersecting camera facing scene depth texels
 			// HZB traversal uses point filtering, so scene depth texels stick out from the plane they are representing
 			{
 				float2 CornerScreenUV = ScreenUV + .5f * View.BufferSizeAndInvSize.zw;
 				float2 CornerScreenPosition = (CornerScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
 				float3 CornerTranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(CornerScreenPosition, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-				float3 WorldNormal = GetGBufferDataFromSceneTextures(ScreenUV).WorldNormal;
-
+			#if SUBSTRATE_ENABLED
+				const float3 WorldNormal = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(CornerScreenUV * View.BufferSizeAndInvSize.xy, 0))).WorldNormal;
+			#else
+				const float3 WorldNormal = GetGBufferDataFromSceneTextures(ScreenUV).WorldNormal;
+			#endif
 				// Project texel corner onto normal
 				float NormalBias = abs(dot(CornerTranslatedWorldPosition - TranslatedWorldPosition, WorldNormal)) * 2;
 				TranslatedRayOrigin += NormalBias * WorldNormal;
@@ -90,7 +97,6 @@ void ReflectionTraceScreenTexturesCS(
 					return;
 				}
 			}
-#endif
 
 			bool bHit;
 			bool bUncertain;
@@ -155,10 +161,10 @@ void ReflectionTraceScreenTexturesCS(
 				float2 HitScreenPosition = (HitUVz.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
 				float HitDeviceZ = HitTileZ;
 
-				float3 HitHistoryScreenPosition = GetPrevScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+				float3 HitHistoryScreenPosition = GetHistoryScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
 
 				float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
-				float Noise = InterleavedGradientNoise(ReflectionTracingCoord.Coord + 0.5f, SCREEN_TEMPORAL_INDEX);
+				float Noise = InterleavedGradientNoise(ReflectionTracingCoord.Coord + 0.5f, ReflectionsStateFrameIndexMod8);
 
 				// Skip reporting a hit if near the edge of the screen
 				if (Vignette < Noise)
@@ -166,7 +172,7 @@ void ReflectionTraceScreenTexturesCS(
 					bHit = false;
 					HitUVz = LastVisibleHitUVz;
 				}
-
+	
 				if (bHit)
 				{
 					// Calculate the expected depth of the pixel last frame
@@ -224,7 +230,7 @@ uint CompactionThreadGroupSize;
 void SetupCompactionIndirectArgsCS(uint GroupThreadId : SV_GroupThreadID)
 {
 	uint NumTracingThreads = ReflectionTracingTileIndirectArgs[0] * REFLECTION_THREADGROUP_SIZE_1D;
-	uint NumCompactionGroups = (NumTracingThreads + CompactionThreadGroupSize - 1) / CompactionThreadGroupSize;
+	uint NumCompactionGroups = DivideAndRoundUp(NumTracingThreads, CompactionThreadGroupSize);
 
 	if (GroupThreadId < 3)
 	{
@@ -249,7 +255,7 @@ float CompactionTracingEndDistanceFromCamera;
 float CompactionMaxTraceDistance;
 float NearFieldMaxTraceDistance;
 float FarFieldDitheredStartDistanceFactor;
-Texture2D<uint> TraceMaterialId;
+Texture2DArray<uint> TraceMaterialId;
 
 groupshared uint SharedGlobalTraceTexelStartOffset;
 
@@ -291,12 +297,14 @@ void ReflectionCompactTracesCS(
 
 	if (ReflectionTileIndex < ReflectionTracingTileIndirectArgs[0])
 	{
-		const FReflectionTracingCoord ReflectionTracingCoord = GetReflectionTracingCoord(GetReflectionTracingScreenCoordZOrder(ReflectionTileIndex, ReflectionGroupThreadId));
+		FReflectionTileData TileData;
+		const uint2 TmpReflectionTracingCoord = GetReflectionTracingScreenCoordZOrder(ReflectionTileIndex/*TileCoord*/, ReflectionGroupThreadId/*InnerTileCoord*/, TileData);
+		const FReflectionTracingCoord ReflectionTracingCoord = GetReflectionTracingCoord(TmpReflectionTracingCoord, TileData.ClosureIndex);
 
 		if (all(ReflectionTracingCoord.Coord < ReflectionTracingViewSize))
 		{
 			float2 ScreenUV = GetScreenUVFromReflectionTracingCoord(ReflectionTracingCoord.Coord);
-			float SceneDepth = DownsampledDepth.Load(int3(ReflectionTracingCoord.CoordFlatten, 0)).x;
+			float SceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten, 0)).x;
 
 			bool bHit;
 			float TraceHitDistance = DecodeRayDistance(TraceHit[ReflectionTracingCoord.CoordFlatten].x, bHit);
@@ -330,11 +338,11 @@ void ReflectionCompactTracesCS(
 #if ORDERED_COMPACTION
 				bTraceValid = true;
 				SharedTexelValid[GroupThreadId] = 1;
-				TraceTexelForThisThread = EncodeTraceTexel(ReflectionTracingCoord.CoordFlatten);
+				TraceTexelForThisThread = EncodeTraceTexel(ReflectionTracingCoord.Coord, ReflectionTracingCoord.ClosureIndex);
 #else
 				uint SharedTexelOffset;
 				InterlockedAdd(SharedTraceTexelAllocator, 1, SharedTexelOffset);
-				SharedTraceTexels[SharedTexelOffset] = EncodeTraceTexel(ReflectionTracingCoord.CoordFlatten);
+				SharedTraceTexels[SharedTexelOffset] = EncodeTraceTexel(ReflectionTracingCoord.Coord, ReflectionTracingCoord.ClosureIndex);
 #endif
 			}
 		}
@@ -407,10 +415,13 @@ RWBuffer<uint> RWReflectionCompactRayTraceDispatchIndirectArgs;
 void SetupCompactedTracesIndirectArgsCS()
 {
 	// THREADGROUP_SIZE_64
-	WriteDispatchIndirectArgs(RWReflectionCompactTracingIndirectArgs, 0, (CompactedTraceTexelAllocator[0] + 64 - 1) / 64, 1, 1);
+	WriteDispatchIndirectArgs(RWReflectionCompactTracingIndirectArgs, 0, DivideAndRoundUp(CompactedTraceTexelAllocator[0],64u), 1, 1);
 
 	// THREADGROUP_SIZE_32
-	WriteDispatchIndirectArgs(RWReflectionCompactTracingIndirectArgs, 1, (CompactedTraceTexelAllocator[0] + 32 - 1) / 32, 1, 1);
+	WriteDispatchIndirectArgs(RWReflectionCompactTracingIndirectArgs, 1, DivideAndRoundUp(CompactedTraceTexelAllocator[0],32u), 1, 1);
+
+	// THREADGROUP_SIZE_256
+	WriteDispatchIndirectArgs(RWReflectionCompactTracingIndirectArgs, 2, DivideAndRoundUp(CompactedTraceTexelAllocator[0],256u), 1, 1);
 
 	// Ray tracing dispatch dimensions are defined simply in terms of threads/rays, not thread groups.
 	WriteDispatchIndirectArgs(RWReflectionCompactRayTraceDispatchIndirectArgs, 0, CompactedTraceTexelAllocator[0], 1, 1);
@@ -420,12 +431,27 @@ void SetupCompactedTracesIndirectArgsCS()
 	#define THREADGROUP_SIZE_1D 1
 #endif
 #define NUM_BINS (THREADGROUP_SIZE_1D / 2)
-groupshared uint BinSize[NUM_BINS];
-groupshared uint BinOffset[NUM_BINS];
+groupshared uint Bins[NUM_BINS];
+
+#if DIM_WAVE_OPS
+#define MIN_SUPPORTED_WAVE_SIZE 32
+#define NUM_WAVE_SUMS ((NUM_BINS+MIN_SUPPORTED_WAVE_SIZE-1) / MIN_SUPPORTED_WAVE_SIZE)
+groupshared uint WaveSums[NUM_WAVE_SUMS];
+#define Offsets Bins // No need for a separate array of offsets as prefix sum is computed in-place
+#else // DIM_WAVE_OPS
+#if NUM_BINS > 0
+groupshared uint Offsets[NUM_BINS];
+#else
+groupshared uint Offsets[1];
+#endif
+#endif // DIM_WAVE_OPS
 
 #define ELEMENTS_PER_THREAD 16
 #define NUM_ELEMENTS THREADGROUP_SIZE_1D * ELEMENTS_PER_THREAD
 
+#if COMPILER_SUPPORTS_WAVE_SIZE && WAVE_OPS
+	WAVESIZE(32)
+#endif
 [numthreads(THREADGROUP_SIZE_1D, 1, 1)]
 void ReflectionSortTracesByMaterialCS(
 	uint GroupId : SV_GroupID,
@@ -435,8 +461,8 @@ void ReflectionSortTracesByMaterialCS(
 
 	if (GroupThreadId < NUM_BINS)
 	{
-		BinSize[GroupThreadId] = 0;
-		BinOffset[GroupThreadId] = 0;
+		Bins[GroupThreadId] = 0;
+		Offsets[GroupThreadId] = 0;
 	}
 
 	GroupMemoryBarrierWithGroupSync();
@@ -458,19 +484,46 @@ void ReflectionSortTracesByMaterialCS(
 			TraceDataCache[i / THREADGROUP_SIZE_1D] = PackedTraceData;
 			TraceBinCache[i / THREADGROUP_SIZE_1D] = BinIndex;
 
-			InterlockedAdd(BinSize[BinIndex], 1, Hash[i / THREADGROUP_SIZE_1D]);
+			InterlockedAdd(Bins[BinIndex], 1, Hash[i / THREADGROUP_SIZE_1D]);
 		}
 	}
 
 	GroupMemoryBarrierWithGroupSync();
 
+#if DIM_WAVE_OPS
+	{
+		const uint WaveIndex = GroupThreadId / WaveGetLaneCount();
+		const uint LaneIndex = WaveGetLaneIndex();
+		uint Value = 0;
+		if (GroupThreadId < NUM_BINS)
+		{
+			Value = Bins[GroupThreadId];
+			uint ThisWaveSum = WaveActiveSum(Value);
+			if (LaneIndex == 0)
+			{
+				WaveSums[WaveIndex] = ThisWaveSum;
+			}
+		}
+		GroupMemoryBarrierWithGroupSync();
+		if (WaveIndex == 0 && LaneIndex < NUM_WAVE_SUMS)
+		{
+			WaveSums[LaneIndex] = WavePrefixSum(WaveSums[LaneIndex]);
+		}
+		GroupMemoryBarrierWithGroupSync();
+		if (GroupThreadId < NUM_BINS)
+		{
+			Offsets[GroupThreadId] = WaveSums[WaveIndex] + WavePrefixSum(Value);
+		}
+	}
+#else // DIM_WAVE_OPS
 	if (GroupThreadId < NUM_BINS)
 	{
 		for (int i = 0; i < GroupThreadId; ++i)
 		{
-			BinOffset[GroupThreadId] += BinSize[i];
+			Offsets[GroupThreadId] += Bins[i];
 		}
 	}
+#endif // DIM_WAVE_OPS
 
 	GroupMemoryBarrierWithGroupSync();
 
@@ -480,7 +533,7 @@ void ReflectionSortTracesByMaterialCS(
 		if (RayIndex < CompactedTraceTexelAllocator[0])
 		{
 			uint BinIndex = TraceBinCache[i / THREADGROUP_SIZE_1D];
-			uint OutputIndex = GroupOffset + BinOffset[BinIndex] + Hash[i / THREADGROUP_SIZE_1D];
+			uint OutputIndex = GroupOffset + Offsets[BinIndex] + Hash[i / THREADGROUP_SIZE_1D];
 
 			RWCompactedTraceTexelData[OutputIndex] = TraceDataCache[i / THREADGROUP_SIZE_1D];
 		}
@@ -507,7 +560,7 @@ float MaxMeshSDFTraceDistance;
 void TraceMeshSDFs(FReflectionTracingCoord ReflectionTracingCoord, float TraceHitDistance)
 {
 	float2 ScreenUV = GetScreenUVFromReflectionTracingCoord(ReflectionTracingCoord.Coord);
-	float SceneDepth = DownsampledDepth.Load(int3(ReflectionTracingCoord.CoordFlatten, 0)).x;
+	float SceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten, 0)).x;
 
 	float3 WorldPosition = GetWorldPositionFromScreenUV(ScreenUV, SceneDepth);
 	float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
@@ -525,7 +578,7 @@ void TraceMeshSDFs(FReflectionTracingCoord ReflectionTracingCoord, float TraceHi
 	TraceInput.Setup(SamplePosition, SampleTranslatedPosition, RayData.Direction, RayCone.SpreadAngle, 0.0f, max(TraceHitDistance - PullbackForSurfaceExpand, 0.0f), RayData.RadianceCacheMaxTraceDistance, 1.0f);
 	TraceInput.bHiResSurface = UseHighResSurface != 0;
 	TraceInput.VoxelTraceStartDistance = MaxMeshSDFTraceDistance;
-	TraceInput.DitherScreenCoord = ReflectionTracingCoord.CoordFlatten;
+	TraceInput.DitherScreenCoord = ReflectionTracingCoord.CoordFlatten.xy;
 
 	uint CardGridCellIndex = ComputeCardGridCellIndex(ReflectionTracingCoord.Coord * ReflectionDownsampleFactor, SceneDepth);
 	TraceInput.NumMeshSDFs = NumGridCulledMeshSDFObjects[CardGridCellIndex];
@@ -577,7 +630,7 @@ void TraceMeshSDFs(FReflectionTracingCoord ReflectionTracingCoord, float TraceHi
 	float Transparency = TraceResult.Transparency;
 	float OpaqueHitDistance = TraceResult.OpaqueHitDistance;
 
-	float DistanceFromViewpoint = length(LWCHackToFloat(PrimaryView.WorldCameraOrigin) - WorldPosition);
+	float DistanceFromViewpoint = GetDistanceToCameraFromViewVector(DFHackToFloat(PrimaryView.WorldCameraOrigin) - WorldPosition);
 	float DistanceFade = saturate(4 * DistanceFromViewpoint / CardTraceEndDistanceFromCamera - 3);
 	DistanceFade = max(DistanceFade, saturate((OpaqueHitDistance - MaxMeshSDFTraceDistance * .7f) / (MaxMeshSDFTraceDistance * .3f)));
 
@@ -638,7 +691,7 @@ void ReflectionTraceMeshSDFsCS(uint DispatchThreadId : SV_DispatchThreadID)
 void TraceVoxels(FReflectionTracingCoord ReflectionTracingCoord, float TraceHitDistance)
 {
 	float2 ScreenUV = GetScreenUVFromReflectionTracingCoord(ReflectionTracingCoord.Coord);
-	float SceneDepth = DownsampledDepth.Load(int3(ReflectionTracingCoord.CoordFlatten, 0)).x;
+	float SceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten, 0)).x;
 
 	float3 WorldPosition = GetWorldPositionFromScreenUV(ScreenUV, SceneDepth); // LUMEN_LWC_TODO
 	float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
@@ -665,7 +718,7 @@ void TraceVoxels(FReflectionTracingCoord ReflectionTracingCoord, float TraceHitD
 	TraceInput.InitialMaxDistance = 0;
 
 	// Dither step factor to smooth out SDF stepping artifacts, but only when near mirror
-	float StepFactorNoise = lerp(.95f, 1.0f / .95f, InterleavedGradientNoise(ReflectionTracingCoord.Coord, View.StateFrameIndexMod8));
+	float StepFactorNoise = lerp(.95f, 1.0f / .95f, InterleavedGradientNoise(ReflectionTracingCoord.Coord, ReflectionsStateFrameIndexMod8));
 	TraceInput.SDFStepFactor = lerp(StepFactorNoise, 1.0f, saturate(RayData.ConeHalfAngle / (PI / 256.0f)));
 
 	FConeTraceResult TraceResult = (FConeTraceResult)0;
@@ -744,15 +797,26 @@ void TraceVoxels(FReflectionTracingCoord ReflectionTracingCoord, float TraceHitD
 
 		if (MaxTraceDistanceForDistantScreenTrace > 0)
 		{
-			DistantScreenTrace(
-				ReflectionTracingCoord.Coord + 0.5f,
-				HZBUvFactorAndInvFactor,
-				TranslatedDistantRayOrigin,
-				RayData.Direction,
-				MaxTraceDistanceForDistantScreenTrace,
-				SceneDepth,
-				bHit,
-				TraceResult.Lighting);
+			float4 StartRayClip = mul(float4(TranslatedDistantRayOrigin, 1.0), View.TranslatedWorldToClip);
+
+			// If we start tracing from outside the screen (from a position on the screen) then we know we will never hit any valueable screen information.
+			// So we skip the tracing if the start position is clipped outside of the view frustum.
+			if (StartRayClip.w >= 0.0 && all(-StartRayClip.ww <= StartRayClip.xy) && all(StartRayClip.xy <= StartRayClip.ww))
+			{
+				// Update SceneDepth according to the new start position moved to the edge of the clipmap. This is important for the SSR HZB tracing to be correct.
+				float StartRayDeviceZ = StartRayClip.z / StartRayClip.w;
+				float DistantTracingSceneDepth = ConvertFromDeviceZ(StartRayDeviceZ);
+
+				DistantScreenTrace(
+					ReflectionTracingCoord.Coord + 0.5f,
+					HZBUvFactorAndInvFactor,
+					TranslatedDistantRayOrigin,
+					RayData.Direction,
+					MaxTraceDistanceForDistantScreenTrace,
+					DistantTracingSceneDepth,
+					bHit,
+					TraceResult.Lighting);
+			}
 		}
 	}
 #endif
@@ -762,7 +826,7 @@ void TraceVoxels(FReflectionTracingCoord ReflectionTracingCoord, float TraceHitD
 #if RADIANCE_CACHE
 		if (RayData.RadianceCacheMaxTraceDistance < MaxTraceDistance * .99f)
 		{
-			FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(WorldPosition, RayData.Direction, InterleavedGradientNoise(ReflectionTracingCoord.Coord, View.StateFrameIndexMod8));
+			FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(WorldPosition, RayData.Direction, InterleavedGradientNoise(ReflectionTracingCoord.Coord, ReflectionsStateFrameIndexMod8));
 			SampleRadianceCacheAndApply(Coverage, WorldPosition, RayData.Direction, RayData.ConeHalfAngle, TraceResult.Lighting, TraceResult.Transparency);
 			TraceHitDistance = RayData.RadianceCacheMaxTraceDistance;
 		}
@@ -827,17 +891,17 @@ void VisualizeReflectionTracesCS(
 
 		if (all(QueryProbeScreenPosition > 0) && all(QueryProbeScreenPosition < ReflectionTracingViewSize))
 		{
-			const FReflectionTracingCoord ReflectionTracingCoord = GetReflectionTracingCoord(QueryProbeScreenPosition);
+			const FReflectionTracingCoord ReflectionTracingCoord = GetReflectionTracingCoord(QueryProbeScreenPosition, 0 /*TODO*/);
 			float2 ScreenUV = GetScreenUVFromReflectionTracingCoord(ReflectionTracingCoord.Coord);
-			float SceneDepth = DownsampledDepth.Load(int3(ReflectionTracingCoord.CoordFlatten, 0)).x;
+			float SceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten,0)).x;
 
 			float3 WorldPosition = GetWorldPositionFromScreenUV(ScreenUV, SceneDepth); // LUMEN_LWC_TODO
 			float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
 			FRayData RayData = GetRayData(ReflectionTracingCoord.CoordFlatten);
 
 			bool bHit;
-			float TraceHitDistance = DecodeRayDistance(TraceHit[ReflectionTracingCoord.Coord].x, bHit);
-			float3 RayHitRadiance = TraceRadiance[ReflectionTracingCoord.Coord];
+			float TraceHitDistance = DecodeRayDistance(TraceHit[ReflectionTracingCoord.CoordFlatten].x, bHit);
+			float3 RayHitRadiance = TraceRadiance[ReflectionTracingCoord.CoordFlatten];
 
 			FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.1, 0.1));
 

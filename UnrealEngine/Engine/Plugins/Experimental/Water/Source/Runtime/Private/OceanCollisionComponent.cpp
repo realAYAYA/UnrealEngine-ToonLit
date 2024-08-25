@@ -104,9 +104,8 @@ void UOceanCollisionComponent::UpdateBodySetup(const TArray<FKConvexElem>& Conve
 			ConvexVertices[VertIndex] = Elem.VertexData[VertIndex];
 		}
 
-		TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe> ChaosConvex = MakeShared<Chaos::FConvex, ESPMode::ThreadSafe>(ConvexVertices, 0.0f);
-
-		Elem.SetChaosConvexMesh(MoveTemp(ChaosConvex));
+		Chaos::FConvexPtr ChaosConvex( new Chaos::FConvex(ConvexVertices, 0.0f));
+		Elem.SetConvexMeshObject(MoveTemp(ChaosConvex));
 	}
 
 	RecreatePhysicsState();

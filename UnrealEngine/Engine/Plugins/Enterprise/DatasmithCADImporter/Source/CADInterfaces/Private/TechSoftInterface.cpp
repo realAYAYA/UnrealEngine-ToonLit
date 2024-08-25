@@ -88,8 +88,9 @@ FString GetTechSoftVersion()
 	A3DInt32 MajorVersion = 0, MinorVersion = 0;
 	A3DDllGetVersion(&MajorVersion, &MinorVersion);
 	return FString::Printf(TEXT("Techsoft %d.%d"), MajorVersion, MinorVersion);
-#endif
+#else
 	return FString();
+#endif
 }
 
 #ifdef USE_TECHSOFT_SDK

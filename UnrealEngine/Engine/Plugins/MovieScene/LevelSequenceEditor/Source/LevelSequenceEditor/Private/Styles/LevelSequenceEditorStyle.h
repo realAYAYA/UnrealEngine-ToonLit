@@ -5,6 +5,7 @@
 #include "Misc/Paths.h"
 #include "Brushes/SlateBorderBrush.h"
 #include "Brushes/SlateImageBrush.h"
+#include "Interfaces/IPluginManager.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "Styling/SlateStyle.h"
 #include "Styling/SlateStyleMacros.h"
@@ -26,7 +27,9 @@ public:
 		const FVector2D Icon40x40(40.0f, 40.0f);
 		const FVector2D Icon48x48(48.0f, 48.0f);
 
-		SetContentRoot(FPaths::EnginePluginsDir() / TEXT("MovieScene/LevelSequenceEditor/Content"));
+		const FString ContentDir = IPluginManager::Get().FindPlugin(TEXT("LevelSequenceEditor"))->GetContentDir();
+
+		SetContentRoot(ContentDir);
 		SetCoreContentRoot(FPaths::EngineContentDir() / TEXT("Slate"));
 
 		// tab icons

@@ -691,11 +691,6 @@ namespace Gauntlet
 		public bool AllRolesExit { get; set; }
 
 		/// <summary>
-		/// Whether a given role should attempt login to a device platform service
-		/// </summary>
-		public bool VerifyLogin { get; set; }
-
-		/// <summary>
 		/// The collection of options which define heartbeat behavior
 		/// </summary>
 		public UnrealHeartbeatOptions HeartbeatOptions { get; set; }
@@ -874,24 +869,31 @@ namespace Gauntlet
 		/// <returns></returns>
 		public UnrealTestRole GetMainRequiredRole()
 		{
-			var ClientRoles = GetRequiredRoles(UnrealTargetRole.Client);
-			if (ClientRoles.Any())
+			var PriorityList = new UnrealTargetRole[] {
+				UnrealTargetRole.Client,
+				UnrealTargetRole.EditorGame,
+				UnrealTargetRole.Server,
+				UnrealTargetRole.EditorServer,
+				UnrealTargetRole.Editor,
+				UnrealTargetRole.CookedEditor
+			};
+			foreach (UnrealTargetRole TargetRole in PriorityList)
 			{
-				return ClientRoles.First();
+				IEnumerable<UnrealTestRole> Roles = GetRequiredRoles(TargetRole);
+				if (Roles.Any())
+				{
+					return Roles.First();
+				}
 			}
-			var ServerRoles = GetRequiredRoles(UnrealTargetRole.Server);
-			if (ServerRoles.Any())
+
+			if (RequiredRoles.Any())
 			{
-				return ServerRoles.First();
+				var RoleEnumerator = RequiredRoles.Values.GetEnumerator();
+				RoleEnumerator.MoveNext();
+				return RoleEnumerator.Current.First();
 			}
-			var EditorRoles = GetRequiredRoles(UnrealTargetRole.Editor);
-			if (EditorRoles.Any())
-			{
-				return EditorRoles.First();
-			}
-			var RoleEnumerator = RequiredRoles.Values.GetEnumerator();
-			RoleEnumerator.MoveNext();
-			return RoleEnumerator.Current.First();
+
+			return new UnrealTestRole(UnrealTargetRole.Unknown, null);
 		}
 
 		/// <summary>
@@ -957,8 +959,8 @@ namespace Gauntlet
 				AppConfig.CommandLine += " -RemoveInvalidKeys";
 			}
 
-			// use -log on servers so we get a window..
-			if (AppConfig.ProcessType.IsServer())
+			// use -log on user machine so we get a window..
+			if (!AutomationTool.Automation.IsBuildMachine)
 			{
 				AppConfig.CommandLine += " -log";
 			}
@@ -979,7 +981,7 @@ namespace Gauntlet
 				}
 			}
 
-			AppConfig.CommandLine += " -stdout -AllowStdOutLogVerbosity";
+			AppConfig.CommandLine += " -stdout -FullStdOutLogOutput";
 
 			float HeartbeatPeriod = Globals.Params.ParseValue("HeartbeatPeriod", HeartbeatOptions.HeartbeatPeriod);
 			if (HeartbeatPeriod > 0)
@@ -996,11 +998,6 @@ namespace Gauntlet
 				{
 					AppConfig.CommandLineParams.GameMap = MapChoice;
 				}
-			}
-
-			if (ConfigRole.RoleType.IsClient())
-			{
-				VerifyLogin = Globals.Params.ParseParam("VerifyLogin");
 			}
 
 			if (CommandUtils.IsBuildMachine)

@@ -47,6 +47,9 @@ Texture2D SSAO_DownsampledAO;
 SamplerState SSAO_Sampler;
 
 float2 SSAO_DownsampledAOInverseSize;
+float2 SSAO_DownsampledAOUVViewportMin;
+float2 SSAO_DownsampledAOUVViewportMax;
+float2 SSAO_SvPositionScaleBias;
 
 // could be moved to a more central spot
 // @param ScreenPos -1 .. 1
@@ -106,12 +109,12 @@ float3 GetWorldSpaceNormalFromAOInput(float2 UV, float4 SvPosition)
 		// Async compute and forward shading don't have access to the gbuffer.
 		WorldNormal = ReconstructNormalFromDepthBuffer(SvPosition);
 	#else
-#if STRATA_ENABLED
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(SvPosition.xy, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-		FStrataPixelHeader StrataHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-		if (StrataHeader.StrataGetBSDFType() != STRATA_BSDF_TYPE_HAIR)
+#if SUBSTRATE_ENABLED
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(SvPosition.xy, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		FSubstratePixelHeader SubstrateHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+		if (SubstrateHeader.SubstrateGetBSDFType() != SUBSTRATE_BSDF_TYPE_HAIR)
 		{
-			const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(SvPosition.xy, 0)));
+			const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(SvPosition.xy, 0)));
 			WorldNormal = TopLayerData.WorldNormal;
 		}
 #else
@@ -166,11 +169,16 @@ float4 ComputeUpsampleContribution(float SceneDepth, float2 InUV, float3 CenterW
 
 	UNROLL for(int i = 0; i < SampleCount; ++i)
 	{
-		float4 SampleValue = Texture2DSample(SSAO_DownsampledAO, SSAO_Sampler, UV[i]);
+#if SHADING_PATH_MOBILE
+		float2 ClampedUV = UV[i];
+#else
+		float2 ClampedUV = clamp(UV[i], SSAO_DownsampledAOUVViewportMin, SSAO_DownsampledAOUVViewportMax);
+#endif
+		float4 SampleValue = Texture2DSample(SSAO_DownsampledAO, SSAO_Sampler, ClampedUV);
 
 		MinIteration = min(MinIteration, SampleValue.g);
 
-		float4 NormalAndSampleDepth = Texture2DSample(SSAO_NormalsTexture, SSAO_Sampler, UV[i]);
+		float4 NormalAndSampleDepth = Texture2DSample(SSAO_NormalsTexture, SSAO_Sampler, ClampedUV);
 		float SampleDepth = NormalAndSampleDepth.a * Constant_Float16F_Scale;
 
 		// when tweaking this constant look for crawling pattern at edges

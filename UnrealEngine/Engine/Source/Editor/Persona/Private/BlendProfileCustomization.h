@@ -19,6 +19,6 @@ public:
 
 private:
 
-	void OnBlendProfileChanged(class UBlendProfile* NewProfile, TSharedPtr<IPropertyHandle> PropertyHandle);
+	void OnBlendProfileChanged(class UBlendProfile* NewProfile, TWeakPtr<IPropertyHandle> WeakPropertyHandle);
 	class USkeleton* GetSkeletonFromOuter(const UObject* Outer);
 };

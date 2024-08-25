@@ -126,13 +126,18 @@ bool FDisplayClusterProjectionManualPolicy::HandleStartScene(IDisplayClusterView
 	return true;
 }
 
+void FDisplayClusterProjectionManualPolicy::SetupProjectionViewPoint(IDisplayClusterViewport* InViewport, const float InDeltaTime, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane)
+{
+	// Add local rotation specified in config
+	InOutViewInfo.Rotation += ViewRotation;
+}
+
 bool FDisplayClusterProjectionManualPolicy::CalculateView(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FVector& InOutViewLocation, FRotator& InOutViewRotation, const FVector& InViewOffset, const float InWorldToMeters, const float InNCP, const float InFCP)
 {
 	check(IsInGameThread());
 	check(InContextNum < 2);
 
-	// Add local rotation specified in config
-	InOutViewRotation += ViewRotation;
+	// View changes are already defined from SetupProjectionViewPoint()
 
 	// Store culling data
 	NCP = InNCP;

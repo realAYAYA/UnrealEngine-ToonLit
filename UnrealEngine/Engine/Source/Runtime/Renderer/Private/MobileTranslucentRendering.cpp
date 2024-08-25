@@ -15,6 +15,6 @@ void FMobileSceneRenderer::RenderTranslucency(FRHICommandList& RHICmdList, const
 		SCOPED_GPU_STAT(RHICmdList, Translucency);
 
 		RHICmdList.SetViewport(View.ViewRect.Min.X, View.ViewRect.Min.Y, 0.0f, View.ViewRect.Max.X, View.ViewRect.Max.Y, 1.0f);
-		View.ParallelMeshDrawCommandPasses[StandardTranslucencyMeshPass].DispatchDraw(nullptr, RHICmdList, &MeshPassInstanceCullingDrawParams[StandardTranslucencyMeshPass]);
+		View.ParallelMeshDrawCommandPasses[StandardTranslucencyMeshPass].DispatchDraw(nullptr, RHICmdList, &TranslucencyInstanceCullingDrawParams);
 	}
 }

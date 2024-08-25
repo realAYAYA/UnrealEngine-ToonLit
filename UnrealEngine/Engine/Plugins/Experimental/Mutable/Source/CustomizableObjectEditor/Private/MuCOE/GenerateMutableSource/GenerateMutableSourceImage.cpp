@@ -30,7 +30,7 @@
 #include "MuCOE/Nodes/CustomizableObjectNodeTextureSaturate.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeTextureVariation.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
-#include "MuCOE/UnrealToMutableTextureConversionUtils.h"
+#include "MuCO/UnrealToMutableTextureConversionUtils.h"
 #include "MuT/NodeImageBinarise.h"
 #include "MuT/NodeImageColourMap.h"
 #include "MuT/NodeImageFormat.h"
@@ -48,7 +48,7 @@
 #include "MuT/NodeImageTable.h"
 #include "MuT/NodeImageTransform.h"
 #include "MuT/NodeImageVariation.h"
-#include "MuT/NodeImageReference.h"
+#include "MuT/NodeImageConstant.h"
 #include "MuT/NodeScalarConstant.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
@@ -56,10 +56,12 @@
 
 mu::ImagePtr ConvertTextureUnrealToMutable(UTexture2D* Texture, const UCustomizableObjectNode* Node, FCustomizableObjectCompiler* Compiler, bool bIsNormalComposite)
 {     
-	mu::ImagePtr MutableImage;
+	MUTABLE_CPUPROFILER_SCOPE(ConvertTextureUnrealToMutable);
+
+	mu::Ptr<mu::Image> MutableImage = new mu::Image;
 	EUnrealToMutableConversionError Error = EUnrealToMutableConversionError::Unknown;
 
-	Tie(MutableImage, Error) = ConvertTextureUnrealToMutable(Texture, bIsNormalComposite);
+	Error = ConvertTextureUnrealSourceToMutable(MutableImage.get(), Texture, bIsNormalComposite, 0);
 
 	switch(Error)
 	{
@@ -72,11 +74,11 @@ mu::ImagePtr ConvertTextureUnrealToMutable(UTexture2D* Texture, const UCustomiza
 					Node);
 			break;
 		}
-	case EUnrealToMutableConversionError::CompositeImageDimensionMissmatch:
+	case EUnrealToMutableConversionError::CompositeImageDimensionMismatch:
 		{
 			Compiler->CompilerLog(
-					LOCTEXT("CompositeImageDimensionMissmatch", 
-							"Composite image dimension missmatch."), 
+					LOCTEXT("CompositeImageDimensionMismatch", 
+							"Composite image dimension mismatch."), 
 					Node);
 			break;
 		}
@@ -101,30 +103,23 @@ mu::ImagePtr ConvertTextureUnrealToMutable(UTexture2D* Texture, const UCustomiza
 	return MutableImage;
 }
 
-
-mu::Ptr<mu::NodeImage> ResizeToMaxTextureSize(float MaxTextureSize, const UTexture2D* BaseTexture, mu::Ptr<mu::NodeImageConstant> ImageNode)
+mu::Ptr<mu::NodeImage> ResizeTextureByNumMips(const mu::Ptr<mu::NodeImage>& ImageConstant, int32 MipsToSkip)
 {
-	// To scale when above MaxTextureSize if defined
-	if (MaxTextureSize > 0 && BaseTexture
-		&& (BaseTexture->GetImportedSize().X > MaxTextureSize
-			|| BaseTexture->GetImportedSize().Y > MaxTextureSize))
+	if (MipsToSkip > 0)
 	{
-		mu::NodeImageResizePtr ResizeImage = new mu::NodeImageResize();
-		ResizeImage->SetBase(ImageNode.get());
-		ResizeImage->SetRelative(false);
-		float Factor = FMath::Min(
-			MaxTextureSize / (float)(BaseTexture->GetImportedSize().X),
-			MaxTextureSize / (float)(BaseTexture->GetImportedSize().Y));
-		ResizeImage->SetSize(BaseTexture->GetImportedSize().X * Factor, BaseTexture->GetImportedSize().Y * Factor);
-		return ResizeImage;
+		mu::NodeImageResizePtr ImageResize = new mu::NodeImageResize();
+		ImageResize->SetBase(ImageConstant.get());
+		ImageResize->SetRelative(true);
+		const float factor = FMath::Pow(0.5f, MipsToSkip);
+		ImageResize->SetSize(factor, factor);
+		return ImageResize;
 	}
-	// TODO: MaxTextureSize = 0 indicates platform-specific maximum size, we should scale for it
 
-	return ImageNode;
+	return ImageConstant;
 }
 
 
-mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGraphGenerationContext& GenerationContext, float MaxTextureSize)
+mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGraphGenerationContext& GenerationContext, int32 ReferenceTextureSize)
 {
 	check(Pin)
 	RETURN_ON_CYCLE(*Pin, GenerationContext)
@@ -141,6 +136,11 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		return static_cast<mu::NodeImage*>(Generated->Node.get());
 	}
 
+	if (Node->IsNodeOutDatedAndNeedsRefresh())
+	{
+		Node->SetRefreshNodeWarning();
+	}
+
 	bool bDoNotAddToGeneratedCache = false;
 
 	mu::NodeImagePtr Result;
@@ -150,27 +150,33 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		UTexture2D* BaseTexture = TypedNodeTex->Texture;
 		if (BaseTexture)
 		{
+			GenerationContext.AddParticipatingObject(*BaseTexture);
+			
 			// Check the specific image cache
-			FGeneratedImageKey imageKey = FGeneratedImageKey(Pin);
-			mu::NodeImageConstantPtr ImageNode;
-			mu::NodeImageConstantPtr* Cached = GenerationContext.GeneratedImages.Find(imageKey);
-			if (Cached)
+			FGeneratedImageKey ImageKey = FGeneratedImageKey(Pin);
+			mu::NodeImagePtr ImageNode;
+			
+			if (mu::NodeImagePtr* Cached = GenerationContext.GeneratedImages.Find(ImageKey))
 			{
 				ImageNode = *Cached;
 			}
 			else
 			{
-				ImageNode = new mu::NodeImageConstant();
-				GenerationContext.ArrayTextureUnrealToMutableTask.Add(FTextureUnrealToMutableTask(ImageNode, BaseTexture, Node));
-				GenerationContext.GeneratedImages.Add(imageKey, ImageNode);
+				mu::Ptr<mu::Image> ImageConstant = GenerateImageConstant(BaseTexture, GenerationContext, false);
+
+				mu::Ptr<mu::NodeImageConstant> ReferenceImageNode = new mu::NodeImageConstant;
+				ReferenceImageNode->SetValue( ImageConstant.get() );
+				ImageNode = ReferenceImageNode;
+
+				GenerationContext.GeneratedImages.Add(ImageKey, ImageNode);
 			}
 
-			Result = ResizeToMaxTextureSize(MaxTextureSize, BaseTexture, ImageNode);
-
+			const uint32 MipsToSkip = ComputeLODBiasForTexture(GenerationContext, *BaseTexture, nullptr, ReferenceTextureSize);
+			Result = ResizeTextureByNumMips(ImageNode, MipsToSkip);
 		}
 		else
 		{
-			GenerationContext.Compiler->CompilerLog(LOCTEXT("MissingImage", "Missing image in texture node."), Node);
+			GenerationContext.Compiler->CompilerLog(LOCTEXT("MissingImage", "Missing image in texture node."), Node, EMessageSeverity::Warning);
 		}
 	}
 
@@ -180,11 +186,13 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		GenerationContext.AddParameterNameUnique(Node, TypedNodeParam->ParameterName);
 
-		TextureNode->SetName(StringCast<ANSICHAR>(*TypedNodeParam->ParameterName).Get());
-		TextureNode->SetUid(StringCast<ANSICHAR>(*GenerationContext.GetNodeIdUnique(Node).ToString()).Get());
+		TextureNode->SetName(TypedNodeParam->ParameterName);
+		TextureNode->SetUid(GenerationContext.GetNodeIdUnique(Node).ToString());
 
-		// TODO: Set a default value for the texture parameter?
-		//ColorNode->SetDefaultValue(TypedNodeParam->DefaultValue.R, TypedNodeParam->DefaultValue.G, TypedNodeParam->DefaultValue.B);
+		if (TypedNodeParam->DefaultValue)
+		{
+			TextureNode->SetDefaultValue(FName(TypedNodeParam->DefaultValue->GetPathName()));			
+		}
 
 		GenerationContext.ParameterUIDataMap.Add(TypedNodeParam->ParameterName, FParameterUIData(
 			TypedNodeParam->ParameterName,
@@ -209,20 +217,34 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		ResizeNode->SetBase(FormatNode);
 		ResizeNode->SetRelative(false);
 
-		const UTexture2D* ReferenceTexture = TypedNodeParam->DefaultValue;
+		FUintVector2 TextureSize(TypedNodeParam->TextureSizeX, TypedNodeParam->TextureSizeY);
+
+		const UTexture2D* ReferenceTexture = TypedNodeParam->ReferenceValue;
 		if (ReferenceTexture)
 		{
-			ResizeNode->SetSize(FMath::Max(ReferenceTexture->GetImportedSize().X,1), FMath::Max(ReferenceTexture->GetImportedSize().X, 1));
+			GenerationContext.AddParticipatingObject(*ReferenceTexture);
+
+			const uint32 LODBias = ComputeLODBiasForTexture(GenerationContext, *TypedNodeParam->ReferenceValue, ReferenceTexture, ReferenceTextureSize);
+			TextureSize.X = FMath::Max(ReferenceTexture->Source.GetSizeX() >> LODBias, 1);
+			TextureSize.Y = FMath::Max(ReferenceTexture->Source.GetSizeY() >> LODBias, 1);
 		}
 		else
 		{
-			if (TypedNodeParam->TextureSizeX <= 0 || TypedNodeParam->TextureSizeY <= 0)
+			const int32 MaxNodeTextureSize = FMath::Max(TypedNodeParam->TextureSizeX, TypedNodeParam->TextureSizeY);
+			if (MaxNodeTextureSize <= 0)
 			{
+				TextureSize.X = TextureSize.Y = 1;
 				GenerationContext.Compiler->CompilerLog(LOCTEXT("TextureParameterSize0", "Texture size not specified. Add a reference texture or set a valid value to the Texture Size variables."), Node);
 			}
-
-			ResizeNode->SetSize(FMath::Max(TypedNodeParam->TextureSizeX, 1), FMath::Max(TypedNodeParam->TextureSizeY, 1));
+			else if (ReferenceTextureSize > 0 && ReferenceTextureSize < MaxNodeTextureSize)
+			{
+				const uint32 MipsToSkip = FMath::CeilLogTwo(MaxNodeTextureSize) - FMath::CeilLogTwo(ReferenceTextureSize);
+				TextureSize.X = FMath::Max(TextureSize.X >> MipsToSkip, (uint32)1);
+				TextureSize.Y = FMath::Max(TextureSize.Y >> MipsToSkip, (uint32)1);
+			}
 		}
+
+		ResizeNode->SetSize(TextureSize.X, TextureSize.Y);
 
 		Result = ResizeNode;
 	}
@@ -236,10 +258,15 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		if (Texture)
 		{
-			GenerationContext.ArrayTextureUnrealToMutableTask.Add(FTextureUnrealToMutableTask(ImageNode, Texture, Node));
-		}
+			ImageNode->SetValue(GenerateImageConstant(Texture, GenerationContext, false).get());
 
-		Result = ResizeToMaxTextureSize(MaxTextureSize, Texture, ImageNode);
+			const uint32 MipsToSkip = ComputeLODBiasForTexture(GenerationContext, *Texture, nullptr, ReferenceTextureSize);
+			Result = ResizeTextureByNumMips(ImageNode, MipsToSkip);
+		}
+		else
+		{
+			Result = mu::NodeImagePtr();
+		}
 	}
 
 	else if (const UCustomizableObjectNodeTextureInterpolate* TypedNodeInterp = Cast<UCustomizableObjectNodeTextureInterpolate>(Node))
@@ -258,7 +285,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		{
 			if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeInterp->Targets(LayerIndex)))
 			{
-				mu::NodeImagePtr TargetNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+				mu::NodeImagePtr TargetNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 
 				if (TargetNode)
 				{
@@ -274,7 +301,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 	{
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeLayer->BasePin()))
 		{
-			Result = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			Result = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 		}
 
 		for (int LayerIndex = 0; LayerIndex < TypedNodeLayer->GetNumLayers(); ++LayerIndex)
@@ -284,7 +311,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 				mu::NodeImagePtr MaskNode = nullptr;
 				if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeLayer->MaskPin(LayerIndex)))
 				{
-					MaskNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+					MaskNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 				}
 
 				mu::EBlendType Type = mu::EBlendType::BT_BLEND;
@@ -312,7 +339,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 				
 				if (OtherPin->PinType.PinCategory == Schema->PC_Image)
 				{
-					mu::NodeImagePtr BlendNode = GenerateMutableSourceImage(OtherPin, GenerationContext, MaxTextureSize);
+					mu::NodeImagePtr BlendNode = GenerateMutableSourceImage(OtherPin, GenerationContext, ReferenceTextureSize);
 
 					mu::NodeImageLayerPtr LayerNode = new mu::NodeImageLayer;
 					LayerNode->SetBlendType(Type);
@@ -384,7 +411,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 				{
 					if (const UEdGraphPin* TexturePin = FollowInputPin(*TypedNodeTextureSwitch->GetElementPin(SelectorIndex)))
 					{
-						SwitchNode->SetOption(SelectorIndex, GenerateMutableSourceImage(TexturePin, GenerationContext, MaxTextureSize));
+						SwitchNode->SetOption(SelectorIndex, GenerateMutableSourceImage(TexturePin, GenerationContext, ReferenceTextureSize));
 					}
 					else
 					{
@@ -407,12 +434,13 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 	else if (const UCustomizableObjectNodeTextureVariation* TypedNodeImageVar = Cast<const UCustomizableObjectNodeTextureVariation>(Node))
 	{
+		// UCustomizableObjectNodePassThroughTextureVariation nodes are also handled here
 		mu::NodeImageVariationPtr TextureNode = new mu::NodeImageVariation();
 		Result = TextureNode;
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeImageVar->DefaultPin()))
 		{
-			mu::NodeImagePtr ChildNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr ChildNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			if (ChildNode)
 			{
 				TextureNode->SetDefaultImage(ChildNode.get());
@@ -422,21 +450,20 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 				GenerationContext.Compiler->CompilerLog(LOCTEXT("TextureFailed", "Texture generation failed."), Node);
 			}
 		}
-		else
-		{
-			GenerationContext.Compiler->CompilerLog(LOCTEXT("TextureVarMissingDef", "Texture variation node requires a default value."), Node);
-		}
 
 		TextureNode->SetVariationCount(TypedNodeImageVar->Variations.Num());
-		for (int VariationIndex = 0; VariationIndex < TypedNodeImageVar->Variations.Num(); ++VariationIndex)
+		for (int32 VariationIndex = 0; VariationIndex < TypedNodeImageVar->Variations.Num(); ++VariationIndex)
 		{
 			const UEdGraphPin* VariationPin = TypedNodeImageVar->VariationPin(VariationIndex);
-			if (!VariationPin) continue;
+			if (!VariationPin)
+			{
+				continue;
+			}
 
-			TextureNode->SetVariationTag(VariationIndex, StringCast<ANSICHAR>(*TypedNodeImageVar->Variations[VariationIndex].Tag).Get());
+			TextureNode->SetVariationTag(VariationIndex, TypedNodeImageVar->Variations[VariationIndex].Tag);
 			if (const UEdGraphPin* ConnectedPin = FollowInputPin(*VariationPin))
 			{
-				mu::NodeImagePtr ChildNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+				mu::NodeImagePtr ChildNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 				TextureNode->SetVariationImage(VariationIndex, ChildNode.get());
 			}
 		}
@@ -458,6 +485,11 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		{
 			ImageFromColour->SetColour(color);
 		}
+
+		if (ReferenceTextureSize > 0)
+		{
+			ImageFromColour->SetSize(ReferenceTextureSize, ReferenceTextureSize);
+		}
 	}
 
 	else if (const UCustomizableObjectNodeTextureFromChannels* TypedNodeFrom = Cast<UCustomizableObjectNodeTextureFromChannels>(Node))
@@ -467,22 +499,22 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeFrom->RPin()))
 		{
-			RNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			RNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			RGB = true;
 		}
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeFrom->GPin()))
 		{
-			GNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			GNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			RGB = true;
 		}
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeFrom->BPin()))
 		{
-			BNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			BNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			RGB = true;
 		}
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeFrom->APin()))
 		{
-			ANode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			ANode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 		}
 
 		mu::NodeImageSwizzlePtr SwizzleNode = new mu::NodeImageSwizzle;
@@ -529,7 +561,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		mu::NodeImagePtr BaseNode;
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeTo->InputPin()))
 		{
-			BaseNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			BaseNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 		}
 
 		mu::NodeImageSwizzlePtr SwizzleNode = new mu::NodeImageSwizzle;
@@ -571,23 +603,31 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		}
 
 		ImageNode->SetLayout(TypedNodeProject->Layout);
-		FUintVector2 TextureSize(TypedNodeProject->TextureSizeX, TypedNodeProject->TextureSizeY);
 
-		// Calculating Texture size using Reference texture parameters
+		// Calculate the max TextureSize allowed using the ReferenceTextureSize and the Reference texture from the node
+		int32 MaxReferenceTextureSizeInGame = ReferenceTextureSize;
 		if (TypedNodeProject->ReferenceTexture)
 		{
-			int32 LODBias = ComputeLODBias(GenerationContext, TypedNodeProject->ReferenceTexture, TypedNodeProject->ReferenceTexture->MaxTextureSize, nullptr, INDEX_NONE, false);
+			GenerationContext.AddParticipatingObject(*TypedNodeProject->ReferenceTexture);
 
-			if (TextureSize.X > 0 && TextureSize.Y > 0)
-			{
-				TextureSize.X = TextureSize.X >> LODBias;
-				TextureSize.Y = TextureSize.Y >> LODBias;
-			}
-			else
-			{
-				TextureSize.X = TypedNodeProject->ReferenceTexture->GetImportedSize().X >> LODBias;
-				TextureSize.Y = TypedNodeProject->ReferenceTexture->GetImportedSize().Y >> LODBias;
-			}
+			const UTextureLODSettings& TextureLODSettings = GenerationContext.Options.TargetPlatform->GetTextureLODSettings();
+			const int32 FirstLODAvailable = GenerationContext.Options.bUseLODAsBias ? GenerationContext.FirstLODAvailable : 0;
+			MaxReferenceTextureSizeInGame = GetTextureSizeInGame(*TypedNodeProject->ReferenceTexture, TextureLODSettings, FirstLODAvailable);
+		}
+
+		FUintVector2 TextureSize(TypedNodeProject->TextureSizeX, TypedNodeProject->TextureSizeY);
+
+		// Max TextureSize allowed
+		const int32 MaxProjectedTextureSizeInGame = ReferenceTextureSize > 0 && ReferenceTextureSize < MaxReferenceTextureSizeInGame ? ReferenceTextureSize : MaxReferenceTextureSizeInGame;
+
+		const int32 ProjectorNodeTextureSize = FMath::Max(TextureSize.X, TextureSize.Y);
+		if (ProjectorNodeTextureSize > 0 && ProjectorNodeTextureSize > MaxProjectedTextureSizeInGame)
+		{
+			const int32 NumMips = FMath::CeilLogTwo(ProjectorNodeTextureSize) + 1;
+			const int32 MaxNumMips = FMath::CeilLogTwo(MaxProjectedTextureSizeInGame) + 1;
+
+			TextureSize.X = TextureSize.X >> (NumMips - MaxNumMips);
+			TextureSize.Y = TextureSize.Y >> (NumMips - MaxNumMips);
 		}
 
 		ImageNode->SetImageSize(TextureSize);
@@ -655,7 +695,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeProject->MeshMaskPin()))
 		{
-			mu::NodeImagePtr MeshMaskNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr MeshMaskNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			ImageNode->SetTargetMask(MeshMaskNode);
 		}
 
@@ -679,20 +719,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeProject->TexturePins(TexIndex)))
 		{
-			mu::NodeImagePtr SourceNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
-
-			// Images that are projected won't be scaled by any means, so we need to apply the lodbias settings here
-			if (GenerationContext.CurrentTextureLODBias > 0)
-			{
-				mu::NodeImageResizePtr ResizeImage = new mu::NodeImageResize();
-				ResizeImage->SetBase(SourceNode.get());
-				ResizeImage->SetRelative(true);
-				float factor = FMath::Pow(0.5f, GenerationContext.CurrentTextureLODBias);
-				ResizeImage->SetSize(factor, factor);
-				ResizeImage->SetMessageContext(Node);
-				SourceNode = ResizeImage;
-			}
-
+			mu::NodeImagePtr SourceNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, FMath::Max(TextureSize.X, TextureSize.Y));
 			ImageNode->SetImage(SourceNode);
 		}
 	}
@@ -704,7 +731,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeTexBin->GetBaseImagePin()))
 		{
-			mu::NodeImagePtr BaseImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr BaseImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			BinariseNode->SetBase(BaseImageNode);
 		}
 
@@ -722,7 +749,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeTexInv->GetBaseImagePin()))
 		{
-			mu::NodeImagePtr BaseImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr BaseImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			InvertNode->SetBase(BaseImageNode);
 		}
 	}
@@ -735,19 +762,19 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeColourMap->GetMapPin()))
 		{
-			mu::NodeImagePtr GradientImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr GradientImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			ColourMapNode->SetMap( GradientImageNode ); 
 		}
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeColourMap->GetMaskPin()))
 		{
-			mu::NodeImagePtr GradientImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr GradientImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			ColourMapNode->SetMask( GradientImageNode ); 
 		}
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeColourMap->GetBasePin()))
 		{
-			mu::NodeImagePtr SourceImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr SourceImageNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, ReferenceTextureSize);
 			ColourMapNode->SetBase( SourceImageNode );
 		}
 	}
@@ -759,7 +786,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 		
 		if ( UEdGraphPin* BaseImagePin = FollowInputPin(*TypedNodeTransform->GetBaseImagePin()) )
 		{
-			mu::NodeImagePtr ImageNode = GenerateMutableSourceImage( BaseImagePin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr ImageNode = GenerateMutableSourceImage( BaseImagePin, GenerationContext, ReferenceTextureSize);
 			TransformNode->SetBase( ImageNode ); 
 		}
 
@@ -803,6 +830,36 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 			default: { check(false); return mu::EAddressMode::None; }
 			}
 		}));
+
+		FUintVector2 TextureSize(TypedNodeTransform->TextureSizeX, TypedNodeTransform->TextureSizeY);
+
+		// Calculate the max TextureSize allowed using the ReferenceTextureSize and the Reference texture from the node
+		int32 MaxReferenceTextureSizeInGame = ReferenceTextureSize;
+		if (TypedNodeTransform->ReferenceTexture)
+		{
+			GenerationContext.AddParticipatingObject(*TypedNodeTransform->ReferenceTexture);
+
+			const UTextureLODSettings& TextureLODSettings = GenerationContext.Options.TargetPlatform->GetTextureLODSettings();
+			const uint8 SurfaceLODBias = GenerationContext.Options.bUseLODAsBias ? GenerationContext.FirstLODAvailable : 0;
+			MaxReferenceTextureSizeInGame = GetTextureSizeInGame(*TypedNodeTransform->ReferenceTexture, TextureLODSettings, SurfaceLODBias);
+		}
+
+		// Max TextureSize allowed
+		const int32 MaxTransformTextureSizeInGame = ReferenceTextureSize > 0 && ReferenceTextureSize < MaxReferenceTextureSizeInGame ? ReferenceTextureSize : MaxReferenceTextureSizeInGame;
+
+		const int32 TransformNodeTextureSize = FMath::Max(TextureSize.X, TextureSize.Y);
+		if (TransformNodeTextureSize > 0 && TransformNodeTextureSize > MaxTransformTextureSizeInGame)
+		{
+			const int32 NumMips = FMath::CeilLogTwo(TransformNodeTextureSize) + 1;
+			const int32 MaxNumMips = FMath::CeilLogTwo(MaxTransformTextureSizeInGame) + 1;
+
+			TextureSize.X = TextureSize.X >> (NumMips - MaxNumMips);
+			TextureSize.Y = TextureSize.Y >> (NumMips - MaxNumMips);
+		}
+
+		TransformNode->SetKeepAspectRatio(TypedNodeTransform->bKeepAspectRatio);
+		TransformNode->SetSizeX(TextureSize.X);
+		TransformNode->SetSizeY(TextureSize.Y);
 	}
 
 	else if (const UCustomizableObjectNodeTextureSaturate* TypedNodeSaturate = Cast<UCustomizableObjectNodeTextureSaturate>(Node))
@@ -812,7 +869,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 	
 		if ( UEdGraphPin* BaseImagePin = FollowInputPin(*TypedNodeSaturate->GetBaseImagePin()) )
 		{
-			mu::NodeImagePtr ImageNode = GenerateMutableSourceImage(BaseImagePin, GenerationContext, MaxTextureSize);
+			mu::NodeImagePtr ImageNode = GenerateMutableSourceImage(BaseImagePin, GenerationContext, ReferenceTextureSize);
 			SaturateNode->SetSource(ImageNode); 
 		}
 
@@ -825,26 +882,13 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 
 	else if (const UCustomizableObjectNodePassThroughTexture* TypedNodePassThroughTex = Cast<UCustomizableObjectNodePassThroughTexture>(Node))
 	{
-		UTexture2D* BaseTexture = TypedNodePassThroughTex->Texture;
+		UTexture* BaseTexture = TypedNodePassThroughTex->PassThroughTexture;
 		if (BaseTexture)
 		{
-			uint32* FoundIndex = GenerationContext.PassThroughTextureToIndexMap.Find(BaseTexture);
-			uint32 NewId;
-
-			if (!FoundIndex)
-			{
-				NewId = GenerationContext.PassThroughTextureToIndexMap.Num();
-				GenerationContext.PassThroughTextureToIndexMap.Add(BaseTexture, NewId);
-			}
-			else
-			{
-				NewId = *FoundIndex;
-			}
-
-			mu::Ptr<mu::NodeImageReference> ImageNode = new mu::NodeImageReference;
-			ImageNode->SetImageReference(NewId);
-
+			mu::NodeImageConstantPtr ImageNode = new mu::NodeImageConstant();
 			Result = ImageNode;
+
+			ImageNode->SetValue(GenerateImageConstant(BaseTexture, GenerationContext, true).get());
 		}
 		else
 		{
@@ -897,7 +941,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 				{
 					if (const UEdGraphPin* TexturePin = FollowInputPin(*TypedNodePassThroughTextureSwitch->GetElementPin(SelectorIndex)))
 					{
-						mu::Ptr<mu::NodeImage> PassThroughImage = GenerateMutableSourceImage(TexturePin, GenerationContext, MaxTextureSize);
+						mu::Ptr<mu::NodeImage> PassThroughImage = GenerateMutableSourceImage(TexturePin, GenerationContext, ReferenceTextureSize);
 						SwitchNode->SetOption(SelectorIndex, PassThroughImage);
 					}
 					else
@@ -956,10 +1000,12 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 				bDoNotAddToGeneratedCache = true;
 			}
 
-			if (TypedNodeTable->Table)
+			UDataTable* DataTable = GetDataTable(TypedNodeTable, GenerationContext);
+
+			if (DataTable)
 			{
 				FString ColumnName = Pin->PinFriendlyName.ToString();
-				FProperty* Property = TypedNodeTable->Table->FindTableProperty(FName(*ColumnName));
+				FProperty* Property = DataTable->FindTableProperty(FName(*ColumnName));
 
 				if (!Property)
 				{
@@ -969,7 +1015,9 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 					bSuccess = false;
 				}
 
-				if (bSuccess && Pin->PinType.PinCategory != Schema->PC_MaterialAsset && !TypedNodeTable->GetColumnDefaultAssetByType<UTexture2D>(Pin) && !TypedNodeTable->GetColumnDefaultAssetByType<UTexture2DArray>(Pin))
+				UTexture* DefaultTexture = TypedNodeTable->GetColumnDefaultAssetByType<UTexture>(Pin);
+
+				if (bSuccess && Pin->PinType.PinCategory != Schema->PC_MaterialAsset && !DefaultTexture)
 				{
 					FString Msg = FString::Printf(TEXT("Couldn't find a default value in the data table's struct for the column [%s]. The default value is null or not a supported Texture"), *ColumnName);
 					GenerationContext.Compiler->CompilerLog(FText::FromString(Msg), Node);
@@ -981,7 +1029,7 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 				{
 					// Generating a new data table if not exists
 					mu::TablePtr Table = nullptr;
-					Table = GenerateMutableSourceTable(TypedNodeTable->Table->GetName(), Pin, GenerationContext);
+					Table = GenerateMutableSourceTable(DataTable, TypedNodeTable, GenerationContext);
 
 					if (Table)
 					{
@@ -992,9 +1040,37 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 							// Material parameters use the Data Table Column Name + Parameter id as mutable column Name to aboid duplicated names (i.e. two MI columns with the same parents but different values).
 							ColumnName = Property->GetDisplayNameText().ToString() + GenerationContext.CurrentMaterialTableParameterId;
 						}
+						else
+						{
+							// Checking if this pin texture has been used in another table node but with a different texture mode
+							const int32 ImageDataIndex = GenerationContext.GeneratedTableImages.Find({ ColumnName, Pin->PinType.PinCategory, Table });
+
+							if (ImageDataIndex != INDEX_NONE )
+							{
+								if (GenerationContext.GeneratedTableImages[ImageDataIndex].PinType != Pin->PinType.PinCategory)
+								{
+									TArray<const UObject*> Nodes;
+									Nodes.Add(TypedNodeTable);
+									Nodes.Add(GenerationContext.GeneratedTableImages[ImageDataIndex].TableNode);
+
+									FString Msg = FString::Printf(TEXT("Texture pin [%s] with different texture modes found in more than one table node. This will add multiple times the texture reseource in the final cook."), *ColumnName);
+									GenerationContext.Compiler->CompilerLog(FText::FromString(Msg), Nodes);
+								}
+							}
+							else
+							{
+								GenerationContext.GeneratedTableImages.Add({ ColumnName, Pin->PinType.PinCategory, Table, TypedNodeTable });
+							}
+
+							// Encoding the texture mode of the type to allow different texture modes from the same pin
+							if (Pin->PinType.PinCategory == Schema->PC_PassThroughImage)
+							{
+								ColumnName += "--PassThrough";
+							}
+						}
 
 						// Generating a new Texture column if not exists
-						if (Table->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get()) == INDEX_NONE)
+						if (Table->FindColumn(ColumnName) == INDEX_NONE)
 						{
 							int32 Dummy = -1; // TODO MTBL-1512
 							bool Dummy2 = false;
@@ -1012,10 +1088,23 @@ mu::NodeImagePtr GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGrap
 							Result = ImageTableNode;
 
 							ImageTableNode->SetTable(Table);
-							ImageTableNode->SetColumn(StringCast<ANSICHAR>(*ColumnName).Get());
-							ImageTableNode->SetParameterName(StringCast<ANSICHAR>(*TypedNodeTable->ParameterName).Get());
+							ImageTableNode->SetColumn(ColumnName);
+							ImageTableNode->SetParameterName(TypedNodeTable->ParameterName);
+							ImageTableNode->SetNoneOption(TypedNodeTable->bAddNoneOption);
+							ImageTableNode->SetDefaultRowName(TypedNodeTable->DefaultRowName.ToString());
 
-							GenerationContext.AddParameterNameUnique(Node, TypedNodeTable->ParameterName);
+							if (UTexture2D* DefaultTexture2D = Cast<UTexture2D>(DefaultTexture))
+							{
+								mu::FImageDesc ImageDesc = GenerateImageDescriptor(DefaultTexture2D);
+
+								uint32 LODBias = ReferenceTextureSize > 0 ? ComputeLODBiasForTexture(GenerationContext, *DefaultTexture2D, nullptr, ReferenceTextureSize) : 0;
+								ImageDesc.m_size[0] = ImageDesc.m_size[0] >> LODBias;
+								ImageDesc.m_size[1] = ImageDesc.m_size[1] >> LODBias;
+								
+								const uint16 MaxTextureSize = FMath::Max3(ImageDesc.m_size[0], ImageDesc.m_size[1], (uint16)1);
+								ImageTableNode->SetMaxTextureSize(MaxTextureSize);
+								ImageTableNode->SetReferenceImageDescriptor(ImageDesc);
+							}
 						}
 					}
 					else

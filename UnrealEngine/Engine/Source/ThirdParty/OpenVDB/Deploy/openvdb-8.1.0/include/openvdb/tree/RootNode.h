@@ -1102,8 +1102,14 @@ struct RootNodeCopyHelper
         self.enforceCompatibleValueTypes(other);
         // One of the above two tests should throw, so we should never get here:
         std::ostringstream ostr;
+#if VDB_WITH_EPIC_EXTENSIONS
+        // don't rely on rtti since we need to compile without it
+        ostr << "cannot convert a " << typeNameAsString<OtherRootT>()
+            << " to a " << typeNameAsString<RootT>();
+#else
         ostr << "cannot convert a " << typeid(OtherRootT).name()
             << " to a " << typeid(RootT).name();
+#endif
         OPENVDB_THROW(TypeError, ostr.str());
     }
 };
@@ -3247,8 +3253,14 @@ struct RootNodeCombineHelper
         self.enforceCompatibleValueTypes(other1);
         // One of the above two tests should throw, so we should never get here:
         std::ostringstream ostr;
+#if VDB_WITH_EPIC_EXTENSIONS
+        // don't rely on rtti since we need to compile without it
+        ostr << "cannot combine a " << typeNameAsString<OtherRootT>()
+            << " into a " << typeNameAsString<RootT>();
+#else
         ostr << "cannot combine a " << typeid(OtherRootT).name()
             << " into a " << typeid(RootT).name();
+#endif
         OPENVDB_THROW(TypeError, ostr.str());
     }
 };

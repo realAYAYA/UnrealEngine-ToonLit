@@ -658,6 +658,19 @@ namespace Electra
 	};
 
 
+	namespace StreamCodecInformationOptions
+	{
+		static const FName DecoderConfigurationRecord(TEXT("dcr"));
+		static const FName VPccBox(TEXT("vpcC_box"));
+		static const FName DOpsBox(TEXT("dOps_box"));
+		static const FName ChanBox(TEXT("chan_box"));
+		static const FName SamplesPerBlock(TEXT("samples_per_block"));
+		static const FName FormatSpecificFlags(TEXT("FormatSpecificFlags"));
+		static const FName SampleSize(TEXT("SampleSize"));
+		static const FName ConstBytesPerAudioPacket(TEXT("ConstBytesPerAudioPacket"));
+		static const FName ConstLPCMFramesPerAudioPacket(TEXT("ConstLPCMFramesPerAudioPacket"));
+	}
+
 
 
 	/**

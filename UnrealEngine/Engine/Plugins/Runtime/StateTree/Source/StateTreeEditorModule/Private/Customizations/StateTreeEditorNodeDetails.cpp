@@ -8,6 +8,7 @@
 #include "StateTree.h"
 #include "StateTreeEditor.h"
 #include "StateTreeEditorData.h"
+#include "StateTreePropertyRef.h"
 #include "Widgets/Input/SComboButton.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Styling/SlateIconFinder.h"
@@ -30,6 +31,7 @@
 #include "Widgets/Input/SSearchBox.h"
 #include "EditorFontGlyphs.h"
 #include "StateTreeEditorNodeUtils.h"
+#include "StateTreeEditorSettings.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Debugger/StateTreeDebuggerUIExtensions.h"
@@ -57,6 +59,44 @@ public:
 
 namespace UE::StateTreeEditor::Internal
 {
+	/**
+	 * This function recursively instantiates instanced objects of a given struct.
+	 * It is needed to fixup nodes pasted from clipboard, which seem to give shallow copy.
+	 */
+	void InstantiateStructSubobjects(UObject& OuterObject, FStructView Struct)
+	{
+		// Empty struct, nothing to do.
+		if (!Struct.IsValid())
+		{
+			return;
+		}
+
+		for (TPropertyValueIterator<FProperty> It(Struct.GetScriptStruct(), Struct.GetMemory()); It; ++It)
+		{
+			if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(It->Key))
+			{
+				// Duplicate instanced objects.
+				if (ObjectProperty->HasAnyPropertyFlags(CPF_InstancedReference | CPF_PersistentInstance))
+				{
+					if (UObject* Object = ObjectProperty->GetObjectPropertyValue(It->Value))
+					{
+						UObject* DuplicatedObject = DuplicateObject(Object, &OuterObject);
+						ObjectProperty->SetObjectPropertyValue(const_cast<void*>(It->Value), DuplicatedObject);
+					}
+				}
+			}
+			if (const FStructProperty* StructProperty = CastField<FStructProperty>(It->Key))
+			{
+				// If we encounter instanced struct, recursively handle it too.
+				if (StructProperty->Struct == TBaseStructure<FInstancedStruct>::Get())
+				{
+					FInstancedStruct& InstancedStruct = *static_cast<FInstancedStruct*>(const_cast<void*>(It->Value));
+					InstantiateStructSubobjects(OuterObject, InstancedStruct);
+				}
+			}
+		}
+	}
+
 	/** @return text describing the pin type, matches SPinTypeSelector. */
 	FText GetPinTypeText(const FEdGraphPinType& PinType)
 	{
@@ -106,7 +146,7 @@ namespace UE::StateTreeEditor::Internal
 		TSharedPtr<IPropertyHandle> ChildPropHandle = ChildRow.GetPropertyHandle();
 		check(ChildPropHandle.IsValid());
 		
-		const EStateTreePropertyUsage Usage = UE::StateTree::Compiler::GetUsageFromMetaData(ChildPropHandle->GetProperty());
+		const EStateTreePropertyUsage Usage = UE::StateTree::GetUsageFromMetaData(ChildPropHandle->GetProperty());
 		const FProperty* Property = ChildPropHandle->GetProperty();
 		
 		// Conditionally control visibility of the value field of bound properties.
@@ -135,7 +175,17 @@ namespace UE::StateTreeEditor::Internal
 				
 				FEdGraphPinType PinType;
 				const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
-				Schema->ConvertPropertyToPinType(Property, PinType);
+
+				// Show referenced type for property refs.
+				if (UE::StateTree::PropertyRefHelpers::IsPropertyRef(*Property))
+				{
+					// Use internal type to construct PinType if it's property of PropertyRef type.
+					PinType = UE::StateTree::PropertyRefHelpers::GetPropertyRefInternalTypeAsPin(*Property);
+				}
+				else
+				{
+					Schema->ConvertPropertyToPinType(Property, PinType);
+				}
 				
 				const FSlateBrush* Icon = FBlueprintEditorUtils::GetIconFromPin(PinType, true);
 				FText Text = GetPinTypeText(PinType);
@@ -210,7 +260,7 @@ namespace UE::StateTreeEditor::Internal
 						[
 							SNew(SBorder)
 							.Padding(FMargin(6, 1))
-							.BorderImage(new FSlateRoundedBoxBrush(FStyleColors::Hover, 6))
+							.BorderImage(FStateTreeEditorStyle::Get().GetBrush("StateTree.Param.Background"))
 							.Visibility(Label.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
 							[
 								SNew(STextBlock)
@@ -248,6 +298,125 @@ namespace UE::StateTreeEditor::Internal
 							.ToolTipText(ToolTip)
 						]
 					];
+			}
+		}
+	}
+
+	struct FNodeRetainPropertyData
+	{
+		FStateTreeNodeBase* NodeBase = nullptr;
+		const UScriptStruct* NodeBaseStruct = nullptr;
+		const UStruct* InstanceStruct = nullptr;
+		void* InstanceData = nullptr;
+	};
+
+	FNodeRetainPropertyData GetNodeData(FStateTreeEditorNode& EditorNode)
+	{
+		FNodeRetainPropertyData Data;
+		Data.NodeBase = EditorNode.Node.GetMutablePtr<FStateTreeNodeBase>();
+
+		if (Data.NodeBase)
+		{
+			Data.NodeBaseStruct = EditorNode.Node.GetScriptStruct();
+			if (const UStruct* InstanceDataType = Data.NodeBase->GetInstanceDataType())
+			{
+				if (InstanceDataType->IsA<UScriptStruct>())
+				{
+					Data.InstanceStruct = EditorNode.Instance.GetScriptStruct();
+					Data.InstanceData = EditorNode.Instance.GetMutableMemory();
+				}
+				else if (InstanceDataType->IsA<UClass>())
+				{
+					Data.InstanceStruct = EditorNode.InstanceObject.GetClass();
+					Data.InstanceData = EditorNode.InstanceObject;
+				}
+			}
+		}
+
+		return Data;
+	}
+
+	void CopyPropertyValues(const UStruct* OldStruct, const void* OldData, const UStruct* NewStruct, void* NewData)
+	{
+		for (TFieldIterator<FProperty> It(OldStruct); It; ++It)
+		{
+			const FProperty* OldProperty = *It;
+			const FProperty* NewProperty = NewStruct->FindPropertyByName(OldProperty->GetFName());
+			if (!NewProperty)
+			{
+				// Let's check if we have the same property present but with(out) the 'b' prefix
+				const FBoolProperty* BoolProperty = ExactCastField<const FBoolProperty>(OldProperty);
+				if (!BoolProperty)
+					continue;
+
+				FString String = OldProperty->GetName();
+				if (String.IsEmpty())
+					continue;
+
+				if (String[0] == TEXT('b'))
+					String.RightChopInline(1, EAllowShrinking::No);
+				else
+					String.InsertAt(0, TEXT('b'));
+
+				NewProperty = NewStruct->FindPropertyByName(FName(String));
+			}
+
+			constexpr uint64 WantedFlags = CPF_Edit;
+			constexpr uint64 UnwantedFlags = CPF_DisableEditOnInstance | CPF_EditConst;
+
+			if (NewProperty
+				&& OldProperty->HasAllPropertyFlags(WantedFlags)
+				&& NewProperty->HasAllPropertyFlags(WantedFlags)
+				&& !OldProperty->HasAnyPropertyFlags(UnwantedFlags)
+				&& !NewProperty->HasAnyPropertyFlags(UnwantedFlags)
+				&& NewProperty->SameType(OldProperty))
+			{
+				OldProperty->CopyCompleteValue(
+					NewProperty->ContainerPtrToValuePtr<void>(NewData),
+					OldProperty->ContainerPtrToValuePtr<void>(OldData)
+				);
+			}
+		}
+	}
+
+	void RetainProperties(FStateTreeEditorNode& OldNode, FStateTreeEditorNode& NewNode)
+	{
+		const FNodeRetainPropertyData OldNodeData = GetNodeData(OldNode);
+		const FNodeRetainPropertyData NewNodeData = GetNodeData(NewNode);
+
+		if (OldNodeData.NodeBase && NewNodeData.NodeBase)
+		{
+			// Copy node -> node
+			CopyPropertyValues(
+				OldNodeData.NodeBaseStruct, OldNodeData.NodeBase,
+				NewNodeData.NodeBaseStruct, NewNodeData.NodeBase
+			);
+
+			if (OldNodeData.InstanceStruct && OldNodeData.InstanceData)
+			{
+				// Copy instance data -> node
+				CopyPropertyValues(
+					OldNodeData.InstanceStruct, OldNodeData.InstanceData,
+					NewNodeData.NodeBaseStruct, NewNodeData.NodeBase
+				);
+
+				if (NewNodeData.InstanceStruct && NewNodeData.InstanceData)
+				{
+					// Copy instance data -> instance data
+					CopyPropertyValues(
+						OldNodeData.InstanceStruct, OldNodeData.InstanceData,
+						NewNodeData.InstanceStruct, NewNodeData.InstanceData
+					);
+				}
+			}
+
+			if (NewNodeData.InstanceStruct && NewNodeData.InstanceData)
+			{
+				// Copy node -> instance data
+				CopyPropertyValues(
+					OldNodeData.NodeBaseStruct, OldNodeData.NodeBase,
+					NewNodeData.InstanceStruct, NewNodeData.InstanceData
+				);
 			}
 		}
 	}
@@ -550,9 +719,6 @@ void FStateTreeEditorNodeDetails::OnPasteNode()
 
 	StructProperty->NotifyPreChange();
 
-	// Make sure we instantiate new objects when setting the value.
-	StructProperty->SetValueFromFormattedString(PastedText, EPropertyValueSetFlags::InstanceObjects);
-
 	// Reset GUIDs on paste
 	TArray<void*> RawNodeData;
 	StructProperty->AccessRawData(RawNodeData);
@@ -564,6 +730,20 @@ void FStateTreeEditorNodeDetails::OnPasteNode()
 			FStateTreeEditorNode* EditorNode = static_cast<FStateTreeEditorNode*>(RawNodeData[Index]);
 			if (EditorNode && OuterObject)
 			{
+				// Copy
+				*EditorNode = TempNode;
+
+				// Ensure unique instance value
+				UE::StateTreeEditor::Internal::InstantiateStructSubobjects(*OuterObject, EditorNode->Node);
+				if (EditorNode->InstanceObject)
+				{
+					EditorNode->InstanceObject = DuplicateObject(EditorNode->InstanceObject, OuterObject);
+				}
+				else
+				{
+					UE::StateTreeEditor::Internal::InstantiateStructSubobjects(*OuterObject, EditorNode->Instance);
+				}
+				
 				if (FStateTreeNodeBase* Node = EditorNode->Node.GetMutablePtr<FStateTreeNodeBase>())
 				{
 					Node->Name = FName(Node->Name.ToString() + TEXT(" Copy"));
@@ -684,7 +864,7 @@ void FStateTreeEditorNodeDetails::CustomizeChildren(TSharedRef<class IPropertyHa
 			{
 				FSortedChild Child;
 				Child.PropertyHandle = ChildHandle;
-				Child.Usage = UE::StateTree::Compiler::GetUsageFromMetaData(Child.PropertyHandle->GetProperty());
+				Child.Usage = UE::StateTree::GetUsageFromMetaData(Child.PropertyHandle->GetProperty());
 
 				// If the property is set to one of these usages, display it even if it is not edit on instance.
 				// It is a common mistake to forget to set the "eye" on these properties it and wonder why it does not show up.
@@ -1460,8 +1640,8 @@ void FStateTreeEditorNodeDetails::GetNodeTypeChildren(TSharedPtr<FStateTreeNodeT
 
 void FStateTreeEditorNodeDetails::OnNodeTypeSelected(TSharedPtr<FStateTreeNodeTypeItem> SelectedItem, ESelectInfo::Type Type)
 {
-	// Skip selection set via code.
-	if (Type == ESelectInfo::Direct)
+	// Skip selection set via code, or if Selected Item is invalid
+	if (Type == ESelectInfo::Direct || !SelectedItem.IsValid())
 	{
 		return;
 	}
@@ -1810,7 +1990,10 @@ void FStateTreeEditorNodeDetails::OnStructPicked(const UScriptStruct* InStruct) 
 			if (UObject* Outer = OuterObjects[Index])
 			{
 				if (FStateTreeEditorNode* Node = static_cast<FStateTreeEditorNode*>(RawNodeData[Index]))
-					{
+				{
+					const bool bRetainProperties = InStruct && UStateTreeEditorSettings::Get().bRetainNodePropertyValues;
+					FStateTreeEditorNode OldNode = bRetainProperties ? *Node : FStateTreeEditorNode();
+
 					Node->Reset();
 					
 					if (InStruct)
@@ -1864,6 +2047,11 @@ void FStateTreeEditorNodeDetails::OnStructPicked(const UScriptStruct* InStruct) 
 								Node->InstanceObject = NewObject<UObject>(Outer, InstanceClass);
 							}
 						}
+
+						if (bRetainProperties)
+						{
+							UE::StateTreeEditor::Internal::RetainProperties(OldNode, *Node);
+						}
 					}
 				}
 			}
@@ -1905,6 +2093,9 @@ void FStateTreeEditorNodeDetails::OnClassPicked(const UClass* InClass) const
 			{
 				if (FStateTreeEditorNode* Node = static_cast<FStateTreeEditorNode*>(RawNodeData[Index]))
 				{
+					bool bRetainProperties = InClass && UStateTreeEditorSettings::Get().bRetainNodePropertyValues;
+					FStateTreeEditorNode OldNode = bRetainProperties ? *Node : FStateTreeEditorNode();
+
 					Node->Reset();
 
 					if (InClass && InClass->IsChildOf(UStateTreeTaskBlueprintBase::StaticClass()))
@@ -1939,6 +2130,16 @@ void FStateTreeEditorNodeDetails::OnClassPicked(const UClass* InClass) const
 						Node->InstanceObject = NewObject<UObject>(Outer, InClass);
 
 						Node->ID = FGuid::NewGuid();
+					}
+					else
+					{
+						// Not retaining properties if we haven't initialized a new node
+						bRetainProperties = false;
+					}
+
+					if (bRetainProperties)
+					{
+						UE::StateTreeEditor::Internal::RetainProperties(OldNode, *Node);
 					}
 				}
 			}

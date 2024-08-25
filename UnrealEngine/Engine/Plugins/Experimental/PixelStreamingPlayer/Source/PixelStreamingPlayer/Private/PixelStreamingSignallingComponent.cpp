@@ -22,19 +22,29 @@ void UPixelStreamingSignallingComponent::Connect(const FString& Url)
 {
 	SignallingConnection->SetKeepAlive(false);
 	SignallingConnection->SetAutoReconnect(true);
-	if (MediaSource == nullptr)
+	FString URL = (MediaSource == nullptr ? Url : MediaSource->GetUrl());
+
+	TArray<FString> Components;
+	URL.ParseIntoArray(Components, TEXT(":"), true);
+
+	if(Components.Num() < 2)
 	{
-		SignallingConnection->TryConnect(Url);
+		UE_LOG(LogPixelStreamingPlayer, Error, TEXT("Incorrectly formated connection URL. Ensure URL is in the format (protocol)://(ip):(port)"));
+		return;
 	}
-	else
+
+	if(Components.Num() == 2)
 	{
-		SignallingConnection->TryConnect(MediaSource->GetUrl());
+		// The user hasn't specified the port. Append port 80 as Pixel Streaming defaults to 8888
+		URL += TEXT(":80");
 	}
+	
+	SignallingConnection->TryConnect(URL);
 }
 
 void UPixelStreamingSignallingComponent::Disconnect()
 {
-	SignallingConnection->Disconnect();
+	SignallingConnection->Disconnect(TEXT("Pixel Streaming player plugin disconnected"));
 }
 
 void UPixelStreamingSignallingComponent::Subscribe(const FString& StreamerId)
@@ -146,6 +156,10 @@ void UPixelStreamingSignallingComponent::FSignallingObserver::OnSignallingSFUPee
 void UPixelStreamingSignallingComponent::FSignallingObserver::OnSignallingStreamerList(const TArray<FString>& StreamerList)
 {
 	Parent->OnStreamerListCallback(StreamerList);
+}
+
+void UPixelStreamingSignallingComponent::FSignallingObserver::OnPlayerRequestsBitrate(FPixelStreamingPlayerId PlayerId, int MinBitrate, int MaxBitrate)
+{
 }
 
 void UPixelStreamingSignallingComponent::AsyncRequestStreamerList(const TFunction<void(const TArray<FString>&)>& Callback)

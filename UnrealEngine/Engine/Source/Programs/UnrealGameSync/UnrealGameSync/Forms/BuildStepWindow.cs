@@ -1,12 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using EpicGames.Core;
 
 namespace UnrealGameSync
 {
@@ -36,16 +36,16 @@ namespace UnrealGameSync
 
 		private void BuildTaskWindow_Load(object sender, EventArgs e)
 		{
-			string defaultTargetName = _targetNames.FirstOrDefault(x => !x.EndsWith("Editor", StringComparison.OrdinalIgnoreCase) && !x.EndsWith("Client", StringComparison.OrdinalIgnoreCase) && !x.EndsWith("Server", StringComparison.OrdinalIgnoreCase)) ?? ((_targetNames.Count > 0)? _targetNames[0] : "");
+			string defaultTargetName = _targetNames.FirstOrDefault(x => !x.EndsWith("Editor", StringComparison.OrdinalIgnoreCase) && !x.EndsWith("Client", StringComparison.OrdinalIgnoreCase) && !x.EndsWith("Server", StringComparison.OrdinalIgnoreCase)) ?? ((_targetNames.Count > 0) ? _targetNames[0] : "");
 			CompileTargetComboBox.Items.AddRange(_targetNames.ToArray());
-			CompileTargetComboBox.Text = String.IsNullOrEmpty(_step.Target)? defaultTargetName : _step.Target;
+			CompileTargetComboBox.Text = String.IsNullOrEmpty(_step.Target) ? defaultTargetName : _step.Target;
 			StatusPanelLinkTextBox.Text = _step.StatusPanelLink;
 
 			DescriptionTextBox.Text = _step.Description;
 			StatusTextTextBox.Text = _step.StatusText;
 			DurationTextBox.Text = _step.EstimatedDuration.ToString();
 
-			switch(_step.Type)
+			switch (_step.Type)
 			{
 				case BuildStepType.Compile:
 					CompileRadioButton.Checked = true;
@@ -66,12 +66,12 @@ namespace UnrealGameSync
 					break;
 			}
 
-			if(String.IsNullOrEmpty(CompilePlatformComboBox.Text))
+			if (String.IsNullOrEmpty(CompilePlatformComboBox.Text))
 			{
 				CompilePlatformComboBox.Text = "Win64";
 			}
 
-			if(String.IsNullOrEmpty(CompileConfigComboBox.Text))
+			if (String.IsNullOrEmpty(CompileConfigComboBox.Text))
 			{
 				CompileConfigComboBox.Text = "Development";
 			}
@@ -138,7 +138,7 @@ namespace UnrealGameSync
 				_step.Arguments = CompileArgumentsTextBox.Text;
 				_step.UseLogWindow = true;
 			}
-			else if(CookRadioButton.Checked)
+			else if (CookRadioButton.Checked)
 			{
 				_step.Type = BuildStepType.Cook;
 				_step.Target = null;
@@ -175,7 +175,7 @@ namespace UnrealGameSync
 			using OpenFileDialog dialog = new OpenFileDialog();
 			dialog.Filter = "Cook/Launch Profiles (*.ulp2)|*.ulp2";
 			dialog.FileName = AddBaseDirectory(CookFileNameTextBox.Text);
-			if(dialog.ShowDialog() == DialogResult.OK)
+			if (dialog.ShowDialog() == DialogResult.OK)
 			{
 				CookFileNameTextBox.Text = RemoveBaseDirectory(dialog.FileName);
 			}
@@ -186,7 +186,7 @@ namespace UnrealGameSync
 			using OpenFileDialog dialog = new OpenFileDialog();
 			dialog.Filter = "Executable Files (*.exe,*.bat)|*.exe;*.bat|All files (*.*)|*.*";
 			dialog.FileName = AddBaseDirectory(OtherFileNameTextBox.Text);
-			if(dialog.ShowDialog() == DialogResult.OK)
+			if (dialog.ShowDialog() == DialogResult.OK)
 			{
 				OtherFileNameTextBox.Text = RemoveBaseDirectory(dialog.FileName);
 			}
@@ -204,11 +204,11 @@ namespace UnrealGameSync
 
 		private string AddBaseDirectory(string fileName)
 		{
-			if(fileName.Contains("$(", StringComparison.Ordinal))
+			if (fileName.Contains("$(", StringComparison.Ordinal))
 			{
 				return "";
 			}
-			else if(Path.IsPathRooted(fileName))
+			else if (Path.IsPathRooted(fileName))
 			{
 				return fileName;
 			}
@@ -221,7 +221,7 @@ namespace UnrealGameSync
 		private string RemoveBaseDirectory(string fileName)
 		{
 			FileReference fullFileName = new FileReference(fileName);
-			if(fullFileName.IsUnderDirectory(_baseDirectory))
+			if (fullFileName.IsUnderDirectory(_baseDirectory))
 			{
 				return fullFileName.MakeRelativeTo(_baseDirectory);
 			}
@@ -239,10 +239,10 @@ namespace UnrealGameSync
 		private void InsertVariable(string name)
 		{
 			IContainerControl container = this;
-			for(;;)
+			for (; ; )
 			{
 				IContainerControl? nextContainer = container.ActiveControl as IContainerControl;
-				if(nextContainer == null)
+				if (nextContainer == null)
 				{
 					break;
 				}
@@ -250,7 +250,7 @@ namespace UnrealGameSync
 			}
 
 			TextBox? focusTextBox = container.ActiveControl as TextBox;
-			if(focusTextBox != null)
+			if (focusTextBox != null)
 			{
 				focusTextBox.SelectedText = name;
 			}
@@ -258,7 +258,7 @@ namespace UnrealGameSync
 
 		private void VariablesButton_Click(object sender, EventArgs e)
 		{
-			if(_variablesWindow == null)
+			if (_variablesWindow == null)
 			{
 				_variablesWindow = new VariablesWindow(_variables);
 				_variablesWindow.OnInsertVariable += InsertVariable;

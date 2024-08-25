@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/error.h"
 #include "acl/core/memory_utils.h"
@@ -36,6 +37,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	inline uint32_t pack_scalar_unsigned(float input, uint32_t num_bits)
 	{
 		ACL_ASSERT(num_bits < 31, "Attempting to pack on too many bits");
@@ -109,7 +112,7 @@ namespace acl
 	// Assumes the 'vector_data' is in big-endian order and padded in order to load up to 8 bytes from it
 	inline rtm::scalarf RTM_SIMD_CALL unpack_scalarf_uXX_unsafe(uint32_t num_bits, const uint8_t* vector_data, uint32_t bit_offset)
 	{
-		ACL_ASSERT(num_bits <= 19, "This function does not support reading more than 19 bits per component");
+		ACL_ASSERT(num_bits <= 23, "This function does not support reading more than 23 bits per component");
 
 		struct PackedTableEntry
 		{
@@ -122,14 +125,14 @@ namespace acl
 			uint32_t mask;
 		};
 
-		// TODO: We technically don't need the first 3 entries, which could save a few bytes
-		alignas(64) static constexpr PackedTableEntry k_packed_constants[20] =
+		alignas(64) static constexpr PackedTableEntry k_packed_constants[24] =
 		{
 			PackedTableEntry(0), PackedTableEntry(1), PackedTableEntry(2), PackedTableEntry(3),
 			PackedTableEntry(4), PackedTableEntry(5), PackedTableEntry(6), PackedTableEntry(7),
 			PackedTableEntry(8), PackedTableEntry(9), PackedTableEntry(10), PackedTableEntry(11),
 			PackedTableEntry(12), PackedTableEntry(13), PackedTableEntry(14), PackedTableEntry(15),
 			PackedTableEntry(16), PackedTableEntry(17), PackedTableEntry(18), PackedTableEntry(19),
+			PackedTableEntry(20), PackedTableEntry(21), PackedTableEntry(22), PackedTableEntry(23),
 		};
 
 #if defined(RTM_SSE2_INTRINSICS)
@@ -170,6 +173,8 @@ namespace acl
 		return rtm::scalar_set(static_cast<float>(x32) * inv_max_value);
 #endif
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

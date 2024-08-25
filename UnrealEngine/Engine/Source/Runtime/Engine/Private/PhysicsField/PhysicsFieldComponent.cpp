@@ -5,9 +5,9 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Field/FieldSystemNodes.h"
-
 #include "DataDrivenShaderPlatformInfo.h"
 #include "GlobalShader.h"
+#include "HAL/LowLevelMemTracker.h"
 #include "PipelineStateCache.h"
 #include "ShaderParameterUtils.h"
 #include "ProfilingDebugging/RealtimeGPUProfiler.h"
@@ -120,7 +120,10 @@ void InitInternalBuffer(FRHICommandListBase& RHICmdList, const uint32 ElementCou
 		const uint32 BufferCount = ElementCount * ElementSize;
 		const uint32 BufferBytes = sizeof(BufferType) * BufferCount;
 		
-		OutputBuffer.Initialize(RHICmdList, TEXT("FPhysicsFieldResource"), sizeof(BufferType), BufferCount, PixelFormat, BUF_Static);
+		{
+			LLM_SCOPE(ELLMTag::Physics);
+			OutputBuffer.Initialize(RHICmdList, TEXT("FPhysicsFieldResource"), sizeof(BufferType), BufferCount, PixelFormat, BUF_Static);
+		}
 
 		if (OutputBuffer.UAV)
 		{
@@ -148,9 +151,10 @@ void UpdateInternalBuffer(FRHICommandListBase& RHICmdList, const uint32 ElementC
 		const uint32 BufferCount = ElementCount * ElementSize;
 		const uint32 BufferBytes = sizeof(BufferType) * BufferCount;
 
-		if(bInitField)
+		if (bInitField)
 		{
-			OutputBuffer.Initialize(RHICmdList, TEXT("FPhysicsFieldResource"),sizeof(BufferType), BufferCount, PixelFormat, BUF_Static);
+			LLM_SCOPE(ELLMTag::Physics);
+			OutputBuffer.Initialize(RHICmdList, TEXT("FPhysicsFieldResource"), sizeof(BufferType), BufferCount, PixelFormat, BUF_Static);
 		}
 
 		void* OutputData = RHICmdList.LockBuffer(OutputBuffer.Buffer, 0, BufferBytes, RLM_WriteOnly);
@@ -523,7 +527,7 @@ void FPhysicsFieldResource::UpdateBounds(const TArray<FVector>& TargetsMin, cons
 	}
 }
 
-void FPhysicsFieldResource::UpdateResource(FRHICommandListImmediate& RHICmdList, 
+void FPhysicsFieldResource::UpdateResource(FRHICommandList& RHICmdList, 
 	const TStaticArray<int32, EFieldPhysicsType::Field_PhysicsType_Max + 1>& TargetsOffsetsDatas, const TArray<int32>& NodesOffsetsDatas, const TArray<float>& NodesParamsDatas,
 	const TArray<FVector>& TargetsMinDatas, const TArray<FVector>& TargetsMaxDatas, const float TimeSeconds,
 	const TArray<FVector4>& BoundsMinDatas, const TArray<FVector4>& BoundsMaxDatas, const TStaticArray<int32, EFieldPhysicsType::Field_PhysicsType_Max + 1>& BoundsOffsetsDatas)
@@ -660,11 +664,11 @@ void FPhysicsFieldInstance::ReleaseInstance()
 	{
 		FPhysicsFieldResource* LocalFieldResource = FieldResource;
 		ENQUEUE_RENDER_COMMAND(FDestroyPhysicsFieldResourceCommand)(
-			[LocalFieldResource](FRHICommandList& RHICmdList)
-			{
-				LocalFieldResource->ReleaseResource();
-				delete LocalFieldResource;
-			});
+			[LocalFieldResource] (FRHICommandListBase&)
+		{
+			LocalFieldResource->ReleaseResource();
+			delete LocalFieldResource;
+		});
 		FieldResource = nullptr;
 	}
 
@@ -790,11 +794,11 @@ void FPhysicsFieldInstance::UpdateInstance(const float TimeSeconds, const bool b
 
 			FPhysicsFieldResource* LocalFieldResource = FieldResource;
 			ENQUEUE_RENDER_COMMAND(FUpdateFieldInstanceCommand)(
-				[LocalFieldResource, LocalNodesParams, LocalNodesOffsets, LocalTargetsOffsets, LocalTargetsMin, LocalTargetsMax, LocalTimeSeconds, LocalBoundsOffsets, LocalBoundsMin, LocalBoundsMax](FRHICommandListImmediate& RHICmdList)
-				{
-					LocalFieldResource->UpdateResource(RHICmdList, 
-						LocalTargetsOffsets, LocalNodesOffsets, LocalNodesParams, LocalTargetsMin, LocalTargetsMax, LocalTimeSeconds, LocalBoundsMin, LocalBoundsMax, LocalBoundsOffsets);
-				});
+				[LocalFieldResource, LocalNodesParams, LocalNodesOffsets, LocalTargetsOffsets, LocalTargetsMin, LocalTargetsMax, LocalTimeSeconds, LocalBoundsOffsets, LocalBoundsMin, LocalBoundsMax](FRHICommandList& RHICmdList)
+			{
+				LocalFieldResource->UpdateResource(RHICmdList, 
+				LocalTargetsOffsets, LocalNodesOffsets, LocalNodesParams, LocalTargetsMin, LocalTargetsMax, LocalTimeSeconds, LocalBoundsMin, LocalBoundsMax, LocalBoundsOffsets);
+			});
 		}
 	}
 }
@@ -838,9 +842,9 @@ void UPhysicsFieldComponent::DestroyRenderState_Concurrent()
 		FPhysicsFieldSceneProxy* SceneProxy = FieldProxy;
 		ENQUEUE_RENDER_COMMAND(FDestroySkyLightCommand)(
 			[SceneProxy](FRHICommandList& RHICmdList)
-			{
-				delete SceneProxy;
-			});
+		{
+			delete SceneProxy;
+		});
 
 		FieldProxy = nullptr;
 	}

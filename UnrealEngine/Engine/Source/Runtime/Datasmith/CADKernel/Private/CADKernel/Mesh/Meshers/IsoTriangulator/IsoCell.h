@@ -4,6 +4,7 @@
 #include "CADKernel/Core/Factory.h"
 #include "CADKernel/Core/Types.h"
 #include "CADKernel/Mesh/MeshEnum.h"
+#include "CADKernel/Mesh/Meshers/IsoTriangulator.h"
 #include "CADKernel/Mesh/Meshers/IsoTriangulator/IsoNode.h"
 #include "CADKernel/Mesh/Meshers/IsoTriangulator/IsoSegment.h"
 #include "CADKernel/Mesh/Meshers/IsoTriangulator/IntersectionSegmentTool.h"
@@ -14,6 +15,7 @@ namespace UE::CADKernel
 {
 class FGrid;
 class FIsoTriangulator;
+struct FLoopConnexion;
 
 struct FCellLoop
 {

@@ -13,15 +13,12 @@
 #include "MovieSceneTimeController.h"
 #include "Evaluation/MovieScenePlayback.h"
 #include "Evaluation/MovieScenePlayback.h"
+#include "MovieSceneSequencePlaybackSettings.h"
 #include "MovieSceneSequenceTickManagerClient.h"
 #include "MovieSceneSequencePlaybackSettings.h"
 #include "MovieSceneLatentActionManager.h"
 #include "IMovieSceneSequencePlayerObserver.h"
 #include "EntitySystem/MovieSceneEntityIDs.h"
-
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-	#include "MovieSceneSequenceTickManager.h"
-#endif
 
 #include "MovieSceneSequencePlayer.generated.h"
 
@@ -33,6 +30,7 @@ namespace UE::MovieScene
 }
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnMovieSceneSequencePlayerEvent);
+DECLARE_DELEGATE(FOnMovieSceneSequencePlayerNativeEvent);
 
 /**
  * Enum used to define how to update to a particular time
@@ -78,25 +76,6 @@ struct FMovieSceneSequenceReplProperties
 	/** The last known serial number on the server */
 	UPROPERTY()
 	int32 LastKnownSerialNumber;
-
-	/**
-	 * Custom serialization method so that all the properties in this struct are
-	 * in sync with the server. Without this, we could sometimes get half of the
-	 * properties up-to-date, and half of the properties left to old values.
-	 * This is especially problematic when LastKnownPosition updates, but LastKnownStatus
-	 * is left as "Stopped".
-	 */
-	bool NetSerialize(FArchive& Ar, UPackageMap* PackageMap, bool& bOutSuccess);
-};
-
-
-template<>
-struct TStructOpsTypeTraits<FMovieSceneSequenceReplProperties> : public TStructOpsTypeTraitsBase2<FMovieSceneSequenceReplProperties>
-{
-	enum
-	{
-		WithNetSerializer = true
-	};
 };
 
 
@@ -106,6 +85,7 @@ enum class EMovieScenePositionType : uint8
 	Frame,
 	Time,
 	MarkedFrame,
+	Timecode
 };
 
 USTRUCT(BlueprintType)
@@ -143,7 +123,19 @@ struct FMovieSceneSequencePlaybackParams
 		, bHasJumped(false)
 	{}
 
-	FFrameTime GetPlaybackPosition(UMovieSceneSequencePlayer* Player) const;
+	FMovieSceneSequencePlaybackParams(const FTimecode& InTimecode, EUpdatePositionMethod InUpdateMethod)
+		: Time(0.f)
+		, Timecode(InTimecode)
+		, PositionType(EMovieScenePositionType::Timecode)
+		, UpdateMethod(InUpdateMethod)
+		, bHasJumped(false)
+	{}
+
+	// Get the playback position using the player's tick resolution and display rate	
+	MOVIESCENE_API FFrameTime GetPlaybackPosition(UMovieSceneSequencePlayer* Player) const;
+
+	// Get the playback position using the sequence's tick resolution and display rate
+	MOVIESCENE_API FFrameTime GetPlaybackPosition(UMovieSceneSequence* Sequence) const;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cinematic", meta=(EditCondition="PositionType == EMovieScenePositionType::Frame"))
 	FFrameTime Frame;
@@ -153,6 +145,9 @@ struct FMovieSceneSequencePlaybackParams
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cinematic", meta=(EditCondition="PositionType == EMovieScenePositionType::MarkedFrame"))
 	FString MarkedFrame;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cinematic", meta=(EditCondition="PositionType == EMovieScenePositionType::Timecode"))
+	FTimecode Timecode;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cinematic")
 	EMovieScenePositionType PositionType;
@@ -186,7 +181,7 @@ class UMovieSceneSequencePlayer
 public:
 	GENERATED_BODY()
 
-	/** Obeserver interface used for controlling whether the effects of this sequence can be seen even when it is playing back. */
+	/** Obeserver interface used for controlling whether this sequence can be played. */
 	UPROPERTY(replicated)
 	TScriptInterface<IMovieSceneSequencePlayerObserver> Observer;
 
@@ -351,8 +346,16 @@ public:
 	/**
 	 * Restore any changes made by this player to their original state
 	 */
-	UFUNCTION(BlueprintCallable, Category="Game|Cinematic")
+	UFUNCTION(BlueprintCallable, Category = "Game|Cinematic")
 	MOVIESCENE_API void RestoreState();
+
+	/** Set the state of the completion mode override. Note, setting the state to force restore state will only take effect if the sequence hasn't started playing */
+	UFUNCTION(BlueprintCallable, Category = "Game|Cinematic")
+	MOVIESCENE_API void SetCompletionModeOverride(EMovieSceneCompletionModeOverride CompletionModeOverride);
+
+	/** Get the state of the completion mode override */
+	UFUNCTION(BlueprintCallable, Category = "Game|Cinematic")
+	MOVIESCENE_API EMovieSceneCompletionModeOverride GetCompletionModeOverride() const;
 
 public:
 
@@ -411,6 +414,8 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Sequencer|Player")
 	FOnMovieSceneSequencePlayerEvent OnFinished;
 
+	/** Native event triggered when the level sequence player finishes naturally (without explicitly calling stop) */
+	FOnMovieSceneSequencePlayerNativeEvent OnNativeFinished;
 
 public:
 
@@ -444,6 +449,9 @@ public:
 
 	/** Perform any tear-down work when this player is no longer (and will never) be needed */
 	MOVIESCENE_API void TearDown();
+
+	/** Returns whether this player is valid, i.e. it has been initialized and not torn down yet */
+	MOVIESCENE_API bool IsValid() const;
 
 public:
 
@@ -544,14 +552,14 @@ protected:
 	virtual void SetPlaybackStatus(EMovieScenePlayerStatus::Type InPlaybackStatus) override {}
 	virtual void SetViewportSettings(const TMap<FViewportClient*, EMovieSceneViewportParams>& ViewportParamsMap) override {}
 	virtual void GetViewportSettings(TMap<FViewportClient*, EMovieSceneViewportParams>& ViewportParamsMap) const override {}
-	virtual bool CanUpdateCameraCut() const override { return !PlaybackSettings.bDisableCameraCuts; }
-	virtual void UpdateCameraCut(UObject* CameraObject, const EMovieSceneCameraCutParams& CameraCutParams) override {}
-	MOVIESCENE_API virtual void ResolveBoundObjects(const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& Sequence, UObject* ResolutionContext, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const override;
+
+	MOVIESCENE_API virtual void ResolveBoundObjects(UE::UniversalObjectLocator::FResolveParams& ResolveParams, const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& Sequence, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const override;
 	virtual IMovieScenePlaybackClient* GetPlaybackClient() override { return PlaybackClient ? &*PlaybackClient : nullptr; }
-	MOVIESCENE_API virtual bool IsDisablingEventTriggers(FFrameTime& DisabledUntilTime) const override;
 	MOVIESCENE_API virtual bool HasDynamicWeighting() const override;
 	MOVIESCENE_API virtual void PreEvaluation(const FMovieSceneContext& Context) override;
 	MOVIESCENE_API virtual void PostEvaluation(const FMovieSceneContext& Context) override;
+
+	MOVIESCENE_API virtual TScriptInterface<IMovieSceneSequencePlayerObserver> GetObserver() override { return Observer; }
 
 	/*~ Begin UObject interface */
 	virtual bool IsSupportedForNetworking() const { return true; }
@@ -559,6 +567,9 @@ protected:
 	MOVIESCENE_API virtual bool CallRemoteFunction(UFunction* Function, void* Parameters, FOutParmRec* OutParms, FFrame* Stack) override;
 	MOVIESCENE_API virtual void PostNetReceive() override;
 	MOVIESCENE_API virtual void BeginDestroy() override;
+#if UE_WITH_IRIS
+	MOVIESCENE_API virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
+#endif
 	/*~ End UObject interface */
 
 	//~ Begin IMovieSceneSequenceTickManagerClient interface
@@ -652,6 +663,9 @@ protected:
 	/** Flag that notifies the player to check network synchronization on next update */
 	uint32 bUpdateNetSync : 1;
 
+	/** Flag that indicates whether to warn on zero duration playback */
+	uint32 bWarnZeroDuration : 1;
+
 	/** The sequence to play back */
 	UPROPERTY(transient)
 	TObjectPtr<UMovieSceneSequence> Sequence;
@@ -692,9 +706,6 @@ protected:
 	/** Play position helper */
 	FMovieScenePlaybackPosition PlayPosition;
 
-	/** Disable event triggers until given time */
-	TOptional<FFrameTime> DisableEventTriggersUntilTime;
-
 	/** Spawn register */
 	TSharedPtr<FMovieSceneSpawnRegister> SpawnRegister;
 
@@ -706,13 +717,18 @@ protected:
 		/** The actual server sequence time in seconds, with client ping at the time of the sample baked in */
 		double ServerTime;
 		/** Wall-clock time that the sample was receieved */
-		double ReceievedTime;
+		double ReceivedTime;
 	};
 	/**
 	 * Array of server sequence times in seconds, with ping compensation baked in.
 	 * Samples are sorted chronologically with the oldest samples first
 	 */
 	TArray<FServerTimeSample> ServerTimeSamples;
+
+	/*
+	* On UpdateServerTimeSamples, the last recorded time dilation. Used to update the server time samples each update to ensure we can smooth server time even on changing time dilation.
+	*/
+	float LastEffectiveTimeDilation = 1.0f;
 
 	/** Replicated playback status and current time that are replicated to clients */
 	UPROPERTY(replicated)

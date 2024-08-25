@@ -22,6 +22,16 @@
 EOS_DECLARE_FUNC(void) EOS_Connect_Login(EOS_HConnect Handle, const EOS_Connect_LoginOptions* Options, void* ClientData, const EOS_Connect_OnLoginCallback CompletionDelegate);
 
 /**
+ * Logout a currently logged in user.
+ * NOTE: Access tokens for Product User IDs cannot be revoked. This operation really just cleans up state for the Product User ID and locally discards any associated access token.
+ *
+ * @param Options Structure containing the input parameters for the operation
+ * @param ClientData Arbitrary data that is passed back to the caller in the CompletionDelegate.
+ * @param CompletionDelegate A callback that is fired when the operation completes, either successfully or in error.
+ */
+EOS_DECLARE_FUNC(void) EOS_Connect_Logout(EOS_HConnect Handle, const EOS_Connect_LogoutOptions* Options, void* ClientData, const EOS_Connect_OnLogoutCallback CompletionDelegate);
+
+/**
  * Create an account association with the Epic Online Service as a product user given their external auth credentials.
  *
  * @param Options structure containing a continuance token from a "user not found" response during Login (always try login first).
@@ -348,7 +358,7 @@ EOS_DECLARE_FUNC(EOS_ELoginStatus) EOS_Connect_GetLoginStatus(EOS_HConnect Handl
  * Notification is approximately 10 minutes prior to expiration.
  * Call EOS_Connect_Login again with valid third party credentials to refresh access.
  *
- * @note must call RemoveNotifyAuthExpiration to remove the notification.
+ * @note If the returned NotificationId is valid, you must call EOS_Connect_RemoveNotifyAuthExpiration when you no longer wish to have your NotificationHandler called.
  *
  * @param Options structure containing the API version of the callback to use.
  * @param ClientData arbitrary data that is passed back to you in the callback.
@@ -367,7 +377,7 @@ EOS_DECLARE_FUNC(void) EOS_Connect_RemoveNotifyAuthExpiration(EOS_HConnect Handl
 
 /**
  * Register to receive user login status updates.
- * @note must call RemoveNotifyLoginStatusChanged to remove the notification.
+ * @note If the returned NotificationId is valid, you must call EOS_Connect_RemoveNotifyLoginStatusChanged when you no longer wish to have your NotificationHandler called.
  *
  * @param Options structure containing the API version of the callback to use.
  * @param ClientData arbitrary data that is passed back to you in the callback.

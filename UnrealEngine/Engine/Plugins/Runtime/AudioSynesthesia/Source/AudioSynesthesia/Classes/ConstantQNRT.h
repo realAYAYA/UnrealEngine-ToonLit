@@ -33,31 +33,31 @@ UENUM(BlueprintType)
 enum class EConstantQFFTSizeEnum : uint8
 {
 	// 64
-	Min,
+	Min UMETA(DisplayName = "64"),
 	
 	// 128
-	XXSmall,
+	XXSmall UMETA(DisplayName = "128"),
 
 	// 256
-	XSmall,
+	XSmall UMETA(DisplayName = "256"),
 
 	// 512
-	Small,
+	Small UMETA(DisplayName = "512"),
 
 	// 1024
-	Medium,
+	Medium UMETA(DisplayName = "1024"),
 
 	// 2048
-	Large,
+	Large UMETA(DisplayName = "2048"),
 
 	// 4096
-	XLarge,
+	XLarge UMETA(DisplayName = "4096"),
 
 	// 8192
-	XXLarge,
+	XXLarge UMETA(DisplayName = "8192"),
 
 	// 16384
-	Max
+	Max UMETA(DisplayName = "16384")
 };
 										 
 /** UConstantQNRTSettings
@@ -159,7 +159,9 @@ class AUDIOSYNESTHESIA_API UConstantQNRT : public UAudioSynesthesiaNRT
 		virtual FText GetAssetActionName() const override;
 
 		virtual UClass* GetSupportedClass() const override;
-#endif
+
+		virtual bool ShouldEventTriggerAnalysis(FPropertyChangedEvent& PropertyChangeEvent) override;
+#endif // WITH_EDITOR
 
 	protected:
 

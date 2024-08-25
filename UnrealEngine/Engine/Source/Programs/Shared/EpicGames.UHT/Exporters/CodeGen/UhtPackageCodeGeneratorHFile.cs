@@ -40,11 +40,14 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				List<UhtHeaderFile> headerFiles = new(Package.Children.Count * 2);
 				headerFiles.AddRange(packageSortedHeaders);
 
-				foreach (UhtHeaderFile headerFile in Package.Children)
+				foreach (UhtType type in Package.Children)
 				{
-					if (headerFile.HeaderFileType == UhtHeaderFileType.Classes)
+					if (type is UhtHeaderFile headerFile)
 					{
-						headerFiles.Add(headerFile);
+						if (headerFile.HeaderFileType == UhtHeaderFileType.Classes)
+						{
+							headerFiles.Add(headerFile);
+						}
 					}
 				}
 

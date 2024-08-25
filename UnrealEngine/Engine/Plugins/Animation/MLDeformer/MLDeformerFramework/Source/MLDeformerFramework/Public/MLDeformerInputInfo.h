@@ -24,6 +24,12 @@ class MLDEFORMERFRAMEWORK_API UMLDeformerInputInfo
 public:
 	virtual ~UMLDeformerInputInfo() = default;
 
+	// UObject overrides.
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
+	// ~END UObject overrides.
+
 	/**
 	 * This method is executed post loading of the ML Deformer asset.
 	 */
@@ -222,7 +228,7 @@ protected:
 	/**
 	 * The path to the skeletal mesh that this model was trained on.
 	 */
-	UPROPERTY()	
+	UPROPERTY()
 	FSoftObjectPath SkeletalMesh;
 
 #if WITH_EDITORONLY_DATA
@@ -252,7 +258,7 @@ protected:
 	TArray<FName> CurveNames;
 
 	/** Number of imported base mesh vertices, so not render vertices. */
-	UPROPERTY()
+	UPROPERTY(AssetRegistrySearchable)
 	int32 NumBaseMeshVertices = 0;
 
 	/** Number of imported target mesh vertices, so not render vertices. */

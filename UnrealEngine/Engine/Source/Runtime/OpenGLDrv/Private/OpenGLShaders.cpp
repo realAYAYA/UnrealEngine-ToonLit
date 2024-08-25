@@ -8,6 +8,7 @@
 #include "HAL/PlatformFileManager.h"
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
+#include "Misc/Compression.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/MemoryReader.h"
 #include "OpenGLDrvPrivate.h"
@@ -486,7 +487,7 @@ public:
 		if (bCompressed)
 		{
 			// shrink buffer
-			GlslCode.SetNum(CompressedSize, true);
+			GlslCode.SetNum(CompressedSize, EAllowShrinking::Yes);
 		}
 		else
 		{
@@ -1054,7 +1055,7 @@ FOpenGLShader::FOpenGLShader(TArrayView<const uint8> Code, const FSHAHash& Hash,
 		check(GlslCodeFinal.Num());
 	}
 	GlslCode = MoveTemp(GlslCodeFinal);
-	GlslCodeString = GlslCodeFinal.GetData();
+	GlslCodeString = GlslCode.GetData();
 #endif
 
 	// The shader is compiled when we link program
@@ -1086,7 +1087,7 @@ static void MarkShaderParameterCachesDirty(FOpenGLShaderParameterCache* ShaderPa
 	}
 }
 
-void FOpenGLDynamicRHI::BindUniformBufferBase(FOpenGLContextState& ContextState, int32 NumUniformBuffers, FRHIUniformBuffer** BoundUniformBuffers, uint32 FirstUniformBuffer, bool ForceUpdate)
+void FOpenGLDynamicRHI::BindUniformBufferBase(FOpenGLContextState& ContextState, int32 NumUniformBuffers, FRHIUniformBuffer** BoundUniformBuffers, uint32* DynamicOffsets, uint32 FirstUniformBuffer, bool ForceUpdate)
 {
 	SCOPE_CYCLE_COUNTER_DETAILED(STAT_OpenGLUniformBindTime);
 	VERIFY_GL_SCOPE();
@@ -1110,10 +1111,10 @@ void FOpenGLDynamicRHI::BindUniformBufferBase(FOpenGLContextState& ContextState,
 				continue;
 			}
 
-			Size = GLUB->GetSize();
-#if SUBALLOCATED_CONSTANT_BUFFER
-			Offset = GLUB->Offset;
-#endif
+			Size = GLUB->RangeSize;
+			Offset = GLUB->Offset + DynamicOffsets[BufferIndex];
+			// make sure range is within bounds of the buffer
+			ensure(GLUB->AllocatedSize >= (Offset + Size));
 		}
 		else
 		{
@@ -1133,7 +1134,7 @@ void FOpenGLDynamicRHI::BindUniformBufferBase(FOpenGLContextState& ContextState,
 			Buffer = PendingState.ZeroFilledDummyUniformBuffer;
 		}
 
-		if (ForceUpdate || (Buffer != 0 && ContextState.UniformBuffers[BindIndex] != Buffer)|| ContextState.UniformBufferOffsets[BindIndex] != Offset)
+		if (ForceUpdate || (Buffer != 0 && ContextState.UniformBuffers[BindIndex] != Buffer) || ContextState.UniformBufferOffsets[BindIndex] != Offset)
 		{
 			FOpenGL::BindBufferRange(GL_UNIFORM_BUFFER, BindIndex, Buffer, Offset, Size);
 			ContextState.UniformBuffers[BindIndex] = Buffer;
@@ -2191,7 +2192,7 @@ void FOpenGLLinkedProgram::ConfigureShaderStage( int Stage, uint32 FirstUniformB
 			// glUniform1i(Location, FirstUAVUnit[Stage] + UAVIndex);
 
 			// verify that only CS and PS uses UAVs (limitation on MALI GPUs)
-			check(Stage == CrossCompiler::SHADER_STAGE_COMPUTE || Stage == CrossCompiler::SHADER_STAGE_PIXEL);
+			checkf(Stage == CrossCompiler::SHADER_STAGE_COMPUTE || Stage == CrossCompiler::SHADER_STAGE_PIXEL, TEXT("%s uses UAV in vertex shader"), *Config.ProgramKey.ToString());
 			
 			UAVStageNeeds[ FirstUAVUnit[Stage] + UAVIndex ] = true;
 			MaxUAVUnitUsed = FMath::Max(MaxUAVUnitUsed, FirstUAVUnit[Stage] + UAVIndex);
@@ -2797,8 +2798,18 @@ static FOpenGLProgramBinary ExternalProgramCompile(const FOpenGLProgramKey& Prog
 void FOpenGLDynamicRHI::PrepareGFXBoundShaderState(const FGraphicsPipelineStateInitializer& Initializer)
 {
 	const bool bIsPreCachePSO = Initializer.bPSOPrecache || Initializer.bFromPSOFileCache;
-	if (!bIsPreCachePSO || !FOpenGLProgramBinaryCache::IsEnabled())
+	// if external creation is not available then ignore precache PSOs
+	// precaching on the RHIT will cause severe hitching.
+	const bool bCanCreateExternally = CanCreateExternally(bIsPreCachePSO);
+
+	if (!bIsPreCachePSO || !FOpenGLProgramBinaryCache::IsEnabled() || !bCanCreateExternally)
 	{
+		static bool bOneTime = true;
+		if(bOneTime && bIsPreCachePSO && FOpenGLProgramBinaryCache::IsEnabled())
+		{
+			UE_LOG(LogRHI, Warning, TEXT("Ignoring precache PSO, external compiler not active."));
+			bOneTime = false;
+		}
 		return;
 	}
 
@@ -2823,47 +2834,7 @@ void FOpenGLDynamicRHI::PrepareGFXBoundShaderState(const FGraphicsPipelineStateI
 		if (FOpenGLProgramBinaryCache::IsBuildingCache())
 		{
 			OGL_BINARYCACHE_STATS_MARKBEGINCOMPILE(ProgramKey);
-			FOpenGLProgramBinary CompiledProgram;
-			if (CanCreateExternally(bIsPreCachePSO))
-			{
-				CompiledProgram = ExternalProgramCompile(ProgramKey, VertexShaderRHI, PixelShaderRHI);
-			}
-			else
-			{
-				RunOnGLRenderContextThread([&CompiledProgram, &VertexShaderRHI, &PixelShaderRHI, &GeometryShaderRHI,this]()
-				{
-					check(IsInRenderingThread() || IsInRHIThread());
-					VERIFY_GL_SCOPE();
-					FOpenGLLinkedProgramConfiguration Config = CreateConfig(VertexShaderRHI,
-						PixelShaderRHI,
-						GeometryShaderRHI);
-
-					FOpenGLLinkedProgram* LinkedProgram = LinkProgram(Config);
-					if(LinkedProgram == nullptr)
-					{
-						RHIGetPanicDelegate().ExecuteIfBound(FName("FailedProgramLinkDuringPrecompile"));
-						UE_LOG(LogRHI, Fatal, TEXT("Failed to link program [%s]. Current total programs: %d"), *Config.ProgramKey.ToString(), GNumPrograms);
-						return;
-					}
-
-					CompiledProgram = UE::OpenGL::GetProgramBinaryFromGLProgram(LinkedProgram->Program);
-					// optional: enqueue this binary, it will be picked up during createboundshaderstate.
-					// If this is enabled then the binary program will be sent to the GL container.
-					// not doing this for now as the completed binary cache will be loaded as normal at the end of the pre-caching process.
-					// FOpenGLProgramBinaryCache::EnqueueBinaryForGLProgramContainer(ProgramKey, TUniqueObj<FOpenGLProgramBinary>(MoveTemp(CompiledProgram)));
-
-					if (!FGLProgramCache::IsUsingLRU())
-					{
-						GetOpenGLProgramsCache().Add(Config.ProgramKey, LinkedProgram);	// if we're not using the LRU then we add the program as normal.
-					}
-					else
-					{
-						// with LRU mode the program is made available as an evicted program after the PSO cache completes.
-						delete LinkedProgram;
-						LinkedProgram = nullptr;
-					}
-				}, true); // TODO: this wait can be optimized away
-			}
+			FOpenGLProgramBinary CompiledProgram = ExternalProgramCompile(ProgramKey, VertexShaderRHI, PixelShaderRHI);
 
 			if (CompiledProgram.IsValid())
 			{
@@ -3157,6 +3128,7 @@ void FOpenGLDynamicRHI::BindPendingShaderState( FOpenGLContextState& ContextStat
 				ContextState,
 				NumUniformBuffers[SF_Vertex],
 				PendingState.BoundUniformBuffers[SF_Vertex],
+				PendingState.BoundUniformBuffersDynamicOffset[SF_Vertex],
 				NextUniformBufferIndex,
 				ForceUniformBindingUpdate);
 		}
@@ -3168,6 +3140,7 @@ void FOpenGLDynamicRHI::BindPendingShaderState( FOpenGLContextState& ContextStat
 				ContextState,
 				NumUniformBuffers[SF_Pixel],
 				PendingState.BoundUniformBuffers[SF_Pixel],
+				PendingState.BoundUniformBuffersDynamicOffset[SF_Pixel],
 				NextUniformBufferIndex,
 				ForceUniformBindingUpdate);
 		}
@@ -3179,6 +3152,7 @@ void FOpenGLDynamicRHI::BindPendingShaderState( FOpenGLContextState& ContextStat
 				ContextState,
 				NumUniformBuffers[SF_Geometry],
 				PendingState.BoundUniformBuffers[SF_Geometry],
+				PendingState.BoundUniformBuffersDynamicOffset[SF_Geometry],
 				NextUniformBufferIndex,
 				ForceUniformBindingUpdate);
 			NextUniformBufferIndex += NumUniformBuffers[SF_Geometry];
@@ -3331,6 +3305,7 @@ void FOpenGLDynamicRHI::BindPendingComputeShaderState(FOpenGLContextState& Conte
 			ContextState,
 			ComputeShader->Bindings.NumUniformBuffers,
 			PendingState.BoundUniformBuffers[SF_Compute],
+			PendingState.BoundUniformBuffersDynamicOffset[SF_Compute],
 			OGL_FIRST_UNIFORM_BUFFER,
 			ForceUniformBindingUpdate);
 

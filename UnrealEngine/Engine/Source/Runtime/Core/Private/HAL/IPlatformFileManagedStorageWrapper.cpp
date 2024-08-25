@@ -234,11 +234,11 @@ FPersistentStorageManager::FCategoryInfo FPersistentStorageManager::InitCategori
 		TrimmedCategory.TrimStartAndEndInline();
 		if (TrimmedCategory.Left(1) == TEXT("("))
 		{
-			TrimmedCategory.RightChopInline(1, false);
+			TrimmedCategory.RightChopInline(1, EAllowShrinking::No);
 		}
 		if (TrimmedCategory.Right(1) == TEXT(")"))
 		{
-			TrimmedCategory.LeftChopInline(1, false);
+			TrimmedCategory.LeftChopInline(1, EAllowShrinking::No);
 		}
 
 		// Find all custom chunks and parse
@@ -271,11 +271,11 @@ FPersistentStorageManager::FCategoryInfo FPersistentStorageManager::InitCategori
 			// Split Directories
 			if (DirectoryNames.Left(1) == TEXT("("))
 			{
-				DirectoryNames.RightChopInline(1, false);
+				DirectoryNames.RightChopInline(1, EAllowShrinking::No);
 			}
 			if (DirectoryNames.Right(1) == TEXT(")"))
 			{
-				DirectoryNames.LeftChopInline(1, false);
+				DirectoryNames.LeftChopInline(1, EAllowShrinking::No);
 			}
 
 			TArray<FString> Directories;

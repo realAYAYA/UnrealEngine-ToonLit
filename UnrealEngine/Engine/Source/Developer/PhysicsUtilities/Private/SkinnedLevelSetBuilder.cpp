@@ -302,7 +302,7 @@ FKSkinnedLevelSetElem FSkinnedLevelSetBuilder::CreateSkinnedLevelSetElem()
 		return FTransform(FMatrix(SkeletalMesh.GetRefBasesInvMatrix()[BoneIndex]));
 		}
 		);
-	TUniquePtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet> > WeightedLevelSet = Generate(MoveTemp(LevelSet));
+	TRefCountPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet> > WeightedLevelSet = Generate(MoveTemp(LevelSet));
 	FKSkinnedLevelSetElem Ret;
 	Ret.SetWeightedLevelSet(MoveTemp(WeightedLevelSet));
 	return Ret;

@@ -46,11 +46,11 @@ void FMovieSceneDynamicBindingCustomization::GetPayloadVariables(UObject* EditOb
 	const FMovieSceneDynamicBinding* DynamicBinding = static_cast<FMovieSceneDynamicBinding*>(RawData);
 	for (const TPair<FName, FMovieSceneDynamicBindingPayloadVariable>& Pair : DynamicBinding->PayloadVariables)
 	{
-		OutPayloadVariables.Add(Pair.Key, Pair.Value.Value);
+		OutPayloadVariables.Add(Pair.Key, FMovieSceneDirectorBlueprintVariableValue{ Pair.Value.ObjectValue, Pair.Value.Value });
 	}
 }
 
-bool FMovieSceneDynamicBindingCustomization::SetPayloadVariable(UObject* EditObject, void* RawData, FName FieldName, const FString& NewVariableValue)
+bool FMovieSceneDynamicBindingCustomization::SetPayloadVariable(UObject* EditObject, void* RawData, FName FieldName, const FMovieSceneDirectorBlueprintVariableValue& NewVariableValue)
 {
 	UMovieScene* MovieScene = Cast<UMovieScene>(EditObject);
 	FMovieSceneDynamicBinding* DynamicBinding = static_cast<FMovieSceneDynamicBinding*>(RawData);
@@ -61,7 +61,7 @@ bool FMovieSceneDynamicBindingCustomization::SetPayloadVariable(UObject* EditObj
 
 	MovieScene->Modify();
 
-	if (!NewVariableValue.IsEmpty())
+	if (!NewVariableValue.Value.IsEmpty())
 	{
 		FMovieSceneDynamicBindingPayloadVariable* PayloadVariable = DynamicBinding->PayloadVariables.Find(FieldName);
 		if (!PayloadVariable)
@@ -69,7 +69,8 @@ bool FMovieSceneDynamicBindingCustomization::SetPayloadVariable(UObject* EditObj
 			PayloadVariable = &DynamicBinding->PayloadVariables.Add(FieldName);
 		}
 
-		PayloadVariable->Value = NewVariableValue;
+		PayloadVariable->Value = NewVariableValue.Value;
+		PayloadVariable->ObjectValue = NewVariableValue.ObjectValue;
 	}
 	else
 	{

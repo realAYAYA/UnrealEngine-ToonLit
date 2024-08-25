@@ -72,7 +72,10 @@ void UMassZoneGraphAnnotationTagUpdateProcessor::Initialize(UObject& Owner)
 	Super::Initialize(Owner);
 
 	UMassSignalSubsystem* SignalSubsystem = UWorld::GetSubsystem<UMassSignalSubsystem>(Owner.GetWorld());
-	SubscribeToSignal(*SignalSubsystem, UE::Mass::Signals::CurrentLaneChanged);
+	if (ensureMsgf(SignalSubsystem, TEXT("Expecting to run this processor with UMassSignalSubsystem available")))
+	{
+		SubscribeToSignal(*SignalSubsystem, UE::Mass::Signals::CurrentLaneChanged);
+	}
 }
 
 void UMassZoneGraphAnnotationTagUpdateProcessor::ConfigureQueries()

@@ -12,6 +12,7 @@
 #include "PixelStreamingSignallingConnection.h"
 #include "Templates/SharedPointer.h"
 #include "PlayerContext.h"
+#include "FreezeFrame.h"
 
 class IPixelStreamingModule;
 
@@ -35,8 +36,6 @@ namespace UE::PixelStreaming
 		virtual TWeakPtr<SViewport> GetTargetViewport() override;
 		virtual void SetTargetWindow(TWeakPtr<SWindow> InTargetWindow) override;
 		virtual TWeakPtr<SWindow> GetTargetWindow() override;
-		virtual void SetTargetScreenSize(TWeakPtr<FIntPoint> InTargetScreenSize) override;
-		virtual TWeakPtr<FIntPoint> GetTargetScreenSize() override;
 		virtual void SetTargetScreenRect(TWeakPtr<FIntRect> InTargetScreenRect) override;
 		virtual TWeakPtr<FIntRect> GetTargetScreenRect() override;
 
@@ -51,6 +50,7 @@ namespace UE::PixelStreaming
 		virtual void StopStreaming() override;
 		virtual bool IsStreaming() const override { return bStreamingStarted; }
 
+		virtual FPreConnectionEvent& OnPreConnection() override;
 		virtual FStreamingStartedEvent& OnStreamingStarted() override;
 		virtual FStreamingStoppedEvent& OnStreamingStopped() override;
 
@@ -81,6 +81,12 @@ namespace UE::PixelStreaming
 		// TODO(Luke) hook this back up so that the Engine can change how the interface is working browser side
 		void AddPlayerConfig(TSharedRef<FJsonObject>& JsonObject);
 
+		virtual void PlayerRequestsBitrate(FPixelStreamingPlayerId PlayerId, int MinBitrate, int MaxBitrate) override;
+
+		virtual void RefreshStreamBitrate() override;
+
+		void ForEachPlayer(const TFunction<void(FPixelStreamingPlayerId, FPlayerContext)>& Func);
+
 	private:
 		FStreamer(const FString& StreamerId);
 
@@ -103,8 +109,6 @@ namespace UE::PixelStreaming
 		void SendProtocol(FPixelStreamingPlayerId PlayerId) const;
 		void SendPeerControllerMessages(FPixelStreamingPlayerId PlayerId) const;
 		void SendLatencyReport(FPixelStreamingPlayerId PlayerId) const;
-		void SendFreezeFrame(TArray<FColor> RawData, const FIntRect& Rect);
-		void SendCachedFreezeFrameTo(FPixelStreamingPlayerId PlayerId) const;
 		bool ShouldPeerGenerateFrames(FPixelStreamingPlayerId PlayerId) const;
 
 		void SetQualityController(FPixelStreamingPlayerId PlayerId);
@@ -122,18 +126,15 @@ namespace UE::PixelStreaming
 
 		webrtc::PeerConnectionInterface::RTCConfiguration PeerConnectionConfig;
 
-		TThreadSafeMap<FPixelStreamingPlayerId, FPlayerContext> Players;
+		TSharedPtr<TThreadSafeMap<FPixelStreamingPlayerId, FPlayerContext>> Players;
 
 		FPixelStreamingPlayerId QualityControllingId = INVALID_PLAYER_ID;
 		FPixelStreamingPlayerId SFUPlayerId = INVALID_PLAYER_ID;
 		FPixelStreamingPlayerId InputControllingId = INVALID_PLAYER_ID;
 
 		bool bStreamingStarted = false;
-		bool bCaptureNextBackBufferAndStream = false;
 
-		// When we send a freeze frame we retain the data so we send freeze frame to new peers if they join during a freeze frame.
-		TArray64<uint8> CachedJpegBytes;
-
+		FPreConnectionEvent StreamingPreConnectionEvent;
 		FStreamingStartedEvent StreamingStartedEvent;
 		FStreamingStoppedEvent StreamingStoppedEvent;
 
@@ -146,6 +147,8 @@ namespace UE::PixelStreaming
 		FDelegateHandle AllConnectionsClosedHandle;
 
 		IPixelStreamingModule& Module;
+
+		TSharedPtr<FFreezeFrame> FreezeFrame;
 
 		TMap<FName, FString> ConfigOptions;
 	};

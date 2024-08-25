@@ -709,11 +709,12 @@ bool FSequenceRecorder::StartRecordingInternal(UWorld* World)
 				// Always initialize the player so that the playback settings/range can be initialized from editor.
 				DupActorToTrigger->InitializePlayer();
 				
-				if (DupActorToTrigger->SequencePlayer)
+				ULevelSequencePlayer* SequencePlayer = DupActorToTrigger->GetSequencePlayer();
+				if (SequencePlayer)
 				{
-					DupActorToTrigger->SequencePlayer->SetDisableCameraCuts(true);
-					DupActorToTrigger->SequencePlayer->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(0, EUpdatePositionMethod::Jump));
-					DupActorToTrigger->SequencePlayer->Play();
+					SequencePlayer->SetDisableCameraCuts(true);
+					SequencePlayer->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(0, EUpdatePositionMethod::Jump));
+					SequencePlayer->Play();
 				}
 				else
 				{
@@ -1039,7 +1040,7 @@ bool FSequenceRecorder::StopRecording(bool bAllowLooping)
 		if (DupActorsToTrigger[DupActorToTriggerIndex].IsValid())
 		{
 			ALevelSequenceActor* DupActorToTrigger = DupActorsToTrigger[DupActorToTriggerIndex].Get();
-			ULevelSequencePlayer* SequencePlayer = DupActorToTrigger->SequencePlayer;
+			ULevelSequencePlayer* SequencePlayer = DupActorToTrigger->GetSequencePlayer();
 			if (SequencePlayer)
 			{
 				SequencePlayer->SetDisableCameraCuts(false);

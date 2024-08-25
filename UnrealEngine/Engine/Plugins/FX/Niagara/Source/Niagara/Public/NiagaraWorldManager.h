@@ -10,6 +10,7 @@
 #include "Particles/ParticlePerfStats.h"
 #include "NiagaraParameterCollection.h"
 #include "UObject/GCObject.h"
+#include "NiagaraCommon.h"
 #include "NiagaraDataSet.h"
 #include "NiagaraScriptExecutionContext.h"
 #include "NiagaraSystemSimulation.h"
@@ -210,9 +211,14 @@ public:
 	void PrimePool(UNiagaraSystem* System);
 
 	static void RequestInvalidateCachedSystemScalabilityDataForAllWorlds();
+
+	void SetTickGroupPriority(const int32 NiagaraTickGroupIndex, const bool bHighPriority);
+
 private:
 	static void InvalidateCachedSystemScalabilityDataForAllWorlds();
 	void InvalidateCachedSystemScalabilityData();
+
+	bool HasActiveWorld() const;
 
 public:
 	void SetDebugPlaybackMode(ENiagaraDebugPlaybackMode Mode) { RequestedDebugPlaybackMode = Mode; }
@@ -226,6 +232,17 @@ public:
 #endif
 
 	class FNiagaraDeferredMethodQueue& GetDeferredMethodQueue() { return DeferredMethods; }
+
+	/**
+	Flush the compute simulation queue and any deferred actions.
+	*/
+	NIAGARA_API void FlushComputeAndDeferredQueues(bool bWaitForGPU);
+
+	/**
+	This is a threadsafe queue which will execute on the game thread.
+	The queue is flushed at the start of each tick group & pre / post actor tick.
+	*/
+	NIAGARA_API static void EnqueueGlobalDeferredCallback(TFunction<void()>&& Callback);
 
 	/**
 	* Will create a new object or return one from the pool.
@@ -329,6 +346,8 @@ private:
 	// Returns scalability state if one exists, this function is not designed for runtime performance and for debugging only
 	bool GetScalabilityState(UNiagaraComponent* Component, FNiagaraScalabilityState& OutState) const;
 
+	void HandleCSVStats(float DeltaSeconds);
+
 	static FDelegateHandle OnWorldInitHandle;
 	static FDelegateHandle OnWorldCleanupHandle;
 	static FDelegateHandle OnPostWorldCleanupHandle;
@@ -382,6 +401,9 @@ private:
 
 	bool bIsTearingDown = false;
 
+	/** True if OnWorldCleanup has been called, will get reset with Init() */
+	bool bIsCleaningUp = false;
+
 	float WorldLoopTime = 0.0f;
 	
 	ENiagaraDebugPlaybackMode RequestedDebugPlaybackMode = ENiagaraDebugPlaybackMode::Play;
@@ -390,6 +412,9 @@ private:
 
 #if WITH_NIAGARA_DEBUGGER
 	TUniquePtr<class FNiagaraDebugHud> NiagaraDebugHud;
+#endif
+#if WITH_NIAGARA_LEAK_DETECTOR
+	TUniquePtr<class FNiagaraComponentLeakDetector> ComponentLeakDetector;
 #endif
 
 	TMap<TObjectPtr<UNiagaraSystem>, TObjectPtr<UNiagaraCullProxyComponent>> CullProxyMap;
@@ -401,6 +426,10 @@ private:
 	TUniquePtr<FNiagaraDataChannelManager> DataChannelManager;
 
 	TUniquePtr<FNiagaraSimpleObjectPool> ObjectPool;
+
+#if WITH_PER_FXTYPE_PARTICLE_PERF_STATS
+	FParticlePerfStatsListenerPtr FXTypeCSVListener;
+#endif
 };
 
 

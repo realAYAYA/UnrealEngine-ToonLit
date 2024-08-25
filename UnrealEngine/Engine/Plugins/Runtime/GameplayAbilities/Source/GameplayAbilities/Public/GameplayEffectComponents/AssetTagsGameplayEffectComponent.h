@@ -7,7 +7,7 @@
 #include "AssetTagsGameplayEffectComponent.generated.h"
 
 /** These are tags that the Gameplay Effect Asset itself 'has' (owns). These do _not_ transfer to any Actors */
-UCLASS()
+UCLASS(DisplayName="Tags This Effect Has (Asset Tags)")
 class GAMEPLAYABILITIES_API UAssetTagsGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()
@@ -17,7 +17,7 @@ public:
 	virtual void PostInitProperties() override;
 
 	/** Needed to properly apply FInheritedTagContainer properties */
-	virtual void OnGameplayEffectChanged() const override;
+	virtual void OnGameplayEffectChanged() override;
 
 	/** Gets the Asset Tags inherited tag structure (as configured) */
 	const FInheritedTagContainer& GetConfiguredAssetTagChanges() const { return InheritableAssetTags; }

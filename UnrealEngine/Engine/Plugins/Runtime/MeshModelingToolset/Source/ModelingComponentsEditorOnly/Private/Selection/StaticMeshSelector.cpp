@@ -18,6 +18,8 @@
 
 #include "Selection/DynamicMeshPolygroupTransformer.h"
 
+#include "StaticMeshOperations.h"
+
 #include "RenderingThread.h"
 #include "UObject/Package.h"
 
@@ -51,17 +53,17 @@ bool FStaticMeshSelector::IsLocked() const
 {
 	if (CVarEnableModelingSelectionStaticMeshLocking.GetValueOnGameThread())
 	{
-		return StaticMesh != nullptr && (UEGlobal::UnlockedStaticMeshes.Contains(StaticMesh) == false);
+		return WeakStaticMesh != nullptr && (UEGlobal::UnlockedStaticMeshes.Contains(WeakStaticMesh.Get()) == false);
 	}
 	else
 	{
-		return (StaticMesh == nullptr);
+		return (WeakStaticMesh == nullptr);
 	}
 }
 
 void FStaticMeshSelector::SetLockedState(bool bLocked)
 {
-	if (StaticMesh != nullptr)
+	if (UStaticMesh* StaticMesh = WeakStaticMesh.Get())
 	{
 		if (bLocked)
 		{
@@ -106,16 +108,19 @@ bool FStaticMeshSelector::Initialize(
 	{
 		return false;
 	}
-	StaticMeshComponent = Cast<UStaticMeshComponent>(SourceGeometryIdentifierIn.TargetObject);
+	UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(SourceGeometryIdentifierIn.TargetObject); 
 	if (StaticMeshComponent == nullptr)
 	{
 		return false;
 	}
-	StaticMesh = StaticMeshComponent->GetStaticMesh();
+	WeakStaticMeshComponent = StaticMeshComponent;
+	
+	UStaticMesh* StaticMesh = StaticMeshComponent->GetStaticMesh();
 	if (StaticMesh == nullptr)
 	{
 		return false;
 	}
+	WeakStaticMesh = StaticMesh;
 
 	// To know if the static mesh changed, we will listen to this OnMeshChanged event.
 	// It is currently a very large hammer, though...
@@ -137,14 +142,25 @@ bool FStaticMeshSelector::Initialize(
 	}
 
 	FBaseDynamicMeshSelector::Initialize(SourceGeometryIdentifierIn, LocalTargetMesh.Get(), 
-		[this]() { return IsValid(this->StaticMeshComponent) ? (UE::Geometry::FTransformSRT3d)this->StaticMeshComponent->GetComponentTransform() : FTransformSRT3d::Identity(); });
+		[this]()
+		{
+			FTransformSRT3d Result = FTransformSRT3d::Identity();
+			if (const UStaticMeshComponent* StaticMeshComponent = this->WeakStaticMeshComponent.Get())
+			{
+				Result = StaticMeshComponent->GetComponentTransform();
+			}
+			return Result;
+		});
 
 	return true;
 }
 
 void FStaticMeshSelector::Shutdown()
 {
-	StaticMesh->OnMeshChanged.Remove(StaticMesh_OnMeshChangedHandle);
+	if (UStaticMesh* StaticMesh = WeakStaticMesh.Get())
+	{
+		StaticMesh->OnMeshChanged.Remove(StaticMesh_OnMeshChangedHandle);
+	}
 	StaticMesh_OnMeshChangedHandle.Reset();
 
 	LocalTargetMesh.Reset();
@@ -204,12 +220,26 @@ void FStaticMeshSelector::UpdateAfterGeometryEdit(
 void FStaticMeshSelector::CopyFromStaticMesh()
 {
 	int32 UseLODIndex = 0;
-	const FMeshDescription* SourceMesh = StaticMesh->GetMeshDescription(UseLODIndex);
+	const FMeshDescription* SourceMesh = nullptr;
+	FVector BuildScale = FVector::OneVector;
+	if (const UStaticMesh* StaticMesh = WeakStaticMesh.Get())
+	{
+		SourceMesh = StaticMesh->GetMeshDescription(UseLODIndex);
+		if (StaticMesh->IsSourceModelValid(UseLODIndex))
+		{
+			BuildScale = StaticMesh->GetSourceModel(UseLODIndex).BuildSettings.BuildScale3D;
+		}
+	}
+	
 	if (SourceMesh != nullptr)
 	{
 		FDynamicMesh3 NewMesh;
 		FMeshDescriptionToDynamicMesh Converter;
 		Converter.Convert(SourceMesh, NewMesh, false /*AssetOptions.bRequestTangents*/ );
+		if (!BuildScale.Equals(FVector::OneVector))
+		{
+			MeshTransforms::Scale(NewMesh, BuildScale, FVector::ZeroVector, true);
+		}
 
 		LocalTargetMesh->EditMesh([&](FDynamicMesh3& EditMesh)
 		{
@@ -229,28 +259,43 @@ void FStaticMeshSelector::CommitMeshTransform()
 	FlushRenderingCommands();
 
 	// emit transaction here??
-
-	// make sure transactional flag is on for this asset
-	StaticMesh->SetFlags(RF_Transactional);
-	// mark as modified
-	StaticMesh->Modify();
-
-	FMeshDescription* MeshDescription = StaticMesh->GetMeshDescription(UseLODIndex);
-	if (MeshDescription == nullptr)
+	
+	if (UStaticMesh* StaticMesh = WeakStaticMesh.Get())
 	{
-		MeshDescription = StaticMesh->CreateMeshDescription(UseLODIndex);
+		// make sure transactional flag is on for this asset
+		StaticMesh->SetFlags(RF_Transactional);
+		// mark as modified
+		StaticMesh->Modify();
+
+		FMeshDescription* MeshDescription = StaticMesh->GetMeshDescription(UseLODIndex);
+		if (MeshDescription == nullptr)
+		{
+			MeshDescription = StaticMesh->CreateMeshDescription(UseLODIndex);
+		}
+		StaticMesh->ModifyMeshDescription(UseLODIndex);
+
+		FConversionToMeshDescriptionOptions ConversionOptions;
+		FDynamicMeshToMeshDescription Converter(ConversionOptions);
+		TargetMesh->ProcessMesh([&](const FDynamicMesh3& ReadMesh)
+		{
+			Converter.Convert(&ReadMesh, *MeshDescription, false /*bCopyTangents*/ );
+		});
+		FVector BuildScale = StaticMesh->GetSourceModel(UseLODIndex).BuildSettings.BuildScale3D;
+		if (!BuildScale.Equals(FVector::OneVector))
+		{
+			FVector InvBuildScale;
+			for (int32 SubIdx = 0; SubIdx < 3; ++SubIdx)
+			{
+				InvBuildScale[SubIdx] = FMath::IsNearlyZero(BuildScale[SubIdx], FMathd::Epsilon) ? 1.0 : 1.0 / BuildScale[SubIdx];
+			}
+			FTransform InvScaleTransform = FTransform::Identity;
+			InvScaleTransform.SetScale3D(InvBuildScale);
+			FStaticMeshOperations::ApplyTransform(*MeshDescription, InvScaleTransform, true);
+		}
+
+		StaticMesh->CommitMeshDescription(UseLODIndex);
+		StaticMesh->PostEditChange();
 	}
-	StaticMesh->ModifyMeshDescription(UseLODIndex);
-
-	FConversionToMeshDescriptionOptions ConversionOptions;
-	FDynamicMeshToMeshDescription Converter(ConversionOptions);
-	TargetMesh->ProcessMesh([&](const FDynamicMesh3& ReadMesh)
-	{
-		Converter.Convert(&ReadMesh, *MeshDescription, false /*bCopyTangents*/ );
-	});
-
-	StaticMesh->CommitMeshDescription(UseLODIndex);
-	StaticMesh->PostEditChange();
 }
 
 

@@ -170,9 +170,11 @@ public:
 		found.Add(vSeed);
 		TArray<int> queue;
 		queue.Add(vSeed);
-		while (queue.Num() > 0) {
-			int vid = queue.Pop(false);
-			for (int nbrid : Mesh->VtxVerticesItr(vid)) {
+		while (queue.Num() > 0)
+		{
+			int vid = queue.Pop(EAllowShrinking::No);
+			for (int nbrid : Mesh->VtxVerticesItr(vid))
+			{
 				if (Mesh->IsBoundaryVertex(nbrid) && found.Contains(nbrid) == false)
 				{
 					found.Add(nbrid);

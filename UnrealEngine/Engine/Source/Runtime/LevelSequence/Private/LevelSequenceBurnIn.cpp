@@ -12,10 +12,11 @@ ULevelSequenceBurnIn::ULevelSequenceBurnIn( const FObjectInitializer& ObjectInit
 void ULevelSequenceBurnIn::TakeSnapshotsFrom(ALevelSequenceActor& InActor)
 {
 	LevelSequenceActor = &InActor;
-	if (ensure(InActor.SequencePlayer))
+	ULevelSequencePlayer* SequencePlayer = InActor.GetSequencePlayer();
+	if (ensure(SequencePlayer))
 	{
-		InActor.SequencePlayer->OnSequenceUpdated().AddUObject(this, &ULevelSequenceBurnIn::OnSequenceUpdated);
-		InActor.SequencePlayer->TakeFrameSnapshot(FrameInformation);
+		SequencePlayer->OnSequenceUpdated().AddUObject(this, &ULevelSequenceBurnIn::OnSequenceUpdated);
+		SequencePlayer->TakeFrameSnapshot(FrameInformation);
 	}
 }
 

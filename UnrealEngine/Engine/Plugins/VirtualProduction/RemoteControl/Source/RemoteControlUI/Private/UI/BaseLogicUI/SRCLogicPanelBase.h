@@ -1,8 +1,9 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
+#include "SRCLogicPanelListBase.h"
 #include "Widgets/SCompoundWidget.h"
 
 class FRCLogicModeBase;
@@ -35,23 +36,29 @@ public:
 	* This is the main container holding all the Remote Control panels including Logic and Exposed Properties*/
 	virtual TSharedPtr<SRemoteControlPanel> GetRemoteControlPanel() const;
 
-	/** "Delete Item" UI command implementation for panels*/
-	virtual void DeleteSelectedPanelItem() = 0;
+	/** "Delete Items" UI command implementation for panels*/
+	virtual void DeleteSelectedPanelItems() = 0;
 
-	/** "Duplicate Item" UI command implementation for panels*/
-	virtual void DuplicateSelectedPanelItem() {}
+	/** "Duplicate Items" UI command implementation for action panels */
+	virtual void DuplicateSelectedPanelItems() {}
 
-	/** "Copy Item" UI command implementation for panels*/
-	virtual void CopySelectedPanelItem() {}
+	/** "Copy Items" UI command implementation for panels*/
+	virtual void CopySelectedPanelItems() {}
 
-	/** "Paste Item" UI command implementation for panels*/
-	virtual void PasteItemFromClipboard() {}
+	/** "Paste Items" UI command implementation for panels*/
+	virtual void PasteItemsFromClipboard() {}
 
-	/** Whether a given clipboard item can be successfully pasted into this panel */
-	virtual bool CanPasteClipboardItem(UObject* InLogicClipboardItem) { return true; }
+	/** Whether a given clipboard items can be successfully pasted into this panel */
+	virtual bool CanPasteClipboardItems(const TArrayView<const TObjectPtr<UObject>> InLogicClipboardItems) const { return true; }
 
-	/** Returns the UI item currently selected by the user (if any). To be implemented per child panel*/
-	virtual TSharedPtr<FRCLogicModeBase> GetSelectedLogicItem() = 0;
+	/** "Update Value" UI command implementation for panels */
+	virtual void UpdateValue() {}
+
+	/** Whether this panel can call the UpdateValue command */
+	virtual bool CanUpdateValue() const { return false; }
+
+	/** Returns the UI items currently selected by the user (if any). To be implemented per child panel*/
+	virtual TArray<TSharedPtr<FRCLogicModeBase>> GetSelectedLogicItems() const = 0;
 
 	/** Provides an item suffix for the Paste context menu to provide users with useful context on the nature of the item being pasted */
 	virtual FText GetPasteItemMenuEntrySuffix() { return FText::GetEmpty(); }
@@ -63,6 +70,9 @@ public:
 	virtual FReply RequestDeleteAllItems() = 0;
 
 protected:
+	/** Widget representing List of Controllers/Behaviours/Actions */
+	TSharedPtr<class SRCLogicPanelListBase> PanelList;
+
 	/** The parent Remote Control Panel widget*/
 	TWeakPtr<SRemoteControlPanel> PanelWeakPtr;
 };

@@ -13,6 +13,15 @@
 
 #include "radfft.h"
 
+#ifndef alloca
+#if defined(_MSC_VER)
+  #include <malloc.h>
+#elif defined(__GNUC__)
+  #include <alloca.h>
+#endif
+#endif
+
+
 #ifdef BIG_OLE_FFT // always false for ue binka
 #define MAX_TRANSFORM                 4096
 #else
@@ -112,7 +121,7 @@ typedef struct BINKAUDIODECOMP
 
 #include "binkbits.h"
 
-#if  defined(__RADARM64__)
+#if  defined(__RADARM64__) && !defined(_M_ARM64) // exclude visual studio arm64 as it doesn't support __int128
   #define bigreg __int128
   #define bigregzero 0
   #define bigregloadaligned( val, ptr ) (val)=*((bigreg*)(ptr))

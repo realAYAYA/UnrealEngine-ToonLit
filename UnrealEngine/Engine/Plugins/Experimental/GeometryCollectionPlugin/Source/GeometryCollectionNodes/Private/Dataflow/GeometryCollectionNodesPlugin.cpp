@@ -24,6 +24,7 @@
 #include "Dataflow/GeometryCollectionVerticesNodes.h"
 #include "Dataflow/GeometryCollectionArrayNodes.h"
 #include "Dataflow/GeometryCollectionDebugNodes.h"
+#include "Dataflow/GeometryCollectionVertexScalarToVertexIndicesNode.h"
 
 #define LOCTEXT_NAMESPACE "DataflowNodes"
 
@@ -49,6 +50,8 @@ void IGeometryCollectionNodesPlugin::StartupModule()
 	Dataflow::GeometryCollectionVerticesNodes();
 	Dataflow::GeometryCollectionArrayNodes();
 	Dataflow::GeometryCollectionDebugNodes();
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGeometryCollectionVertexScalarToVertexIndicesNode);
+
 }
 
 void IGeometryCollectionNodesPlugin::ShutdownModule()

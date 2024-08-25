@@ -20,6 +20,12 @@
 #define CHAOS_CHECK_BROADPHASE 0
 #endif
 
+namespace Chaos::CVars
+{
+	extern bool bChaosMidPhaseRedistributionEnabled;
+	extern int32 ChaosOneWayInteractionPairCollisionMode;
+}
+
 namespace Chaos
 {
 	template <typename TPayloadType, typename T, int d>
@@ -46,63 +52,75 @@ namespace Chaos
 				return false;
 			}
 
-			bool bIsKinematic1 = true;
+			bool bIsMovingKinematic1 = false;
 			bool bIsDynamicAwake1 = false;
 			bool bIsDynamicAsleep1 = false;
 			const FPBDRigidParticleHandle* Rigid1 = Particle1->CastToRigidParticle();
 			if (Rigid1 != nullptr)
 			{
-				bIsKinematic1 = Rigid1->IsKinematic();
-				bIsDynamicAsleep1 = !bIsKinematic1 && Rigid1->IsSleeping();
-				bIsDynamicAwake1 = !bIsKinematic1 && !bIsDynamicAsleep1;
+				bIsMovingKinematic1 = Rigid1->IsMovingKinematic();
+				bIsDynamicAsleep1 = Rigid1->IsDynamic() && Rigid1->IsSleeping();
+				bIsDynamicAwake1 = Rigid1->IsDynamic() && !Rigid1->IsSleeping();;
 			}
 
-			bool bIsKinematic2 = true;
+			bool bIsMovingKinematic2 = false;
 			bool bIsDynamicAwake2 = false;
 			bool bIsDynamicAsleep2 = false;
 			const FPBDRigidParticleHandle* Rigid2 = Particle2->CastToRigidParticle();
 			if (Rigid2 != nullptr)
 			{
-				bIsKinematic2 = Rigid2->IsKinematic();
-				bIsDynamicAsleep2 = !bIsKinematic2 && Rigid2->IsSleeping();
-				bIsDynamicAwake2 = !bIsKinematic2 && !bIsDynamicAsleep2;
+				bIsMovingKinematic2 = Rigid2->IsMovingKinematic();
+				bIsDynamicAsleep2 = Rigid2->IsDynamic() && Rigid2->IsSleeping();
+				bIsDynamicAwake2 = Rigid2->IsDynamic() && !Rigid2->IsSleeping();
 			}
 
-			// In both cases (resim or not) we will generate (1) dynamic-(sleeping,kinematic(steady+moving),static) pairs + (2) sleeping-moving kinematic ones
-			// Sleeping particles could collide with dynamic ones but these collisions are already handled in case 1
-			// Sleeping particles won't collide with static or steady kinematic particles since neither are moving
-			// Sleeping particles will collide against moving kinematic particles
-			bool bAcceptParticlePair = false;
-			if ((bIsDynamicAwake1 && !bIsDynamicAwake2) || (bIsDynamicAsleep1 && bIsKinematic2))
-			{
-				bAcceptParticlePair = true;
-			}
-
-			// Used to determine a winner in cases where we will visit particle pairs in both orders
+			// Used to determine a winner in cases where we visit particle pairs in both orders
 			const bool bIsParticle1Preferred = AreParticlesInPreferredOrder(Particle1, Particle2);
 
+			bool bAcceptParticlePair = false;
 			if (!bIsResimming)
 			{
-				// Normally (not resimming) we iterate over dynamic and asleep|kinematic particles, so:
-				// - Particle1 is dynamic, asleep OR kinematic
-				// - Particle2 may be static, kinematic, dynamic, asleep
+				// Assumptions for the non-resim case:
+				//		- Particle1 is the particle from an outer loop over either
+				//			(A) all dynamic particles, or 
+				//			(B) all awake dynamic and moving kinematic particles.
+				//		- Particle2 is one of the particles whose bounds overlaps Particle1
 
-				// If Particle1 is non dynamic but particle 2 is dynamic, the case should already be handled by (1)
-				if (!bIsDynamicAwake1 && bIsDynamicAwake2)
+				// If the first particle is an awake dynamic
+				//		- accept if the other particle is an awake dynamic and we are the preferred particle (lower ID)
+				//		- accept if the other particle is in any other state (static, kinematic, asleep)
+				if (bIsDynamicAwake1)
 				{
-					bAcceptParticlePair = false;
+					if (bIsDynamicAwake2)
+					{
+						bAcceptParticlePair = bIsParticle1Preferred;
+					}
+					else
+					{
+						bAcceptParticlePair = true;
+					}
 				}
-				// If Particle1 and Particle2 are dynamic we validate the pair if particle1 has higher ID to discard duplicates since we will visit twice the pairs
-				else if (bIsDynamicAwake1 && bIsDynamicAwake2)
+				// If the first particle is an asleep dynamic
+				//		- accept if the other particle is a moving kinematic
+				//		- reject if the other particle is a stationary kinematic or static - sleeping and static particles do not collide
+				//		- reject if the other particle is an awake dynamic - will be picked up when visiting in the opposite order
+				//		- reject if the other particle if an asleep dynamic - two sleeping dynamics do not collide
+				else if (bIsDynamicAsleep1)
 				{
-					bAcceptParticlePair = bIsParticle1Preferred;
+					bAcceptParticlePair = bIsMovingKinematic2;
 				}
-				// If Particle1 is kinematic we should in theory discard the pairs against sleeping particles
-				// since the sleeping-kinematic case has been validated in (2). But Particle1 is asleep OR kinematic so
-				// when entering this condition we are sure that we enver entered (2). It is why we validate the kinematic-sleeping pairs as well
-				else if (bIsKinematic1 && bIsDynamicAsleep2)
+				// If the first particle is a moving kinematic
+				//		- accept if the other particle is sleeping dynamic
+				//		- reject if the other particle is an awake dynamic - will be picked up when visiting in the opposite order
+				//		- reject if the other particle is a kinematic or static - they do not collide
+				else if (bIsMovingKinematic1)
 				{
-					bAcceptParticlePair = true;
+					bAcceptParticlePair = bIsDynamicAsleep2;
+				}
+				// If the first particle is static or non-moving kinematic
+				//		- reject always - will be picked up when visiting in the opposite order
+				else
+				{
 				}
 			}
 			else
@@ -116,6 +134,14 @@ namespace Chaos
 				// Even though Particle1 may be kinematic when resimming, we want to create the contacts in the original order (i.e., dynamic first)
 				// 
 				const bool bIsParticle2Desynced = bIsResimming && (Particle2->SyncState() == ESyncState::HardDesync);
+				const bool bIsKinematic1 = !bIsDynamicAwake1 && !bIsDynamicAsleep1;
+				const bool bIsKinematic2 = !bIsDynamicAwake2 && !bIsDynamicAsleep2;
+
+				// If Particle1 is dynamic, accept if the other is asleep or nor dynamic
+				if ((bIsDynamicAwake1 && !bIsDynamicAwake2) || (bIsDynamicAsleep1 && bIsKinematic2))
+				{
+					bAcceptParticlePair = true;
+				}
 
 				// If Particle1 is non dynamic but particle 2 is dynamic, the case should already be handled by (1) for
 				// the desynced dynamic - synced/desynced (static,kinematic,asleep) pairs. But we still need to process
@@ -309,6 +335,10 @@ namespace Chaos
 
 			bNeedsResim = ResimCache && ResimCache->IsResimming();
 
+			// Reset stats
+			NumBroadPhasePairs = 0;
+			NumMidPhases = 0;
+
 			{
 				SCOPE_CYCLE_COUNTER(STAT_Collisions_SpatialBroadPhase);
 
@@ -356,6 +386,13 @@ namespace Chaos
 			// Run some error checks in non-shipping builds
 			// NOTE: This must come after MidPhase assignment for now because that's where the filter is applied
 			CheckOverlapResults();
+
+			// Update stats
+			for (int32 ContextIndex = 0; ContextIndex < NumActiveBroadphaseContexts; ++ContextIndex)
+			{
+				NumBroadPhasePairs += BroadphaseContexts[ContextIndex].Overlaps.Num();
+				NumMidPhases += BroadphaseContexts[ContextIndex].MidPhases.Num();
+			}
 		}
 
 		/**
@@ -368,7 +405,14 @@ namespace Chaos
 
 			FChaosVDContextWrapper CVDContext;
 			CVD_GET_WRAPPED_CURRENT_CONTEXT(CVDContext);
-	
+
+			// The broadphase overlaps probably resulted in a very different number of MidPhases 
+			// (overlaps) on each thread. Redistribute the MidPhases so that we get more even 
+			// processing. NOTE: This does not take into account that some MidPhases may be expensive. 
+			// For that we would need to queue and redistribute the NarrowPhases, but currently each
+			// MidPhase runs the NarrowPhase in ProcessMidPhase
+			RedistributeMidPhasesInContexts();
+
 			const auto& ProcessMidPhasesWorker = [this, Dt, &CVDContext](const int32 ContextIndex)
 			{
 				CVD_SCOPE_CONTEXT(CVDContext.Context);
@@ -376,8 +420,7 @@ namespace Chaos
 			};
 			PhysicsParallelFor(NumActiveBroadphaseContexts, ProcessMidPhasesWorker, bDisableCollisionParallelFor);
 		}
-	
-		
+
 		/** @brief This function is the outer loop of collision detection. It loops over the
 		 * particles view and do the broadphase + narrowphase collision detection
 		 * @param OverlapView View to consider for the outer loop
@@ -487,6 +530,17 @@ namespace Chaos
 
 		FIgnoreCollisionManager& GetIgnoreCollisionManager() { return IgnoreCollisionManager; }
 
+		// Stats
+		int32 GetNumBroadPhasePairs() const
+		{
+			return NumBroadPhasePairs;
+		}
+
+		int32 GetNumMidPhases() const
+		{
+			return NumMidPhases;
+		}
+
 	private:
 
 		// Generate the set of particles that overlap the specified particle and are allowed to collide with it
@@ -555,6 +609,56 @@ namespace Chaos
 			}
 		}
 
+		// Redistribute the midphases among the contects to even out the per-core work a bit
+		void RedistributeMidPhasesInContexts()
+		{
+			QUICK_SCOPE_CYCLE_COUNTER(STAT_Collisions_RedistributeMidPhases);
+
+			if ((NumActiveBroadphaseContexts > 1) && CVars::bChaosMidPhaseRedistributionEnabled)
+			{
+				// We want this many midphases per worker
+				const int32 NumMidPhasesPerContext = FMath::DivideAndRoundUp(NumMidPhases, NumActiveBroadphaseContexts);
+
+				// Reserve array space
+				for (int32 ContextIndex = 0; ContextIndex < NumActiveBroadphaseContexts; ++ContextIndex)
+				{
+					BroadphaseContexts[ContextIndex].MidPhases.Reserve(NumMidPhasesPerContext);
+				}
+
+				// Find the over-filled arrays and move elements to the under-filled arrays
+				for (int32 SrcContextIndex = 0; SrcContextIndex < NumActiveBroadphaseContexts; ++SrcContextIndex)
+				{
+					TArray<FParticlePairMidPhase*>& SrcMidPhases = BroadphaseContexts[SrcContextIndex].MidPhases;
+					int32 SrcNum = SrcMidPhases.Num();
+					if (SrcNum > NumMidPhasesPerContext)
+					{
+						// SrcMidPhases is over-filled
+						for (int32 DstContextIndex = 0; DstContextIndex < NumActiveBroadphaseContexts; ++DstContextIndex)
+						{
+							TArray<FParticlePairMidPhase*>& DstMidPhases = BroadphaseContexts[DstContextIndex].MidPhases;
+							if ((DstContextIndex != SrcContextIndex) && (DstMidPhases.Num() < NumMidPhasesPerContext))
+							{
+								// DstMidPhases is under-filled, see how many elements we can move into it
+								const int32 NumToMove = FMath::Min(SrcNum - NumMidPhasesPerContext, NumMidPhasesPerContext - DstMidPhases.Num());
+								
+								// Copy the elements from the end or Src to end of Dst (we will resize SrcMidPhases at the end)
+								SrcNum -= NumToMove;
+								DstMidPhases.Append(&SrcMidPhases[SrcNum], NumToMove);
+
+								if (SrcNum == NumMidPhasesPerContext)
+								{
+									break;
+								}
+							}
+						}
+
+						check(SrcNum == NumMidPhasesPerContext);
+						SrcMidPhases.SetNum(SrcNum);
+					}
+				}
+			}
+		}
+
 		// Find or assign midphases to each of the overlapping particle pairs
 		// @todo(chaos): optimize
 		void AssignMidPhases(Private::FBroadPhaseContext& BroadphaseContext)
@@ -576,6 +680,16 @@ namespace Chaos
 
 				if (Overlap.bCollisionsEnabled)
 				{
+					if (CVars::ChaosOneWayInteractionPairCollisionMode == (int32)EOneWayInteractionPairCollisionMode::IgnoreCollision)
+					{
+						const bool bIsOneWay0 = FConstGenericParticleHandle(Overlap.Particles[0])->OneWayInteraction();
+						const bool bIsOneWay1 = FConstGenericParticleHandle(Overlap.Particles[1])->OneWayInteraction();
+						if (bIsOneWay0 && bIsOneWay1)
+						{
+							continue;
+						}
+					}
+
 					// Get the midphase for this pair
 					FParticlePairMidPhase* MidPhase = ContextAllocator->GetMidPhase(Overlap.Particles[0], Overlap.Particles[1], Overlap.Particles[Overlap.SearchParticleIndex], BroadphaseContext.CollisionContext);
 					BroadphaseContext.MidPhases[MidPhaseIndex] = MidPhase;
@@ -596,24 +710,30 @@ namespace Chaos
 			
 			// Prefetch initial set of MidPhases
 			const int32 PrefetchLookahead = 4;
-			const int32 NumMidPhases = BroadphaseContext.MidPhases.Num();
-			for (int32 Index = 0; Index < NumMidPhases && Index < PrefetchLookahead; Index++)
+			const int32 NumContextMidPhases = BroadphaseContext.MidPhases.Num();
+			for (int32 Index = 0; Index < NumContextMidPhases && Index < PrefetchLookahead; Index++)
 			{
 				BroadphaseContext.MidPhases[Index]->CachePrefetch();
 			}
 
-			for (int32 Index = 0; Index < NumMidPhases; Index++)
+			for (int32 Index = 0; Index < NumContextMidPhases; Index++)
 			{
 				// Prefetch next MidPhase
-				if (Index + PrefetchLookahead < NumMidPhases)
+				if (Index + PrefetchLookahead < NumContextMidPhases)
 				{
 					BroadphaseContext.MidPhases[Index + PrefetchLookahead]->CachePrefetch();
 				}
 
-				// Run MidPhase + NarrowPhase
-				BroadphaseContext.MidPhases[Index]->GenerateCollisions(BroadphaseContext.CollisionContext.GetSettings().BoundsExpansion, Dt, BroadphaseContext.CollisionContext);
+				FParticlePairMidPhase* MidPhase = BroadphaseContext.MidPhases[Index];
+				const FGeometryParticleHandle* Particle0 = MidPhase->GetParticle0();
+				const FGeometryParticleHandle* Particle1 = MidPhase->GetParticle1();
+				if ((Particle0 != nullptr) && (Particle1 != nullptr))
+				{
+					// Run MidPhase + NarrowPhase
+					MidPhase->GenerateCollisions(BroadphaseContext.CollisionContext.GetSettings().BoundsExpansion, Dt, BroadphaseContext.CollisionContext);
+				}
 
-				CVD_TRACE_MID_PHASE(BroadphaseContext.MidPhases[Index]);
+				CVD_TRACE_MID_PHASE(MidPhase);
 			}
 
 			PHYSICS_CSV_CUSTOM_EXPENSIVE(PhysicsCounters, NumFromBroadphase, NumPotentials, ECsvCustomStatOp::Accumulate);
@@ -632,7 +752,7 @@ namespace Chaos
 				{
 					if (Overlap.bCollisionsEnabled)
 					{
-						const FCollisionParticlePairKey PairKey = FCollisionParticlePairKey(Overlap.Particles[0], Overlap.Particles[1]);
+						const Private::FCollisionParticlePairKey PairKey = Private::FCollisionParticlePairKey(Overlap.Particles[0], Overlap.Particles[1]);
 						const bool bIsInSet = ParticlePairKeys.Contains(PairKey.GetKey());
 						if (ensure(!bIsInSet))
 						{
@@ -655,6 +775,9 @@ namespace Chaos
 		FIgnoreCollisionManager IgnoreCollisionManager;
 		int32 NumActiveBroadphaseContexts;
 		bool bNeedsResim;
+
+		int32 NumBroadPhasePairs;
+		int32 NumMidPhases;
 	};
 
 }

@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
-using System.Collections.Generic;
 
 namespace UnrealGameSync
 {
@@ -17,7 +17,7 @@ namespace UnrealGameSync
 		const uint SwpNosize = 0x0001;
 		const uint SwpNoactivate = 0x0010;
 
-		[DllImport("user32.dll", SetLastError=true)]
+		[DllImport("user32.dll", SetLastError = true)]
 		static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int width, int height, uint flags);
 
 		public IssueMonitor IssueMonitor { get; }
@@ -53,9 +53,9 @@ namespace UnrealGameSync
 		{
 			base.OnPaintBackground(e);
 
-			if(StrongAlert ?? false)
+			if (StrongAlert ?? false)
 			{
-				Color stripeColor = IsWarning? Color.FromArgb(216, 167, 64) : Color.FromArgb(200, 74, 49);//214, 69, 64);
+				Color stripeColor = IsWarning ? Color.FromArgb(216, 167, 64) : Color.FromArgb(200, 74, 49);//214, 69, 64);
 				using (Brush stripeBrush = new SolidBrush(stripeColor))
 				{
 					e.Graphics.FillRectangle(stripeBrush, 0, 0, Bounds.Width, Bounds.Height);
@@ -67,20 +67,20 @@ namespace UnrealGameSync
 			}
 			else
 			{
-				Color stripeColor = IsWarning? Color.FromArgb(216, 167, 64) : Color.FromArgb(214, 69, 64);
+				Color stripeColor = IsWarning ? Color.FromArgb(216, 167, 64) : Color.FromArgb(214, 69, 64);
 
 				Color backgroundColor = Color.FromArgb(241, 236, 236);
-				using(Brush solidBrush = new SolidBrush(backgroundColor))
+				using (Brush solidBrush = new SolidBrush(backgroundColor))
 				{
-	//				e.Graphics.FillRectangle(SolidBrush, 0, 0, Bounds.Width - 1, Bounds.Height - 1);
+					//				e.Graphics.FillRectangle(SolidBrush, 0, 0, Bounds.Width - 1, Bounds.Height - 1);
 				}
 
-				using(Pen pen = new Pen(Color.FromArgb(128, 128, 128)))
+				using (Pen pen = new Pen(Color.FromArgb(128, 128, 128)))
 				{
 					e.Graphics.DrawRectangle(pen, 0, 0, Bounds.Width - 1, Bounds.Height - 1);
 				}
 
-				using(Brush stripeBrush = new SolidBrush(stripeColor))
+				using (Brush stripeBrush = new SolidBrush(stripeColor))
 				{
 					e.Graphics.FillRectangle(stripeBrush, 0, 0, /*6*/10 * e.Graphics.DpiX / 96.0f, Bounds.Height);
 				}
@@ -92,15 +92,15 @@ namespace UnrealGameSync
 			bool newStrongAlert = false;
 
 			StringBuilder ownerTextBuilder = new StringBuilder();
-			if(newIssue.Owner == null)
+			if (newIssue.Owner == null)
 			{
 				ownerTextBuilder.Append("Currently unassigned.");
 			}
 			else
 			{
-				if(String.Equals(newIssue.Owner, IssueMonitor.UserName, StringComparison.OrdinalIgnoreCase))
+				if (String.Equals(newIssue.Owner, IssueMonitor.UserName, StringComparison.OrdinalIgnoreCase))
 				{
-					if(newIssue.NominatedBy != null)
+					if (newIssue.NominatedBy != null)
 					{
 						ownerTextBuilder.AppendFormat("You have been nominated to fix this issue by {0}.", Utility.FormatUserName(newIssue.NominatedBy));
 					}
@@ -113,11 +113,11 @@ namespace UnrealGameSync
 				else
 				{
 					ownerTextBuilder.AppendFormat("Assigned to {0}", Utility.FormatUserName(newIssue.Owner));
-					if(newIssue.NominatedBy != null)
+					if (newIssue.NominatedBy != null)
 					{
 						ownerTextBuilder.AppendFormat(" by {0}", Utility.FormatUserName(newIssue.NominatedBy));
 					}
-					if(!newIssue.AcknowledgedAt.HasValue && (newReason & IssueAlertReason.UnacknowledgedTimer) != 0)
+					if (!newIssue.AcknowledgedAt.HasValue && (newReason & IssueAlertReason.UnacknowledgedTimer) != 0)
 					{
 						ownerTextBuilder.Append(" (not acknowledged)");
 					}
@@ -134,12 +134,12 @@ namespace UnrealGameSync
 			string summary = newIssue.Summary;
 
 			int maxLength = 128;
-			if(summary.Length > maxLength)
+			if (summary.Length > maxLength)
 			{
 				summary = summary.Substring(0, maxLength).TrimEnd() + "...";
 			}
 
-			if(summary != SummaryLabel.Text || ownerText != OwnerLabel.Text || Reason != newReason || IsWarning != newIsWarning || StrongAlert != newStrongAlert)
+			if (summary != SummaryLabel.Text || ownerText != OwnerLabel.Text || Reason != newReason || IsWarning != newIsWarning || StrongAlert != newStrongAlert)
 			{
 				Rectangle prevBounds = Bounds;
 				SuspendLayout();
@@ -148,11 +148,11 @@ namespace UnrealGameSync
 				OwnerLabel.Text = ownerText;
 
 				bool forceUpdateButtons = false;
-				if(StrongAlert != newStrongAlert)
+				if (StrongAlert != newStrongAlert)
 				{
 					StrongAlert = newStrongAlert;
 
-					if(newStrongAlert)
+					if (newStrongAlert)
 					{
 						SummaryLabel.ForeColor = Color.FromArgb(255, 255, 255);
 						SummaryLabel.LinkColor = Color.FromArgb(255, 255, 255);
@@ -179,18 +179,18 @@ namespace UnrealGameSync
 					IsWarning = newIsWarning;
 				}
 
-				if(Reason != newReason || forceUpdateButtons)
+				if (Reason != newReason || forceUpdateButtons)
 				{
 					Reason = newReason;
 
 					List<Button> buttons = new List<Button>();
 					buttons.Add(DetailsBtn);
-					if((newReason & IssueAlertReason.Owner) != 0)
+					if ((newReason & IssueAlertReason.Owner) != 0)
 					{
 						AcceptBtn.Text = "Acknowledge";
 						buttons.Add(AcceptBtn);
 					}
-					else if((newReason & IssueAlertReason.Normal) != 0)
+					else if ((newReason & IssueAlertReason.Normal) != 0)
 					{
 						AcceptBtn.Text = "Will Fix";
 						buttons.Add(AcceptBtn);
@@ -205,7 +205,7 @@ namespace UnrealGameSync
 
 					tableLayoutPanel3.ColumnCount = buttons.Count;
 					tableLayoutPanel3.Controls.Clear();
-					for(int idx = 0; idx < buttons.Count; idx++)
+					for (int idx = 0; idx < buttons.Count; idx++)
 					{
 						tableLayoutPanel3.Controls.Add(buttons[idx], idx, 0);
 					}
@@ -240,7 +240,7 @@ namespace UnrealGameSync
 		public void LaunchUrl()
 		{
 			string url = Issue.BuildUrl;
-			if(String.IsNullOrEmpty(url))
+			if (String.IsNullOrEmpty(url))
 			{
 				MessageBox.Show("No additional information is available");
 			}

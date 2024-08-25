@@ -25,6 +25,27 @@
 FLazyName AMediaPlate::MediaPlateComponentName(TEXT("MediaPlateComponent0"));
 FLazyName AMediaPlate::MediaTextureName("MediaTexture");
 
+namespace UE::MediaPlate::Private
+{
+	void ApplyTranslucencyScreenPercentageCVar(int32 InBasis)
+	{
+		static IConsoleVariable* TranslucencySPBasisCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Translucency.ScreenPercentage.Basis"));
+		if (TranslucencySPBasisCVar->GetInt() != InBasis)
+		{
+			if (InBasis)
+			{
+				UE_LOG(LogMediaPlate, Warning, TEXT("Setting 'r.Translucency.ScreenPercentage.Basis' to 1. For media plates with overlay materials, please apply this console variable permanently to your project."));
+			}
+			else
+			{
+				UE_LOG(LogMediaPlate, Warning, TEXT("Setting 'r.Translucency.ScreenPercentage.Basis' to 0."));
+			}
+
+			TranslucencySPBasisCVar->Set(InBasis);
+		}
+	}
+}
+
 AMediaPlate::AMediaPlate(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -98,6 +119,12 @@ void AMediaPlate::PostRegisterAllComponents()
 	
 	AddAssetUserData();
 #endif // WITH_EDITOR
+
+	if (IsValid(StaticMeshComponent) &&
+		IsValid(StaticMeshComponent->OverlayMaterial))
+	{
+		UE::MediaPlate::Private::ApplyTranslucencyScreenPercentageCVar(1);
+	}
 }
 
 void AMediaPlate::BeginDestroy()
@@ -107,9 +134,19 @@ void AMediaPlate::BeginDestroy()
 
 UMaterialInterface* AMediaPlate::GetCurrentMaterial() const
 {
-	if (StaticMeshComponent != nullptr)
+	if (IsValid(StaticMeshComponent))
 	{
 		return StaticMeshComponent->GetMaterial(0);
+	}
+
+	return nullptr;
+}
+
+UMaterialInterface* AMediaPlate::GetCurrentOverlayMaterial() const
+{
+	if (IsValid(StaticMeshComponent))
+	{
+		return StaticMeshComponent->GetOverlayMaterial();
 	}
 
 	return nullptr;
@@ -122,6 +159,13 @@ void AMediaPlate::UseDefaultMaterial()
 	UMaterial* DefaultMaterial = LoadObject<UMaterial>(NULL, TEXT("/MediaPlate/M_MediaPlate"), NULL, LOAD_None, NULL);
 	
 	ApplyMaterial(DefaultMaterial);
+
+	if (IsValid(StaticMeshComponent))
+	{
+		StaticMeshComponent->SetOverlayMaterial(nullptr);
+		
+		LastOverlayMaterial = nullptr;
+	}
 }
 
 void AMediaPlate::ApplyCurrentMaterial()
@@ -132,6 +176,40 @@ void AMediaPlate::ApplyCurrentMaterial()
 	{
 		ApplyMaterial(MaterialInterface);
 	}
+
+	UMaterialInterface* OverlayMaterialInterface = GetCurrentOverlayMaterial();
+
+	if ((OverlayMaterialInterface != nullptr) && (LastOverlayMaterial != OverlayMaterialInterface))
+	{
+		ApplyOverlayMaterial(OverlayMaterialInterface);
+	}
+}
+
+UMaterialInterface* AMediaPlate::CreateMaterialInstanceConstant(UMaterialInterface* InMaterial)
+{
+	// Change M_ to MI_ in material name and then generate a unique one.
+	FString MaterialName = InMaterial->GetName();
+	if (MaterialName.StartsWith(TEXT("M_")))
+	{
+		MaterialName.InsertAt(1, TEXT("I"));
+	}
+	FName MaterialUniqueName = MakeUniqueObjectName(StaticMeshComponent, UMaterialInstanceConstant::StaticClass(),
+		FName(*MaterialName));
+
+	// Create instance.
+	UMaterialInstanceConstant* MaterialInstance =
+		NewObject<UMaterialInstanceConstant>(StaticMeshComponent, MaterialUniqueName, RF_Transactional);
+	MaterialInstance->SetParentEditorOnly(InMaterial);
+	MaterialInstance->CopyMaterialUniformParametersEditorOnly(InMaterial);
+	MaterialInstance->SetTextureParameterValueEditorOnly(
+		FMaterialParameterInfo(MediaTextureName),
+		MediaPlateComponent->GetMediaTexture());
+	MaterialInstance->PostEditChange();
+
+	// We force call post-load to indirectly call UpdateParameters() (for integration with VPUtilities plugin).
+	MaterialInstance->PostLoad();
+
+	return MaterialInstance;
 }
 
 void AMediaPlate::ApplyMaterial(UMaterialInterface* Material)
@@ -170,30 +248,7 @@ void AMediaPlate::ApplyMaterial(UMaterialInterface* Material)
 			else
 			{
 				MediaPlateComponent->SetNumberOfTextures(1);
-
-				// Change M_ to MI_ in material name and then generate a unique one.
-				FString MaterialName = Material->GetName();
-				if (MaterialName.StartsWith(TEXT("M_")))
-				{
-					MaterialName.InsertAt(1, TEXT("I"));
-				}
-				FName MaterialUniqueName = MakeUniqueObjectName(StaticMeshComponent, UMaterialInstanceConstant::StaticClass(),
-					FName(*MaterialName));
-
-				// Create instance.
-				UMaterialInstanceConstant* MaterialInstance =
-					NewObject<UMaterialInstanceConstant>(StaticMeshComponent, MaterialUniqueName, RF_Transactional);
-				MaterialInstance->SetParentEditorOnly(Material);
-				MaterialInstance->CopyMaterialUniformParametersEditorOnly(Material);
-				MaterialInstance->SetTextureParameterValueEditorOnly(
-					FMaterialParameterInfo(MediaTextureName),
-					MediaPlateComponent->GetMediaTexture());
-				MaterialInstance->PostEditChange();
-
-				// We force call post-load to indirectly call UpdateParameters() (for integration with VPUtilities plugin).
-				MaterialInstance->PostLoad();
-
-				Result = MaterialInstance;
+				Result = CreateMaterialInstanceConstant(Material);
 			}
 
 			// Update static mesh.
@@ -205,6 +260,52 @@ void AMediaPlate::ApplyMaterial(UMaterialInterface* Material)
 				LastMaterial = Result;
 			}
 		}
+	}
+}
+
+void AMediaPlate::ApplyOverlayMaterial(UMaterialInterface* InOverlayMaterial)
+{
+	if (InOverlayMaterial != nullptr && StaticMeshComponent != nullptr)
+	{
+		UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(InOverlayMaterial);
+
+		if (GEditor == nullptr)
+		{
+			if (MID == nullptr)
+			{
+				// Create and set the dynamic material instance.
+				MID = UMaterialInstanceDynamic::Create(InOverlayMaterial, StaticMeshComponent);
+			}
+			StaticMeshComponent->SetOverlayMaterial(MID);
+			SetMIDParameters(MID);
+			LastOverlayMaterial = MID;
+		}
+		else
+		{
+			UMaterialInterface* Result = nullptr;
+
+			if (MID != nullptr)
+			{
+				SetMIDParameters(MID);
+				Result = MID;
+			}
+			else
+			{
+				MediaPlateComponent->SetNumberOfTextures(1);
+				Result = CreateMaterialInstanceConstant(InOverlayMaterial);
+			}
+
+			// Update static mesh.
+			if (Result != nullptr)
+			{
+				StaticMeshComponent->Modify();
+				StaticMeshComponent->SetOverlayMaterial(Result);
+
+				LastOverlayMaterial = Result;
+			}
+		}
+
+		UE::MediaPlate::Private::ApplyTranslucencyScreenPercentageCVar(1);
 	}
 }
 
@@ -251,7 +352,7 @@ void AMediaPlate::OnPostSaveWorld(UWorld* InWorld, FObjectPostSaveContext Object
 
 void AMediaPlate::AddAssetUserData()
 {
-	if (StaticMeshComponent != nullptr)
+	if (StaticMeshComponent != nullptr && !StaticMeshComponent->HasAssetUserDataOfClass(UMediaPlateAssetUserData::StaticClass()))
 	{
 		UMediaPlateAssetUserData* AssetUserData = NewObject<UMediaPlateAssetUserData>(GetTransientPackage());
 		AssetUserData->OnPostEditChangeOwner.BindUObject(this, &AMediaPlate::ApplyCurrentMaterial);

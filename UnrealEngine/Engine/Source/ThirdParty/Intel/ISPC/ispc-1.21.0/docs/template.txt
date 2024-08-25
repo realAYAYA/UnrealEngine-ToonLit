@@ -1,0 +1,50 @@
+%(head_prefix)s
+%(head)s
+%(stylesheet)s
+%(body_prefix)s
+<div id="wrap">
+  <div id="wrap2">
+    <div id="header">
+      <h1 id="logo">Intel® Implicit SPMD Program Compiler</h1>
+      <div id="slogan">An open-source compiler for high-performance SIMD programming on
+      the CPU and GPU</div>
+    </div>
+    <div id="nav">
+      <div id="nbar">
+        <ul>
+          <li><a href="index.html">Overview</a></li>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="downloads.html">Downloads</a></li>
+          <li id="selected"><a href="documentation.html">Documentation</a></li>
+          <li><a href="perf.html">Performance</a></li>
+          <li><a href="contrib.html">Contributors</a></li>
+        </ul>
+      </div>
+    </div>
+    <div id="content-wrap">
+      <div id="sidebar">
+          <div class="widgetspace">
+            <h1>Resources</h1>
+            <ul class="menu">
+              <li><a href="http://github.com/ispc/ispc">GitHub page</a></li>
+              <li><a href="https://github.com/ispc/ispc/discussions">Discussions on GitHub</a></li>
+              <li><a href="http://github.com/ispc/ispc/issues">Issues on Github</a></li>
+              <li><a href="https://github.com/orgs/ispc/projects/1">Release planning board</a></li>
+              <li><a href="https://github.com/ispc/ispc/blob/main/CONTRIBUTING.md">Contributing guide</a></li>
+              <li><a href="http://github.com/ispc/ispc/wiki">Wiki on Github</a></li>
+            </ul>
+        </div>
+      </div>
+%(body_pre_docinfo)s
+%(docinfo)s
+<div id="content">
+%(body)s
+</div>
+    <div class="clearfix"></div>
+    <div id="footer"> &copy; <strong>Intel Corporation</strong> | Valid <a href="http://validator.w3.org/check?uri=referer">XHTML</a> | <a href="http://jigsaw.w3.org/css-validator/check/referer">CSS</a> | ClearBlue  by: <a href="http://www.themebin.com/">ThemeBin</a>
+      <!-- Please Do Not remove this link, thank u -->
+      </div>
+      </div>
+      </div>
+      </div>
+%(body_suffix)s

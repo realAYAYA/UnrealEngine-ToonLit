@@ -65,7 +65,7 @@ FLWCVector3 TransformPosition(FLWCMatrix LocalToWorld, float3 InPosition)
 {
 	if (NiagaraRibbonVF.bLocalSpace)
 	{
-		return TransformLocalToWorld(InPosition, LocalToWorld);
+		return LWCMultiply(InPosition, LocalToWorld);
 	}
 	else
 	{
@@ -77,7 +77,7 @@ float3 TransformVector(FLWCMatrix LocalToWorld, float3 InvScale, float3 InVector
 {
 	if (NiagaraRibbonVF.bLocalSpace)
 	{
-		return RotateLocalToWorld(InVector, LocalToWorld, InvScale);
+		return RotateLocalToWorld(InVector, LWCToFloat3x3(LocalToWorld), InvScale);
 	}
 	else
 	{
@@ -391,6 +391,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 
 #if USE_PARTICLE_POSITION
 	Result.Particle.TranslatedWorldPositionAndSize = Interpolants.TranslatedWorldPositionAndSize;
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 #endif
 
 #if USE_PARTICLE_VELOCITY
@@ -444,6 +445,7 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 
 #if USE_PARTICLE_POSITION
 	Result.Particle.TranslatedWorldPositionAndSize = Intermediates.TranslatedWorldPositionAndSize;
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 #endif
 
 #if USE_PARTICLE_VELOCITY
@@ -469,6 +471,12 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 		Result.TexCoords[1] = Intermediates.TexCoord.zw;
 	#endif
 #endif
+
+#if ENABLE_NEW_HLSL_GENERATOR
+	EvaluateVertexMaterialAttributes(Result);
+#endif
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
@@ -554,7 +562,7 @@ FRibbonPositionIntermediates GetRibbonPositionIntermediates(
 	}
 	else
 	{
-		Facing = LWCToFloat(LWCSubtract(ResolvedView.WorldCameraOrigin, Intermediates.Position));
+		Facing = LWCToFloat(LWCSubtract(ResolvedView.TileOffset.WorldCameraOrigin, Intermediates.Position));
 	}
 	Facing = SafeNormalize(Facing, float3(0, 0, 0));
 
@@ -588,14 +596,14 @@ FRibbonPositionIntermediates GetRibbonPositionIntermediates(
 	
 	Intermediates.GeoUp = cross(Intermediates.TangentY, Intermediates.TangentX);
 	Intermediates.GeoRight = Intermediates.TangentX;
-	
-	Intermediates.TangentZ = NiagaraRibbonVFLooseParameters.Shape >= 1 ? Intermediates.GeoUp : Facing; // Intermediates.GeoUp;
-	
+
+	Intermediates.TangentZ = NiagaraRibbonVFLooseParameters.UseGeometryNormals ? Intermediates.GeoUp : Facing;
+
 	Intermediates.TangentZ = SafeNormalize(Intermediates.TangentZ * SliceVertexNormals.y + Intermediates.TangentX * SliceVertexNormals.x, float3(0, 0, 1));
 	
 	// Flip the normal only for multiplane shape if the normal is looking away from the camera.
 	// This lets us still render as two sided, but at least gets the normals corrected so the plane faces the camera.
-	float3 ViewNormal = SafeNormalize(LWCToFloat(LWCSubtract(ResolvedView.WorldCameraOrigin, Intermediates.Position)), float3(0,0,0));
+	float3 ViewNormal = SafeNormalize(LWCToFloat(LWCSubtract(ResolvedView.TileOffset.WorldCameraOrigin, Intermediates.Position)), float3(0,0,0));
 	Intermediates.TangentZ *= (NiagaraRibbonVF.ShouldFlipNormalToView > 0 && dot(ViewNormal, Intermediates.TangentZ) < 0) ? -1 : 1;
 	
 	Intermediates.TangentX = cross(Intermediates.TangentZ, Intermediates.TangentY);
@@ -604,6 +612,7 @@ FRibbonPositionIntermediates GetRibbonPositionIntermediates(
 	float3 t = Intermediates.TangentX;
 	Intermediates.TangentX = Intermediates.TangentY;
 	Intermediates.TangentY = t;
+
 
 	// Overrides (FVertexFactoryIntermediates)0; 
 	Intermediates.RibbonWidth = 1.0f;
@@ -629,7 +638,7 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	const float2 SliceVertexNormals = UnpackParticleVertexNormal(Input.InterpVtxId);
 
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveDataFromUniformBuffer();
-	FLWCMatrix LocalToWorld = GetPrimitiveDataFromUniformBuffer().LocalToWorld;
+	FLWCMatrix LocalToWorld = DFFastToTileOffset(GetPrimitiveDataFromUniformBuffer().LocalToWorld);
 	float3 InvScale = PrimitiveData.InvNonUniformScale;
 
 	Intermediates.Current = GetRibbonPositionIntermediates(
@@ -655,7 +664,7 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	BRANCH
 	if (NiagaraRibbonVFLooseParameters.NeedsPreciseMotionVectors)
 	{
-		FLWCMatrix PreviousLocalToWorld = PrimitiveData.PreviousLocalToWorld;
+		FLWCMatrix PreviousLocalToWorld = DFFastToTileOffset(PrimitiveData.PreviousLocalToWorld);
 
 		// we don't cache the InvScale so we generate it here
 		float3x3 PreviousTransform = LWCToFloat3x3(PreviousLocalToWorld);
@@ -807,7 +816,7 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	Intermediates.TexCoord.zw = UV1ForSegment * SegmentData.UV1Scale + SegmentData.UV1Offset;
 
 #if USE_PARTICLE_POSITION
-	Intermediates.TranslatedWorldPositionAndSize = float4(LWCToFloat(LWCAdd(Intermediates.Current.Position, ResolvedView.PreViewTranslation)),  .5 * Intermediates.Current.RibbonWidth);
+	Intermediates.TranslatedWorldPositionAndSize = float4(LWCToFloat(LWCAdd(Intermediates.Current.Position, ResolvedView.TileOffset.PreViewTranslation)),  .5 * Intermediates.Current.RibbonWidth);
 #endif
 
 #if USE_PARTICLE_TIME
@@ -845,12 +854,12 @@ float3 ConstructWorldPosition(FVertexFactoryInput Input, FRibbonPositionIntermed
 
 float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
-	return float4(ConstructWorldPosition(Input, Intermediates.Current, ResolvedView.PreViewTranslation), 1);
+	return float4(ConstructWorldPosition(Input, Intermediates.Current, ResolvedView.TileOffset.PreViewTranslation), 1);
 }
 
 float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
-	return float4(ConstructWorldPosition(Input, Intermediates.Previous, ResolvedView.PrevPreViewTranslation), 1);
+	return float4(ConstructWorldPosition(Input, Intermediates.Previous, ResolvedView.TileOffset.PrevPreViewTranslation), 1);
 }
 
 float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)

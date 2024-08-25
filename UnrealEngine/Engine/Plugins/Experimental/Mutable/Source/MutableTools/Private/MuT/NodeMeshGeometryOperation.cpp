@@ -18,8 +18,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshGeometryOperation::Private::s_type =
-			NODE_TYPE( "MeshGeometryOperation", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshGeometryOperation::Private::s_type =
+			FNodeType( "MeshGeometryOperation", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -27,53 +27,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeMeshGeometryOperation, EType::GeometryOperation, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshGeometryOperation::GetInputCount() const
-	{
-		return 4;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshGeometryOperation::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = nullptr;
-
-		switch (i)
-		{
-		case 0: pResult = m_pD->m_pMeshA.get(); break;
-		case 1: pResult = m_pD->m_pMeshB.get(); break;
-		case 2: pResult = m_pD->m_pScalarA.get(); break;
-		case 3: pResult = m_pD->m_pScalarB.get(); break;
-		default:
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshGeometryOperation::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0: m_pD->m_pMeshA = dynamic_cast<NodeMesh*>(pNode.get()); break;
-		case 1: m_pD->m_pMeshB = dynamic_cast<NodeMesh*>(pNode.get()); break;
-		case 2: m_pD->m_pScalarA = dynamic_cast<NodeScalar*>(pNode.get()); break;
-		case 3: m_pD->m_pScalarB = dynamic_cast<NodeScalar*>(pNode.get()); break;
-		default:
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -141,9 +94,7 @@ namespace mu
 
 		if (m_pMeshA)
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>(m_pMeshA->GetBasePrivate() );
-
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>(m_pMeshA->GetBasePrivate() );
 			pResult = pPrivate->GetLayout( index );
 		}
 

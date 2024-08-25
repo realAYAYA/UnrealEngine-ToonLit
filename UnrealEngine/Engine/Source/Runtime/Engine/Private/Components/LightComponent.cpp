@@ -350,9 +350,10 @@ void FLightRenderParameters::MakeShaderParameters(const FViewMatrices& ViewMatri
 	OutShaderParameters.RectLightAtlasUVScale = RectLightAtlasUVScale;
 	OutShaderParameters.RectLightAtlasMaxLevel = RectLightAtlasMaxLevel;
 	OutShaderParameters.IESAtlasIndex = IESAtlasIndex;
+	OutShaderParameters.LightFunctionAtlasLightIndex = LightFunctionAtlasLightIndex;
 }
 
-// match logic in EyeAdaptationInverseLookup(...)
+// match logic in InverseExposureLerp(...)
 float FLightRenderParameters::GetLightExposureScale(float Exposure, float InverseExposureBlend)
 {
 	if (Exposure <= 0.0f)
@@ -615,6 +616,15 @@ bool ULightComponent::CanEditChange(const FProperty* InProperty) const
 			{
 				return false;
 			}
+		}
+
+		if (!CastDynamicShadows &&
+			  (PropertyName == GET_MEMBER_NAME_STRING_CHECKED(ULightComponent, ContactShadowLength)
+			|| PropertyName == GET_MEMBER_NAME_STRING_CHECKED(ULightComponent, ContactShadowLengthInWS)
+			|| PropertyName == GET_MEMBER_NAME_STRING_CHECKED(ULightComponent, ContactShadowCastingIntensity)
+			|| PropertyName == GET_MEMBER_NAME_STRING_CHECKED(ULightComponent, ContactShadowNonCastingIntensity)))
+		{
+			return false;
 		}
 		
 		const bool bIsRayStartOffset = PropertyName == GET_MEMBER_NAME_STRING_CHECKED(ULightComponent, RayStartOffsetDepthScale);
@@ -1422,6 +1432,11 @@ void ULightComponent::SetMaterial(int32 ElementIndex, UMaterialInterface* InMate
 		LightFunctionMaterial = InMaterial;
 		MarkRenderStateDirty();
 	}
+}
+
+void ULightComponent::PushSelectionToProxy()
+{
+	MarkRenderStateDirty();
 }
 
 /** Stores a light and a channel it has been assigned to. */

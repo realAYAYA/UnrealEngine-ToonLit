@@ -14,8 +14,35 @@
 #include "Sequencer.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "Framework/Application/SlateApplication.h"
+#include "MVVM/ViewModels/OutlinerColumns/OutlinerColumnTypes.h"
+#include "MVVM/Views/SSequencerKeyNavigationButtons.h"
+#include "MVVM/Views/SOutlinerTrackColorPicker.h"
+#include "MVVM/Views/SOutlinerItemViewBase.h"
+#include "SKeyAreaEditorSwitcher.h"
 
+namespace UE::Sequencer
+{
+	bool HasKeyableAreas(const FViewModel& ViewModel)
+	{
+		for (TSharedPtr<FChannelGroupModel> ChannelGroup : ViewModel.GetDescendantsOfType<FChannelGroupModel>())
+		{
+			for (const TWeakViewModelPtr<FChannelModel>& WeakChannel : ChannelGroup->GetChannels())
+			{
+				if (TViewModelPtr<FChannelModel> Channel = WeakChannel.Pin())
+				{
+					if (Channel->GetKeyArea())
+					{
+						return true;
+					}
+				}
+			}
+		}
+
+		return false;
+	}
+}
 
 FMovieSceneTrackEditor::FMovieSceneTrackEditor(TSharedRef<ISequencer> InSequencer)
 	: Sequencer(InSequencer)
@@ -97,7 +124,7 @@ void FMovieSceneTrackEditor::AnimatablePropertyChanged( FOnKeyProperty OnKeyProp
 		{
 			for (TWeakObjectPtr<UMovieSceneSection> NewSection : KeyPropertyResult.SectionsCreated)
 			{
-				if (NewSection.IsValid())
+				if (NewSection.IsValid() && NewSection.Get()->HasEndFrame())
 				{
 					NextKeyTime = NewSection.Get()->GetExclusiveEndFrame();
 					break;
@@ -185,12 +212,95 @@ void FMovieSceneTrackEditor::BuildAddTrackMenu(FMenuBuilder& MenuBuilder)
 { 
 }
 
-void FMovieSceneTrackEditor::BuildObjectBindingEditButtons(TSharedPtr<SHorizontalBox> EditBox, const FGuid& ObjectBinding, const UClass* ObjectClass) 
-{ 
+void FMovieSceneTrackEditor::BuildObjectBindingColumnWidgets(TFunctionRef<TSharedRef<SHorizontalBox>()> GetEditBox, const UE::Sequencer::TViewModelPtr<UE::Sequencer::FObjectBindingModel>& ObjectBinding, const UE::Sequencer::FCreateOutlinerViewParams& InParams, const FName& InColumnName)
+{
 }
 
 void FMovieSceneTrackEditor::BuildObjectBindingTrackMenu(FMenuBuilder& MenuBuilder, const TArray<FGuid>& ObjectBindings, const UClass* ObjectClass)
 {
+}
+
+TSharedPtr<SWidget> FMovieSceneTrackEditor::BuildOutlinerColumnWidget(const FBuildColumnWidgetParams& Params, const FName& ColumnName)
+{
+	using namespace UE::Sequencer;
+
+	UMovieSceneTrack* Track = Params.TrackModel->GetTrack();
+	TViewModelPtr<FSequencerEditorViewModel> Editor       = Params.Editor->CastThisShared<FSequencerEditorViewModel>();
+	TViewModelPtr<IOutlinerExtension>        OutlinerItem = Params.ViewModel.ImplicitCast();
+	if (!Track || !Editor || !OutlinerItem)
+	{
+		return SNullWidget::NullWidget;
+	}
+
+	if (ColumnName == FCommonOutlinerNames::Label)
+	{
+		return SNew(SOutlinerItemViewBase, OutlinerItem, Params.Editor, Params.TreeViewRow);
+	}
+
+	if (ColumnName == FCommonOutlinerNames::Edit)
+	{
+		TOptional<FViewModelChildren>  TopLevelChannels = Params.ViewModel->FindChildList(FTrackModel::GetTopLevelChannelGroupType());
+		TSharedPtr<FChannelGroupModel> TopLevelChannel  = TopLevelChannels ? TopLevelChannels->FindFirstChildOfType<FChannelGroupModel>() : nullptr;
+		if (TopLevelChannel)
+		{
+			return SNew(SKeyAreaEditorSwitcher, TopLevelChannel, Editor);
+		}
+	}
+
+	if (ColumnName == FCommonOutlinerNames::Add)
+	{
+		TAttribute<bool> IsHovered = MakeAttributeSP(Params.TreeViewRow, &ISequencerTreeViewRow::IsHovered);
+
+		// This function is a misnomer but is called this way for backwards compatibility
+		FBuildEditWidgetParams EditWidgetParams(Params);
+		EditWidgetParams.NodeIsHovered = IsHovered;
+		EditWidgetParams.RowIndex = Params.TrackModel->GetRowIndex();
+		if (Params.ViewModel->FindAncestorOfType<ITrackExtension>())
+		{
+			EditWidgetParams.TrackInsertRowIndex = Params.TrackModel->GetRowIndex();
+		}
+		else if (Track && Track->SupportsMultipleRows())
+		{
+			EditWidgetParams.TrackInsertRowIndex = Track->GetMaxRowIndex() + 1;
+		}
+		TViewModelPtr<IObjectBindingExtension> ObjectBinding = Params.ViewModel->FindAncestorOfType<IObjectBindingExtension>();
+		return BuildOutlinerEditWidget(ObjectBinding ? ObjectBinding->GetObjectGuid() : FGuid(), Track, EditWidgetParams);
+	}
+
+	if (ColumnName == FCommonOutlinerNames::KeyFrame)
+	{
+		if (HasKeyableAreas(*Params.ViewModel))
+		{
+			EKeyNavigationButtons Buttons = EKeyNavigationButtons::AddKey;
+
+			return SNew(SSequencerKeyNavigationButtons, Params.ViewModel, Editor->GetSequencer())
+				.Buttons(Buttons);
+		}
+
+		return nullptr;
+	}
+
+	if (ColumnName == FCommonOutlinerNames::Nav)
+	{
+		if (HasKeyableAreas(*Params.ViewModel))
+		{
+			EKeyNavigationButtons Buttons = Params.TreeViewRow->IsColumnVisible(FCommonOutlinerNames::KeyFrame)
+				? EKeyNavigationButtons::NavOnly
+				: EKeyNavigationButtons::All;
+
+			return SNew(SSequencerKeyNavigationButtons, Params.ViewModel, Editor->GetSequencer())
+				.Buttons(Buttons);
+		}
+
+		return nullptr;
+	}
+
+	if (ColumnName == FCommonOutlinerNames::ColorPicker)
+	{
+		return SNew(SOutlinerTrackColorPicker, Params.ViewModel.ImplicitCast(), Params.Editor);
+	}
+
+	return nullptr;
 }
 
 TSharedPtr<SWidget> FMovieSceneTrackEditor::BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params)
@@ -209,13 +319,7 @@ TSharedPtr<SWidget> FMovieSceneTrackEditor::BuildOutlinerEditWidget(const FGuid&
 			return MenuBuilder.MakeWidget();
 		};
 
-		return SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		[
-			FSequencerUtilities::MakeAddButton(NSLOCTEXT("MovieSceneTrackEditor", "AddSection", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-		];
+		return UE::Sequencer::MakeAddButton(NSLOCTEXT("MovieSceneTrackEditor", "AddSection", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.ViewModel);
 	}
 	else
 	{

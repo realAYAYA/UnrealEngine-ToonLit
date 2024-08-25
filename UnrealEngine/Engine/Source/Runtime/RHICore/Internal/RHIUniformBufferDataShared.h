@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "RHI.h"
 #include "RenderGraphResources.h"
 
 namespace UE::RHICore

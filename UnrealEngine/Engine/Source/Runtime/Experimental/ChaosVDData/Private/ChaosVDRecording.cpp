@@ -2,8 +2,36 @@
 
 #include "ChaosVDRecording.h"
 #include "Chaos/ImplicitObject.h"
+#include "ChaosVisualDebugger/ChaosVDSerializedNameTable.h"
+
+FChaosVDRecording::FChaosVDRecording()
+{
+	NameTable = MakeShared<Chaos::VisualDebugger::FChaosVDSerializableNameTable>();
+
+	// Start with a default header data as a fallback
+	HeaderData = Chaos::VisualDebugger::FChaosVDArchiveHeader::Current();
+}
+
+int32 FChaosVDRecording::GetAvailableGameFramesNumber() const
+{
+	FReadScopeLock ReadLock(RecordingDataLock);
+	
+	return GetAvailableGameFramesNumber_AssumesLocked();
+}
+
+int32 FChaosVDRecording::GetAvailableGameFramesNumber_AssumesLocked() const
+{
+	return GameFrames.Num(); 
+}
 
 int32 FChaosVDRecording::GetAvailableSolverFramesNumber(const int32 SolverID) const
+{
+	FReadScopeLock ReadLock(RecordingDataLock);
+
+	return GetAvailableSolverFramesNumber_AssumesLocked(SolverID);
+}
+
+int32 FChaosVDRecording::GetAvailableSolverFramesNumber_AssumesLocked(int32 SolverID) const
 {
 	if (const TArray<FChaosVDSolverFrameData>* SolverData = RecordedFramesDataPerSolver.Find(SolverID))
 	{
@@ -14,6 +42,13 @@ int32 FChaosVDRecording::GetAvailableSolverFramesNumber(const int32 SolverID) co
 }
 
 FString FChaosVDRecording::GetSolverName(int32 SolverID)
+{
+	FReadScopeLock ReadLock(RecordingDataLock);
+
+	return GetSolverName_AssumedLocked(SolverID);
+}
+
+FString FChaosVDRecording::GetSolverName_AssumedLocked(int32 SolverID)
 {
 	static FString DefaultName(TEXT("Invalid"));
 
@@ -30,18 +65,35 @@ FString FChaosVDRecording::GetSolverName(int32 SolverID)
 	return DefaultName;
 }
 
-FChaosVDSolverFrameData* FChaosVDRecording::GetSolverFrameData(const int32 SolverID, const int32 FrameNumber)
+FChaosVDSolverFrameData* FChaosVDRecording::GetSolverFrameData_AssumesLocked(const int32 SolverID, const int32 FrameNumber, bool bKeyFrameOnly)
 {
 	if (TArray<FChaosVDSolverFrameData>* SolverFrames = RecordedFramesDataPerSolver.Find(SolverID))
 	{
 		//TODO: Find a safer way of do this. If someone stores this ptr bad things will happen
-		return SolverFrames->IsValidIndex(FrameNumber) ? &(*SolverFrames)[FrameNumber] : nullptr;
+		if (FChaosVDSolverFrameData* FoundFrame = SolverFrames->IsValidIndex(FrameNumber) ? &(*SolverFrames)[FrameNumber] : nullptr)
+		{
+			if (!FoundFrame->bIsKeyFrame && bKeyFrameOnly)
+			{
+				if (TMap<int32, FChaosVDSolverFrameData>* GenerateSolverFrameByNumber = GeneratedKeyFrameDataPerSolver.Find(SolverID))
+				{
+					if (FChaosVDSolverFrameData* GeneratedKeyFrame = GenerateSolverFrameByNumber->Find(FrameNumber))
+					{
+						return GeneratedKeyFrame;
+					}
+				}
+				ensureMsgf(false, TEXT("Failed to find generated KeyFrame [%d] for Solver [%d]"), FrameNumber, SolverID);
+			}
+			else
+			{
+				return FoundFrame;
+			}			
+		}
 	}
 
 	return nullptr;
 }
 
-FChaosVDSolverFrameData* FChaosVDRecording::GetSolverFrameDataAtCycle(int32 SolverID, uint64 Cycle)
+FChaosVDSolverFrameData* FChaosVDRecording::GetSolverFrameDataAtCycle_AssumesLocked(int32 SolverID, uint64 Cycle)
 {
 	if (TArray<FChaosVDSolverFrameData>* SolverFramesPtr = RecordedFramesDataPerSolver.Find(SolverID))
 	{
@@ -55,6 +107,13 @@ FChaosVDSolverFrameData* FChaosVDRecording::GetSolverFrameDataAtCycle(int32 Solv
 
 int32 FChaosVDRecording::GetLowestSolverFrameNumberAtCycle(int32 SolverID, uint64 Cycle)
 {
+	FReadScopeLock ReadLock(RecordingDataLock);
+
+	return GetLowestSolverFrameNumberAtCycle_AssumesLocked(SolverID, Cycle);
+}
+
+int32 FChaosVDRecording::GetLowestSolverFrameNumberAtCycle_AssumesLocked(int32 SolverID, uint64 Cycle)
+{
 	if (TArray<FChaosVDSolverFrameData>* SolverFramesPtr = RecordedFramesDataPerSolver.Find(SolverID))
 	{
 		TArray<FChaosVDSolverFrameData>& SolverFrames = *SolverFramesPtr;
@@ -64,7 +123,7 @@ int32 FChaosVDRecording::GetLowestSolverFrameNumberAtCycle(int32 SolverID, uint6
 	return INDEX_NONE;
 }
 
-int32 FChaosVDRecording::FindFirstSolverKeyFrameNumberFromFrame(int32 SolverID, int32 StartFrameNumber)
+int32 FChaosVDRecording::FindFirstSolverKeyFrameNumberFromFrame_AssumesLocked(int32 SolverID, int32 StartFrameNumber)
 {
 	if (TArray<int32>* KeyFrameNumbersPtr = RecordedKeyFramesNumberPerSolver.Find(SolverID))
 	{
@@ -104,6 +163,7 @@ int32 FChaosVDRecording::FindFirstSolverKeyFrameNumberFromFrame(int32 SolverID, 
 
 int32 FChaosVDRecording::GetLowestSolverFrameNumberGameFrame(int32 SolverID, int32 GameFrame)
 {
+	FReadScopeLock ReadLock(RecordingDataLock);
 	if (!GameFrames.IsValidIndex(GameFrame))
 	{
 		return INDEX_NONE;
@@ -121,6 +181,7 @@ int32 FChaosVDRecording::GetLowestSolverFrameNumberGameFrame(int32 SolverID, int
 
 int32 FChaosVDRecording::GetLowestGameFrameAtSolverFrameNumber(int32 SolverID, int32 SolverFrame)
 {
+	FReadScopeLock ReadLock(RecordingDataLock);
 	if (TArray<FChaosVDSolverFrameData>* SolverFramesPtr = RecordedFramesDataPerSolver.Find(SolverID))
 	{
 		TArray<FChaosVDSolverFrameData>& SolverFrames = *SolverFramesPtr;
@@ -136,6 +197,12 @@ int32 FChaosVDRecording::GetLowestGameFrameAtSolverFrameNumber(int32 SolverID, i
 
 void FChaosVDRecording::AddKeyFrameNumberForSolver(const int32 SolverID, int32 FrameNumber)
 {
+	FWriteScopeLock WriteLock(RecordingDataLock);
+	AddKeyFrameNumberForSolver_AssumesLocked(SolverID, FrameNumber);
+}
+
+void FChaosVDRecording::AddKeyFrameNumberForSolver_AssumesLocked(int32 SolverID, int32 FrameNumber)
+{
 	if (TArray<int32>* KeyFrameNumber = RecordedKeyFramesNumberPerSolver.Find(SolverID))
 	{
 		KeyFrameNumber->Add(FrameNumber);
@@ -146,36 +213,90 @@ void FChaosVDRecording::AddKeyFrameNumberForSolver(const int32 SolverID, int32 F
 	}
 }
 
-void FChaosVDRecording::AddFrameForSolver(const int32 SolverID, FChaosVDSolverFrameData&& InFrameData)
+void FChaosVDRecording::GenerateAndStoreKeyframeForSolver_AssumesLocked(const int32 SolverID, int32 CurrentFrameNumber, const int32 LastKeyFrameNumber)
 {
-	int32 FrameNumber;
-	const bool bIsKeyFrame = InFrameData.bIsKeyFrame;
-	if (TArray<FChaosVDSolverFrameData>* SolverFrames = RecordedFramesDataPerSolver.Find(SolverID))
-	{
-		FrameNumber = SolverFrames->Num();
+	FChaosVDSolverFrameData GeneratedKeyFrame;
+	CollapseSolverFramesRange_AssumesLocked(SolverID, LastKeyFrameNumber, CurrentFrameNumber, GeneratedKeyFrame);
 
-		SolverFrames->Add(MoveTemp(InFrameData));	
+	// We don't replace an existing delta frame with a generated keyframe because processing keyframes during playback is expensive
+	// So we keep the generated keyframes on its own map, so we can access them when needed
+	// (usually when we are skipping frames and we need to collapse frame data from the closest keyframe)
+	if (TMap<int32, FChaosVDSolverFrameData>* GenerateSolverFrameByNumber = GeneratedKeyFrameDataPerSolver.Find(SolverID))
+	{
+		GenerateSolverFrameByNumber->Add(CurrentFrameNumber, GeneratedKeyFrame);
 	}
 	else
-	{	
-		FrameNumber = 0;
-		RecordedFramesDataPerSolver.Add(SolverID, { MoveTemp(InFrameData) });
+	{
+		TMap<int32, FChaosVDSolverFrameData> GeneratedSolverFramesByNumber;
+		GeneratedSolverFramesByNumber.Add(CurrentFrameNumber, GeneratedKeyFrame);
+		GeneratedKeyFrameDataPerSolver.Add(SolverID, GeneratedSolverFramesByNumber);
+	}
+}
+
+void FChaosVDRecording::AddFrameForSolver(const int32 SolverID, FChaosVDSolverFrameData&& InFrameData)
+{
+	int32 CurrentFrameNumber;
+	bool bIsKeyFrame = InFrameData.bIsKeyFrame;
+
+	{
+		FWriteScopeLock WriteLock(RecordingDataLock);
+
+		auto FindLastKeyFrameNumberForSolver = [this](int32 SolverID)-> int32
+		{
+			if (TArray<int32>* KeyFrameNumber = RecordedKeyFramesNumberPerSolver.Find(SolverID))
+			{
+				return KeyFrameNumber->Num() ? KeyFrameNumber->Last() : INDEX_NONE;
+			}
+			return INDEX_NONE;
+		};
+
+		if (TArray<FChaosVDSolverFrameData>* SolverFrames = RecordedFramesDataPerSolver.Find(SolverID))
+		{
+			CurrentFrameNumber = SolverFrames->Num();
+
+			SolverFrames->Add(MoveTemp(InFrameData));
+
+			if (!bIsKeyFrame)
+			{
+				// If not a keyframe, see if we should generate a to keyframe for the frame number we just added.
+				// This greatly reduces the cost during playback when we are skipping more than one frame or going backwards because with more keyframe
+				// we have less data to process on the process "Play from last key frame", needed in such situations.
+				const int32 LastKeyFrameNumber = FindLastKeyFrameNumberForSolver(SolverID);
+				if (LastKeyFrameNumber != INDEX_NONE)
+				{
+					constexpr int32 MaxDeltaBetweenKeyframes = 5;
+					const int32 FrameDiffSinceLastKeyframe = FMath::Abs(CurrentFrameNumber - LastKeyFrameNumber);
+
+					if (FrameDiffSinceLastKeyframe > MaxDeltaBetweenKeyframes)
+					{
+						GenerateAndStoreKeyframeForSolver_AssumesLocked(SolverID, CurrentFrameNumber, LastKeyFrameNumber);
+						AddKeyFrameNumberForSolver_AssumesLocked(SolverID, CurrentFrameNumber);
+					}
+				}
+			}
+		}
+		else
+		{
+			CurrentFrameNumber = 0;
+			RecordedFramesDataPerSolver.Add(SolverID, {}).Emplace(MoveTemp(InFrameData));
+		}
 	}
 
 	if (bIsKeyFrame)
 	{
-		AddKeyFrameNumberForSolver(SolverID, FrameNumber);
+		AddKeyFrameNumberForSolver(SolverID, CurrentFrameNumber);
 	}
 
-	OnRecordingUpdated().Broadcast();
+	LastUpdatedTimeAsCycle = FPlatformTime::Cycles64();
 }
 
-void FChaosVDRecording::AddGameFrameData(FChaosVDGameFrameData&& InFrameData)
+void FChaosVDRecording::AddGameFrameData(const FChaosVDGameFrameData& InFrameData)
 {
-	GameFrames.Add(MoveTemp(InFrameData));
+	FWriteScopeLock WriteLock(RecordingDataLock);
+	GameFrames.Add(InFrameData);
 }
 
-FChaosVDGameFrameData* FChaosVDRecording::GetGameFrameDataAtCycle(uint64 Cycle)
+FChaosVDGameFrameData* FChaosVDRecording::GetGameFrameDataAtCycle_AssumesLocked(uint64 Cycle)
 {
 	int32 FrameIndex = Algo::BinarySearchBy(GameFrames, Cycle, &FChaosVDGameFrameData::FirstCycle);
 
@@ -187,30 +308,47 @@ FChaosVDGameFrameData* FChaosVDRecording::GetGameFrameDataAtCycle(uint64 Cycle)
 	return nullptr;
 }
 
-FChaosVDGameFrameData* FChaosVDRecording::GetGameFrameData(int32 FrameNumber)
+FChaosVDGameFrameData* FChaosVDRecording::GetGameFrameData_AssumesLocked(int32 FrameNumber)
 {
 	return GameFrames.IsValidIndex(FrameNumber) ? &GameFrames[FrameNumber] : nullptr;
 }
 
-FChaosVDGameFrameData* FChaosVDRecording::GetLastGameFrameData()
+FChaosVDGameFrameData* FChaosVDRecording::GetLastGameFrameData_AssumesLocked()
 {
 	return GameFrames.Num() > 0 ? &GameFrames.Last() : nullptr;
 }
 
 int32 FChaosVDRecording::GetLowestGameFrameNumberAtCycle(uint64 Cycle)
 {
+	FReadScopeLock ReadLock(RecordingDataLock);
 	return Algo::LowerBoundBy(GameFrames, Cycle, &FChaosVDGameFrameData::FirstCycle);
 }
 
 void FChaosVDRecording::GetAvailableSolverIDsAtGameFrameNumber(int32 FrameNumber, TArray<int32>& OutSolversID)
+{
+	FReadScopeLock ReadLock(RecordingDataLock);
+
+	return GetAvailableSolverIDsAtGameFrameNumber_AssumesLocked(FrameNumber, OutSolversID);
+}
+
+void FChaosVDRecording::GetAvailableSolverIDsAtGameFrameNumber_AssumesLocked(int32 FrameNumber, TArray<int32>& OutSolversID)
 {
 	if (!GameFrames.IsValidIndex(FrameNumber))
 	{
 		return;
 	}
 	
-	FChaosVDGameFrameData& FrameData = GameFrames[FrameNumber];
+	GetAvailableSolverIDsAtGameFrame_AssumesLocked(GameFrames[FrameNumber], OutSolversID);
+}
 
+void FChaosVDRecording::GetAvailableSolverIDsAtGameFrame(const FChaosVDGameFrameData& GameFrameData, TArray<int32>& OutSolversID)
+{
+	FReadScopeLock ReadLock(RecordingDataLock);
+	GetAvailableSolverIDsAtGameFrame_AssumesLocked(GameFrameData, OutSolversID);
+}
+
+void FChaosVDRecording::GetAvailableSolverIDsAtGameFrame_AssumesLocked(const FChaosVDGameFrameData& GameFrameData, TArray<int32>& OutSolversID)
+{
 	OutSolversID.Reserve(RecordedFramesDataPerSolver.Num());
 
 	for (const TPair<int32, TArray<FChaosVDSolverFrameData>>& SolverFramesWithIDPair : RecordedFramesDataPerSolver)
@@ -220,13 +358,13 @@ void FChaosVDRecording::GetAvailableSolverIDsAtGameFrameNumber(int32 FrameNumber
 			continue;
 		}
 
-		if (SolverFramesWithIDPair.Value.Num() == 1 && SolverFramesWithIDPair.Value[0].FrameCycle < FrameData.FirstCycle)
+		if (SolverFramesWithIDPair.Value.Num() == 1 && SolverFramesWithIDPair.Value[0].FrameCycle < GameFrameData.FirstCycle)
 		{
 			OutSolversID.Add(SolverFramesWithIDPair.Key);
 		}
 		else
 		{
-			if (FrameData.FirstCycle > SolverFramesWithIDPair.Value[0].FrameCycle && FrameData.FirstCycle < SolverFramesWithIDPair.Value.Last().FrameCycle)
+			if (GameFrameData.FirstCycle > SolverFramesWithIDPair.Value[0].FrameCycle && GameFrameData.FirstCycle < SolverFramesWithIDPair.Value.Last().FrameCycle)
 			{
 				OutSolversID.Add(SolverFramesWithIDPair.Key);
 			}
@@ -234,25 +372,94 @@ void FChaosVDRecording::GetAvailableSolverIDsAtGameFrameNumber(int32 FrameNumber
 	}
 }
 
-void FChaosVDRecording::AddImplicitObject(const uint32 ID, const TSharedPtr<Chaos::FImplicitObject>& InImplicitObject)
+void FChaosVDRecording::CollapseSolverFramesRange_AssumesLocked(int32 SolverID, int32 StartFrame, int32 EndFrame, FChaosVDSolverFrameData& OutCollapsedFrameData)
 {
+	// Make sure we start with a clear map
+	ParticlesOnCurrentGeneratedKeyframe.Reset();
+	
+	for (int32 CurrentFrameNumber = StartFrame; CurrentFrameNumber <= EndFrame; CurrentFrameNumber++)
+	{
+		const bool bRequestingKeyFrameOnly = CurrentFrameNumber == StartFrame;
+		if (const FChaosVDSolverFrameData* SolverFrameData = GetSolverFrameData_AssumesLocked(SolverID, CurrentFrameNumber, bRequestingKeyFrameOnly))
+		{
+			OutCollapsedFrameData.ParticlesDestroyedIDs.Append(SolverFrameData->ParticlesDestroyedIDs);
+
+			// Only evaluate the last step as it contains all the particles that changed
+			const int32 LastStepNumber = SolverFrameData->SolverSteps.Num() - 1;
+			if (SolverFrameData->SolverSteps.IsValidIndex(LastStepNumber))
+			{
+				for (const FChaosVDStepData& StepData : SolverFrameData->SolverSteps)
+				{
+					for (const TSharedPtr<FChaosVDParticleDataWrapper>& ParticleData : StepData.RecordedParticlesData)
+					{
+						if (!ParticleData)
+						{
+							continue;
+						}
+
+						if (TSharedPtr<FChaosVDParticleDataWrapper>* FoundParticleData = ParticlesOnCurrentGeneratedKeyframe.Find(ParticleData->ParticleIndex))
+						{
+							(*FoundParticleData) = ParticleData;
+						}
+						else
+						{
+							ParticlesOnCurrentGeneratedKeyframe.Add(ParticleData->ParticleIndex, ParticleData);
+						}
+					}
+				}
+			}
+
+			// If this is the end frame, Copy all the "metadata" for the generated frame, and generate the Solver step
+			if (CurrentFrameNumber == EndFrame)
+			{
+				OutCollapsedFrameData.EndTime = SolverFrameData->EndTime;
+				OutCollapsedFrameData.StartTime = SolverFrameData->StartTime;
+				OutCollapsedFrameData.FrameCycle = SolverFrameData->FrameCycle;
+				OutCollapsedFrameData.bIsKeyFrame = true;
+				OutCollapsedFrameData.SolverID = SolverFrameData->SolverID;
+				OutCollapsedFrameData.SimulationTransform = SolverFrameData->SimulationTransform;
+				OutCollapsedFrameData.DebugName = SolverFrameData->DebugName;
+
+				FChaosVDStepData CollapsedStepData;
+				CollapsedStepData.StepName = TEXT("GeneratedStep");
+
+				ParticlesOnCurrentGeneratedKeyframe.GenerateValueArray(CollapsedStepData.RecordedParticlesData);
+
+				ParticlesOnCurrentGeneratedKeyframe.Reset();
+				
+				OutCollapsedFrameData.SolverSteps.Add(MoveTemp(CollapsedStepData));
+			}
+		}
+	}
+}
+
+void FChaosVDRecording::AddImplicitObject(const uint32 ID, const Chaos::FImplicitObjectPtr& InImplicitObject)
+{
+	FWriteScopeLock WriteLock(RecordingDataLock);
 	if (!ImplicitObjects.Contains(ID))
 	{
-		AddImplicitObject_Internal(ID, InImplicitObject);
+		AddImplicitObject_Internal(ID, Chaos::FConstImplicitObjectPtr(InImplicitObject));
 	}
+}
+
+bool FChaosVDRecording::IsEmpty() const
+{
+	FReadScopeLock ReadLock(RecordingDataLock);
+	return GetAvailableSolversNumber_AssumesLocked() == 0 && GetAvailableGameFrames_AssumesLocked().Num() == 0 && ImplicitObjects.Num() == 0;
 }
 
 void FChaosVDRecording::AddImplicitObject(const uint32 ID, const Chaos::FImplicitObject* InImplicitObject)
 {
+	FWriteScopeLock WriteLock(RecordingDataLock);
 	if (!ImplicitObjects.Contains(ID))
 	{
 		// Only take ownership after we know we will add it to the map
-		const TSharedPtr<const Chaos::FImplicitObject> SharedImplicit(InImplicitObject);
-		AddImplicitObject_Internal(ID, SharedImplicit);
+		const Chaos::FConstImplicitObjectPtr ImplicitObjectPtr(InImplicitObject);
+		AddImplicitObject_Internal(ID, ImplicitObjectPtr);
 	}
 }
 
-void FChaosVDRecording::AddImplicitObject_Internal(uint32 ID, const TSharedPtr<const Chaos::FImplicitObject>& InImplicitObject)
+void FChaosVDRecording::AddImplicitObject_Internal(uint32 ID, const Chaos::FConstImplicitObjectPtr& InImplicitObject)
 {
 	ImplicitObjects.Add(ID, InImplicitObject);
 	GeometryDataLoaded.Broadcast(InImplicitObject, ID);

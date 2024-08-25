@@ -8,10 +8,14 @@
 
 #include "HAL/Platform.h"
 
-// This is a value that should be tweaked to fit the app, lower numbers will have better performance
-// Titles using many terrain layers may want to set MAX_SRVS to 64 to avoid shader compilation errors. This will have a small performance hit of around 0.1%
-#define MAX_SRVS		64
-#define MAX_SAMPLERS	16
+// Note: We do not need to worry about these counts exceeding resource binding tiers 1 & 2 due to 2 reasons:
+// 1) On PC the actual counts used to build the root signature are derived from the shader and the shader compiler
+// profile required for a desired feature level will enforce the proper limits.
+// 2) All platforms currently using the global root signature support resource binding tier 3, these counts are well within the limits
+// of tier 3.
+// More info here: https://learn.microsoft.com/en-us/windows/win32/direct3d12/hardware-support, https://en.wikipedia.org/wiki/Feature_levels_in_Direct3D
+#define MAX_SRVS		64 // Cannot be set higher than 64 due to 64b Cache.BoundMask logic
+#define MAX_SAMPLERS	32
 #define MAX_UAVS		16
 #define MAX_CBS			16
 

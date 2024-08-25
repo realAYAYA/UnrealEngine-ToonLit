@@ -34,7 +34,8 @@ void SColorGradingPicker::Construct( const FArguments& InArgs )
 	check(SliderValueMin < SliderValueMax);
 
 	MainDelta = InArgs._MainDelta;
-	MainShiftMouseMovePixelPerDelta = InArgs._MainShiftMouseMovePixelPerDelta;
+	MainShiftMultiplier = InArgs._MainShiftMultiplier;
+	MainCtrlMultiplier = InArgs._MainCtrlMultiplier;
 	ColorGradingModes = InArgs._ColorGradingModes;
 	OnColorCommitted = InArgs._OnColorCommitted;
 	OnQueryCurrentColor = InArgs._OnQueryCurrentColor;
@@ -91,7 +92,8 @@ void SColorGradingPicker::Construct( const FArguments& InArgs )
 				.MinSliderValue(SliderValueMin)
 				.MaxSliderValue(SliderValueMax)
 				.Delta(MainDelta)
-				.ShiftMouseMovePixelPerDelta(MainShiftMouseMovePixelPerDelta)
+				.ShiftMultiplier(MainShiftMultiplier)
+				.CtrlMultiplier(MainCtrlMultiplier)
 				.OnBeginSliderMovement(this, &SColorGradingPicker::OnBeginSliderMovement)
 				.OnEndSliderMovement(this, &SColorGradingPicker::OnEndSliderMovement)
 				.UndeterminedString(NSLOCTEXT("PropertyEditor", "MultipleValues", "Multiple Values"))

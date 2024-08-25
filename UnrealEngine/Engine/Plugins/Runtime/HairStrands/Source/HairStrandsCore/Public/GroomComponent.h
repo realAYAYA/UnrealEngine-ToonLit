@@ -149,7 +149,7 @@ public:
 
 	//~ Begin UPrimitiveComponent Interface.
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
-	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FComponentPSOPrecacheParamsList& OutParams) override;
+	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 	//~ End UPrimitiveComponent Interface.
 
 	//~ Begin UMeshComponent Interface.
@@ -175,6 +175,12 @@ public:
 	void ValidateMaterials(bool bMapCheck) const;
 	void Invalidate();
 	void InvalidateAndRecreate();
+#endif
+
+#if WITH_EDITOR
+	virtual void PreFeatureLevelChange(ERHIFeatureLevel::Type PendingFeatureLevel) override;
+	void HandlePlatformPreviewChanged(ERHIFeatureLevel::Type InFeatureLevel);
+	void HandleFeatureLevelChanged(ERHIFeatureLevel::Type InFeatureLevel);
 #endif
 
 	/* Accessor function for changing Groom asset from blueprint/sequencer */
@@ -234,9 +240,12 @@ public:
 
 	///~ Begin ILODSyncInterface Interface.
 	virtual int32 GetDesiredSyncLOD() const override;
-	virtual void SetSyncLOD(int32 LODIndex) override;
+	virtual int32 GetBestAvailableLOD() const override;
+	virtual void SetForceStreamedLOD(int32 LODIndex) override;
+	virtual void SetForceRenderedLOD(int32 LODIndex) override;
 	virtual int32 GetNumSyncLODs() const override;
-	virtual int32 GetCurrentSyncLOD() const override;
+	virtual int32 GetForceStreamedLOD() const override;
+	virtual int32 GetForceRenderedLOD() const override;
 	//~ End ILODSyncInterface
 
 	int32 GetNumLODs() const;
@@ -275,6 +284,9 @@ public:
 
 	/** GroomCache */
 	UGroomCache* GetGroomCache() const { return GroomCache; }
+
+	/* Accessor function for changing GroomCache asset from blueprint/sequencer */
+	UFUNCTION(BlueprintCallable, Category = "Groom")
 	void SetGroomCache(UGroomCache* InGroomCache);
 
 	float GetGroomCacheDuration() const;
@@ -312,8 +324,7 @@ private:
 	TSharedPtr<class IGroomCacheBuffers, ESPMode::ThreadSafe> GroomCacheBuffers;
 
 private:
-	TArray<FHairGroupInstance*> HairGroupInstances;
-	TArray<FHairGroupInstance*> DeferredDeleteHairGroupInstances;
+	TArray<TRefCountPtr<FHairGroupInstance>> HairGroupInstances;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(Transient)

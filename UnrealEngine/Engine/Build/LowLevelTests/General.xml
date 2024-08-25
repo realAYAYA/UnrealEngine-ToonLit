@@ -2,17 +2,49 @@
 <BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
 	<Property Name="Win64ExtraArgs" Value=""/>
 	<Property Name="LinuxExtraArgs" Value=""/>
+	<Property Name="LinuxArm64ExtraArgs" Value=""/>
 	<Property Name="MacExtraArgs" Value=""/>
 	<Property Name="IOSExtraArgs" Value=""/>
 	<Property Name="AndroidExtraArgs" Value=""/>
 	<Property Name="Win64RequiresSpecialAgent" Value="False"/>
 	<Property Name="LinuxRequiresSpecialAgent" Value="False"/>
+	<Property Name="LinuxArm64RequiresSpecialAgent" Value="False"/>
 	<Property Name="MacRequiresSpecialAgent" Value="False"/>
 	<Property Name="IOSRequiresSpecialAgent" Value="False"/>
 	<Property Name="AndroidRequiresSpecialAgent" Value="False"/>
 	<Property Name="Win64RequiresCatch2BuildExtraCMakeArgs" Value="False"/>
 	<Property Name="LinuxRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
+	<Property Name="LinuxArm64RequiresCatch2BuildExtraCMakeArgs" Value="False"/>
 	<Property Name="MacRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
 	<Property Name="IOSRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
 	<Property Name="AndroidRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
+	<Extend Name="Catch2BuildAppendExtraCMakeArgsPlatform">
+		<Do If="'$(Platform)' == 'Win64'">
+			<Expand Name="Catch2BuildAppendExtraCMakeArgs"
+					ExtraArgValue="-DCOMPILER_EXCEPTION_FLAG:STRING=&quot;/EHsc&quot; -DSET_CONFIG_NO_COLOUR_WIN32=OFF"/>
+		</Do>
+		<Do If="'$(Platform)' == 'Mac' OR '$(Platform)' == 'Linux' OR '$(Platform)' == 'LinuxArm64'">
+			<Expand Name="Catch2BuildAppendExtraCMakeArgs"
+					ExtraArgValue="-DCOMPILER_EXCEPTION_FLAG:STRING=&quot;-fexceptions&quot;"/>
+		</Do>
+		<Do If="'$(Platform)' == 'Linux' OR '$(Platform)' == 'LinuxArm64'">
+			<Expand Name="Catch2BuildAppendExtraCMakeArgs"
+					ExtraArgValue="-DBUILD_WITH_LIBCXX=ON"/>
+		</Do>
+	</Extend>
+	<Macro Name="LinuxArm64DockerSetup" Arguments="AppNameLowercase;AppDir">
+		<!-- Build a linux docker image with arm64 emulator utilities -->
+		<Property Name="AppDirFiles" Value="$(AppDir)/..."/>
+		<Tag Files="$(AppDirFiles)" With="#DockerBuildFiles"/>
+		<Copy From="$(RootDir)/Engine/Build/LowLevelTests/LinuxArm64/" To="$(AppDir)/" Files="dockerfile"/>
+		<Docker-Build BaseDir="$(AppDir)" DockerFile="$(AppDir)/dockerfile" Files="..." Tag="$(AppNameLowercase)-linuxarm64-image" Arguments="--build-arg app_base_dir=$(AppDir)" UseBuildKit="False"/>
+	</Macro>
+	<Macro Name="LinuxArm64DockerCleanup" Arguments="AppNameLowercase">
+		<Do If="!$(IsBuildMachine)">
+			<Spawn Exe="$(RootDir)/Engine/Build/LowLevelTests/LinuxArm64/docker_cleanup.bat" Arguments="$(AppNameLowercase)"/>
+		</Do>
+		<Do If="$(IsBuildMachine)">
+			<Spawn Exe="sh" Arguments="$(RootDir)/Engine/Build/LowLevelTests/LinuxArm64/docker_cleanup.sh $(AppNameLowercase)"/>
+		</Do>
+	</Macro>
 </BuildGraph>

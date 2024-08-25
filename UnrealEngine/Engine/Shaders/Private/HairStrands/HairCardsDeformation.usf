@@ -8,19 +8,21 @@
 #define DEBUG_ENABLE 0
 
 #if DEBUG_ENABLE
-#include "../ShaderPrint.ush"?
+#include "../ShaderPrint.ush"
 #endif
 
 #if SHADER_DEFORM_CARDS
 float4x4 LocalToWorld;
 
+uint CardLODIndex;
+uint InstanceRegisteredIndex;
 uint CardsVertexCount;
 uint GuideVertexCount;
 float3 GuideRestPositionOffset;
-Buffer<float4> GuideDeformedPositionOffsetBuffer;
+StructuredBuffer<float4> GuideDeformedPositionOffsetBuffer;
 
-Buffer<uint4>  GuideRestPositionBuffer;
-Buffer<uint4>  GuideDeformedPositionBuffer;
+ByteAddressBuffer GuideRestPositionBuffer;
+ByteAddressBuffer GuideDeformedPositionBuffer;
 Buffer<float4> CardsRestPositionBuffer;
 ByteAddressBuffer CardsInterpolationBuffer;
 
@@ -34,9 +36,9 @@ Buffer<float4>  TriangleRestPositionBuffer;
 
 Buffer<float4>  TriangleDeformedPositionBuffer;
 
-Buffer<uint>	GuideRootBarycentricBuffer;
-Buffer<uint>    GuideVertexToRootIndexBuffer;
-Buffer<uint>    GuideRootToUniqueTriangleIndexBuffer;
+Buffer<uint>		GuideRootBarycentricBuffer;
+ByteAddressBuffer   GuideVertexToRootIndexBuffer;
+Buffer<uint>    	GuideRootToUniqueTriangleIndexBuffer;
 
 #if PERMUTATION_DYNAMIC_GEOMETRY == 1
 float3 ComputeDynamicGeometryOffset(
@@ -47,10 +49,10 @@ float3 ComputeDynamicGeometryOffset(
 	float3 RootBarycentric,
 	float3 GuideDeformedPositionOffset)
 {
-	const float3 RestGuidePoint = UnpackHairControlPointPosition(GuideRestPositionBuffer[GuideIndex], GuideRestPositionOffset);
+	const float3 RestGuidePoint = ReadHairControlPointPosition(GuideRestPositionBuffer, GuideIndex, GuideRestPositionOffset);
 	const float3 LocalRestGuidePoint = ToTriangle(RestGuidePoint, RootBarycentric, RestTriangle);
 
-	const float3 DeformedGuidePoint = UnpackHairControlPointPosition(GuideDeformedPositionBuffer[GuideIndex], GuideDeformedPositionOffset);
+	const float3 DeformedGuidePoint = ReadHairControlPointPosition(GuideDeformedPositionBuffer, GuideIndex, GuideDeformedPositionOffset);
 	const float3 LocalDeformedGuidePoint = ToTriangle(DeformedGuidePoint, RootBarycentric, DeformedTriangle);
 
 	return (LocalDeformedGuidePoint - LocalRestGuidePoint) * GuideVertexWeight;
@@ -84,46 +86,48 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 	const float GuideRadius = 1;
 	const float GuideRootScale = 1;
 	const float GuideTipScale = 1;
-	const float3 GuideDeformedPositionOffset = GuideDeformedPositionOffsetBuffer[0].xyz;
+	const float3 GuideDeformedPositionOffset = ReadCardPositionOffset(GuideDeformedPositionOffsetBuffer, InstanceRegisteredIndex, CardLODIndex);
 
 #if PERMUTATION_DYNAMIC_GEOMETRY == 0
-	// Simple deformation based on world space offset
 
-	const FGuideData GuideData = UnpackGuideData(CardsInterpolationBuffer.Load(VertexId * HAIR_INTERPOLATION_1GUIDE_STRIDE));
-	const uint GuideIndex0 = GuideData.VertexIndices.x;
-	const uint GuideIndex1 = min(GuideIndex0+1, GuideVertexCount-1);
-	const float GuideLerp = GuideData.VertexLerps.x;
+	const FCardsGuideData GuideData = ReadCardGuideData(CardsInterpolationBuffer, VertexId);
+	const uint GuidePointIndex0 = GuideData.VertexIndex;
+	const uint GuidePointIndex1 = min(GuidePointIndex0+1, GuideVertexCount-1);
 
-	const FHairControlPoint RestGuideP0 = UnpackHairControlPoint(
-		GuideRestPositionBuffer[GuideIndex0],
+	const FHairControlPoint RestGuideP0 = ReadHairControlPoint(
+		GuideRestPositionBuffer, 
+		GuidePointIndex0,
 		GuideRestPositionOffset,
 		GuideRadius,
 		GuideRootScale,
 		GuideTipScale);
 
-	const FHairControlPoint RestGuideP1 = UnpackHairControlPoint(
-		GuideRestPositionBuffer[GuideIndex1],
+	const FHairControlPoint RestGuideP1 = ReadHairControlPoint(
+		GuideRestPositionBuffer,
+		GuidePointIndex1,
 		GuideRestPositionOffset,
 		GuideRadius,
 		GuideRootScale,
 		GuideTipScale);
 
-	const FHairControlPoint DeformedGuideP0 = UnpackHairControlPoint(
-		GuideDeformedPositionBuffer[GuideIndex0],
+	const FHairControlPoint DeformedGuideP0 = ReadHairControlPoint(
+		GuideDeformedPositionBuffer,
+		GuidePointIndex0,
 		GuideDeformedPositionOffset,
 		GuideRadius,
 		GuideRootScale,
 		GuideTipScale);
 
-	const FHairControlPoint DeformedGuideP1 = UnpackHairControlPoint(
-		GuideDeformedPositionBuffer[GuideIndex1],
+	const FHairControlPoint DeformedGuideP1 = ReadHairControlPoint(
+		GuideDeformedPositionBuffer,
+		GuidePointIndex1,
 		GuideDeformedPositionOffset,
 		GuideRadius,
 		GuideRootScale,
 		GuideTipScale);
 
-	const float3 RestGuidePosition		= lerp(RestGuideP0.Position, RestGuideP1.Position, GuideLerp);
-	const float3 DeformedGuidePosition	= lerp(DeformedGuideP0.Position, DeformedGuideP1.Position, GuideLerp);
+	const float3 RestGuidePosition		= lerp(RestGuideP0.Position, RestGuideP1.Position, GuideData.VertexLerp);
+	const float3 DeformedGuidePosition	= lerp(DeformedGuideP0.Position, DeformedGuideP1.Position, GuideData.VertexLerp);
 
 	const float3 DeformationOffset = DeformedGuidePosition - RestGuidePosition;
 	const float4 RestPosition = CardsRestPositionBuffer[VertexId];
@@ -136,22 +140,21 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 #elif PERMUTATION_DYNAMIC_GEOMETRY == 1
 	// Compute the deformation offset in triangle local space
 
-	const FGuideData GuideData = UnpackGuideData(CardsInterpolationBuffer.Load(VertexId * HAIR_INTERPOLATION_1GUIDE_STRIDE));
-	const uint GuideIndex0 = GuideData.VertexIndices.x;
-	const uint GuideIndex1 = min(GuideIndex0 + 1, GuideVertexCount - 1);
-	const float GuideLerp = GuideData.VertexLerps.x;
+	const FCardsGuideData GuideData = ReadCardGuideData(CardsInterpolationBuffer, VertexId);
+	const uint GuidePointIndex0 = GuideData.VertexIndex;
+	const uint GuidePointIndex1 = min(GuidePointIndex0 + 1, GuideVertexCount - 1);
 
-	const uint RootIndex = GuideVertexToRootIndexBuffer[GuideIndex0];
-	const uint TriangleIndex = GuideRootToUniqueTriangleIndexBuffer[RootIndex];
+	const uint GuideCurveIndex = ReadHairPointToCurveIndex(GuideVertexToRootIndexBuffer, GuidePointIndex0);
+	const uint TriangleIndex = GuideRootToUniqueTriangleIndexBuffer[GuideCurveIndex];
 
-	const float3 RootBarycentric = UnpackBarycentrics(GuideRootBarycentricBuffer[RootIndex]);
+	const float3 RootBarycentric = UnpackBarycentrics(GuideRootBarycentricBuffer[GuideCurveIndex]);
 
 	const FHairMeshTriangle RestTriangle = GetTriangleTransformation(TriangleIndex, TriangleRestPositionBuffer);
 	const FHairMeshTriangle DeformedTriangle = GetTriangleTransformation(TriangleIndex, TriangleDeformedPositionBuffer);
 
-	const float3 Offset0 = ComputeDynamicGeometryOffset(GuideIndex0, 1, RestTriangle, DeformedTriangle, RootBarycentric, GuideDeformedPositionOffset);
-	const float3 Offset1 = ComputeDynamicGeometryOffset(GuideIndex1, 1, RestTriangle, DeformedTriangle, RootBarycentric, GuideDeformedPositionOffset);
-	const float3 CurrOffset = VectorToWorld(lerp(Offset0, Offset1, GuideLerp), DeformedTriangle);
+	const float3 Offset0 = ComputeDynamicGeometryOffset(GuidePointIndex0, 1, RestTriangle, DeformedTriangle, RootBarycentric, GuideDeformedPositionOffset);
+	const float3 Offset1 = ComputeDynamicGeometryOffset(GuidePointIndex1, 1, RestTriangle, DeformedTriangle, RootBarycentric, GuideDeformedPositionOffset);
+	const float3 CurrOffset = VectorToWorld(lerp(Offset0, Offset1, GuideData.VertexLerp), DeformedTriangle);
 
 	// Transform hair from rest post to deformed pose, based triangle deformation + simulation offset (optional depending of the simulation is actual running or not
 	const float4 RestControlPoint = CardsRestPositionBuffer[VertexId];

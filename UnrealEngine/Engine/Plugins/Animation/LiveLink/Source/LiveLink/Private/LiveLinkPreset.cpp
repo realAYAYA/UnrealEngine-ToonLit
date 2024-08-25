@@ -235,23 +235,29 @@ void ULiveLinkPreset::ApplyToClientLatent(TFunction<void(bool)> CompletionCallba
 
 	ApplyToClientPollingOperation = MakePimpl<FApplyToClientPollingOperation>(this);
 
-	ApplyToClientEndFrameHandle = FCoreDelegates::OnEndFrame.AddLambda([WeakThis = TWeakObjectPtr<ULiveLinkPreset>(this), WrappedCallback = MoveTemp(CompletionCallback)]()
+	
+	ApplyToClientEndFrameHandle = FCoreDelegates::OnEndFrame.AddLambda([WeakThis = TWeakObjectPtr<ULiveLinkPreset>(this), WrappedCallback = MoveTemp(CompletionCallback), Count = ApplyCount]()
 	{
 		if (ensure(WeakThis->ApplyToClientPollingOperation))
 		{
 			FApplyToClientPollingOperation::EApplyToClientUpdateResult Result = WeakThis->ApplyToClientPollingOperation->Update();
 			if (Result != FApplyToClientPollingOperation::EApplyToClientUpdateResult::Pending)
 			{
+				WeakThis->ApplyToClientPollingOperation.Reset();
+				
 				if (WrappedCallback != nullptr)
 				{
 					WrappedCallback(Result == FApplyToClientPollingOperation::EApplyToClientUpdateResult::Success ? true : false);
 				}
 
-				WeakThis->ApplyToClientPollingOperation.Reset();
+				UE_LOG(LogTemp, Verbose, TEXT("Clearing preset %s (%d)"), *WeakThis->GetFullName(), Count);
+
 				WeakThis->ClearApplyToClientTimer();
 			}
 		}
 	});
+
+	UE_LOG(LogTemp, Verbose, TEXT("Applying preset %s (%d)"), *GetFullName(), ApplyCount++);
 }
 
 bool ULiveLinkPreset::AddToClient(const bool bRecreatePresets) const

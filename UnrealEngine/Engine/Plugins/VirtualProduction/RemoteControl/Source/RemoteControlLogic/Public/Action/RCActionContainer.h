@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -12,6 +12,7 @@ class URCAction;
 class URCBehaviour;
 class URCController;
 class URCFunctionAction;
+class URCPropertyIdAction;
 class URCPropertyAction;
 class URCPropertyBindAction;
 
@@ -36,6 +37,12 @@ public:
 	void ExecuteActions();
 
 	TRCActionUniquenessTest GetDefaultActionUniquenessTest(const TSharedRef<const FRemoteControlField> InRemoteControlField);
+
+	/** Add remote control identity action. */
+	URCAction* AddAction();
+
+	/** Add remote control identity action. */
+	URCAction* AddAction(FName InFieldId);
 
 	/** Add remote control property action  */
 	URCAction* AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField);
@@ -72,7 +79,6 @@ public:
 	/** Called after applying a transaction to the object. Used to broadcast Undo related container changes to UI */
 	virtual void PostEditUndo() override;
 #endif
-	virtual void PostLoad() override;
 	//~ End UObject
 
 	/** Set of child action container */
@@ -89,14 +95,15 @@ public:
 	/** Derive the parent Behaviour holding this Action Container */
 	URCBehaviour* GetParentBehaviour();
 
+	/** Call the given function on all actions of the container. */
+	void ForEachAction(TFunctionRef<void(URCAction*)> InActionFunction, bool bInRecursive);
+
 private:
 	/** Add remote control property action  */
 	URCPropertyAction* AddPropertyAction(const TSharedRef<const FRemoteControlProperty> InRemoteControlProperty);
 
 	/** Add remote control property function */
 	URCFunctionAction* AddFunctionAction(const TSharedRef<const FRemoteControlFunction> InRemoteControlFunction);
-
-	void ExecuteActionsOnLoad();
 	
 	/** The list of Actions present in this container */
 	UPROPERTY()

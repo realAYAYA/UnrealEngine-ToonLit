@@ -17,21 +17,17 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeMeshPtr m_pSource;
 		NodeMeshPtr m_pClipMesh;
 
-		TArray<mu::string> m_tags;
+		TArray<FString> m_tags;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32 ver = 1;
+            uint32 ver = 2;
 			arch << ver;
 
 			arch << m_pSource;
@@ -44,10 +40,25 @@ namespace mu
 		{
             uint32 ver;
 			arch >> ver;
+			check(ver<=2)
 
 			arch >> m_pSource;
 			arch >> m_pClipMesh;
-			arch >> m_tags;
+
+			if (ver <= 1)
+			{
+				TArray<std::string> Temp;
+				arch >> Temp;
+				m_tags.SetNum(Temp.Num());
+				for (int32 i = 0; i < Temp.Num(); ++i)
+				{
+					m_tags[i] = Temp[i].c_str();
+				}
+			}
+			else
+			{
+				arch >> m_tags;
+			}
 		}
 
 		// NodeMesh::Private interface

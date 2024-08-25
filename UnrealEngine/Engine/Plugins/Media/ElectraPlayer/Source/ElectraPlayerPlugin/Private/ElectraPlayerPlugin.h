@@ -127,6 +127,8 @@ private:
 	bool SetRate(float Rate) override;
 	bool Seek(const FTimespan& Time) override;
 
+	TRange<FTimespan> GetPlaybackTimeRange(EMediaTimeRangeType InRangeToGet) const override;
+	bool SetPlaybackTimeRange(const TRange<FTimespan>& InTimeRange) override;
 
 	// From IMediaTracks
 	bool GetAudioTrackFormat(int32 TrackIndex, int32 FormatIndex, FMediaAudioTrackFormat& OutFormat) const override;

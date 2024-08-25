@@ -80,7 +80,8 @@ FSharedBufferedOutputPtr IAudioLinkFactory::CreatePushableBufferListener(const F
 
 FSharedBufferedOutputPtr IAudioLinkFactory::CreateSubmixBufferListener(const FSubmixBufferListenerCreateParams& InSubmixCreateParams)
 {
-	return MakeShared<FBufferedSubmixListener, ESPMode::ThreadSafe>(InSubmixCreateParams.SizeOfBufferInFrames, InSubmixCreateParams.bShouldZeroBuffer);	
+	const FString ListenerName = FString::Format(TEXT("IAudioLinkFactory:{0}"), { *GetFactoryName().ToString() });
+	return MakeShared<FBufferedSubmixListener, ESPMode::ThreadSafe>(InSubmixCreateParams.SizeOfBufferInFrames, InSubmixCreateParams.bShouldZeroBuffer, &ListenerName);
 }
 
 TArray<IAudioLinkFactory*> IAudioLinkFactory::GetAllRegisteredFactories()

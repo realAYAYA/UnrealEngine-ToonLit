@@ -164,10 +164,6 @@ public:
 	uint32					LoadFlags;
 	/** Indicates whether the imports for this loader have been verified													*/
 	bool					bHaveImportsBeenVerified;
-	// @todo: BP2CPP_remove
-	/** Indicates that this linker was created for a dynamic class package and will not use Loader */
-	UE_DEPRECATED(5.0, "This member is no longer in use and will be removed.")
-	bool					bDynamicClassLinker;
 
 	UObject*				TemplateForGetArchetypeFromLoader;
 	bool					bForceSimpleIndexToObject;
@@ -469,6 +465,12 @@ private:
 
 	/** Cache if the package is relocated or not */
 	bool bIsPackageRelocated : 1;
+
+	/** Set when the loader is serializing to a property bag placeholder object.											*/
+	bool bIsLoadingToPropertyBagObject : 1;
+
+	/** TRUE when the loader is actively serializing an object's script properties data.									*/
+	bool bIsSerializingScriptProperties : 1;
 #endif // WITH_EDITOR
 
 	/** Call count of IsTimeLimitExceeded.																					*/
@@ -564,6 +566,8 @@ public:
 	 * Locates package index for a UPackage import
 	 */
 	COREUOBJECT_API bool FindImportPackage(FName PackageName, FPackageIndex& PackageIdx);
+	/* Locates package index for a given name in an outer. */
+	COREUOBJECT_API bool FindImport(FPackageIndex OuterIndex, FName ObjectName, FPackageIndex& OutObjectIndex);
 
 	/**
 	 * Locates the class adjusted index and its package adjusted index for a given class name in the import map
@@ -858,6 +862,18 @@ private:
 	 */
 	UClass* GetExportLoadClass(int32 ExportIndex);
 
+#if WITH_EDITOR
+	/**
+	 * Utility function to create a placeholder type for the specified export.
+	 * This will be called if the export could not resolve its LoadClass import.
+	 * In that case, its data might still be serializable (into a property bag).
+	 *
+	 * @param  ExportIndex    Index of the export that's missing its type.
+	 * @return The placeholder type that will be used to load the export's data.
+	 */
+	UClass* TryCreatePlaceholderTypeForExport(int32 ExportIndex);
+#endif
+
 #if WITH_EDITORONLY_DATA
 	/** 
 	 * Looks for and loads meta data object from export map.
@@ -1010,8 +1026,18 @@ private:
 		checkSlow(FPlatformTLS::GetCurrentThreadId() == OwnerThread);
 #if WITH_EDITOR
 		Loader->SetSerializedProperty(GetSerializedProperty());
+
+		// This handles the case where we're only serializing to a property bag and we don't immediately know where the script
+		// property data starts/ends in the object's data stream. Allows for loading from packages saved with an older version.
+		if (UNLIKELY(bIsLoadingToPropertyBagObject && !bIsSerializingScriptProperties))
+		{
+			Loader->Seek(Tell() + Length);
+		}
+		else
 #endif
-		Loader->Serialize(V, Length);
+		{
+			Loader->Serialize(V, Length);
+		}
 	}
 	using FArchiveUObject::operator<<; // For visibility of the overloads we don't override
 	virtual FArchive& operator<<(UObject*& Object) override;
@@ -1488,3 +1514,4 @@ enum class ENotifyRegistrationPhase
 
 COREUOBJECT_API void NotifyRegistrationEvent(const TCHAR* PackageName, const TCHAR* Name, ENotifyRegistrationType NotifyRegistrationType, ENotifyRegistrationPhase NotifyRegistrationPhase, UObject *(*InRegister)() = nullptr, bool InbDynamic = false, UObject* FinishedObject = nullptr);
 COREUOBJECT_API void NotifyRegistrationComplete();
+COREUOBJECT_API bool IsEnforcePackageCompatibleVersionCheck();

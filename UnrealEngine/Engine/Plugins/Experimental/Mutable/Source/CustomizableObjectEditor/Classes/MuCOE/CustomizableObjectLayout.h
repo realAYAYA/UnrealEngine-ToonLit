@@ -3,7 +3,9 @@
 #pragma once
 
 
+#include "MuT/NodeLayout.h"
 #include "CustomizableObjectLayout.generated.h"
+
 
 UENUM()
 enum class ECustomizableObjectTextureLayoutPackingStrategy : uint8
@@ -11,8 +13,12 @@ enum class ECustomizableObjectTextureLayoutPackingStrategy : uint8
 	// The layout increases its size to fit all the blocks.
 	Resizable = 0 UMETA(DisplayName = "Resizable Layout"),
 	// The layout resizes the blocks to keep its size.
-	Fixed = 1 UMETA(DisplayName = "Fixed Layout")
+	Fixed = 1 UMETA(DisplayName = "Fixed Layout"),
+	// The layout is not modified and blocks are ignored. Extend material nodes just add their layouts on top of the base one.
+	Overlay = 2 UMETA(DisplayName = "Overlay Layout")
 };
+
+mu::EPackStrategy ConvertLayoutStrategy(const ECustomizableObjectTextureLayoutPackingStrategy LayoutPackStrategy);
 
 // Fixed Layout reduction methods
 UENUM()
@@ -29,28 +35,39 @@ struct CUSTOMIZABLEOBJECTEDITOR_API FCustomizableObjectLayoutBlock
 {
 	GENERATED_USTRUCT_BODY()
 
-	FCustomizableObjectLayoutBlock()
+	FCustomizableObjectLayoutBlock(FIntPoint InMin = FIntPoint(0, 0), FIntPoint InMax = FIntPoint(1, 1))
 	{
-		Min = FIntPoint(0, 0);
-		Max = FIntPoint(1, 1);
+		Min = InMin;
+		Max = InMax;
 		Priority = 0;
+		Id = FGuid::NewGuid();
+		bReduceBothAxes = false;
+		bReduceByTwo = false;
 	}
 
+	/** Top left coordinate. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	FIntPoint Min;
 
+	/** Bottom right coordinate. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	FIntPoint Max;
 
+	/** Priority to be reduced. Only functional in fixed layouts. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	uint32 Priority;
 
-	//! Unique unchangeable id used to reference this block from other nodes.
-	UPROPERTY()
+	/** Unique unchangeable id used to reference this block from other nodes. */
+	UPROPERTY(meta = (IgnoreForMemberInitializationTest))
 	FGuid Id;
 
+	/** Block will be reduced on both sizes at the same time on each reduction. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
-	bool bUseSymmetry = false;
+	bool bReduceBothAxes = false;
+
+	/** Block will be reduced by two in an Unitary Layout reduction. */
+	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	bool bReduceByTwo = false;
 };
 
 UCLASS()

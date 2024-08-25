@@ -51,7 +51,7 @@ constexpr uint16 GetInternalStateAlignment(const T& MemberDescriptors, const FIn
 
 	for (uint32 It = 0; It < Count; ++It)
 	{
-		Alignment = FPlatformMath::Max<uint16>(Alignment, InternalTypeInfo[It].Alignment);
+		Alignment = FPlatformMath::Max<uint16>(Alignment, static_cast<uint16>(InternalTypeInfo[It].Alignment));
 	}
 
 	return Alignment;

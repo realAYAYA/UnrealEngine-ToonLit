@@ -60,6 +60,18 @@ public:
 		});
 	}
 
+	operator TTSDelegate<void(LambdaArgs...)>()
+	{
+		TSharedPtr<TDelegateAdapter<ComponentType, LambdaArgs...>> SharedAnchor = this->AsShared();
+		return TTSDelegate<void(LambdaArgs...)>::CreateLambda([this, SharedAnchor](LambdaArgs... Args)
+		{
+			if(Parent.IsValid())
+			{
+				Callback(Forward<LambdaArgs>(Args)...);
+			}
+		});
+	}
+
 private:
 	TWeakPtr<ComponentType> Parent;
 	TUniqueFunction<void(LambdaArgs...)> Callback;

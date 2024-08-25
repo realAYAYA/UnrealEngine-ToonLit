@@ -33,6 +33,8 @@ public:
 #endif // #if WITH_EDITORONLY_DATA
 
 	//~ Begin UObject Interface
+	INTERCHANGEENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	INTERCHANGEENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	INTERCHANGEENGINE_API virtual void PostLoad() override;
 	//~ End UObject Interface
@@ -55,9 +57,9 @@ public:
 	 * Returns the UObject which asset path is '//PackageName.AssetName[:SubPathString]'.
 	 * Returns nullptr if the asset which path is '//PackageName.AssetName[:SubPathString]' was not part of
 	 * the level import cached in this UInterchangeSceneImportAsset.
-	 * @oaram PackageName: Package path of the actual object to reimport
-	 * @oaram AssetName: Asset name of the actual object to reimport
-	 * @oaram SubPathString: Optional subobject name
+	 * @param PackageName: Package path of the actual object to reimport
+	 * @param AssetName: Asset name of the actual object to reimport
+	 * @param SubPathString: Optional subobject name
 	 */
 	INTERCHANGEENGINE_API UObject* GetSceneObject(const FString& PackageName, const FString& AssetName, const FString& SubPathString = FString()) const;
 
@@ -65,9 +67,9 @@ public:
 	 * Returns the factory node associated with the asset which path is '//PackageName.AssetName[:SubPathString]'.
 	 * Returns nullptr if the asset which path is '//PackageName.AssetName[:SubPathString]' was not part of
 	 * the level import cached in this UInterchangeSceneImportAsset.
-	 * @oaram PackageName: Package path of the actual object to reimport
-	 * @oaram AssetName: Asset name of the actual object to reimport
-	 * @oaram SubPathString: Optional subobject name
+	 * @param PackageName: Package path of the actual object to reimport
+	 * @param AssetName: Asset name of the actual object to reimport
+	 * @param SubPathString: Optional subobject name
 	 */
 	INTERCHANGEENGINE_API const UInterchangeFactoryBaseNode* GetFactoryNode(const FString& PackageName, const FString& AssetName, const FString& SubPathString = FString()) const;
 

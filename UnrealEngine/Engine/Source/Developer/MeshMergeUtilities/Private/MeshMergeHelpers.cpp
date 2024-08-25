@@ -957,7 +957,7 @@ void FMeshMergeHelpers::ExtractPhysicsGeometry(UBodySetup* InBodySetup, const FT
 	OutAggGeom.BoxElems.Empty();
 
 	// we are not owner of this stuff
-	OutAggGeom.RenderInfo = nullptr;
+	OutAggGeom.FreeRenderInfo();
 	for (FKConvexElem& Elem : OutAggGeom.ConvexElems)
 	{
 		Elem.ResetChaosConvexMesh();

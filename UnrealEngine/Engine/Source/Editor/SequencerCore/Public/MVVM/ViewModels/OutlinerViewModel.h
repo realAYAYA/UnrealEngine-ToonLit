@@ -15,11 +15,8 @@
 
 class FDragDropOperation;
 class SWidget;
-namespace UE::Sequencer { template <typename T> struct TAutoRegisterViewModelTypeID; }
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
 class FEditorViewModel;
@@ -90,6 +87,12 @@ public:
 	 */
 	virtual TSharedRef<FDragDropOperation> InitiateDrag(TArray<TWeakViewModelPtr<IOutlinerExtension>>&& InDraggedModels);
 
+	/**
+	 * Request that this tree be updated
+	 */
+	virtual void RequestUpdate();
+
+
 private:
 
 	void HandleDataHierarchyChanged();
@@ -108,6 +111,5 @@ private:
 	bool bRootItemsInvalidated;
 };
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 

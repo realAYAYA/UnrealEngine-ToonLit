@@ -134,6 +134,14 @@ public:
 					Baker->ChannelEvaluators[ChannelIdx] = CurvatureEval;
 					break;
 				}
+				case EBakeMapType::One:
+				case EBakeMapType::Zero:
+				{
+					const float Value = BakeSettings.OutputTypePerChannel[ChannelIdx] == EBakeMapType::One ? 1.0f : 0.0f;
+					TSharedPtr<FMeshConstantMapEvaluator> ConstantEval = MakeShared<FMeshConstantMapEvaluator>(Value);
+					Baker->ChannelEvaluators[ChannelIdx] = ConstantEval;
+					break;
+				}
 				default:
 				case EBakeMapType::None:
 				{
@@ -273,10 +281,9 @@ void UBakeMeshAttributeVertexTool::Setup()
 	// TargetMesh stores the original target mesh. It is intended to remain
 	// const throughout this tool and is used to refresh the PreviewMesh back
 	// to its original state.
-	TargetMesh = UE::ToolTarget::GetDynamicMeshCopy(Targets[0], true);
-	TargetSpatial.SetMesh(&TargetMesh, true);
-	TargetMeshTangents = MakeShared<FMeshTangentsd, ESPMode::ThreadSafe>(&TargetMesh);
-	TargetMeshTangents->CopyTriVertexTangents(TargetMesh);
+	TargetMesh = MakeShared<FDynamicMesh3, ESPMode::ThreadSafe>(UE::ToolTarget::GetDynamicMeshCopy(Targets[0], true));
+	TargetMeshTangents = MakeShared<FMeshTangentsd, ESPMode::ThreadSafe>(TargetMesh.Get());
+	TargetMeshTangents->CopyTriVertexTangents(*TargetMesh);
 
 	// PreviewMesh stores computed result mesh. On shutdown, PreviewMesh will be
 	// used to commit the dynamic mesh to the target tool target.
@@ -391,58 +398,41 @@ void UBakeMeshAttributeVertexTool::OnShutdown(EToolShutdownType ShutdownType)
 	UE::ToolTarget::ShowSourceObject(Targets[0]);
 	SetSourceObjectVisible(true);
 
-	if (Compute)
+	Compute->Shutdown();
+
+	if (ShutdownType == EToolShutdownType::Accept)
 	{
-		Compute->Shutdown();
+		GetToolManager()->BeginUndoTransaction(LOCTEXT("BakeMeshAttributeVertexToolTransactionName",
+													   "Bake Mesh Attribute Vertex"));
+		FConversionToMeshDescriptionOptions ConvertOptions;
+		ConvertOptions.SetToVertexColorsOnly();
+		ConvertOptions.bTransformVtxColorsSRGBToLinear = true;
+		UE::ToolTarget::CommitDynamicMeshUpdate(
+			Targets[0],
+			*PreviewMesh->GetMesh(),
+			false, // bHaveModifiedTopology
+			ConvertOptions);
+		GetToolManager()->EndUndoTransaction();
 	}
 
-	if (PreviewMesh)
-	{
-		if (ShutdownType == EToolShutdownType::Accept)
-		{
-			GetToolManager()->BeginUndoTransaction(LOCTEXT("BakeMeshAttributeVertexToolTransactionName",
-			                                               "Bake Mesh Attribute Vertex"));
-			FConversionToMeshDescriptionOptions ConvertOptions;
-			ConvertOptions.SetToVertexColorsOnly();
-			ConvertOptions.bTransformVtxColorsSRGBToLinear = true;
-			UE::ToolTarget::CommitDynamicMeshUpdate(
-				Targets[0],
-				*PreviewMesh->GetMesh(),
-				false, // bHaveModifiedTopology
-				ConvertOptions);
-			GetToolManager()->EndUndoTransaction();
-		}
-
-		PreviewMesh->SetVisible(false);
-		PreviewMesh->Disconnect();
-		PreviewMesh = nullptr;
-	}
+	PreviewMesh->SetVisible(false);
+	PreviewMesh->Disconnect();
+	PreviewMesh = nullptr;
 
 	RecordAnalytics(BakeAnalytics, TEXT("BakeVertex"));
 }
 
 void UBakeMeshAttributeVertexTool::OnTick(float DeltaTime)
 {
-	if (Compute)
-	{
-		Compute->Tick(DeltaTime);
+	Compute->Tick(DeltaTime);
 
-		if (static_cast<bool>(OpState & EBakeOpState::Invalid))
-		{
-			PreviewMesh->SetOverrideRenderMaterial(ErrorPreviewMaterial);
-		}
-		else
-		{
-			const float ElapsedComputeTime = Compute->GetElapsedComputeTime();
-			if (!CanAccept() && ElapsedComputeTime > SecondsBeforeWorkingMaterial)
-			{
-				PreviewMesh->SetOverrideRenderMaterial(WorkingPreviewMaterial);
-			}
-		}
-	}
-	else if (static_cast<bool>(OpState & EBakeOpState::Invalid))
+	if (static_cast<bool>(OpState & EBakeOpState::Invalid))
 	{
 		PreviewMesh->SetOverrideRenderMaterial(ErrorPreviewMaterial);
+	}
+	else if (!CanAccept() && Compute->GetElapsedComputeTime() > SecondsBeforeWorkingMaterial)
+	{
+		PreviewMesh->SetOverrideRenderMaterial(WorkingPreviewMaterial);
 	}
 }
 
@@ -454,7 +444,7 @@ void UBakeMeshAttributeVertexTool::Render(IToolsContextRenderAPI* RenderAPI)
 bool UBakeMeshAttributeVertexTool::CanAccept() const
 {
 	const bool bValidOp = (OpState & EBakeOpState::Invalid) != EBakeOpState::Invalid;
-	return Compute ? bValidOp && Compute->HaveValidResult() : false;
+	return bValidOp && Compute->HaveValidResult();
 }
 
 TUniquePtr<UE::Geometry::TGenericDataOperator<FMeshVertexBaker>> UBakeMeshAttributeVertexTool::MakeNewOperator()
@@ -594,6 +584,7 @@ void UBakeMeshAttributeVertexTool::UpdateVisualization()
 	}
 }
 
+/** Regenerates the VertexColorOverlay topology of the PreviewMesh per our Settings */
 void UBakeMeshAttributeVertexTool::UpdateColorTopology()
 {
 	// Update PreviewMesh color topology
@@ -624,9 +615,22 @@ void UBakeMeshAttributeVertexTool::UpdateColorTopology()
 				}
 				return bCanShare;
 			}, 0.0f);
+	});
 
-		// Copy source vertex colors onto new color overlay topology.
-		const FDynamicMeshColorOverlay* TargetColorOverlay = TargetMesh.HasAttributes() ? TargetMesh.Attributes()->PrimaryColors() : nullptr;
+	// Copy source vertex colors onto new color overlay topology.
+	UpdateSourceVertexColors();
+	
+	NumColorElements = PreviewMesh->GetMesh()->Attributes()->PrimaryColors()->ElementCount();
+
+	bColorTopologyValid = true;
+}
+
+/**	Copies the vertex colors from the TargetMesh to the PreviewMesh */
+void UBakeMeshAttributeVertexTool::UpdateSourceVertexColors()
+{
+	PreviewMesh->EditMesh([this](FDynamicMesh3& Mesh)
+	{
+		const FDynamicMeshColorOverlay* TargetColorOverlay = TargetMesh->HasAttributes() ? TargetMesh->Attributes()->PrimaryColors() : nullptr;
 		FDynamicMeshColorOverlay* PreviewColorOverlay = Mesh.Attributes()->PrimaryColors(); 
 		if (TargetColorOverlay)
 		{
@@ -641,10 +645,8 @@ void UBakeMeshAttributeVertexTool::UpdateColorTopology()
 			}
 		}
 	});
-	NumColorElements = PreviewMesh->GetMesh()->Attributes()->PrimaryColors()->ElementCount();
-
-	bColorTopologyValid = true;
 }
+
 
 void UBakeMeshAttributeVertexTool::UpdateResult()
 {
@@ -714,7 +716,7 @@ void UBakeMeshAttributeVertexTool::UpdateResult()
 			OpState |= UpdateResult_MeshProperty(Dimensions);
 			// Force copy the original vertex colors to our PreviewMesh so that
 			// the baker samples the source vertex colors for identity bakes.
-			UpdateColorTopology();
+			UpdateSourceVertexColors();
 			break;
 		case EBakeMapType::Texture:
 			OpState |= UpdateResult_Texture2DImage(Dimensions, DetailMesh.Get());
@@ -739,6 +741,11 @@ void UBakeMeshAttributeVertexTool::UpdateResult()
 		{
 			OpState |= UpdateResult_Curvature(Dimensions);
 		}
+		
+		// Always force copy the original vertex colors to our PreviewMesh for
+		// PerChannel bakes so that channels that are not targeted persist
+		// through the bake.
+		UpdateSourceVertexColors();
 	}
 
 	// Early exit if op input parameters are invalid.
@@ -761,12 +768,45 @@ void UBakeMeshAttributeVertexTool::OnResultUpdated(const TUniquePtr<FMeshVertexB
 
 	PreviewMesh->DeferredEditMesh([this, &ImageResult](FDynamicMesh3& Mesh)
 	{
-		const int NumColors = Mesh.Attributes()->PrimaryColors()->ElementCount();
-		check(NumColors == ImageResult->GetDimensions().GetWidth());
-		for (int Idx = 0; Idx < NumColors; ++Idx)
+		if (CachedBakeSettings.OutputMode == EBakeVertexOutput::PerChannel)
 		{
-			const FVector4f& Pixel = ImageResult->GetPixel(Idx);
-			Mesh.Attributes()->PrimaryColors()->SetElement(Idx, Pixel);
+			// Precompute scale vectors for source and image pixel data to merge
+			// the data according to the populated channels.
+			FVector4f SrcScale = FVector4f::Zero();
+			FVector4f ImgScale = FVector4f::Zero();
+			for (int ChannelIdx = 0; ChannelIdx < 4; ++ChannelIdx)
+			{
+				const bool bOutputChannel = CachedBakeSettings.OutputTypePerChannel[ChannelIdx] != EBakeMapType::None;
+				SrcScale[ChannelIdx] = static_cast<float>(!bOutputChannel);
+				ImgScale[ChannelIdx] = static_cast<float>(bOutputChannel);
+			}
+			
+			const int NumColors = Mesh.Attributes()->PrimaryColors()->ElementCount();
+			check(NumColors == ImageResult->GetDimensions().GetWidth());
+			for (int Idx = 0; Idx < NumColors; ++Idx)
+			{
+				if (const FDynamicMeshColorOverlay* ColorOverlay = Mesh.Attributes()->PrimaryColors())
+				{
+					FVector4f Pixel;
+					ColorOverlay->GetElement(Idx, Pixel);
+					Pixel *= SrcScale;
+
+					// Merge the ImageResult pixels with the source vertex colors based on the requested channels.
+					const FVector4f& ImagePixel = ImageResult->GetPixel(Idx);
+					Pixel += ImagePixel * ImgScale;
+					Mesh.Attributes()->PrimaryColors()->SetElement(Idx, Pixel);
+				}
+			}
+		}
+		else //if (Settings->OutputMode == EBakeVertexOutput::RGBA)
+		{
+			const int NumColors = Mesh.Attributes()->PrimaryColors()->ElementCount();
+			check(NumColors == ImageResult->GetDimensions().GetWidth());
+			for (int Idx = 0; Idx < NumColors; ++Idx)
+			{
+				const FVector4f& Pixel = ImageResult->GetPixel(Idx);
+				Mesh.Attributes()->PrimaryColors()->SetElement(Idx, Pixel);
+			}
 		}
 	}, false);
 	PreviewMesh->NotifyDeferredEditCompleted(UPreviewMesh::ERenderUpdateMode::FastUpdate, EMeshRenderAttributeFlags::VertexColors, false);
@@ -782,8 +822,8 @@ void UBakeMeshAttributeVertexTool::GatherAnalytics(FBakeAnalytics::FMeshSettings
 		return;
 	}
 	
-	Data.NumTargetMeshVerts = TargetMesh.VertexCount();
-	Data.NumTargetMeshTris = TargetMesh.TriangleCount();
+	Data.NumTargetMeshVerts = TargetMesh->VertexCount();
+	Data.NumTargetMeshTris = TargetMesh->TriangleCount();
 	Data.NumDetailMesh = 1;
 	Data.NumDetailMeshTris = DetailMesh->TriangleCount();
 }

@@ -47,6 +47,7 @@ public abstract class DatasmithRhinoBaseTarget : TargetRules
 
 		// Define post-build step
 		// Since the Datasmith Rhino Exporter is a C# project, build in batch the release configuration of the Visual Studio C# project file.
+		// The Rhino Exporter has to be compatible with older toolchains so it still requires mono to build, relying on the system to have mono installed.
 		string ProjectFile = Path.Combine(RhinoExporterPath, ProjectName, ProjectName+".csproj");
 		string CustomAssemblyInfoPath = GetCustomAssemblyInfoPath(Target);
 		string CompilerCommand = Target.Platform == UnrealTargetPlatform.Win64 ? @"$(EngineDir)\Build\BatchFiles\MSBuild.bat" : "xbuild";
@@ -137,7 +138,7 @@ public abstract class DatasmithRhinoBaseTarget : TargetRules
 		PostBuildSteps.Add(string.Format(@"sed -i '' 's/""<AssemblyFileVersion>""/""{1}""/' ""{0}""", CustomAssemblyInfoPath, VersionString));
 	}
 
-	public string GetRhinoThirdPartyFolder()
+	public virtual string GetRhinoThirdPartyFolder()
 	{
 		return Path.Combine("$(EngineDir)", "Restricted", "NotForLicensees", "Source", "ThirdParty", "Enterprise", "RhinoCommonSDK_" + GetVersion());
 	}
@@ -162,7 +163,7 @@ public class DatasmithRhino6Target : DatasmithRhinoBaseTarget
 	{
 		try
 		{
-			return Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\McNeel\Rhinoceros\6.0\Install", "Path", "") as string;
+			return OperatingSystem.IsWindows() ? Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\McNeel\Rhinoceros\6.0\Install", "Path", "") as string : null;
 		}
 		catch(Exception)
 		{

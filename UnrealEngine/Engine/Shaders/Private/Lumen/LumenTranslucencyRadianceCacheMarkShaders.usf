@@ -79,7 +79,7 @@ void MainPS(
 	GetMaterialCoverageAndClipping(MaterialParameters, PixelMaterialInputs);
 
 	//@todo - conservative coverage
-	uint ClipmapIndex = GetRadianceProbeClipmapForMark(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition), InterleavedGradientNoise(MaterialParameters.SvPosition.xy, View.StateFrameIndexMod8));
+	uint ClipmapIndex = GetRadianceProbeClipmapForMark(WSHackToFloat(GetWorldPosition(MaterialParameters)), InterleavedGradientNoise(MaterialParameters.SvPosition.xy, View.StateFrameIndexMod8));
 
 	if (IsValidRadianceCacheClipmapForMark(ClipmapIndex))
 	{
@@ -93,7 +93,7 @@ void MainPS(
 
 		if (MaterialParameters.ScreenPosition.w < MaxDepth)
 		{
-			MarkPositionUsedInIndirectionTexture(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition), ClipmapIndex);
+			MarkPositionUsedInIndirectionTexture(WSHackToFloat(GetWorldPosition(MaterialParameters)), ClipmapIndex);
 		}
 	}
 }

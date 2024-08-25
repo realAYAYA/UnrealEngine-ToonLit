@@ -36,14 +36,14 @@ float3 ComposeTileWorldExtent;
 float3 ClipmapMinBounds;
 float ClipmapVoxelExtent;
 
-float3 ViewTilePosition;
-float3 RelativePreViewTranslation;
+float3 PreViewTranslationHigh;
+float3 PreViewTranslationLow;
 
 StructuredBuffer<uint> CullGridObjectHeader;
 StructuredBuffer<uint> CullGridObjectArray;
 uint3 CullGridResolution;
 
-void CompositeMeshSDF(uint ObjectIndex, FLWCVector3 VoxelWorldCenter, inout float MinDistance, inout bool bVoxelHasOneSidedMeshes, inout bool bVoxelHasTwoSidedMeshes)
+void CompositeMeshSDF(uint ObjectIndex, FDFVector3 VoxelWorldCenter, inout float MinDistance, inout bool bVoxelHasOneSidedMeshes, inout bool bVoxelHasTwoSidedMeshes)
 {
 	float MaxEarlyOutDistance = 0.0f;
 
@@ -88,7 +88,7 @@ void CompositeObjectsIntoPagesCS(
 
 	GroupMemoryBarrierWithGroupSync();
 
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	uint ThreadIndex = (GroupThreadId.z * THREADGROUP_SIZE + GroupThreadId.y) * THREADGROUP_SIZE + GroupThreadId.x;
 	uint3 PageGridCoord = UnpackPageUpdateTile(ComposeTileBuffer[GroupId.x / GLOBAL_DISTANCE_FIELD_PAGE_GROUP_NUM]);
@@ -107,7 +107,7 @@ void CompositeObjectsIntoPagesCS(
 
 	float3 VoxelTranslatedWorldCenter = PageCoord * PageCoordToVoxelTranslatedCenterScale + PageCoordToVoxelTranslatedCenterBias;
 	float3 ComposeTileTranslatedWorldCenter = ComposeTileCenterPageCoord * PageCoordToVoxelTranslatedCenterScale + PageCoordToVoxelTranslatedCenterBias;
-	const FLWCVector3 VoxelWorldCenter = LWCSubtract(VoxelTranslatedWorldCenter, PreViewTranslation);
+	const FDFVector3 VoxelWorldCenter = DFFastSubtract(VoxelTranslatedWorldCenter, PreViewTranslation);
 
 	uint3 PageTableTextureCoord = PageGridCoordToPageTableTextureCoord(PageGridCoord);
 	FGlobalDistanceFieldPage Page = UnpackGlobalDistanceFieldPage(RWPageTableCombinedTexture[PageTableTextureCoord]);
@@ -145,7 +145,7 @@ void CompositeObjectsIntoPagesCS(
 			uint ObjectIndex = CullGridObjectArray[CullGridObjectOffset + IndexInCullCell];
 
 			const FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-			const float3 TranslatedBoundsCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PreViewTranslation));
+			const float3 TranslatedBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PreViewTranslation);
 			float DistanceSq = ComputeSquaredDistanceBetweenAABBs(ComposeTileTranslatedWorldCenter, ComposeTileWorldExtent, TranslatedBoundsCenter, DFObjectBounds.BoxExtent);
 
 			if (DistanceSq < InfluenceRadiusSq)
@@ -262,7 +262,7 @@ void CompositeObjectsIntoObjectGridPagesCS(
 	uint3 DispatchThreadId : SV_DispatchThreadID,
 	uint3 GroupThreadId : SV_GroupThreadID)
 {
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	uint ThreadIndex = (GroupThreadId.z * THREADGROUP_SIZE + GroupThreadId.y) * THREADGROUP_SIZE + GroupThreadId.x;
 
@@ -283,7 +283,7 @@ void CompositeObjectsIntoObjectGridPagesCS(
 
 	float3 ObjectGridCellPageCoord = PageGridCoord * GLOBAL_DISTANCE_FIELD_PAGE_RESOLUTION + CellCoordInPage * 2.0f + 0.5f - GLOBAL_DISTANCE_FIELD_PAGE_BORDER;
 	float3 ObjectGridCellTranslatedWorldCenter = ObjectGridCellPageCoord * PageCoordToVoxelTranslatedCenterScale + PageCoordToVoxelTranslatedCenterBias;
-	FLWCVector3 ObjectGridCellWorldCenter = LWCSubtract(ObjectGridCellTranslatedWorldCenter, PreViewTranslation);
+	FDFVector3 ObjectGridCellWorldCenter = DFFastSubtract(ObjectGridCellTranslatedWorldCenter, PreViewTranslation);
 	float ObjectGridCellWorldExtent = ClipmapVoxelExtent * GLOBAL_DISTANCE_FIELD_PAGE_RESOLUTION / float(DISTANCE_FIELD_OBJECT_GRID_PAGE_RESOLUTION);
 	float CardInterpolationRange = DISTANCE_FIELD_OBJECT_GRID_CARD_INTERPOLATION_RANGE_IN_VOXELS * ClipmapVoxelExtent;
 	float MaxQueryDistance = 1.44f * ObjectGridCellWorldExtent + CardInterpolationRange;
@@ -327,7 +327,7 @@ void CompositeObjectsIntoObjectGridPagesCS(
 				uint ObjectIndex = CullGridObjectArray[CullGridObjectOffset + IndexInCullCell];
 
 				FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-				const float3 TranslatedBoundsCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PreViewTranslation));
+				const float3 TranslatedBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PreViewTranslation);
 				float DistanceSq = ComputeSquaredDistanceBetweenAABBs(ObjectGridTileTranslatedWorldCenter, ObjectGridTileWorldExtent, TranslatedBoundsCenter, DFObjectBounds.BoxExtent);
 
 				if (DistanceSq < Pow2(MaxTileQueryDistance))
@@ -347,7 +347,7 @@ void CompositeObjectsIntoObjectGridPagesCS(
 			uint ObjectIndex = SharedCulledObjectList[ListObjectIndex];
 
 			FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-			const float3 TranslatedBoundsCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PreViewTranslation));
+			const float3 TranslatedBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PreViewTranslation);
 			float DistanceSq = ComputeSquaredDistanceBetweenAABBs(ObjectGridCellTranslatedWorldCenter, ObjectGridCellWorldExtent, TranslatedBoundsCenter, DFObjectBounds.BoxExtent);
 
 			if (DistanceSq <= Pow2(CardInterpolationRange))

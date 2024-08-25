@@ -7,14 +7,12 @@
 
 class UUsdAssetCache2;
 
-class FUsdAssetCacheAssetEditorToolkit : public FAssetEditorToolkit, public FGCObject
+class FUsdAssetCacheAssetEditorToolkit
+	: public FAssetEditorToolkit
+	, public FGCObject
 {
 public:
-	void Initialize(
-		const EToolkitMode::Type Mode,
-		const TSharedPtr<IToolkitHost>& InitToolkitHost,
-		UUsdAssetCache2* InAssetCache
-	);
+	void Initialize(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, UUsdAssetCache2* InAssetCache);
 
 private:
 	virtual FText GetBaseToolkitName() const override;

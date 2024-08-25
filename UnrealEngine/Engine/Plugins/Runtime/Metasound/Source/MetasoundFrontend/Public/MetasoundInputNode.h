@@ -18,14 +18,7 @@ namespace Metasound
 {
 	namespace MetasoundInputNodePrivate
 	{
-		class METASOUNDFRONTEND_API FInputOperatorBase : public IOperator
-		{
-		public:
-			virtual FDataReferenceCollection GetInputs() const override;
-			virtual FDataReferenceCollection GetOutputs() const override;
-		};
-		
-		class METASOUNDFRONTEND_API FNonExecutableInputOperatorBase : public FInputOperatorBase
+		class METASOUNDFRONTEND_API FNonExecutableInputOperatorBase : public IOperator
 		{	
 		public:
 			virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
@@ -80,17 +73,17 @@ namespace Metasound
 		};
 
 		template<typename DataType>
-		class TExecutableInputOperator : public FInputOperatorBase
+		class TExecutableInputOperator : public IOperator
 		{
 			static_assert(TExecutableDataType<DataType>::bIsExecutable, "TExecutableInputOperatorBase should only be used with executable data types");
 		public:
 			using FDataWriteReference = TDataWriteReference<DataType>;
-			using FDataWriteReferenceFactory = TDataWriteReferenceLiteralFactory<DataType>;
 
+			UE_DEPRECATED(5.4, "The Executable data types will no longer be supported. Please use PostExecutable data types.") 
 			TExecutableInputOperator(const FVertexName& InDataReferenceName, TDataWriteReference<DataType> InValue)
 				: DataReferenceName(InDataReferenceName)
 				, InputValue(InValue)
-				, OutputValue(FDataWriteReferenceFactory::CreateNew(*InValue))
+				, OutputValue(FDataWriteReference::CreateNew(*InValue))
 			{
 			}
 
@@ -107,6 +100,11 @@ namespace Metasound
 			virtual FExecuteFunction GetExecuteFunction() override
 			{
 				return &Execute;
+			}
+
+			virtual FExecuteFunction GetPostExecuteFunction() override
+			{
+				return nullptr;
 			}
 
 			virtual FResetFunction GetResetFunction() override
@@ -169,29 +167,28 @@ namespace Metasound
 		};
 
 		template<typename DataType>
-		class TPostExecutableInputOperator : public FInputOperatorBase
+		class TPostExecutableInputOperator : public IOperator
 		{
 			static_assert(TPostExecutableDataType<DataType>::bIsPostExecutable, "TPostExecutableInputOperator should only be used with post executable data types");
 			static_assert(!TExecutableDataType<DataType>::bIsExecutable, "A data type cannot be Executable and PostExecutable");
 
 		public:
 			using FDataWriteReference = TDataWriteReference<DataType>;
-			using FDataWriteReferenceFactory = TDataWriteReferenceLiteralFactory<DataType>;
 
 			TPostExecutableInputOperator(const FVertexName& InDataReferenceName, TDataWriteReference<DataType> InValue)
 				: DataReferenceName(InDataReferenceName)
-				, Value(InValue)
+				, DataRef(InValue)
 			{
 			}
 
 			virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override
 			{
-				InOutVertexData.BindWriteVertex(DataReferenceName, Value);
+				InOutVertexData.BindVertex(DataReferenceName, DataRef);
 			}
 
 			virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override
 			{
-				InOutVertexData.BindReadVertex(DataReferenceName, Value);
+				InOutVertexData.BindVertex(DataReferenceName, DataRef.GetDataReadReference<DataType>());
 			}
 
 			virtual FExecuteFunction GetExecuteFunction() override
@@ -201,15 +198,41 @@ namespace Metasound
 
 			virtual FPostExecuteFunction GetPostExecuteFunction() override
 			{
-				return &PostExecute;
+				// This condition is checked at runtime as its possible dynamic graphs may reassign ownership
+				// of underlying data to operate on in post execute. In this case, the expectation is that the
+				// data reference is now owned by another provider/operator.
+				if (DataRef.GetAccessType() == EDataReferenceAccessType::Write)
+				{
+					return &PostExecute;
+				}
+				else
+				{
+					return nullptr;
+				}
 			}
 
 			virtual FResetFunction GetResetFunction() override
 			{
-				return nullptr;
+				// This condition is checked at runtime as its possible dynamic graphs may reassign ownership
+				// of underlying data to operate on in post execute. In this case, the expectation is that the
+				// data reference is now owned by another provider/operator.
+				if (DataRef.GetAccessType() == EDataReferenceAccessType::Write)
+				{
+					return &NoOpReset;
+				}
+				else
+				{
+					return nullptr;
+				}
 			}
 
 		protected:
+			static void NoOpReset(IOperator* InOperator, const IOperator::FResetParams& InParams)
+			{
+				// All post executable nodes must have a reset.  This is a special
+				// case of a non-owning node performing post execute on a data type
+				// owned by an external system.
+			}
 
 			static void PostExecute(IOperator* InOperator)
 			{
@@ -218,11 +241,15 @@ namespace Metasound
 				FPostExecutableInputOperator* DerivedOperator = static_cast<FPostExecutableInputOperator*>(InOperator);
 				check(nullptr != DerivedOperator);
 
-				TPostExecutableDataType<DataType>::PostExecute(*(DerivedOperator->Value));
+				DataType* Value = DerivedOperator->DataRef.template GetWritableValue<DataType>();
+				if (ensure(Value != nullptr))
+				{
+					TPostExecutableDataType<DataType>::PostExecute(*Value);
+				}
 			}
 
 			FVertexName DataReferenceName;
-			FDataWriteReference Value;
+			FAnyDataReference DataRef;
 		};
 
 		template<typename DataType>
@@ -231,6 +258,7 @@ namespace Metasound
 		public:
 			using FDataWriteReference = TDataWriteReference<DataType>;
 			using FDataWriteReferenceFactory = TDataWriteReferenceLiteralFactory<DataType>;
+			using TPostExecutableInputOperator<DataType>::DataRef;
 
 			TResetablePostExecutableInputOperator(const FVertexName& InDataReferenceName, const FOperatorSettings& InSettings, const FLiteral& InLiteral)
 			: TPostExecutableInputOperator<DataType>(InDataReferenceName, FDataWriteReferenceFactory::CreateExplicitArgs(InSettings, InLiteral))
@@ -240,7 +268,15 @@ namespace Metasound
 
 			virtual IOperator::FResetFunction GetResetFunction() override
 			{
-				return &Reset;
+				if (DataRef.GetAccessType() == EDataReferenceAccessType::Write)
+				{
+					return &Reset;
+				}
+				else
+				{
+					// If DataRef is not writable, reference is assumed to be reset by another owning operator.
+					return nullptr;
+				}
 			}
 
 		private:
@@ -252,7 +288,11 @@ namespace Metasound
 				FResetablePostExecutableInputOperator* Operator = static_cast<FResetablePostExecutableInputOperator*>(InOperator);
 				check(nullptr != Operator);
 
-				*Operator->Value = TDataTypeLiteralFactory<DataType>::CreateExplicitArgs(InParams.OperatorSettings, Operator->Literal);
+				DataType* Value = Operator->DataRef.template GetWritableValue<DataType>();
+				if (ensure(Value != nullptr))
+				{
+					*Value = TDataTypeLiteralFactory<DataType>::CreateExplicitArgs(InParams.OperatorSettings, Operator->Literal);
+				}
 			}
 
 			FLiteral Literal;

@@ -17,7 +17,6 @@ class UActorFactoryGeometryCache : public UActorFactory
 	// Begin UActorFactory Interface
 	virtual bool CanCreateActorFrom(const FAssetData& AssetData, FText& OutErrorMsg) override;
 	virtual void PostSpawnActor(UObject* Asset, AActor* NewActor) override;
-	virtual void PostCreateBlueprint(UObject* Asset, AActor* CDO) override;	
 	// End UActorFactory Interface
 };
 

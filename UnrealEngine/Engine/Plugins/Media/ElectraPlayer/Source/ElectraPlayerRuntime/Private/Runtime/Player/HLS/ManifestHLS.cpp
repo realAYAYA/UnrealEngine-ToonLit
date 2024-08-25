@@ -168,7 +168,7 @@ FTimeRange FManifestHLS::GetSeekableTimeRange() const
 	}
 	return FTimeRange();
 }
-FTimeRange FManifestHLS::GetPlaybackRange() const
+FTimeRange FManifestHLS::GetPlaybackRange(EPlaybackRangeType /*InRangeType*/) const
 {
 	return FTimeRange();
 }
@@ -194,6 +194,13 @@ FTimeValue FManifestHLS::GetDefaultStartTime() const
 	return FTimeValue::GetInvalid();
 }
 void FManifestHLS::ClearDefaultStartTime()
+{
+}
+FTimeValue FManifestHLS::GetDefaultEndTime() const
+{
+	return FTimeValue::GetInvalid();
+}
+void FManifestHLS::ClearDefaultEndTime()
 {
 }
 
@@ -857,7 +864,6 @@ IManifest::FResult FPlayPeriodHLS::FindSegment(TSharedPtrTS<FStreamSegmentReques
 		OutRequest = Req;
 		return IManifest::FResult(IManifest::FResult::EType::PastEOS);
 	}
-	return IManifest::FResult(IManifest::FResult::EType::NotFound);
 }
 
 
@@ -1192,8 +1198,6 @@ IManifest::FResult FPlayPeriodHLS::GetNextOrRetrySegment(TSharedPtrTS<IStreamSeg
 		}
 		return Result;
 	}
-
-	return IManifest::FResult(IManifest::FResult::EType::PastEOS);
 }
 
 /**

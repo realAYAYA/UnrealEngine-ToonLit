@@ -38,7 +38,7 @@ namespace UE::AI::EQS::Internal
 					++Skip;
 				}
 
-				InOutActors.RemoveAt(i, Skip, /*bAllowShrinking=*/false);
+				InOutActors.RemoveAt(i, Skip, EAllowShrinking::No);
 				continue;
 			}
 			PrevValue = InOutActors[i++];

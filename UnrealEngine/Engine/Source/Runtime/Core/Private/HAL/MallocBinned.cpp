@@ -884,7 +884,7 @@ struct FMallocBinned::Private
 	static FORCEINLINE void SmallOSFree(FMallocBinned& Allocator, void* Ptr, SIZE_T Size)
 	{
 #if PLATFORM_IOS
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
 		::free(Ptr);
 		Allocator.bNanoMallocAvailable = true;
 #else
@@ -965,7 +965,7 @@ struct FMallocBinned::Private
 		{
 			UE_LOG(LogTemp, Warning, TEXT("malloc failure allocating %d, error code: %d"), NewSize, errno);
 		}
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, NewSize));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, NewSize));
 		return Ptr;
 #else
 		(void)OutActualSize;
@@ -1436,9 +1436,9 @@ void* FMallocBinned::Realloc( void* Ptr, SIZE_T NewSize, uint32 Alignment )
             if ((NewSize <= Private::SMALL_BLOCK_POOL_SIZE) && (Alignment <= Private::DEFAULT_BINNED_ALLOCATOR_ALIGNMENT))
             {
                 LLM_PLATFORM_SCOPE(ELLMTag::FMalloc);
-                LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
+				LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
                 NewPtr = ::realloc(Ptr, NewSize);
-                LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, NewPtr, NewSize));
+				LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, NewPtr, NewSize));
                 bFallback = !FPlatformMemory::PtrIsFromNanoMalloc(NewPtr);
             }
 

@@ -2,6 +2,8 @@
 
 #include "ShaderConductorContext.h"
 #include "HAL/ExceptionHandling.h"
+#include "ShaderCompilerDefinitions.h"
+#include "Containers/AnsiString.h"
 
 #if PLATFORM_MAC || PLATFORM_WINDOWS || PLATFORM_LINUX
 THIRD_PARTY_INCLUDES_START
@@ -42,48 +44,13 @@ namespace CrossCompiler
 		OutResultDesc = ShaderConductor::Compiler::ConvertBinary(InBinaryDesc, InSourceDesc, InOptions, InTargetDesc);
 	}
 
-	// Converts the byte array 'InString' (without null terminator) to the output ANSI string 'OutString' (with appended null terminator).
-	static void ConvertByteArrayToAnsiString(const ANSICHAR* InString, uint32 InStringLength, TArray<ANSICHAR>& OutString)
-	{
-		// 'FCStringAnsi::Strncpy()' will put a '\0' character at the end
-		OutString.SetNum(InStringLength + 1);
-		FCStringAnsi::Strncpy(OutString.GetData(), InString, OutString.Num());
-	}
-
-	// Converts the FString to the output ANSI string 'OutString'.
-	static void ConvertFStringToAnsiString(const FString& InString, TArray<ANSICHAR>& OutString)
-	{
-		ConvertByteArrayToAnsiString(TCHAR_TO_ANSI(*InString), InString.Len(), OutString);
-	}
-
-	// Copies the NULL-terminated string 'InString' to 'OutString'. Also copies the '\0' character at the end.
-	static void CopyAnsiString(const ANSICHAR* InString, TArray<ANSICHAR>& OutString)
-	{
-		// 'InString' is NULL-terminated, so we can use 'FCStringAnsi::Strlen()'
-		if (InString != nullptr)
-		{
-			ConvertByteArrayToAnsiString(InString, FCStringAnsi::Strlen(InString), OutString);
-		}
-	}
-
-	// Converts the specified ShaderConductor blob to FString.
-	static bool ConvertByteArrayToFString(const void* InData, uint32 InSize, FString& OutString)
-	{
-		if (InData != nullptr && InSize > 0)
-		{
-			FUTF8ToTCHAR UTF8Converter(reinterpret_cast<const ANSICHAR*>(InData), InSize);
-			OutString = FString(UTF8Converter.Length(), UTF8Converter.Get());
-			return true;
-		}
-		return false;
-	}
-
 	// Converts the specified ShaderConductor blob to FString.
 	static bool ConvertScBlobToFString(ShaderConductor::Blob* Blob, FString& OutString)
 	{
 		if (Blob && Blob->Size() > 0)
 		{
-			return ConvertByteArrayToFString(Blob->Data(), Blob->Size(), OutString);
+			OutString = StringCast<TCHAR>(reinterpret_cast<const ANSICHAR*>(Blob->Data()), Blob->Size());
+			return true;
 		}
 		return false;
 	}
@@ -94,8 +61,8 @@ namespace CrossCompiler
 		switch (Frequency)
 		{
 		case SF_Vertex:			return ShaderConductor::ShaderStage::VertexShader;
-		case SF_Mesh:			checkf(0, TEXT("SF_Mesh not support in ShaderConductor")); break;
-		case SF_Amplification:	checkf(0, TEXT("SF_Amplification not support in ShaderConductor")); break;
+		case SF_Mesh:			return ShaderConductor::ShaderStage::MeshShader;
+        case SF_Amplification:	return ShaderConductor::ShaderStage::AmplificationShader;
 		case SF_Pixel:			return ShaderConductor::ShaderStage::PixelShader;
 		case SF_Geometry:		return ShaderConductor::ShaderStage::GeometryShader;
 		case SF_Compute:		return ShaderConductor::ShaderStage::ComputeShader;
@@ -110,6 +77,32 @@ namespace CrossCompiler
 		return ShaderConductor::ShaderStage::NumShaderStages;
 	}
 
+	struct FOptionalConvertedAnsiString
+	{
+		FOptionalConvertedAnsiString& operator=(FStringView WideView)
+		{
+			Storage.Empty();
+			Storage.Append(WideView);
+			AnsiView = FAnsiStringView(Storage);
+			return *this;
+		}
+
+		FOptionalConvertedAnsiString& operator=(FAnsiStringView InAnsiView)
+		{
+			AnsiView = InAnsiView;
+			return *this;
+		}
+
+		void CopyAnsi(FAnsiStringView InAnsiView)
+		{
+			Storage = InAnsiView;
+			AnsiView = FAnsiStringView(Storage);
+		}
+
+		FAnsiString Storage;
+		FAnsiStringView AnsiView;
+	};
+
 	// Wrapper structure to hold all intermediate buffers for ShaderConductor
 	struct FShaderConductorContext::FShaderConductorIntermediates
 	{
@@ -118,15 +111,16 @@ namespace CrossCompiler
 		{
 		}
 
-		TArray<ANSICHAR> ShaderSource;
-		TArray<ANSICHAR> Filename;
-		TArray<ANSICHAR> EntryPoint;
+		FOptionalConvertedAnsiString ShaderSource;
+		FOptionalConvertedAnsiString Filename;
+		FOptionalConvertedAnsiString EntryPoint;
 		ShaderConductor::ShaderStage Stage;
-		TArray<TPair<TArray<ANSICHAR>, TArray<ANSICHAR>>> Defines;
+		TArray<TPair<FAnsiString, FAnsiString>> Defines;
 		TArray<ShaderConductor::MacroDefine> DefineRefs;
-		TArray<TPair<TArray<ANSICHAR>, TArray<ANSICHAR>>> Flags;
+		TArray<TPair<FAnsiString, FAnsiString>> Flags;
 		TArray<ShaderConductor::MacroDefine> FlagRefs;
-		TArray<TArray<ANSICHAR>> CustomDxcArgs;
+		FAnsiString InternalDxcArgs;
+		TArray<FAnsiString> CustomDxcArgs;
 		TArray<ANSICHAR const*> CustomDxcArgRefs;
 		TArray<ANSICHAR const*> DxcArgRefs;
 	};
@@ -134,9 +128,9 @@ namespace CrossCompiler
 	static void ConvertScSourceDesc(const FShaderConductorContext::FShaderConductorIntermediates& Intermediates, ShaderConductor::Compiler::SourceDesc& OutSourceDesc)
 	{
 		// Convert descriptor with pointers to the ANSI strings
-		OutSourceDesc.source = Intermediates.ShaderSource.GetData();
-		OutSourceDesc.fileName = Intermediates.Filename.GetData();
-		OutSourceDesc.entryPoint = Intermediates.EntryPoint.GetData();
+		OutSourceDesc.source = Intermediates.ShaderSource.AnsiView.GetData();
+		OutSourceDesc.fileName = Intermediates.Filename.AnsiView.GetData();
+		OutSourceDesc.entryPoint = Intermediates.EntryPoint.AnsiView.GetData();
 		OutSourceDesc.stage = Intermediates.Stage;
 		if (Intermediates.DefineRefs.Num() > 0)
 		{
@@ -170,7 +164,7 @@ namespace CrossCompiler
 	{
 		OutTargetDesc.language = ShaderConductor::ShadingLanguage::Hlsl;
 		OutTargetDesc.version = GetHlslVersionString(InTarget.Version);
-		checkf(OutTargetDesc.version, TEXT("Unsupported target shader version for HLSL: SM%d.%d"), InTarget.Version / 10, InTarget.Version % 10);
+		checkf(OutTargetDesc.version!=nullptr, TEXT("Unsupported target shader version for HLSL: SM%d.%d"), InTarget.Version / 10, InTarget.Version % 10);
 	}
 
 	static const ANSICHAR* GetGlslFamilyVersionString(int32 Version)
@@ -194,7 +188,7 @@ namespace CrossCompiler
 	{
 		OutTargetDesc.language = (InTarget.Language == EShaderConductorLanguage::Glsl ? ShaderConductor::ShadingLanguage::Glsl : ShaderConductor::ShadingLanguage::Essl);
 		OutTargetDesc.version = GetGlslFamilyVersionString(InTarget.Version);
-		checkf(OutTargetDesc.version, TEXT("Unsupported target shader version for GLSL family: %d"), InTarget.Version);
+		checkf(OutTargetDesc.version!=nullptr, TEXT("Unsupported target shader version for GLSL family: %d"), InTarget.Version);
 	}
 
 	static const ANSICHAR* GetMetalFamilyVersionString(int32 Version)
@@ -218,48 +212,47 @@ namespace CrossCompiler
 	{
 		OutTargetDesc.language = (InTarget.Language == EShaderConductorLanguage::Metal_macOS ? ShaderConductor::ShadingLanguage::Msl_macOS : ShaderConductor::ShadingLanguage::Msl_iOS);
 		OutTargetDesc.version = GetMetalFamilyVersionString(InTarget.Version);
-		checkf(OutTargetDesc.version, TEXT("Unsupported target shader version for Metal family: %d"), InTarget.Version);
+		checkf(OutTargetDesc.version!=nullptr, TEXT("Unsupported target shader version for Metal family: %d"), InTarget.Version);
 	}
 
 	// Converts an array of FString to a C-style array of char* pointers
-	static void ConvertStringArrayToAnsiArray(const TArray<FString>& InPairs, TArray<TArray<ANSICHAR>>& OutPairs, TArray<const char*>& OutPairRefs)
+	static void ConvertStringArrayToAnsiArray(const TArray<FString>& InPairs, TArray<FAnsiString>& OutPairs, TArray<const char*>& OutPairRefs)
 	{
 		// Convert map into an array container
 		TArray<ANSICHAR> Value;
 		for (const FString& Iter : InPairs)
 		{
-			ConvertFStringToAnsiString(Iter, Value);
-			OutPairs.Emplace(MoveTemp(Value));
+			OutPairs.Emplace(Iter);
 		}
 
 		// Store references after all elements have been added to the container so the pointers remain valid
 		OutPairRefs.SetNum(OutPairs.Num());
 		for (int32 Index = 0; Index < OutPairs.Num(); ++Index)
 		{
-			OutPairRefs[Index] = OutPairs[Index].GetData();
+			OutPairRefs[Index] = *OutPairs[Index];
 		}
 	}
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
 
 	// Converts a map of string pairs to a C-Style macro defines array
-	static void ConvertStringMapToMacroDefines(const TMap<FString,FString>& InPairs, TArray<TPair<TArray<ANSICHAR>, TArray<ANSICHAR>>>& OutPairs, TArray<ShaderConductor::MacroDefine>& OutPairRefs)
+	static void ConvertDefineMapToMacroDefines(const FShaderCompilerDefinitions& Definitions, TArray<TPair<FAnsiString, FAnsiString>>& OutPairs, TArray<ShaderConductor::MacroDefine>& OutPairRefs)
 	{
 		// Convert map into an array container
-		TArray<ANSICHAR> Name, Value;
-		for (const TPair<FString, FString>& Iter : InPairs)
+		for (FShaderCompilerDefinitions::FConstIterator Iter(Definitions); Iter; ++Iter)
 		{
-			ConvertFStringToAnsiString(Iter.Key, Name);
-			ConvertFStringToAnsiString(Iter.Value, Value);
-			OutPairs.Emplace(MoveTemp(Name), MoveTemp(Value));
+			OutPairs.Emplace(Iter.Key(), Iter.Value());
 		}
 
 		// Store references after all elements have been added to the container so the pointers remain valid
 		OutPairRefs.SetNum(OutPairs.Num());
 		for (int32 Index = 0; Index < OutPairs.Num(); ++Index)
 		{
-			OutPairRefs[Index].name = OutPairs[Index].Key.GetData();
-			OutPairRefs[Index].value = OutPairs[Index].Value.GetData();
+			OutPairRefs[Index].name = *OutPairs[Index].Key;
+			OutPairRefs[Index].value = *OutPairs[Index].Value;
 		}
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	static void ConvertScTargetDesc(FShaderConductorContext::FShaderConductorIntermediates& Intermediates, const FShaderConductorTarget& InTarget, ShaderConductor::Compiler::TargetDesc& OutTargetDesc)
 	{
@@ -285,7 +278,7 @@ namespace CrossCompiler
 		}
 
 		// Convert flags map into an array container
-		ConvertStringMapToMacroDefines(InTarget.CompileFlags.GetDefinitionMap(), Intermediates.Flags, Intermediates.FlagRefs);
+		ConvertDefineMapToMacroDefines(*InTarget.CompileFlags, Intermediates.Flags, Intermediates.FlagRefs);
 
 		OutTargetDesc.options = Intermediates.FlagRefs.GetData();
 		OutTargetDesc.numOptions = static_cast<uint32>(Intermediates.FlagRefs.Num());
@@ -310,7 +303,160 @@ namespace CrossCompiler
 		}
 	}
 
-	static void ConvertScOptions(const FShaderConductorOptions& InOptions, ShaderConductor::Compiler::Options& OutOptions, const TArray<ANSICHAR const*>& CustomDxcArgRefs, TArray<ANSICHAR const*>& DxcArgRefs)
+
+	/*
+	 * Reduced list of SPIRV-Tools optimization passes to avoid nested expressions in GLSL output.
+	 * The order of passes has been adopted from the standard '-O' optimization configuration with the following passes removed:
+	 * - LocalSingleBlockLoadStoreElimPass
+	 * - LocalSingleStoreElimPass
+	 * - LocalMultiStoreElimPass
+	 * - SSARewritePass
+	 */
+	static const TCHAR* GSpirvTools_OptPasses_PresetRelaxNestedExpr = TEXT(
+		"--wrap-opkill,"
+		"--eliminate-dead-branches,"
+		"--merge-return,"
+		"--inline-entry-points-exhaustive,"
+		"--eliminate-dead-functions,"
+		"--eliminate-dead-code-aggressive,"
+		"--private-to-local,"
+		"--eliminate-dead-code-aggressive,"
+		"--scalar-replacement,"
+		"--convert-local-access-chains,"
+		"--eliminate-dead-code-aggressive,"
+		"--ccp,"
+		"--eliminate-dead-code-aggressive,"
+		"--loop-unroll,"
+		"--eliminate-dead-branches,"
+		"--redundancy-elimination,"
+		"--combine-access-chains,"
+		"--simplify-instructions,"
+		"--scalar-replacement,"
+		"--convert-local-access-chains,"
+		"--eliminate-dead-code-aggressive,"
+		"--vector-dce,"
+		"--eliminate-dead-inserts,"
+		"--eliminate-dead-branches,"
+		"--simplify-instructions,"
+		"--if-conversion,"
+		"--copy-propagate-arrays,"
+		"--reduce-load-size,"
+		"--eliminate-dead-code-aggressive,"
+		"--merge-blocks,"
+		"--redundancy-elimination,"
+		"--eliminate-dead-branches,"
+		"--merge-blocks,"
+		"--simplify-instructions,"
+		"--eliminate-dead-members,"
+		"--merge-blocks,"
+		"--redundancy-elimination,"
+		"--simplify-instructions,"
+		"--eliminate-dead-code-aggressive,"
+		"--cfg-cleanup"
+	);
+
+	static const TCHAR* SelectSpirvCustomOptimizationPasses(const FString& OptimizationPasses)
+	{
+		if (OptimizationPasses == TEXT("preset(relax-nested-expr)"))
+		{
+			return GSpirvTools_OptPasses_PresetRelaxNestedExpr;
+		}
+		else
+		{
+			// Interpret input argument as set of optimization passes
+			return *OptimizationPasses;
+		}
+	}
+
+	static void AppendDxcArguments(const FShaderConductorOptions& InOptions, TArray<const ANSICHAR*>& DxcArguments, bool bGenerateSpirv = true)
+	{
+		if(bGenerateSpirv)
+		{
+			DxcArguments.Add("-spirv");
+		}
+		
+		DxcArguments.Add("-Qunused-arguments");
+
+		switch (InOptions.HlslVersion)
+		{
+		case 2015:
+			DxcArguments.Add("-HV");
+			DxcArguments.Add("2015");
+			break;
+		case 2016:
+			DxcArguments.Add("-HV");
+			DxcArguments.Add("2016");
+			break;
+		case 2017:
+			DxcArguments.Add("-HV");
+			DxcArguments.Add("2017");
+			break;
+		case 2018:
+			DxcArguments.Add("-HV");
+			DxcArguments.Add("2018");
+			break;
+		case 2021:
+			DxcArguments.Add("-HV");
+			DxcArguments.Add("2021");
+			break;
+		default:
+			checkf(false, TEXT("Invalid HLSL version: expected 2015, 2016, 2017, 2018, or 2021 but %u was specified"), InOptions.HlslVersion);
+			break;
+		}
+
+		// Add additional DXC arguments that are not exposed by ShaderConductor API directly
+		if (!InOptions.bDisableScalarBlockLayout)
+		{
+			DxcArguments.Add("-fvk-use-scalar-layout");
+		}
+		if (InOptions.bPreserveStorageInput)
+		{
+			DxcArguments.Add("-fspv-preserve-storage-input");
+		}
+		if (InOptions.bForceStorageImageFormat)
+		{
+			DxcArguments.Add("-fvk-force-storage-image-format");
+		}
+		if (InOptions.bSvPositionImplicitInvariant)
+		{
+			DxcArguments.Add("-fspv-svposition-implicit-invariant");
+		}
+		if (InOptions.bSupportPreciseOutputs)
+		{
+			DxcArguments.Add("-fspv-support-precise-outputs");
+		}
+
+		using ETargetEnvironment = CrossCompiler::FShaderConductorOptions::ETargetEnvironment;
+		if (InOptions.bEnable16bitTypes)
+		{
+			DxcArguments.Add("-fspv-target-env=universal1.5");
+
+			// ShaderConductor.cpp forgot to pipedown enable16bitTypes, so work arround by adding the parameter manually in here.
+			DxcArguments.Add("-enable-16bit-types");
+		}
+		else
+		{
+			switch (InOptions.TargetEnvironment)
+			{
+			default:
+				checkf(false, TEXT("Unexpected SPIR-V target environment: %d"), (uint32)InOptions.TargetEnvironment);
+			case ETargetEnvironment::Vulkan_1_0:
+				DxcArguments.Add("-fspv-target-env=vulkan1.0");
+				break;
+			case ETargetEnvironment::Vulkan_1_1:
+				DxcArguments.Add("-fspv-target-env=vulkan1.1");
+				break;
+			case ETargetEnvironment::Vulkan_1_2:
+				DxcArguments.Add("-fspv-target-env=vulkan1.2");
+				break;
+			case ETargetEnvironment::Vulkan_1_3:
+				DxcArguments.Add("-fspv-target-env=vulkan1.3");
+				break;
+			}
+		}
+	}
+
+static void ConvertScOptions(FShaderConductorContext::FShaderConductorIntermediates& Intermediates, const FShaderConductorOptions& InOptions, ShaderConductor::Compiler::Options& OutOptions, bool bIgnoreCustomDxcArgs = false, bool bGenerateSpirv = true)
 	{
 		// Validate input shader model with respect to certain language features.
 		checkf(
@@ -333,94 +479,33 @@ namespace CrossCompiler
 			static_cast<uint8>(InOptions.ShaderModel.Minor)
 		};
 
+		TArray<ANSICHAR const*>& DxcArgRefs = Intermediates.DxcArgRefs;
+
 		DxcArgRefs.Empty();
 
-		// Select language version
-		DxcArgRefs.Add("-spirv");
-		DxcArgRefs.Add("-Qunused-arguments");
-
-		switch (InOptions.HlslVersion)
+		AppendDxcArguments(InOptions, DxcArgRefs, bGenerateSpirv);
+		
+		if (!InOptions.SpirvCustomOptimizationPasses.IsEmpty())
 		{
-		case 2015:
-			DxcArgRefs.Add("-HV");
-			DxcArgRefs.Add("2015");
-			break;
-		case 2016:
-			DxcArgRefs.Add("-HV");
-			DxcArgRefs.Add("2016");
-			break;
-		case 2017:
-			DxcArgRefs.Add("-HV");
-			DxcArgRefs.Add("2017");
-			break;
-		case 2018:
-			// Default
-			break;
-		case 2021:
-			DxcArgRefs.Add("-HV");
-			DxcArgRefs.Add("2021");
-			break;
-		default:
-			checkf(false, TEXT("Invalid HLSL version: expected 2015, 2016, 2017, 2018, or 2021 but %u was specified"), InOptions.HlslVersion);
-			break;
-		}
-
-		// Add additional DXC arguments that are not exposed by ShaderConductor API directly
-		if (InOptions.bDisableScalarBlockLayout)
-		{
-			DxcArgRefs.Add("-fspv-no-scalar-block-layout");
-		}
-		if (InOptions.bPreserveStorageInput)
-		{
-			DxcArgRefs.Add("-fspv-preserve-storage-input");
-		}
-        if (InOptions.bForceStorageImageFormat)
-        {
-            DxcArgRefs.Add("-fvk-force-storage-image-format");
-        }
-		if (InOptions.bSvPositionImplicitInvariant)
-		{
-			DxcArgRefs.Add("-fspv-svposition-implicit-invariant");
-		}
-
-		using ETargetEnvironment = CrossCompiler::FShaderConductorOptions::ETargetEnvironment;
-		if (OutOptions.enable16bitTypes)
-		{
-			DxcArgRefs.Add("-fspv-target-env=universal1.5");
-		}
-		else
-		{
-			switch (InOptions.TargetEnvironment)
-			{
-			default:
-				checkf(false, TEXT("Unexpected SPIR-V target environment: %d"), (uint32)InOptions.TargetEnvironment);
-			case ETargetEnvironment::Vulkan_1_0:
-				DxcArgRefs.Add("-fspv-target-env=vulkan1.0");
-				break;
-			case ETargetEnvironment::Vulkan_1_1:
-				DxcArgRefs.Add("-fspv-target-env=vulkan1.1");
-				break;
-			case ETargetEnvironment::Vulkan_1_2:
-				DxcArgRefs.Add("-fspv-target-env=vulkan1.2");
-				break;
-			case ETargetEnvironment::Vulkan_1_3:
-				DxcArgRefs.Add("-fspv-target-env=vulkan1.3");
-				break;
-			}
+			Intermediates.InternalDxcArgs = FAnsiString::Printf("-Oconfig=%ls", SelectSpirvCustomOptimizationPasses(InOptions.SpirvCustomOptimizationPasses));
+			DxcArgRefs.Add(*Intermediates.InternalDxcArgs);
 		}
 
 		if (DxcArgRefs.Num() > 0)
 		{
 			// Use DXC argument container and append custom arguments
-			DxcArgRefs.Append(CustomDxcArgRefs);
+			if (!bIgnoreCustomDxcArgs)
+			{
+				DxcArgRefs.Append(Intermediates.CustomDxcArgRefs);
+			}
 			OutOptions.numDXCArgs = DxcArgRefs.Num();
 			OutOptions.DXCArgs = (const char**)DxcArgRefs.GetData();
 		}
-		else if (CustomDxcArgRefs.Num() > 0)
+		else if (!bIgnoreCustomDxcArgs)
 		{
 			// Use custom DXC arguments only
-			OutOptions.numDXCArgs = CustomDxcArgRefs.Num();
-			OutOptions.DXCArgs = (const char**)CustomDxcArgRefs.GetData();
+			OutOptions.numDXCArgs = Intermediates.CustomDxcArgRefs.Num();
+			OutOptions.DXCArgs = (const char**)Intermediates.CustomDxcArgRefs.GetData();
 		}
 		else
 		{
@@ -466,6 +551,13 @@ namespace CrossCompiler
 		}
 	}
 
+	FShaderConductorTarget::FShaderConductorTarget()
+	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+		CompileFlags = MakePimpl<FShaderCompilerDefinitions>();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+
 	FShaderConductorContext::FShaderConductorContext()
 		: Intermediates(new FShaderConductorIntermediates())
 	{
@@ -492,17 +584,19 @@ namespace CrossCompiler
 		return *this;
 	}
 
-	bool FShaderConductorContext::LoadSource(const FString& ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+	bool FShaderConductorContext::LoadSource(FStringView ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		// Convert FString to ANSI string and store them as intermediates
-		ConvertFStringToAnsiString(ShaderSource, Intermediates->ShaderSource);
-		ConvertFStringToAnsiString(Filename, Intermediates->Filename);
-		ConvertFStringToAnsiString(EntryPoint, Intermediates->EntryPoint);
+		Intermediates->ShaderSource = ShaderSource;
+		Intermediates->Filename = Filename;
+		Intermediates->EntryPoint = EntryPoint;
 
 		// Convert macro definitions map into an array container
 		if (Definitions != nullptr)
 		{
-			ConvertStringMapToMacroDefines(Definitions->GetDefinitionMap(), Intermediates->Defines, Intermediates->DefineRefs);
+			ConvertDefineMapToMacroDefines(*Definitions, Intermediates->Defines, Intermediates->DefineRefs);
 		}
 
 		if (ExtraDxcArgs && ExtraDxcArgs->Num() > 0)
@@ -516,17 +610,51 @@ namespace CrossCompiler
 		return true;
 	}
 
-	bool FShaderConductorContext::LoadSource(const ANSICHAR* ShaderSource, const ANSICHAR* Filename, const ANSICHAR* EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+	bool FShaderConductorContext::LoadSource(FAnsiStringView ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
-		// Store ANSI strings as intermediates
-		CopyAnsiString(ShaderSource, Intermediates->ShaderSource);
-		CopyAnsiString(Filename, Intermediates->Filename);
-		CopyAnsiString(EntryPoint, Intermediates->EntryPoint);
+		Intermediates->ShaderSource = ShaderSource;
+		Intermediates->Filename = Filename;
+		Intermediates->EntryPoint = EntryPoint;
 
 		// Convert macro definitions map into an array container
 		if (Definitions != nullptr)
 		{
-			ConvertStringMapToMacroDefines(Definitions->GetDefinitionMap(), Intermediates->Defines, Intermediates->DefineRefs);
+			ConvertDefineMapToMacroDefines(*Definitions, Intermediates->Defines, Intermediates->DefineRefs);
+		}
+
+		if (ExtraDxcArgs && ExtraDxcArgs->Num() > 0)
+		{
+			ConvertStringArrayToAnsiArray(*ExtraDxcArgs, Intermediates->CustomDxcArgs, Intermediates->CustomDxcArgRefs);
+		}
+
+		// Convert shader stage
+		Intermediates->Stage = ToShaderConductorShaderStage(ShaderStage);
+
+		return true;
+	}
+
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+	bool FShaderConductorContext::LoadSource(const FString& ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	{
+		return LoadSource(FStringView(ShaderSource), Filename, EntryPoint, ShaderStage, Definitions, ExtraDxcArgs);
+	}
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+	bool FShaderConductorContext::LoadSource(const ANSICHAR* ShaderSource, const ANSICHAR* Filename, const ANSICHAR* EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	{
+		Intermediates->ShaderSource = ShaderSource;
+		Intermediates->Filename = Filename;
+		Intermediates->EntryPoint = EntryPoint;
+
+		// Convert macro definitions map into an array container
+		if (Definitions != nullptr)
+		{
+			ConvertDefineMapToMacroDefines(*Definitions, Intermediates->Defines, Intermediates->DefineRefs);
 		}
 
 		if (ExtraDxcArgs && ExtraDxcArgs->Num() > 0)
@@ -547,33 +675,28 @@ namespace CrossCompiler
 		ConvertScSourceDesc(*Intermediates, ScSourceDesc);
 
 		ShaderConductor::Compiler::Options ScOptions;
-		ConvertScOptions(Options, ScOptions, {}, Intermediates->DxcArgRefs);
-
-		// ShaderConductor.cpp forgot to pipedown enable16bitTypes, so work arround by adding the parameter manually in here.
-		TArray<ANSICHAR const*> PatchedDxcArgRefs;
-		if (ScOptions.enable16bitTypes)
-		{
-			PatchedDxcArgRefs = Intermediates->DxcArgRefs;
-			PatchedDxcArgRefs.Add("-enable-16bit-types");
-
-			ScOptions.numDXCArgs = PatchedDxcArgRefs.Num();
-			ScOptions.DXCArgs = (const char**)PatchedDxcArgRefs.GetData();
-		}
+		constexpr bool bIgnoreExtraDxcArgs = true;
+		ConvertScOptions(*Intermediates, Options, ScOptions, bIgnoreExtraDxcArgs);
 
 		// Rewrite HLSL with wrapper function to catch exceptions from ShaderConductor
 		bool bSucceeded = false;
 		ShaderConductor::Compiler::ResultDesc ResultDesc;
 		ScRewriteWrapper(ScSourceDesc, ScOptions, ResultDesc);
 
-		if (!ResultDesc.hasError && ResultDesc.target.Size() > 0)
+		if (!ResultDesc.hasError && ResultDesc.target.Size() > 1)
 		{
+			// Note: We don't want to include the '\0' included in the result string (thanks to DxcCreateBlob), hence the -1
+			check(reinterpret_cast<const ANSICHAR*>(ResultDesc.target.Data())[ResultDesc.target.Size() - 1] == '\0');
+			FAnsiStringView ResultView(reinterpret_cast<const ANSICHAR*>(ResultDesc.target.Data()), ResultDesc.target.Size() - 1);
+
 			// Copy rewritten HLSL code into intermediate source code.
-			ConvertByteArrayToAnsiString(reinterpret_cast<const ANSICHAR*>(ResultDesc.target.Data()), ResultDesc.target.Size(), Intermediates->ShaderSource);
+			Intermediates->ShaderSource.CopyAnsi(ResultView);
 
 			// If output source is specified, also convert to TCHAR string
 			if (OutSource != nullptr)
 			{
-				*OutSource = ANSI_TO_TCHAR(Intermediates->ShaderSource.GetData());
+				OutSource->Empty();
+				OutSource->Append(ResultView);
 			}
 			bSucceeded = true;
 		}
@@ -583,6 +706,46 @@ namespace CrossCompiler
 
 		return bSucceeded;
 	}
+
+    bool FShaderConductorContext::CompileHlslToDxil(const FShaderConductorOptions& Options, TArray<uint32>& OutDxil)
+    {
+		constexpr bool bGenerateSpirv = false;
+		
+        // Convert descriptors for ShaderConductor interface
+        ShaderConductor::Compiler::SourceDesc ScSourceDesc;
+        ConvertScSourceDesc(*Intermediates, ScSourceDesc);
+
+        ShaderConductor::Compiler::TargetDesc ScTargetDesc;
+        FMemory::Memzero(ScTargetDesc);
+        ScTargetDesc.language = ShaderConductor::ShadingLanguage::Dxil;
+		
+        ShaderConductor::Compiler::Options ScOptions;
+        ConvertScOptions(*Intermediates, Options, ScOptions, false, bGenerateSpirv);
+        
+        // Force PDB generation (required to generate DXIL reflection).
+        ScOptions.enableDebugInfo = true;
+
+        // Compile HLSL source code to DXIL
+        bool bSucceeded = false;
+        ShaderConductor::Compiler::ResultDesc ResultDesc;
+        ScCompileWrapper(ScSourceDesc, ScOptions, ScTargetDesc, ResultDesc);
+
+        if (!ResultDesc.hasError && ResultDesc.target.Size() > 0)
+        {
+            // Copy result blob into output DXIL module
+            OutDxil = TArray<uint32>(reinterpret_cast<const uint32*>(ResultDesc.target.Data()), ResultDesc.target.Size() / 4);
+            bSucceeded = true;
+        }
+        else
+        {
+            bSucceeded = false;
+        }
+
+        // Append compile error and warning to output reports
+        ConvertScCompileErrors(ResultDesc.errorWarningMsg, Errors);
+
+        return bSucceeded;
+    }
 
 	bool FShaderConductorContext::CompileHlslToSpirv(const FShaderConductorOptions& Options, TArray<uint32>& OutSpirv)
 	{
@@ -595,7 +758,7 @@ namespace CrossCompiler
 		ScTargetDesc.language = ShaderConductor::ShadingLanguage::SpirV;
 
 		ShaderConductor::Compiler::Options ScOptions;
-		ConvertScOptions(Options, ScOptions, Intermediates->CustomDxcArgRefs, Intermediates->DxcArgRefs);
+		ConvertScOptions(*Intermediates, Options, ScOptions);
 
 		// Compile HLSL source code to SPIR-V
 		bool bSucceeded = false;
@@ -659,7 +822,8 @@ namespace CrossCompiler
 			[&OutSource](const void* Data, uint32 Size)
 			{
 				// Convert source buffer to FString
-				ConvertByteArrayToFString(Data, Size, OutSource);
+				FString Converted(reinterpret_cast<const ANSICHAR*>(Data), Size);
+				OutSource = MoveTemp(Converted);
 			}
 		);
 	}
@@ -671,7 +835,8 @@ namespace CrossCompiler
 			[&OutSource](const void* Data, uint32 Size)
 			{
 				// Convert source buffer to ANSI string
-				ConvertByteArrayToAnsiString(reinterpret_cast<const ANSICHAR*>(Data), Size, OutSource);
+				FAnsiString Copy = FAnsiString::ConstructFromPtrSize(reinterpret_cast<const ANSICHAR*>(Data), Size);
+				OutSource = MoveTemp(Copy.GetCharArray());
 			}
 		);
 	}
@@ -691,7 +856,7 @@ namespace CrossCompiler
 		ConvertScTargetDesc(*Intermediates, Target, ScTargetDesc);
 
 		ShaderConductor::Compiler::Options ScOptions;
-		ConvertScOptions(Options, ScOptions, Intermediates->CustomDxcArgRefs, Intermediates->DxcArgRefs);
+		ConvertScOptions(*Intermediates, Options, ScOptions);
 
 		ShaderConductor::Compiler::ResultDesc ScBinaryDesc;
 		ScBinaryDesc.target.Reset(InSpirv, InSpirvByteSize);
@@ -743,12 +908,45 @@ namespace CrossCompiler
 
 	const ANSICHAR* FShaderConductorContext::GetSourceString() const
 	{
-		return (Intermediates->ShaderSource.Num() > 0 ? Intermediates->ShaderSource.GetData() : nullptr);
+		return (Intermediates->ShaderSource.AnsiView.Len() > 0 ? Intermediates->ShaderSource.AnsiView.GetData() : nullptr);
 	}
 
 	int32 FShaderConductorContext::GetSourceLength() const
 	{
-		return (Intermediates->ShaderSource.Num() > 0 ? (Intermediates->ShaderSource.Num() - 1) : 0);
+		return Intermediates->ShaderSource.AnsiView.Len();
+	}
+
+	static const TCHAR* GetHlslShaderModelProfile(ShaderConductor::ShaderStage Stage)
+	{
+		switch (Stage)
+		{
+		case ShaderConductor::ShaderStage::VertexShader:	return TEXT("vs");
+		case ShaderConductor::ShaderStage::PixelShader:		return TEXT("ps");
+		case ShaderConductor::ShaderStage::GeometryShader:	return TEXT("gs");
+		case ShaderConductor::ShaderStage::HullShader:		return TEXT("hl");
+		case ShaderConductor::ShaderStage::DomainShader:	return TEXT("ds");
+		case ShaderConductor::ShaderStage::ComputeShader:	return TEXT("cs");
+		default:											return TEXT("lib");
+		}
+	}
+
+	FString FShaderConductorContext::GenerateDxcArguments(const FShaderConductorOptions& Options) const
+	{
+		FString CmdLineArgs = FString::Printf(
+			TEXT("-E %hs -T %s_%d_%d"),
+			Intermediates->EntryPoint.AnsiView.GetData(), GetHlslShaderModelProfile(Intermediates->Stage), (int32)Options.ShaderModel.Major, (int32)Options.ShaderModel.Minor
+		);
+
+		TArray<const ANSICHAR*> DxcArguments;
+		AppendDxcArguments(Options, DxcArguments);
+
+		for (const ANSICHAR* Argument : DxcArguments)
+		{
+			CmdLineArgs += TEXT(" ");
+			CmdLineArgs += ANSI_TO_TCHAR(Argument);
+		}
+
+		return CmdLineArgs;
 	}
 
 	void FShaderConductorContext::ConvertCompileErrors(TArray<FString>&& ErrorStringLines, TArray<FShaderCompilerError>& OutErrors)
@@ -802,7 +1000,8 @@ namespace CrossCompiler
 		if (TextOutput.isText && !TextOutput.hasError)
 		{
 			// Convert and return output to ANSI string
-			ConvertByteArrayToAnsiString(reinterpret_cast<const ANSICHAR*>(TextOutput.target.Data()), TextOutput.target.Size(), OutAssemblyText);
+			FAnsiString Copy = FAnsiString::ConstructFromPtrSize(reinterpret_cast<const ANSICHAR*>(TextOutput.target.Data()), TextOutput.target.Size());
+			OutAssemblyText = MoveTemp(Copy.GetCharArray());
 			return true;
 		}
 
@@ -836,6 +1035,11 @@ namespace CrossCompiler
 		return false; // Dummy
 	}
 
+	bool FShaderConductorContext::LoadSource(FStringView ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
+	{
+		return false; // Dummy
+	}
+
 	bool FShaderConductorContext::LoadSource(const ANSICHAR* ShaderSource, const ANSICHAR* Filename, const ANSICHAR* EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions, const TArray<FString>* ExtraDxcArgs)
 	{
 		return false; // Dummy
@@ -845,6 +1049,11 @@ namespace CrossCompiler
 	{
 		return false; // Dummy
 	}
+ 
+    bool FShaderConductorContext::CompileHlslToDxil(const FShaderConductorOptions& Options, TArray<uint32>& OutDxil)
+    {
+        return false; // Dummy
+    }
 
 	bool FShaderConductorContext::CompileHlslToSpirv(const FShaderConductorOptions& Options, TArray<uint32>& OutSpirv)
 	{

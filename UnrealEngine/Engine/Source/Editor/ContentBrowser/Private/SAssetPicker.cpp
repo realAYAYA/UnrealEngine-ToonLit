@@ -80,7 +80,14 @@ void SAssetPicker::Construct( const FArguments& InArgs )
 	OnFolderEnteredDelegate = InArgs._AssetPickerConfig.OnFolderEntered;
 	OnGetAssetContextMenu = InArgs._AssetPickerConfig.OnGetAssetContextMenu;
 	OnGetFolderContextMenu = InArgs._AssetPickerConfig.OnGetFolderContextMenu;
+	
+	// Break up the incoming filter into a sources data and backend filter.
+	CurrentSourcesData = FSourcesData(InArgs._AssetPickerConfig.Filter.PackagePaths, InArgs._AssetPickerConfig.Collections);
+	CurrentBackendFilter = InArgs._AssetPickerConfig.Filter;
+	CurrentBackendFilter.PackagePaths.Reset();
 
+	bAllowRename = InArgs._AssetPickerConfig.bAllowRename;
+	
 	FOnGetContentBrowserItemContextMenu OnGetItemContextMenu;
 	if (OnGetAssetContextMenu.IsBound() || OnGetFolderContextMenu.IsBound())
 	{
@@ -182,23 +189,35 @@ void SAssetPicker::Construct( const FArguments& InArgs )
 
 
 	if (InArgs._AssetPickerConfig.bAddFilterUI)
-	{
-		// Filter
-		HorizontalBox->AddSlot()
+	{		
+		// We create available classes here. These are used to hide away the type filters in the filter list that don't match this list of classes
+		TArray<UClass*> FilterClassList;
+		for(auto Iter = CurrentBackendFilter.ClassPaths.CreateIterator(); Iter; ++Iter)
+		{
+			FTopLevelAssetPath ClassName = (*Iter);
+			UClass* FilterClass = FindObject<UClass>(ClassName);
+			if(FilterClass)
+			{
+				FilterClassList.AddUnique(FilterClass);
+			}
+		}		
+		
+		SAssignNew(FilterListPtr, SFilterList)
+			.OnFilterChanged(this, &SAssetPicker::OnFilterChanged)
+			.FrontendFilters(FrontendFilters)
+			.InitialClassFilters(FilterClassList)
+			.FilterBarIdentifier(FName(SaveSettingsName))
+			.ExtraFrontendFilters(InArgs._AssetPickerConfig.ExtraFrontendFilters)
+			.DefaultMenuExpansionCategory(ConvertAssetTypeCategoryToAssetCategoryPath(DefaultFilterMenuExpansion).Get(EAssetCategoryPaths::Basic))
+			.OnExtendAddFilterMenu(InArgs._AssetPickerConfig.OnExtendAddFilterMenu)
+			.bUseSectionsForCustomCategories(InArgs._AssetPickerConfig.bUseSectionsForCustomFilterCategories);
+		
+		FilterComboButtonPtr = StaticCastSharedRef<SComboButton>(SFilterList::MakeAddFilterButton(FilterListPtr.ToSharedRef()));
+		
+		HorizontalBox->InsertSlot(0)
 		.AutoWidth()
 		[
-			SAssignNew(FilterComboButtonPtr, SComboButton)
-			.ComboButtonStyle(&FAppStyle::Get().GetWidgetStyle<FComboButtonStyle>("SimpleComboButton"))
-			.ToolTipText( LOCTEXT( "AddFilterToolTip", "Add an asset filter." ) )
-			.OnGetMenuContent( this, &SAssetPicker::MakeAddFilterMenu )
-			.HasDownArrow( false )
-			.AddMetaData<FTagMetaData>(FTagMetaData(TEXT("ContentBrowserFiltersCombo")))
-			.ButtonContent()
-			[
-				SNew( SImage)
-				.ColorAndOpacity(FSlateColor::UseForeground())
-				.Image(FAppStyle::Get().GetBrush("Icons.Filter"))
-			]
+			FilterComboButtonPtr.ToSharedRef()
 		];
 	}
 		
@@ -242,35 +261,12 @@ void SAssetPicker::Construct( const FArguments& InArgs )
 	}
 
 	// Asset view
-	
-	// Break up the incoming filter into a sources data and backend filter.
-	CurrentSourcesData = FSourcesData(InArgs._AssetPickerConfig.Filter.PackagePaths, InArgs._AssetPickerConfig.Collections);
-	CurrentBackendFilter = InArgs._AssetPickerConfig.Filter;
-	CurrentBackendFilter.PackagePaths.Reset();
-
 	if (InArgs._AssetPickerConfig.bAddFilterUI)
 	{
-		// Filters
-		TArray<UClass*> FilterClassList;
-		for(auto Iter = CurrentBackendFilter.ClassPaths.CreateIterator(); Iter; ++Iter)
-		{
-			FTopLevelAssetPath ClassName = (*Iter);
-			UClass* FilterClass = FindObject<UClass>(ClassName);
-			if(FilterClass)
-			{
-				FilterClassList.AddUnique(FilterClass);
-			}
-		}
-
 		VerticalBox->AddSlot()
 		.AutoHeight()
 		[
-			SAssignNew(FilterListPtr, SFilterList)
-			.OnFilterChanged(this, &SAssetPicker::OnFilterChanged)
-			.FrontendFilters(FrontendFilters)
-			.InitialClassFilters(FilterClassList)
-			.FilterBarIdentifier(FName(SaveSettingsName))
-			.ExtraFrontendFilters(InArgs._AssetPickerConfig.ExtraFrontendFilters)
+			FilterListPtr.ToSharedRef()
 		];
 
 		// Use the 'other developer' filter from the filter list widget. 
@@ -362,6 +358,7 @@ void SAssetPicker::Construct( const FArguments& InArgs )
 		.HiddenColumnNames(InArgs._AssetPickerConfig.HiddenColumnNames)
 		.CustomColumns(InArgs._AssetPickerConfig.CustomColumns)
 		.OnSearchOptionsChanged(this, &SAssetPicker::HandleSearchSettingsChanged)
+		.InitialThumbnailSize(InArgs._AssetPickerConfig.InitialThumbnailSize)
 	];
 
 
@@ -538,11 +535,6 @@ void SAssetPicker::SetNewBackendFilter(const FARFilter& NewFilter)
 	OnFilterChanged();
 }
 
-TSharedRef<SWidget> SAssetPicker::MakeAddFilterMenu()
-{
-	return FilterListPtr->ExternalMakeAddFilterMenu(DefaultFilterMenuExpansion);
-}
-
 void SAssetPicker::OnFilterChanged()
 {
 	FARFilter Filter;
@@ -709,6 +701,10 @@ void SAssetPicker::OnRenameRequested() const
 
 bool SAssetPicker::CanExecuteRenameRequested()
 {
+	if(!bAllowRename)
+	{
+		return false;
+	}
 	return ContentBrowserUtils::CanRenameFromAssetView(AssetViewPtr);
 }
 
@@ -822,6 +818,43 @@ TSharedPtr<SWidget> SAssetPicker::GetItemContextMenu(TArrayView<const FContentBr
 	}
 
 	return nullptr;
+}
+
+TOptional<FAssetCategoryPath> SAssetPicker::ConvertAssetTypeCategoryToAssetCategoryPath(EAssetTypeCategories::Type InDefaultFilterMenuExpansion)
+{
+	// TODO We should completely replace EAssetTypeCategories with FAssetCategoryPath, but FAssetCategoryPath is contained in the AssetDefinitionsModule.
+	// Since the API exposes the DefaultFilterMenuExpansion, we can't easily change this
+	switch (InDefaultFilterMenuExpansion)
+	{
+	case EAssetTypeCategories::Basic:
+		return EAssetCategoryPaths::Basic;
+	case EAssetTypeCategories::Animation:
+		return EAssetCategoryPaths::Animation;
+	case EAssetTypeCategories::Materials:
+		return EAssetCategoryPaths::Material;
+	case EAssetTypeCategories::Sounds:
+		return EAssetCategoryPaths::Audio;
+	case EAssetTypeCategories::Physics:
+		return EAssetCategoryPaths::Physics;
+	case EAssetTypeCategories::UI:
+		return EAssetCategoryPaths::UI;
+	case EAssetTypeCategories::Misc:
+		return EAssetCategoryPaths::Misc;
+	case EAssetTypeCategories::Gameplay:
+		return EAssetCategoryPaths::Gameplay;
+	case EAssetTypeCategories::Blueprint:
+		return EAssetCategoryPaths::Blueprint;
+	case EAssetTypeCategories::Media:
+		return EAssetCategoryPaths::Media;
+	case EAssetTypeCategories::Textures:
+		return EAssetCategoryPaths::Texture;
+	case EAssetTypeCategories::World:
+		break;
+	case EAssetTypeCategories::FX:
+		return EAssetCategoryPaths::FX;
+	}
+
+	return TOptional<FAssetCategoryPath>();
 }
 
 #undef LOCTEXT_NAMESPACE

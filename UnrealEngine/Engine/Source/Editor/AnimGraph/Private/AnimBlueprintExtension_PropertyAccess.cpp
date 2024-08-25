@@ -52,6 +52,15 @@ FPropertyAccessHandle UAnimBlueprintExtension_PropertyAccess::AddCopy(TArrayView
 	return FPropertyAccessHandle();
 }
 
+FPropertyAccessHandle UAnimBlueprintExtension_PropertyAccess::AddAccess(TArrayView<FString> InPath, UObject* InObject)
+{
+	if (PropertyAccessLibraryCompiler.IsValid())
+	{
+		return PropertyAccessLibraryCompiler->AddAccess(InPath, InObject);
+	}
+	return FPropertyAccessHandle();
+}
+
 void UAnimBlueprintExtension_PropertyAccess::HandleStartCompilingClass(const UClass* InClass, IAnimBlueprintCompilationBracketContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData)
 {
 	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
@@ -182,6 +191,15 @@ FCompiledPropertyAccessHandle UAnimBlueprintExtension_PropertyAccess::GetCompile
 		return PropertyAccessLibraryCompiler->GetCompiledHandle(InHandle);
 	}
 	return FCompiledPropertyAccessHandle();
+}
+
+EPropertyAccessCopyType UAnimBlueprintExtension_PropertyAccess::GetCompiledHandleAccessType(FPropertyAccessHandle InHandle) const
+{
+	if (PropertyAccessLibraryCompiler.IsValid())
+	{
+		return PropertyAccessLibraryCompiler->GetCompiledHandleAccessType(InHandle);
+	}
+	return EPropertyAccessCopyType::None;
 }
 
 FText UAnimBlueprintExtension_PropertyAccess::GetCompiledHandleContext(FCompiledPropertyAccessHandle InHandle)

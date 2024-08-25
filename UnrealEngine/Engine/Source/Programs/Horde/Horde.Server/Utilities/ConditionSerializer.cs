@@ -24,7 +24,7 @@ namespace Horde.Server.Utilities
 		/// <inheritdoc/>
 		public Condition Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
 		{
-			if(context.Reader.CurrentBsonType == BsonType.Null)
+			if (context.Reader.CurrentBsonType == BsonType.Null)
 			{
 				context.Reader.ReadNull();
 				return null!;
@@ -37,11 +37,11 @@ namespace Horde.Server.Utilities
 		{
 			if (value == null)
 			{
-				context.Writer.WriteNull();				
+				context.Writer.WriteNull();
 			}
 			else
 			{
-				context.Writer.WriteString(value.ToString());				
+				context.Writer.WriteString(value.ToString());
 			}
 		}
 	}

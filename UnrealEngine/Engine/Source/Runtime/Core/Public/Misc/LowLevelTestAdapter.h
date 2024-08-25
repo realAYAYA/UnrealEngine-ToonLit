@@ -108,7 +108,6 @@ FString CaptureExpressionsAndValues(const FString& InExpressions, ArgTypes&&... 
 #define TEST_CASE(PrettyName, TFlags) TEST_CASE_NAMED_STR(TEST_CASE_GENERATED_NAME_UNIQUE, TEST_CASE_GENERATED_NAME_UNIQUE_STR, PrettyName, TFlags)
 #define TEST_CASE_NAMED(ClassName, PrettyName, TFlags) TEST_CASE_NAMED_STR(ClassName, #ClassName, PrettyName, TFlags)
 
-#define INFO(What)
 //-V:CHECK:571,501,547
 #define CHECK(Expr) if (!(Expr)) { FAutomationTestFramework::Get().GetCurrentTest()->AddError(TEXT("Condition failed")); }
 //-V:CHECK_FALSE:571,501,547
@@ -134,7 +133,10 @@ FString CaptureExpressionsAndValues(const FString& InExpressions, ArgTypes&&... 
 #define FAIL_CHECK(Message) FAutomationTestFramework::Get().GetCurrentTest()->AddError(Message);
 
 #define CAPTURE(...) FAutomationTestFramework::Get().GetCurrentTest()->AddInfo(CaptureExpressionsAndValues(#__VA_ARGS__, __VA_ARGS__));
+#define INFO(Message) FAutomationTestFramework::Get().GetCurrentTest()->AddInfo(Message);
 #define WARN(Message) FAutomationTestFramework::Get().GetCurrentTest()->AddWarning(Message); 
-#define FAIL_ON_MESSAGE(Message) FAutomationTestFramework::Get().GetCurrentTest()->AddExpectedError(Message); 
+#define FAIL_ON_MESSAGE(Message) FAutomationTestFramework::Get().GetCurrentTest()->AddExpectedError(Message);
+
+#define SKIP(Message)
 
 #endif // !WITH_LOW_LEVEL_TESTS

@@ -593,7 +593,7 @@ TSharedPtr<FNiagaraCurveSelectionTreeNode> UNiagaraCurveSelectionViewModel::Crea
 		}
 		else
 		{
-			const FText* DisplayName = StackEditorData.GetStackEntryDisplayName(FNiagaraStackGraphUtilities::GenerateStackModuleEditorDataKey(FunctionCallNode));
+			const FText* DisplayName = StackEditorData.GetStackEntryDisplayName(FNiagaraStackGraphUtilities::StackKeys::GenerateStackModuleEditorDataKey(FunctionCallNode));
 			if(DisplayName != nullptr)
 			{
 				NewFunctionNode->SetDisplayName(*DisplayName);
@@ -886,9 +886,12 @@ void UNiagaraCurveSelectionViewModel::Refresh()
 		for (TSharedRef<FNiagaraEmitterHandleViewModel> EmitterHandleViewModel : SystemViewModel->GetEmitterHandleViewModels())
 		{
 			// During transactions Emitters may not have their EditorData set if they were created during the transaction; skip if this is true.
-			if (EmitterHandleViewModel->GetEmitterHandle() && EmitterHandleViewModel->GetEmitterHandle()->GetEmitterData()->GetEditorData())
+			//-TODO:Stateless:
+			FNiagaraEmitterHandle* EmitterHandle = EmitterHandleViewModel->GetEmitterHandle();
+			if (EmitterHandle && EmitterHandle->GetEmitterData() && EmitterHandle->GetEmitterData()->GetEditorData())
+			//-TODO:Stateless:
 			{
-				TSharedPtr<FNiagaraCurveSelectionTreeNode> EmitterNode = CreateNodeForEmitter(OldRootChildNodes, *EmitterHandleViewModel->GetEmitterHandle());
+				TSharedPtr<FNiagaraCurveSelectionTreeNode> EmitterNode = CreateNodeForEmitter(OldRootChildNodes, *EmitterHandle);
 				if (EmitterNode.IsValid())
 				{
 					NewRootChildNodes.Add(EmitterNode.ToSharedRef());

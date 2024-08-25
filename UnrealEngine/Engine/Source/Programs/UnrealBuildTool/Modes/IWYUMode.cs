@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
@@ -203,6 +204,12 @@ namespace UnrealBuildTool
 	class IWYUMode : ToolMode
 	{
 		/// <summary>
+		/// Specifies the file to use for logging.
+		/// </summary>
+		[XmlConfigFile(Category = "BuildConfiguration")]
+		public string? IWYUBaseLogFileName;
+
+		/// <summary>
 		/// Will check out files from p4 and write to disk
 		/// </summary>
 		[CommandLine("-Write")]
@@ -343,11 +350,31 @@ namespace UnrealBuildTool
 		/// <param name="Logger"></param>
 		public override async Task<int> ExecuteAsync(CommandLineArguments Arguments, ILogger Logger)
 		{
+			Arguments.ApplyTo(this);
+
 			Logger.LogInformation($"====================================================");
 			Logger.LogInformation($"Running IWYU. {(bWrite ? "" : "(Preview mode. Add -Write to write modifications to files)")}");
 			Logger.LogInformation($"====================================================");
 
-			Arguments.ApplyTo(this);
+			// Fixup the log path if it wasn't overridden by a config file
+			if (IWYUBaseLogFileName == null)
+			{
+				IWYUBaseLogFileName = FileReference.Combine(Unreal.EngineProgramSavedDirectory, "UnrealBuildTool", "IWYULog.txt").FullName;
+			}
+
+			// Create the log file, and flush the startup listener to it
+			if (!Arguments.HasOption("-NoLog") && !Log.HasFileWriter())
+			{
+				Log.AddFileWriter("DefaultLogTraceListener", FileReference.FromString(IWYUBaseLogFileName));
+			}
+			else
+			{
+				IEnumerable<StartupTraceListener> StartupListeners = Trace.Listeners.OfType<StartupTraceListener>();
+				if (StartupListeners.Any())
+				{
+					Trace.Listeners.Remove(StartupListeners.First());
+				}
+			}
 
 			// Create the build configuration object, and read the settings
 			CommandLineArguments BuildArguments = Arguments.Append(new[] { "-IWYU" }); // Add in case it is not added (it is needed for iwyu toolchain)
@@ -814,9 +841,9 @@ namespace UnrealBuildTool
 			Logger.LogInformation($"Generating infos for .generated.h files...");
 			if (GeneratedHeaderInfos.Count > 0)
 			{
-				IWYUIncludeEntry ObjectMacrosInclude = SpecialIncludes["UObject/ObjectMacros.h"]!;
-				IWYUIncludeEntry ScriptMacrosInclude = SpecialIncludes["UObject/ScriptMacros.h"]!;
-				IWYUIncludeEntry VerseInteropUtilsInclude = SpecialIncludes["VerseInteropUtils.h"]!;
+				IWYUIncludeEntry? ObjectMacrosInclude = SpecialIncludes["UObject/ObjectMacros.h"];
+				IWYUIncludeEntry? ScriptMacrosInclude = SpecialIncludes["UObject/ScriptMacros.h"];
+				IWYUIncludeEntry? VerseInteropUtilsInclude = SpecialIncludes["VerseInteropUtils.h"];
 
 				foreach (string Gen in GeneratedHeaderInfos)
 				{
@@ -824,15 +851,24 @@ namespace UnrealBuildTool
 					GenInfo.File = Gen;
 					if (Gen.EndsWith(".generated.h"))
 					{
-						GenInfo.IncludesSeenInFile.Add(ObjectMacrosInclude);
-						GenInfo.IncludesSeenInFile.Add(ScriptMacrosInclude);
-						GenInfo.Includes.Add(ObjectMacrosInclude);
-						GenInfo.Includes.Add(ScriptMacrosInclude);
+						if (ObjectMacrosInclude != null)
+						{
+							GenInfo.IncludesSeenInFile.Add(ObjectMacrosInclude);
+							GenInfo.Includes.Add(ObjectMacrosInclude);
+						}
+						if (ScriptMacrosInclude != null)
+						{
+							GenInfo.IncludesSeenInFile.Add(ScriptMacrosInclude);
+							GenInfo.Includes.Add(ScriptMacrosInclude);
+						}
 					}
 					else
 					{
-						GenInfo.IncludesSeenInFile.Add(VerseInteropUtilsInclude);
-						GenInfo.Includes.Add(VerseInteropUtilsInclude);
+						if (VerseInteropUtilsInclude != null)
+						{
+							GenInfo.IncludesSeenInFile.Add(VerseInteropUtilsInclude);
+							GenInfo.Includes.Add(VerseInteropUtilsInclude);
+						}
 					}
 					Infos.Add(Gen, GenInfo);
 				}
@@ -1287,6 +1323,7 @@ namespace UnrealBuildTool
 
 				bool IsCpp = Info.IsCpp;
 				bool IsPrivate = IsCpp || Info.File.Contains("/Private/");
+				bool IsInternal = Info.File.Contains("/Internal/");
 
 				// If we only want to update private files we early out for non-private headers
 				if (!IsPrivate && (bUpdateOnlyPrivate || (Info.Module?.Rules.IWYUSupport == IWYUSupport.KeepPublicAsIsForNow)))
@@ -1769,7 +1806,7 @@ namespace UnrealBuildTool
 				// If file is public, in engine and we have a deprecation tag set we will 
 				// add a deprecated include scope at the end of the file (unless scope already exists, then we'll add it inside that)
 				string EngineDir = Unreal.EngineDirectory.FullName.Replace('\\', '/');
-				if (!IsPrivate && Info.File.StartsWith(EngineDir) && !String.IsNullOrEmpty(HeaderDeprecationTag))
+				if (!(IsPrivate || IsInternal) && Info.File.StartsWith(EngineDir) && !String.IsNullOrEmpty(HeaderDeprecationTag))
 				{
 					Dictionary<string, string> PrintableToFull = new();
 					foreach (IWYUIncludeEntry Seen in Info.IncludesSeenInFile)

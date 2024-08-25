@@ -8,6 +8,7 @@
 #if RHI_RAYTRACING
 
 #include "Async/TaskGraphInterfaces.h"
+#include "Math/DoubleFloat.h"
 #include "RHI.h"
 #include "RHIUtilities.h"
 #include "RenderGraphResources.h"
@@ -49,6 +50,10 @@ public:
 	~FRayTracingScene();
 
 	uint32 AddInstance(FRayTracingGeometryInstance Instance, const FPrimitiveSceneProxy* Proxy = nullptr, bool bDynamic = false);
+
+	uint32 AddInstancesUninitialized(uint32 NumInstances);
+
+	void SetInstance(uint32 InstanceIndex, FRayTracingGeometryInstance Instance, const FPrimitiveSceneProxy* Proxy = nullptr, bool bDynamic = false);
 
 	// Allocates RayTracingSceneRHI and builds various metadata required to create the final scene.
 	FRayTracingSceneWithGeometryInstances BuildInitializationData() const;
@@ -129,8 +134,7 @@ public:
 	bool bNeedsDebugInstanceGPUSceneIndexBuffer = false;
 
 	// Used for transforming to translated world space in which TLAS was built.
-	FVector RelativePreViewTranslation = FVector::Zero();
-	FVector3f ViewTilePosition = FVector3f::ZeroVector;
+	FDFVector3 PreViewTranslation {};
 private:
 	void WaitForTasks() const;
 

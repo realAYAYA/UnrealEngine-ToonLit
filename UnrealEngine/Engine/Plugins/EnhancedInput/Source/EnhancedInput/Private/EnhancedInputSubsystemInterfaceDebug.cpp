@@ -406,7 +406,7 @@ void IEnhancedInputSubsystemInterface::ShowDebugActionModifiers(UCanvas* Canvas,
 
 
 		static TArray<FVector> RunningSampleData;
-		RunningSampleData.SetNumUninitialized(VisSize.X * VisSize.Y, false);
+		RunningSampleData.SetNumUninitialized(VisSize.X * VisSize.Y, EAllowShrinking::No);
 
 		// Reset running data to initial values
 		for (int32 y = 0; y < VisSize.Y; ++y)

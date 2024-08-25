@@ -1,0 +1,68 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	ShadowFactorsUpsampleCommon.ush
+=============================================================================*/
+
+#ifndef SHADOW_FACTORS_UPSAMPLE_REQUIRED
+#error "Must define SHADOW_FACTORS_UPSAMPLE_REQUIRED"
+#endif
+
+#include "Common.ush"
+#include "ComputeShaderUtils.ush"
+
+void UpsampleShadowFactors(float4 SVPos, int4 ScissorRectMinAndSize, float OneOverDownsampleFactor, Texture2D ShadowFactorsTexture, SamplerState ShadowFactorsSampler, out float ShadowFactor, out float SceneDepth)
+{
+	float2 BufferUV = SvPositionToBufferUV(SVPos);
+
+	// ShadowFactors is computed at 0,0 regardless of viewrect min
+	float2 ShadowFactorsUV = BufferUV - ScissorRectMinAndSize.xy * View.BufferSizeAndInvSize.zw;
+
+	SceneDepth = CalcSceneDepth(BufferUV);
+
+#define BILATERAL_UPSAMPLE 1
+#if BILATERAL_UPSAMPLE && SHADOW_FACTORS_UPSAMPLE_REQUIRED
+	float2 LowResBufferSize = floor(View.BufferSizeAndInvSize.xy * OneOverDownsampleFactor);
+	float2 LowResTexelSize = 1.0f / LowResBufferSize;
+
+	// since DF shadow rays are traced from the position of the full-res texel at the top left of low-res tile
+	// we need to use different UVs for calculating bilinear weights and sampling the 4 texels
+
+	float2 Corner00UVBase = floor(ShadowFactorsUV * LowResBufferSize) / LowResBufferSize;
+
+	// Calculate bilinear weights using the same UVs that rays were traced from
+	float2 Corner00UV = Corner00UVBase + 0.5f * View.BufferSizeAndInvSize.zw;
+	float2 BilinearWeights = saturate((ShadowFactorsUV - Corner00UV) * LowResBufferSize);
+
+	// Sample low res texture using UVs at center of low-res texels since we are interpolating manually
+	float2 Corner00SampleUV = Corner00UVBase + 0.5f * LowResTexelSize;
+
+	float2 TextureValues00 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00SampleUV, 0).xy;
+	float2 TextureValues10 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00SampleUV + float2(LowResTexelSize.x, 0), 0).xy;
+	float2 TextureValues01 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00SampleUV + float2(0, LowResTexelSize.y), 0).xy;
+	float2 TextureValues11 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00SampleUV + LowResTexelSize, 0).xy;
+
+	float4 CornerWeights = float4(
+		(1 - BilinearWeights.y) * (1 - BilinearWeights.x), 
+		(1 - BilinearWeights.y) * BilinearWeights.x,
+		BilinearWeights.y * (1 - BilinearWeights.x),
+		BilinearWeights.y * BilinearWeights.x);
+
+	float Epsilon = .0001f;
+
+	float4 CornerDepths = abs(float4(TextureValues00.y, TextureValues10.y, TextureValues01.y, TextureValues11.y));
+	float4 DepthWeights = 1.0f / (abs(CornerDepths - SceneDepth.xxxx) + Epsilon);
+	float4 FinalWeights = CornerWeights * DepthWeights;
+
+	float InterpolatedResult = 
+		(FinalWeights.x * TextureValues00.x 
+		+ FinalWeights.y * TextureValues10.x
+		+ FinalWeights.z * TextureValues01.x 
+		+ FinalWeights.w * TextureValues11.x)
+		/ dot(FinalWeights, 1);
+
+	ShadowFactor = InterpolatedResult;
+#else
+	ShadowFactor = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, ShadowFactorsUV, 0).x;
+#endif
+}

@@ -366,11 +366,18 @@ void FViewModelChildren::Empty()
 }
 
 FViewModelHierarchyOperation::FViewModelHierarchyOperation(const TSharedPtr<FViewModel>& InAnyModel)
-	: FViewModelHierarchyOperation(InAnyModel->SharedData)
-{}
+	: SharedData(InAnyModel->SharedData)
+{
+	Construct();
+}
 
-FViewModelHierarchyOperation::FViewModelHierarchyOperation(const TSharedPtr<FSharedViewModelData>& InSharedData)
+FViewModelHierarchyOperation::FViewModelHierarchyOperation(const TSharedRef<FSharedViewModelData>& InSharedData)
 	: SharedData(InSharedData)
+{
+	Construct();
+}
+
+void FViewModelHierarchyOperation::Construct()
 {
 	if (SharedData)
 	{

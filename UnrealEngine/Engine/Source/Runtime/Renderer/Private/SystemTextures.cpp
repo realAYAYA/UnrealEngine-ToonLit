@@ -291,10 +291,7 @@ void FSystemTextures::InitializeCommonTextures(FRHICommandListImmediate& RHICmdL
 	// Create Cube BlackDummy textures
 	{
 		CubeBlackDummy = CreateRenderTarget(GBlackTextureCube->TextureRHI, TEXT("CubeBlackDummy"));
-		if (SupportsTextureCubeArray(GetFeatureLevel()))
-		{
-			CubeArrayBlackDummy = CreateRenderTarget(GBlackCubeArrayTexture->TextureRHI, TEXT("CubeArrayBlackDummy"));
-		}
+		CubeArrayBlackDummy = CreateRenderTarget(GBlackCubeArrayTexture->TextureRHI, TEXT("CubeArrayBlackDummy"));
 	}
 }
 
@@ -926,6 +923,25 @@ void FSystemTextures::InitializeFeatureLevelDependentTextures(FRHICommandListImm
 		GTAOPreIntegrated = CreateRenderTarget(Texture, Desc.DebugName);
 	}
 
+    // Create a texture array that is a single UInt32 value set to 0, this texture is AtomicCompatible on SM6
+    {
+        ETextureCreateFlags TextureCreateFlags = ETextureCreateFlags::ShaderResource;
+        
+        if(InFeatureLevel >= ERHIFeatureLevel::SM6)
+        {
+            TextureCreateFlags |= ETextureCreateFlags::AtomicCompatible;
+        }
+        
+        const FRHITextureCreateDesc Desc =
+            FRHITextureCreateDesc::Create2DArray(TEXT("ZeroUIntArrayAtomicCompatDummy"), 1, 1, 1, PF_R32_UINT)
+            .SetFlags(TextureCreateFlags)
+            .SetClassName(SystemTexturesName);
+
+        FTextureRHIRef Texture = RHICreateTexture(Desc);
+        SetDummyTextureArrayData<uint32>(Texture, 0u);
+        ZeroUIntArrayAtomicCompatDummy = CreateRenderTarget(Texture, Desc.DebugName);
+    }
+    
 	// Initialize textures only once.
 	FeatureLevelInitializedTo = InFeatureLevel;
 }
@@ -960,8 +976,9 @@ void FSystemTextures::ReleaseRHI()
 	CubeBlackDummy.SafeRelease();
 	CubeArrayBlackDummy.SafeRelease();
 	ZeroUIntDummy.SafeRelease();
-	ZeroUIntArrayDummy.SafeRelease();
-	MidGreyDummy.SafeRelease();
+    ZeroUIntArrayDummy.SafeRelease();
+    ZeroUIntArrayAtomicCompatDummy.SafeRelease();
+    MidGreyDummy.SafeRelease();
 	StencilDummy.SafeRelease();
 	StencilDummySRV.SafeRelease();
 	BlackDepthCube.SafeRelease();
@@ -1057,6 +1074,11 @@ FRDGTextureRef FSystemTextures::GetZeroUIntDummy(FRDGBuilder& GraphBuilder) cons
 FRDGTextureRef FSystemTextures::GetZeroUIntArrayDummy(FRDGBuilder& GraphBuilder) const
 {
 	return GraphBuilder.RegisterExternalTexture(ZeroUIntArrayDummy, TEXT("ZeroUIntArrayDummy"), ERDGTextureFlags::SkipTracking);
+}
+
+FRDGTextureRef FSystemTextures::GetZeroUIntArrayAtomicCompatDummy(FRDGBuilder& GraphBuilder) const
+{
+    return GraphBuilder.RegisterExternalTexture(ZeroUIntArrayAtomicCompatDummy, TEXT("ZeroUIntArrayAtomicCompatDummy"), ERDGTextureFlags::SkipTracking);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////

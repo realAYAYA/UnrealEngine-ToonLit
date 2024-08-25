@@ -18,5 +18,5 @@ public:
 	TArray<UObjectReachabilityStressData*> Children;
 };
 
-UObjectReachabilityStressData* GenerateReachabilityStressData();
-void UnlinkReachabilityStressData(UObjectReachabilityStressData* Data);
+void GenerateReachabilityStressData(TArray<UObjectReachabilityStressData*>& Data);
+void UnlinkReachabilityStressData(TArray<UObjectReachabilityStressData*>& Data);

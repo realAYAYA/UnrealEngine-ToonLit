@@ -4,7 +4,6 @@
 
 #include "FoliageType_Actor.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/Object.h"
 

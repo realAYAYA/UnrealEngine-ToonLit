@@ -444,7 +444,7 @@ void FCustomPrimitiveDataCustomization::CreateParameterRow(IDetailChildrenBuilde
 
 		TSharedRef<SWidget> ValueWidget = ElementHandle->CreatePropertyValueWidget(false);
 		ValueWidget->SetEnabled(bDataEditable);
-		ElementHandleRef->SetOnPropertyResetToDefault(FSimpleDelegate::CreateSP(this, &FCustomPrimitiveDataCustomization::SetDefaultValue, ElementHandle, PrimIdx));
+		ElementHandleRef->SetOnPropertyResetToDefault(FSimpleDelegate::CreateSP(this, &FCustomPrimitiveDataCustomization::SetDefaultValue, PrimIdx));
 
 		Row.CustomWidget()
 		.NameContent()
@@ -756,12 +756,22 @@ void FCustomPrimitiveDataCustomization::OnAddedDesiredPrimitiveData(uint8 PrimId
 	{
 		GEditor->BeginTransaction(LOCTEXT("OnAddedDesiredPrimitiveData", "Added Items"));
 
-		for (int32 i = NumElements; i <= PrimIdx; ++i)
-		{
-			DataArrayHandle->AddItem();
+		DataHandle->NotifyPreChange();
 
-			SetDefaultValue(DataArrayHandle->GetElement(i), i);
+		TArray<void*> RawArray;
+		DataHandle->AccessRawData(RawArray);
+		
+		if (RawArray.Num() > 0)
+		{
+			TArray<float>* Data = reinterpret_cast<TArray<float>*>(RawArray[0]);
+
+			for (int32 i = NumElements; i <= PrimIdx; ++i)
+			{
+				SetDefaultValue(i);
+			}
 		}
+		
+		DataHandle->NotifyPostChange(EPropertyChangeType::ArrayAdd);
 
 		GEditor->EndTransaction();
 	}
@@ -808,61 +818,62 @@ void FCustomPrimitiveDataCustomization::SetVectorColor(FLinearColor NewColor, ui
 	uint32 NumElems;
 	if (GetNumElements(NumElems) == FPropertyAccess::Success)
 	{
-		const int32 MaxElems = FMath::Min((int32)NumElems, PrimIdx + 4);
-
-		for (int32 i = PrimIdx; i < MaxElems; ++i)
+		DataHandle->NotifyPreChange();
+		DataHandle->EnumerateRawData([&](void* Ptr, const int32 ObjectIndex, const int32 NumObjects)
 		{
-			DataArrayHandle->GetElement(i)->SetValue(Color[i - PrimIdx]);
-		}
+			const uint32 MaxElems = FMath::Min(NumElems, PrimIdx + 4u);
+
+			if (TArray<float>* const DataArray = static_cast<TArray<float>*>(Ptr))
+			{
+				for (uint32 i = PrimIdx; i < MaxElems; ++i)
+				{
+					(*DataArray)[i] = Color[i - PrimIdx];
+				}
+			}
+ 
+			return true;
+		});
+		DataHandle->NotifyPostChange(EPropertyChangeType::ValueSet);
+		DataHandle->NotifyFinishedChangingProperties();
+
 	}
 }
 
-void FCustomPrimitiveDataCustomization::SetDefaultValue(TSharedPtr<IPropertyHandle> Handle, uint8 PrimIdx)
+void FCustomPrimitiveDataCustomization::SetDefaultValue(uint8 PrimIdx)
 {
-	if (Handle.IsValid())
+	TSet<TWeakObjectPtr<UPrimitiveComponent>> ChangedComponents;
+
+	// Prioritize vector data since we have a color picker
+	if (VectorParameterData.Contains(PrimIdx))
 	{
-		TSet<TWeakObjectPtr<UPrimitiveComponent>> ChangedComponents;
-
-		// Prioritize vector data since we have a color picker
-		if (VectorParameterData.Contains(PrimIdx))
+		for (const FParameterData& ParameterData : VectorParameterData[PrimIdx])
 		{
-			for (const FParameterData& ParameterData : VectorParameterData[PrimIdx])
+			if (ParameterData.Component.IsValid() && !ChangedComponents.Contains(ParameterData.Component))
 			{
-				if (ParameterData.Component.IsValid() && !ChangedComponents.Contains(ParameterData.Component))
+				FLinearColor Color(ForceInitToZero);
+				if (!ParameterData.Material.IsValid() || ParameterData.Material->GetVectorParameterValue(ParameterData.Info, Color))
 				{
-					FLinearColor Color(ForceInitToZero);
-					if (!ParameterData.Material.IsValid() || ParameterData.Material->GetVectorParameterValue(ParameterData.Info, Color))
-					{
-						float* ColorPtr = reinterpret_cast<float*>(&Color);
-						ParameterData.Component->SetDefaultCustomPrimitiveDataFloat(PrimIdx, ColorPtr[ParameterData.IndexOffset]);
+					float* ColorPtr = reinterpret_cast<float*>(&Color);
+					ParameterData.Component->SetDefaultCustomPrimitiveDataFloat(PrimIdx, ColorPtr[ParameterData.IndexOffset]);
 
-						FPropertyChangedEvent PropertyChangedEvent(Handle->GetParentHandle()->GetParentHandle()->GetProperty());
-						PropertyChangedEvent.SetActiveMemberProperty(Handle->GetParentHandle()->GetProperty());
-						ParameterData.Component->PostEditChangeProperty(PropertyChangedEvent);
-
-						ChangedComponents.Add(ParameterData.Component);
-					}
+					ChangedComponents.Add(ParameterData.Component);
 				}
 			}
 		}
+	}
 
-		if (ScalarParameterData.Contains(PrimIdx))
+	if (ScalarParameterData.Contains(PrimIdx))
+	{
+		for (const FParameterData& ParameterData : ScalarParameterData[PrimIdx])
 		{
-			for (const FParameterData& ParameterData : ScalarParameterData[PrimIdx])
+			if (ParameterData.Component.IsValid() && !ChangedComponents.Contains(ParameterData.Component))
 			{
-				if (ParameterData.Component.IsValid() && !ChangedComponents.Contains(ParameterData.Component))
+				float Value = 0.f;
+				if (!ParameterData.Material.IsValid() || ParameterData.Material->GetScalarParameterValue(ParameterData.Info, Value))
 				{
-					float Value = 0.f;
-					if (!ParameterData.Material.IsValid() || ParameterData.Material->GetScalarParameterValue(ParameterData.Info, Value))
-					{
-						ParameterData.Component->SetDefaultCustomPrimitiveDataFloat(PrimIdx, Value);
+					ParameterData.Component->SetDefaultCustomPrimitiveDataFloat(PrimIdx, Value);
 
-						FPropertyChangedEvent PropertyChangedEvent(Handle->GetParentHandle()->GetParentHandle()->GetProperty());
-						PropertyChangedEvent.SetActiveMemberProperty(Handle->GetParentHandle()->GetProperty());
-						ParameterData.Component->PostEditChangeProperty(PropertyChangedEvent);
-
-						ChangedComponents.Add(ParameterData.Component);
-					}
+					ChangedComponents.Add(ParameterData.Component);
 				}
 			}
 		}
@@ -896,6 +907,7 @@ FReply FCustomPrimitiveDataCustomization::OnMouseButtonDownColorBlock(const FGeo
 	GEditor->BeginTransaction(FText::Format(LOCTEXT("SetVectorColor", "Edit Primitive Data Vector: {0}"), FText::AsNumber(PrimIdx)));
 
 	FColorPickerArgs PickerArgs;
+	PickerArgs.bOnlyRefreshOnOk = true;
 	PickerArgs.bUseAlpha = true;
 	PickerArgs.InitialColor = GetVectorColor(PrimIdx);
 	PickerArgs.ParentWidget = ColorBlocks[PrimIdx];

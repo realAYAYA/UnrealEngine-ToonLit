@@ -189,14 +189,19 @@ void FEntityLedger::ImportEntity(UMovieSceneEntitySystemLinker* Linker, const FE
 	}
 }
 
-void FEntityLedger::UnlinkEverything(UMovieSceneEntitySystemLinker* Linker)
+void FEntityLedger::UnlinkEverything(UMovieSceneEntitySystemLinker* Linker, EUnlinkEverythingMode UnlinkMode)
 {
+	FComponentTypeID NeedsLink = FBuiltInComponentTypes::Get()->Tags.NeedsLink;
 	FComponentMask FinishedMask = FBuiltInComponentTypes::Get()->FinishedMask;
 
 	for (TPair<FMovieSceneEvaluationFieldEntityKey, FImportedEntityData>& Pair : ImportedEntities)
 	{
 		if (Pair.Value.EntityID)
 		{
+			if (UnlinkMode == EUnlinkEverythingMode::CleanGarbage)
+			{
+				Linker->EntityManager.RemoveComponent(Pair.Value.EntityID, NeedsLink, EEntityRecursion::Full);
+			}
 			Linker->EntityManager.AddComponents(Pair.Value.EntityID, FinishedMask, EEntityRecursion::Full);
 		}
 	}
@@ -220,7 +225,7 @@ void FEntityLedger::CleanupLinkerEntities(const TSet<FMovieSceneEntityID>& Linke
 	{
 		if (LinkerEntities.Contains(OneShotEntities[Index]))
 		{
-			OneShotEntities.RemoveAtSwap(Index, 1, false);
+			OneShotEntities.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 		}
 	}
 	for (auto It = ImportedEntities.CreateIterator(); It; ++It)

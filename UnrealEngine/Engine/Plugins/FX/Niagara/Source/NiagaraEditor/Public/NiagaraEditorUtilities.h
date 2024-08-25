@@ -48,6 +48,8 @@ struct FNiagaraScriptVersionUpgradeContext;
 struct FNiagaraScriptConversionContext;
 class UUpgradeNiagaraEmitterContext;
 struct FNiagaraMessageStore;
+class UNiagaraStackNote;
+class SToolTip;
 
 enum class ENiagaraFunctionDebugState : uint8;
 
@@ -56,6 +58,11 @@ struct FRefreshAllScriptsFromExternalChangesArgs
 	UNiagaraScript* OriginatingScript = nullptr;
 	UNiagaraGraph* OriginatingGraph = nullptr;
 	UNiagaraParameterDefinitions* OriginatingParameterDefinitions = nullptr;
+};
+
+struct NIAGARAEDITOR_API FNiagaraEditorSharedTexts
+{
+	static const FText DebugDrawUIActionBaseText;
 };
 
 namespace FNiagaraEditorUtilities
@@ -169,7 +176,7 @@ namespace FNiagaraEditorUtilities
 
 	FText GetTypeDefinitionCategory(const FNiagaraTypeDefinition& TypeDefinition);
 
-	NIAGARAEDITOR_API bool AreTypesAssignable(const FNiagaraTypeDefinition& TypeA, const FNiagaraTypeDefinition& TypeB);
+	NIAGARAEDITOR_API bool AreTypesAssignable(const FNiagaraTypeDefinition& FromType, const FNiagaraTypeDefinition& ToType);
 
 	void MarkDependentCompilableAssetsDirty(TArray<UObject*> InObjects);
 	void MarkDependentCompilableAssetsDirty(const TArray<FAssetData>& InAssets);
@@ -236,12 +243,14 @@ namespace FNiagaraEditorUtilities
 
 	NIAGARAEDITOR_API ENiagaraScriptLibraryVisibility GetScriptAssetVisibility(const FAssetData& ScriptAssetData);
 
+	NIAGARAEDITOR_API bool GetIsInheritableFromAssetRegistryTags(const FAssetData& AssetData, bool& bUseInheritance);
+	
 	/** Used instead of reading the template tag directly for backwards compatibility reasons when changing from a bool template specifier to an enum */
 	NIAGARAEDITOR_API bool GetTemplateSpecificationFromTag(const FAssetData& Data, ENiagaraScriptTemplateSpecification& OutTemplateSpecification);
 
 	NIAGARAEDITOR_API bool IsScriptAssetInLibrary(const FAssetData& ScriptAssetData);
 
-	NIAGARAEDITOR_API bool IsEnginePluginAsset(const FAssetData& InAssetData);
+	NIAGARAEDITOR_API bool IsEnginePluginAsset(const FTopLevelAssetPath& InTopLevelAssetPath);
 
 	NIAGARAEDITOR_API int32 GetWeightForItem(const TSharedPtr<FNiagaraMenuAction_Generic>& Item, const TArray<FString>& FilterTerms);
 
@@ -303,6 +312,9 @@ namespace FNiagaraEditorUtilities
 	ECheckBoxState GetSelectedEmittersIsolatedCheckState(TSharedRef<FNiagaraSystemViewModel> SystemViewModel);
 	void ToggleSelectedEmittersIsolated(TSharedRef<FNiagaraSystemViewModel> SystemViewModel);
 
+	ECheckBoxState GetSelectedEmittersEmitterModeCheckState(TSharedRef<FNiagaraSystemViewModel> SystemViewModel, ENiagaraEmitterMode EmitterMode);
+	void SetSelectedEmittersEmitterMode(TSharedRef<FNiagaraSystemViewModel> SystemViewModel, ENiagaraEmitterMode EmitterMode);
+
 	void CreateAssetFromEmitter(TSharedRef<FNiagaraEmitterHandleViewModel> EmitterHandleViewModel);
 
 	NIAGARAEDITOR_API void WarnWithToastAndLog(FText WarningMessage);
@@ -316,9 +328,9 @@ namespace FNiagaraEditorUtilities
 		return GetUniqueObjectName(Outer, T::StaticClass(), CandidateName);
 	}
 
-	TArray<FName> DecomposeVariableNamespace(const FName& InVarNameToken, FName& OutName);
+	NIAGARAEDITOR_API TArray<FName> DecomposeVariableNamespace(const FName& InVarNameToken, FName& OutName);
 
-	void  RecomposeVariableNamespace(const FName& InVarNameToken, const TArray<FName>& InParentNamespaces, FName& OutName);
+	NIAGARAEDITOR_API void  RecomposeVariableNamespace(const FName& InVarNameToken, const TArray<FName>& InParentNamespaces, FName& OutName);
 
 	FString NIAGARAEDITOR_API GetNamespacelessVariableNameString(const FName& InVarName);
 
@@ -344,6 +356,8 @@ namespace FNiagaraEditorUtilities
 	TArray<UNiagaraParameterDefinitions*> GetAllParameterDefinitions();
 
 	bool GetAvailableParameterDefinitions(const TArray<FString>& ExternalPackagePaths, TArray<FAssetData>& OutParameterDefinitionsAssetData);
+
+	NIAGARAEDITOR_API void GetAvailableParameterCollections(TArray<UNiagaraParameterCollection*>& OutParameterCollections);
 
 	TSharedPtr<INiagaraParameterDefinitionsSubscriberViewModel> GetOwningLibrarySubscriberViewModelForGraph(const UNiagaraGraph* Graph);
 
@@ -413,7 +427,12 @@ namespace FNiagaraEditorUtilities
 	NIAGARAEDITOR_API bool IsEditorDataInterfaceInstance(const UNiagaraDataInterface* DataInterface);
 
 	NIAGARAEDITOR_API UNiagaraDataInterface* GetResolvedRuntimeInstanceForEditorDataInterfaceInstance(const UNiagaraSystem& OwningSystem, UNiagaraDataInterface& EditorDataInterfaceInstance);
-
+	
+	namespace Tooltips
+	{
+		NIAGARAEDITOR_API TSharedRef<SToolTip> CreateStackNoteTooltip(UNiagaraStackNote& StackNote);
+	}
+	
 	namespace Scripts
 	{
 		namespace Validation
@@ -421,6 +440,36 @@ namespace FNiagaraEditorUtilities
 			TMap<FGuid, TArray<FNiagaraVariableBase>> ValidateScriptVariableIds(UNiagaraScript* Script, FGuid VersionGuid);
 			TMap<FNiagaraVariableBase, FGuid> FixupDuplicateScriptVariableGuids(UNiagaraScript* Script);
 		}
+	}
+
+	namespace AssetBrowser
+	{
+		enum EAssetTagSectionSource
+		{		
+			NiagaraInternal,
+			Project,
+			Other
+		};
+		
+		struct FStructuredAssetTagDefinitionLookupData
+		{
+			UNiagaraAssetTagDefinitions* DefinitionsAsset;
+			TArray<FNiagaraAssetTagDefinition> AssetTagDefinitions;
+			EAssetTagSectionSource Source;
+		};
+
+		
+		/** Returns a fully sorted array of tag definitions. Sorted by [Source.AssetSortOrder.(Optionally)TagNames].
+		 * If not sorted by tag names, the order defined in the asset is used. Sorting by tag names makes sense for flat lists. */
+		TArray<FStructuredAssetTagDefinitionLookupData> GetStructuredSortedAssetTagDefinitions(bool bSortTagsByName = false);
+		/** Same as above, but returns a flat list. If end result is not sorted, the order is [Source.AssetSorderOrder.OriginalTagOrder]. */
+		TArray<FNiagaraAssetTagDefinition> GetFlatSortedAssetTagDefinitions(bool bSortEndResultTagsByName = false);
+
+		const FNiagaraAssetTagDefinition& FindTagDefinitionForReference(const FNiagaraAssetTagDefinitionReference& Reference);
+
+		/* Expects a UNiagaraAssetTagDefinition asset */
+		EAssetTagSectionSource GetAssetTagDefinitionSource(const FAssetData& AssetData);
+		FText GetAssetTagSectionNameFromSource(EAssetTagSectionSource Source);
 	}
 }
 

@@ -76,7 +76,8 @@ public:
 		, _AlwaysUsesDeltaSnap(false)
 		, _EnableSlider(true)
 		, _Delta(0)
-		, _ShiftMouseMovePixelPerDelta(1)
+		, _ShiftMultiplier(10.f)
+		, _CtrlMultiplier(0.1f)
 		, _SupportDynamicSliderMaxValue(false)
 		, _SupportDynamicSliderMinValue(false)
 		, _SliderExponent(1.f)
@@ -115,12 +116,16 @@ public:
 		/** Delta to increment the value as the slider moves.  If not specified will determine automatically */
 		SLATE_ATTRIBUTE(NumericType, Delta)
 		/** How many pixel the mouse must move to change the value of the delta step */
-		SLATE_ATTRIBUTE(int32, ShiftMouseMovePixelPerDelta)
+		SLATE_ATTRIBUTE_DEPRECATED(int32, ShiftMouseMovePixelPerDelta, 5.4, "Shift Mouse Move Pixel Per Delta is deprecated and incrementing by a fixed delta per pixel is no longer supported. Please use ShiftMultiplier and CtrlMultiplier which will multiply the step per mouse move")
+		/** Multiplier to use when shift is held down */
+		SLATE_ATTRIBUTE(float, ShiftMultiplier)
+		/** Multiplier to use when ctrl is held down */
+		SLATE_ATTRIBUTE(float, CtrlMultiplier)
 		/** If we're an unbounded spinbox, what value do we divide mouse movement by before multiplying by Delta. Requires Delta to be set. */
 		SLATE_ATTRIBUTE(int32, LinearDeltaSensitivity)
-		/** Tell us if we want to support dynamically changing of the max value using ctrl */
+		/** Tell us if we want to support dynamically changing of the max value using alt */
 		SLATE_ATTRIBUTE(bool, SupportDynamicSliderMaxValue)
-		/** Tell us if we want to support dynamically changing of the min value using ctrl */
+		/** Tell us if we want to support dynamically changing of the min value using alt */
 		SLATE_ATTRIBUTE(bool, SupportDynamicSliderMinValue)
 		/** Called right after the max slider value is changed (only relevant if SupportDynamicSliderMaxValue is true) */
 		SLATE_EVENT(FOnDynamicSliderMinMaxValueChanged, OnDynamicSliderMaxValueChanged)
@@ -246,7 +251,8 @@ public:
 		PreDragValue = NumericType();
 
 		Delta = InArgs._Delta;
-		ShiftMouseMovePixelPerDelta = InArgs._ShiftMouseMovePixelPerDelta;
+		ShiftMultiplier = InArgs._ShiftMultiplier;
+		CtrlMultiplier = InArgs._CtrlMultiplier;
 		LinearDeltaSensitivity = InArgs._LinearDeltaSensitivity;
 
 		BackgroundHoveredBrush = &InArgs._Style->HoveredBackgroundBrush;
@@ -387,6 +393,11 @@ public:
 		return FMath::Max(FilledLayer, SCompoundWidget::OnPaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, FilledLayer, InWidgetStyle, bEnabled));
 	}
 
+	const bool CommitWithMultiplier(const FPointerEvent& MouseEvent)
+	{
+		return MouseEvent.IsShiftDown() || MouseEvent.IsControlDown();
+	}
+
 	/**
 	 * The system calls this method to notify the widget that a mouse button was pressed within it. This event is bubbled.
 	 *
@@ -441,7 +452,7 @@ public:
 			if (bDragging)
 			{
 				NumericType CurrentDelta = Delta.Get();
-				if (CurrentDelta != NumericType())
+				if (CurrentDelta != NumericType() && !CommitWithMultiplier(MouseEvent))
 				{
 					InternalValue = FMath::GridSnap(InternalValue, (double)CurrentDelta);
 				}
@@ -570,13 +581,7 @@ public:
 				const float MinSliderWidth = 100.f;
 				float SliderWidthInSlateUnits = FMath::Max((float)MyGeometry.GetDrawSize().X, MinSliderWidth);
 
-				const int32 CachedShiftMouseMovePixelPerDelta = ShiftMouseMovePixelPerDelta.Get();
-				if (CachedShiftMouseMovePixelPerDelta > 1 && MouseEvent.IsShiftDown())
-				{
-					SliderWidthInSlateUnits *= (float)CachedShiftMouseMovePixelPerDelta;
-				}
-
-				if (MouseEvent.IsControlDown())
+				if (MouseEvent.IsAltDown())
 				{
 					float DeltaToAdd = (float)MouseEvent.GetCursorDelta().X / SliderWidthInSlateUnits;
 
@@ -588,6 +593,22 @@ public:
 					{
 						ApplySliderMinValueChanged(DeltaToAdd, false);
 					}
+				}
+
+				ECommitMethod CommitMethod = CommittedViaSpin;
+				
+				const bool bIsSmallStep = (GetMaxSliderValue() - GetMinSliderValue()) <= 10.0;
+				double Step = bIsSmallStep ? 0.1 : 1.0;
+
+				if (MouseEvent.IsControlDown())
+				{
+					Step *= CtrlMultiplier.Get();
+					CommitMethod = CommittedViaSpinMultiplier;
+				}
+				else if (MouseEvent.IsShiftDown())
+				{
+					Step *= ShiftMultiplier.Get();
+					CommitMethod = CommittedViaSpinMultiplier;
 				}
 
 				//if we have a range to draw in
@@ -615,7 +636,7 @@ public:
 					FractionFilled *= SliderWidthInSlateUnits;
 
 					// Now add the delta to the fraction filled, this causes the spin.
-					FractionFilled += (float)MouseEvent.GetCursorDelta().X;
+					FractionFilled += (float)(MouseEvent.GetCursorDelta().X * Step);
 
 					// Clamp the fraction to be within the bounds of the geometry.
 					FractionFilled = FMath::Clamp(FractionFilled, 0.0f, SliderWidthInSlateUnits);
@@ -645,21 +666,22 @@ public:
 				{
 					// If this control has a specified delta and sensitivity then we use that instead of the current value for determining how much to change.
 					const double Sign = (MouseEvent.GetCursorDelta().X > 0) ? 1.0 : -1.0;
+
 					if (LinearDeltaSensitivity.IsSet() && LinearDeltaSensitivity.Get() != 0 && Delta.IsSet() && Delta.Get() > 0)
 					{
 						const double MouseDelta = FMath::Abs(MouseEvent.GetCursorDelta().X / (float)LinearDeltaSensitivity.Get());
-						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow((double)Delta.Get(), (double)SliderExponent.Get()));
+						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow((double)Delta.Get(), (double)SliderExponent.Get())) * Step;
 					}
 					else
 					{
 						const double MouseDelta = FMath::Abs(MouseEvent.GetCursorDelta().X / SliderWidthInSlateUnits);
 						const double CurrentValue = FMath::Clamp<double>(FMath::Abs(InternalValue), 1.0, (double)std::numeric_limits<NumericType>::max());
-						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow((double)CurrentValue, (double)SliderExponent.Get()));
+						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow((double)CurrentValue, (double)SliderExponent.Get())) * Step;
 					}
 				}
 
 				NumericType RoundedNewValue = RoundIfIntegerValue(NewValue);
-				CommitValue(RoundedNewValue, NewValue, CommittedViaSpin, ETextCommit::OnEnter);
+				CommitValue(RoundedNewValue, NewValue, CommitMethod, ETextCommit::OnEnter);
 			}
 
 			return FReply::Handled();
@@ -685,13 +707,13 @@ public:
 
 			if (MouseEvent.IsControlDown())
 			{
-				// If no value is set for WheelSmallStep, we use the DefaultStep divided by 10
-				Step /= 10.0;
+				// If no value is set for WheelSmallStep, we use the DefaultStep multiplied by the CtrlMultiplier
+				Step *= CtrlMultiplier.Get();
 			}
 			else if (MouseEvent.IsShiftDown())
 			{
-				// If no value is set for WheelBigStep, we use the DefaultStep multiplied by 10
-				Step *= 10.0;
+				// If no value is set for WheelBigStep, we use the DefaultStep multiplied by the ShiftMultiplier
+				Step *= ShiftMultiplier.Get();
 			}
 
 			const double Sign = (MouseEvent.GetWheelDelta() > 0) ? 1.0 : -1.0;
@@ -950,12 +972,13 @@ protected:
 				EditableText->SetText(FText::FromString(ValidData));
 			}
 
-			if (bBroadcastValueChangesPerKey)
+			// we check that the input is numeric, as we don't want to commit the new value on every change when an expression like *= is entered
+			if (bBroadcastValueChangesPerKey && FCString::IsNumeric(*Data))
 			{
-				TOptional<NumericType> NewValue = Interface->FromString(NewText.ToString(), ValueAttribute.Get());
+				TOptional<NumericType> NewValue = Interface->FromString(Data, ValueAttribute.Get());
 				if (NewValue.IsSet())
 				{
-					CommitValue(NewValue.GetValue(), (double)NewValue.GetValue(), CommittedViaCode, ETextCommit::Default);
+					CommitValue(NewValue.GetValue(), static_cast<double>(NewValue.GetValue()), CommittedViaCode, ETextCommit::Default);
 				}
 			}
 		}
@@ -988,7 +1011,8 @@ protected:
 		CommittedViaSpin,
 		CommittedViaTypeIn,
 		CommittedViaArrowKey,
-		CommittedViaCode
+		CommittedViaCode,
+		CommittedViaSpinMultiplier
 	};
 
 	/**
@@ -1146,7 +1170,8 @@ private:
 
 	float DistanceDragged;
 	TAttribute<NumericType> Delta;
-	TAttribute<int32> ShiftMouseMovePixelPerDelta;
+	TAttribute<float> ShiftMultiplier;
+	TAttribute<float> CtrlMultiplier;
 	TAttribute<int32> LinearDeltaSensitivity;
 	TAttribute<float> SliderExponent;
 	TAttribute<NumericType> SliderExponentNeutralValue;

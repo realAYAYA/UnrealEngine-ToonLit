@@ -44,7 +44,7 @@ bool FHTNPlanner::GeneratePlan(const FHTNDomain& Domain, const FHTNWorldState& I
 	{
 		//self.print_progress(final_plan, tasks_to_process)
 
-		const FHTNPolicy::FTaskID CurrentTaskID = TasksToProcess.Pop(/*bAllowShrinking=*/false);
+		const FHTNPolicy::FTaskID CurrentTaskID = TasksToProcess.Pop(EAllowShrinking::No);
 		
 		if (CurrentTaskID == FHTNPolicy::InvalidTaskID)
 		{

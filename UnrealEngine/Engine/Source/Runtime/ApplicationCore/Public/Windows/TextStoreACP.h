@@ -7,7 +7,6 @@
 #include "Containers/Array.h"
 #include "Templates/SharedPointer.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <TextStor.h>
 #include <msctf.h>

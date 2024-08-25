@@ -59,7 +59,7 @@ FMassSimulationVariableTickSharedFragment::FMassSimulationVariableTickSharedFrag
 namespace UE::MassLOD
 {
 	int32 bDebugSimulationLOD = 0;
-	FAutoConsoleVariableRef CVarDebugSimulationLODTest(TEXT("ai.debug.SimulationLOD"), bDebugSimulationLOD, TEXT("Debug Simulation LOD"), ECVF_Cheat);
+	FAutoConsoleVariableRef CVarDebugSimulationLODTest(TEXT("mass.debug.SimulationLOD"), bDebugSimulationLOD, TEXT("Debug Simulation LOD"), ECVF_Cheat);
 } // UE::MassLOD
 
 UMassSimulationLODProcessor::UMassSimulationLODProcessor()
@@ -69,7 +69,7 @@ UMassSimulationLODProcessor::UMassSimulationLODProcessor()
 	, EntityQueryVariableTick(*this)
 	, EntityQuerySetLODTag(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::LOD;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::LODCollector);
 }
@@ -115,10 +115,10 @@ void UMassSimulationLODProcessor::ConfigureQueries()
 
 void UMassSimulationLODProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("SimulationLOD"))
+	TRACE_CPUPROFILER_EVENT_SCOPE(SimulationLOD)
 
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("PrepareExecution"));
+		TRACE_CPUPROFILER_EVENT_SCOPE(PrepareExecution);
 
 		const UMassLODSubsystem& LODSubsystem = Context.GetSubsystemChecked<UMassLODSubsystem>();
 		const TArray<FViewerInfo>& Viewers = LODSubsystem.GetViewers();
@@ -130,7 +130,7 @@ void UMassSimulationLODProcessor::Execute(FMassEntityManager& EntityManager, FMa
 	}
 
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("CalculateLOD"));
+		TRACE_CPUPROFILER_EVENT_SCOPE(CalculateLOD);
 		EntityQueryCalculateLOD.ForEachEntityChunk(EntityManager, Context, [](FMassExecutionContext& Context)
 		{
 			FMassSimulationLODSharedFragment& LODSharedFragment = Context.GetMutableSharedFragment<FMassSimulationLODSharedFragment>();
@@ -140,8 +140,9 @@ void UMassSimulationLODProcessor::Execute(FMassEntityManager& EntityManager, FMa
 		});
 	}
 
+	if (bDoAdjustmentFromCount)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("AdjustDistancesAndLODFromCount"));
+		TRACE_CPUPROFILER_EVENT_SCOPE(AdjustDistancesAndLODFromCount);
 		EntityManager.ForEachSharedFragment<FMassSimulationLODSharedFragment>([](FMassSimulationLODSharedFragment& LODSharedFragment)
 		{
 			LODSharedFragment.bHasAdjustedDistancesFromCount = LODSharedFragment.LODCalculator.AdjustDistancesFromCount();
@@ -158,13 +159,13 @@ void UMassSimulationLODProcessor::Execute(FMassEntityManager& EntityManager, FMa
 
 	UWorld* World = EntityManager.GetWorld();
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("VariableTickRates"))
+		TRACE_CPUPROFILER_EVENT_SCOPE(VariableTickRates)
 		check(World);
 		const double Time = World->GetTimeSeconds();
 		EntityQueryVariableTick.ForEachEntityChunk(EntityManager, Context, [Time](FMassExecutionContext& Context)
 		{
 			FMassSimulationVariableTickSharedFragment& TickRateSharedFragment = Context.GetMutableSharedFragment<FMassSimulationVariableTickSharedFragment>();
-			TConstArrayView<FMassSimulationLODFragment> SimulationLODFragments = Context.GetMutableFragmentView<FMassSimulationLODFragment>();
+			TConstArrayView<FMassSimulationLODFragment> SimulationLODFragments = Context.GetFragmentView<FMassSimulationLODFragment>();
 			TArrayView<FMassSimulationVariableTickFragment> SimulationVariableTickFragments = Context.GetMutableFragmentView<FMassSimulationVariableTickFragment>();
 
 			TickRateSharedFragment.LODTickRateController.UpdateTickRateFromLOD(Context, SimulationLODFragments, SimulationVariableTickFragments, Time);
@@ -172,7 +173,7 @@ void UMassSimulationLODProcessor::Execute(FMassEntityManager& EntityManager, FMa
 	}
 
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("SetLODTags"))
+		TRACE_CPUPROFILER_EVENT_SCOPE(SetLODTags)
 		check(World);
 		EntityQuerySetLODTag.ForEachEntityChunk(EntityManager, Context, [](FMassExecutionContext& Context)
 		{
@@ -190,10 +191,11 @@ void UMassSimulationLODProcessor::Execute(FMassEntityManager& EntityManager, FMa
 		});
 	}
 
+#if WITH_MASSGAMEPLAY_DEBUG
 	// Optional debug display
 	if (UE::MassLOD::bDebugSimulationLOD)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("DebugDisplayLOD"));
+		TRACE_CPUPROFILER_EVENT_SCOPE(DebugDisplayLOD);
 		EntityQuery.ForEachEntityChunk(EntityManager, Context, [World](FMassExecutionContext& Context)
 		{
 			FMassSimulationLODSharedFragment& LODSharedFragment = Context.GetMutableSharedFragment<FMassSimulationLODSharedFragment>();
@@ -202,4 +204,5 @@ void UMassSimulationLODProcessor::Execute(FMassEntityManager& EntityManager, FMa
 			LODSharedFragment.LODCalculator.DebugDisplayLOD(Context, SimulationLODList, LocationList, World);
 		});
 	}
+#endif // WITH_MASSGAMEPLAY_DEBUG
 }

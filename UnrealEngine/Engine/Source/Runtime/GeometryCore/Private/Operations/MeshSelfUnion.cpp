@@ -733,7 +733,7 @@ bool FMeshSelfUnion::MergeEdges(const TArray<int>& CutBoundaryEdges, const TMap<
 			int OtherEID = UnmatchedEdges[OtherIdx];
 			if (!Mesh->IsEdge(OtherEID) || !Mesh->IsBoundaryEdge(OtherEID))
 			{
-				UnmatchedEdges.RemoveAtSwap(OtherIdx, 1, false);
+				UnmatchedEdges.RemoveAtSwap(OtherIdx, 1, EAllowShrinking::No);
 				OtherIdx--;
 				continue;
 			}
@@ -746,7 +746,7 @@ bool FMeshSelfUnion::MergeEdges(const TArray<int>& CutBoundaryEdges, const TMap<
 				EMeshResult EdgeMergeResult = Mesh->MergeEdges(EID, OtherEID, MergeInfo);
 				if (EdgeMergeResult == EMeshResult::Ok)
 				{
-					UnmatchedEdges.RemoveAtSwap(OtherIdx, 1, false);
+					UnmatchedEdges.RemoveAtSwap(OtherIdx, 1, EAllowShrinking::No);
 					if (bTrackAllNewEdges)
 					{
 						AllNewEdges.Add(EID);

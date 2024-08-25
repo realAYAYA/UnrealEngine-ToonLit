@@ -18,6 +18,7 @@ class UOptimusNode_CustomComputeKernel;
 enum class EOptimusNodeGraphType;
 class IOptimusNodeGraphCollectionOwner;
 class UOptimusNode;
+class UOptimusNodePair;
 class UOptimusNodeGraph;
 class UOptimusNodeLink;
 class UOptimusNodePin;
@@ -33,7 +34,7 @@ public:
 	FOptimusNodeGraphAction_AddGraph() = default;
 
 	FOptimusNodeGraphAction_AddGraph(
-	    IOptimusNodeGraphCollectionOwner* InGraphOwner,
+		const FString& InGraphOwnerPath,
 		EOptimusNodeGraphType InGraphType,
 		FName InGraphName,
 		int32 InGraphIndex,
@@ -125,6 +126,10 @@ protected:
 	bool Undo(IOptimusPathResolver* InRoot) override;
 
 private:
+
+	// The path of the graph owner that will actually perform the rename 
+	FString GraphOwnerPath;
+	
 	// The path of the graph to rename. This value will change after each rename.
 	FString GraphPath;
 
@@ -257,6 +262,89 @@ private:
 
 	// The stored node data.
 	TArray<uint8> NodeData;
+};
+
+// A base action for adding/removing node pairs.
+USTRUCT()
+struct FOptimusNodeGraphAction_AddRemoveNodePair:
+	public FOptimusAction
+{
+	GENERATED_BODY()
+
+	FOptimusNodeGraphAction_AddRemoveNodePair() = default;
+
+	FOptimusNodeGraphAction_AddRemoveNodePair(
+		const FString& InFirstNodePath,
+		const FString& InSecondNodePath
+		);
+
+protected:
+	bool AddNodePair(IOptimusPathResolver* InRoot);
+	bool RemoveNodePair(IOptimusPathResolver* InRoot);
+
+	FString FirstNodePath;
+
+	FString SecondNodePath;
+};
+
+// Mark FOptimusNodeGraphAction_AddRemoveNodePair as pure virtual, so that the UObject machinery
+// won't attempt to instantiate it.
+template<>
+struct TStructOpsTypeTraits<FOptimusNodeGraphAction_AddRemoveNodePair> :
+	TStructOpsTypeTraitsBase2<FOptimusNodeGraphAction_AddRemoveNodePair>
+{
+	enum
+	{
+		WithPureVirtual = true,
+    };
+};
+
+
+
+USTRUCT()
+struct FOptimusNodeGraphAction_AddNodePair :
+	public FOptimusNodeGraphAction_AddRemoveNodePair
+{
+	GENERATED_BODY()
+
+	FOptimusNodeGraphAction_AddNodePair() = default;
+
+	// Use when the node paths are unknown after add node actions are performed
+	FOptimusNodeGraphAction_AddNodePair(
+		TWeakPtr<FOptimusNodeGraphAction_AddNode> InAddFirstNodeAction,
+		TWeakPtr<FOptimusNodeGraphAction_AddNode> InAddSecondNodeAction
+		);
+	
+	// Use when the node paths are available already
+	FOptimusNodeGraphAction_AddNodePair(
+		const FString& InFirstNodePath,
+		const FString& InSecondNodePath
+		);
+
+protected:
+	bool Do(IOptimusPathResolver* InRoot) override; 
+	bool Undo(IOptimusPathResolver* InRoot) override;
+
+	
+	TWeakPtr<FOptimusNodeGraphAction_AddNode> AddFirstNodeAction;
+	TWeakPtr<FOptimusNodeGraphAction_AddNode> AddSecondNodeAction;
+};
+
+USTRUCT()
+struct FOptimusNodeGraphAction_RemoveNodePair :
+	public FOptimusNodeGraphAction_AddRemoveNodePair
+{
+	GENERATED_BODY()
+
+	FOptimusNodeGraphAction_RemoveNodePair() = default;
+
+	FOptimusNodeGraphAction_RemoveNodePair(
+		const UOptimusNodePair* InNodePair
+	);
+
+protected:
+	bool Do(IOptimusPathResolver* InRoot) override { return RemoveNodePair(InRoot); }
+	bool Undo(IOptimusPathResolver* InRoot) override { return AddNodePair(InRoot); }
 };
 
 

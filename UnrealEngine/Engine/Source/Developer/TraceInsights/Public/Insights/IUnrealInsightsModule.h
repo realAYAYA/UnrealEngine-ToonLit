@@ -180,6 +180,11 @@ public:
 	virtual void CreateDefaultStore() = 0;
 
 	/**
+	 * Gets the default trace store (for "Browser" mode).
+	*/
+	virtual FString GetDefaultStoreDir() = 0;
+
+	/**
 	 * Gets the store client.
 	 */
 	virtual UE::Trace::FStoreClient* GetStoreClient() = 0;
@@ -276,6 +281,11 @@ public:
 	* Called to schedule a command to run after session analysis is complete. Intended for running Automation RunTests commands.
 	*/
 	virtual void ScheduleCommand(const FString& InCmd) = 0;
+
+	/**
+	* Called to run automation test in Insights.
+	*/
+	virtual void RunAutomationTest(const FString& InCmd) = 0;
 
 	/**
 	* Called to initialize testing in stand alone Insights.

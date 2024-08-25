@@ -3,12 +3,14 @@
 #pragma once 
 
 #include "CoreMinimal.h"
-#include "Dataflow/DataflowCore.h"
 #include "Chaos/Math/Poisson.h"
-#include "ChaosLog.h"
 #include "ChaosFlesh/TetrahedralCollection.h"
-#include "Dataflow/DataflowEngine.h"
 #include "ChaosFlesh/FleshAsset.h"
+#include "ChaosLog.h"
+
+#include "Dataflow/DataflowCore.h"
+#include "Dataflow/DataflowEngine.h"
+#include "Field/FieldSystemTypes.h"
 
 #include "ChaosFleshEngineAssetNodes.generated.h"
 
@@ -164,19 +166,47 @@ public:
 		const TArray<int32>& Insertion) const;
 };
 
+/**
+* Visualizes a muscle fiber direction per tetrahedron from a GeometryCollection containing tetrahedra.
+*/
+USTRUCT(meta = (DataflowFlesh))
+struct FVisualizeFiberFieldNode : public FDataflowNode
+{
+	GENERATED_USTRUCT_BODY()
+	DATAFLOW_NODE_DEFINE_INTERNAL(FVisualizeFiberFieldNode, "VisualizeFiberField", "Flesh", "")
+	DATAFLOW_NODE_RENDER_TYPE(FFieldCollection::StaticType(), "VectorField")
 
+public:
+	UPROPERTY(meta = (DataflowInput, DisplayName = "Collection"))
+	FManagedArrayCollection Collection;
+
+	UPROPERTY(EditAnywhere, Category = "Dataflow")
+	float VectorScale = 1.0;
+
+	UPROPERTY(meta = (DataflowOutput, DisplayName = "VectorField"))
+	FFieldCollection VectorField;
+	
+	FVisualizeFiberFieldNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
+		: FDataflowNode(InParam, InGuid)
+	{
+		RegisterInputConnection(&Collection);
+		RegisterOutputConnection(&VectorField);
+	}
+
+	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+};
 
 USTRUCT(meta = (DataflowFlesh))
 struct FComputeIslandsNode : public FDataflowNode
 {
 	GENERATED_USTRUCT_BODY()
-		DATAFLOW_NODE_DEFINE_INTERNAL(FComputeIslandsNode, "ComputeIslands", "Flesh", "")
-		DATAFLOW_NODE_RENDER_TYPE(FGeometryCollection::StaticType(), "Collection")
+	DATAFLOW_NODE_DEFINE_INTERNAL(FComputeIslandsNode, "ComputeIslands", "Flesh", "")
+	DATAFLOW_NODE_RENDER_TYPE(FGeometryCollection::StaticType(), "Collection")
 
 public:
 
 	UPROPERTY(meta = (DataflowInput, DataflowOutput, DisplayName = "Collection", DataflowPassthrough = "Collection"))
-		FManagedArrayCollection Collection;
+	FManagedArrayCollection Collection;
 
 	FComputeIslandsNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
 		: FDataflowNode(InParam, InGuid)
@@ -200,22 +230,22 @@ public:
 	//typedef FManagedArrayCollection DataType;
 
 	UPROPERTY(meta = (DataflowInput, DataflowOutput, DisplayName = "Collection", DataflowPassthrough = "Collection"))
-		FManagedArrayCollection Collection;
+	FManagedArrayCollection Collection;
 
 	UPROPERTY(meta = (DataflowInput, DisplayName = "OriginIndicesIn"))
-		TArray<int32> OriginIndicesIn;
+	TArray<int32> OriginIndicesIn;
 
 	UPROPERTY(meta = (DataflowInput, DisplayName = "InsertionIndicesIn"))
-		TArray<int32> InsertionIndicesIn;
+	TArray<int32> InsertionIndicesIn;
 
 	UPROPERTY(meta = (DataflowOutput, DisplayName = "OriginIndicesOut"))
-		TArray<int32> OriginIndicesOut;
+	TArray<int32> OriginIndicesOut;
 
 	UPROPERTY(meta = (DataflowOutput, DisplayName = "InsertionIndicesOut"))
-		TArray<int32> InsertionIndicesOut;
+	TArray<int32> InsertionIndicesOut;
 	
 	UPROPERTY(EditAnywhere, Category = "Dataflow")
-		float Radius = float(1);
+	float Radius = float(1);
 
 	FGenerateOriginInsertionNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
 		: FDataflowNode(InParam, InGuid)
@@ -242,13 +272,13 @@ public:
 	//typedef FManagedArrayCollection DataType;
 
 	UPROPERTY(meta = (DataflowInput, DataflowOutput, DisplayName = "Collection", DataflowPassthrough = "Collection"))
-		FManagedArrayCollection Collection;
+	FManagedArrayCollection Collection;
 
 	UPROPERTY(EditAnywhere, Category = "Dataflow")
-		bool bDeleteHiddenFaces = false;
+	bool bDeleteHiddenFaces = false;
 
 	UPROPERTY(EditAnywhere, Category = "Dataflow")
-		FString TargetComponentIndex = "";
+	FString TargetComponentIndex = "";
 
 	FIsolateComponentNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
 		: FDataflowNode(InParam, InGuid)
@@ -269,13 +299,13 @@ struct FGetSurfaceIndicesNode : public FDataflowNode
 
 public:
 	UPROPERTY(meta = (DataflowInput, DisplayName = "Collection"))
-		FManagedArrayCollection Collection;
+	FManagedArrayCollection Collection;
 
 	UPROPERTY(meta = (DataflowInput, DisplayName = "GeometryGroupGuidsIn"))
-		TArray<FString> GeometryGroupGuidsIn;
+	TArray<FString> GeometryGroupGuidsIn;
 
 	UPROPERTY(meta = (DataflowOutput, DisplayName = "SurfaceIndicesOut"))
-		TArray<int32> SurfaceIndicesOut;
+	TArray<int32> SurfaceIndicesOut;
 
 	FGetSurfaceIndicesNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
 		: FDataflowNode(InParam, InGuid)

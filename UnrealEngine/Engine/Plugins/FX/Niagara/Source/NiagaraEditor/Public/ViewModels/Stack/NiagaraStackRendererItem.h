@@ -8,6 +8,7 @@
 #include "NiagaraStackRendererItem.generated.h"
 
 struct FVersionedNiagaraEmitterData;
+class INiagaraStackRenderersOwner;
 class UNiagaraEmitter;
 class UNiagaraRendererProperties;
 class UNiagaraStackObject;
@@ -20,7 +21,7 @@ class UNiagaraStackRendererItem : public UNiagaraStackItem
 public:
 	NIAGARAEDITOR_API UNiagaraStackRendererItem();
 
-	NIAGARAEDITOR_API void Initialize(FRequiredEntryData InRequiredEntryData, UNiagaraRendererProperties* InRendererProperties);
+	NIAGARAEDITOR_API void Initialize(FRequiredEntryData InRequiredEntryData, TSharedPtr<INiagaraStackRenderersOwner> InRenderersOwner, UNiagaraRendererProperties* InRendererProperties);
 
 	NIAGARAEDITOR_API UNiagaraRendererProperties* GetRendererProperties();
 	NIAGARAEDITOR_API const UNiagaraRendererProperties* GetRendererProperties() const;
@@ -56,6 +57,8 @@ public:
 	
 	virtual bool SupportsRename() const override { return true; }
 
+	virtual bool SupportsStackNotes() override { return true; }
+
 	NIAGARAEDITOR_API bool HasBaseRenderer() const;
 
 	virtual bool SupportsChangeEnabled() const override { return true; }
@@ -67,6 +70,8 @@ public:
 	virtual bool SupportsResetToBase() const override { return true; }
 	NIAGARAEDITOR_API virtual bool TestCanResetToBaseWithMessage(FText& OutCanResetToBaseMessage) const override;
 	NIAGARAEDITOR_API virtual void ResetToBase() override;
+
+	NIAGARAEDITOR_API virtual bool GetShouldShowInOverview() const;
 
 	static NIAGARAEDITOR_API TArray<FNiagaraVariable> GetMissingVariables(UNiagaraRendererProperties* RendererProperties, const FVersionedNiagaraEmitterData* EmitterData);
 	static NIAGARAEDITOR_API bool AddMissingVariable(const FVersionedNiagaraEmitterData* EmitterData, const FNiagaraVariable& Variable);
@@ -93,6 +98,8 @@ private:
 	NIAGARAEDITOR_API void ProcessRendererIssues(const TArray<FNiagaraRendererFeedback>& InIssues, EStackIssueSeverity Severity, TArray<FStackIssue>& OutIssues);
 
 private:
+	TSharedPtr<INiagaraStackRenderersOwner> RenderersOwner;
+
 	TWeakObjectPtr<UNiagaraRendererProperties> RendererProperties;
 
 	mutable TOptional<bool> bHasBaseRendererCache;

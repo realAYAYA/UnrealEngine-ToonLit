@@ -155,7 +155,6 @@ namespace Metasound
 		FeedbackSample = 0.f;
 		PrevDelayTimeMsec = GetInputDelayTimeMsec();
 
-		DelayBuffer.Reset();
 		DelayBuffer.Init(InParams.OperatorSettings.GetSampleRate(), MaxDelayTimeSeconds);
 		DelayBuffer.SetDelayMsec(PrevDelayTimeMsec);
 

@@ -2,12 +2,20 @@
 
 #include "DSP/Delay.h"
 #include "DSP/Dsp.h"
+#include "HAL/IConsoleManager.h"
+
+static float FDelayInitialAllocationSecondsCVar = -1.0f;
+FAutoConsoleVariableRef CVarFDelayInitialAllocationSeconds(
+	TEXT("au.DSP.InitialFDelayAllocationSeconds"),
+	FDelayInitialAllocationSecondsCVar,
+	TEXT("Override the inital delay line allocation in seconds, it will grow up to InBufferLengthSec.\n"),
+	//TEXT("The default is -1.  A value less than zero will allocate the full InBufferLengthSec\n"),
+	ECVF_Default);
 
 namespace Audio
 {
 	FDelay::FDelay()
-		: AudioBuffer(nullptr)
-		, AudioBufferSize(0)
+		: AudioBufferSize(0)
 		, ReadIndex(0)
 		, WriteIndex(0)
 		, SampleRate(0)
@@ -19,36 +27,30 @@ namespace Audio
 		Reset();
 	}
 
-	FDelay::~FDelay()
-	{
-		if (AudioBuffer)
-		{
-			delete[] AudioBuffer;
-			AudioBuffer = nullptr;
-		}
-	}
-
+	// update metadata, call Reset()
 	void FDelay::Init(const float InSampleRate, const float InBufferLengthSec)
 	{
 		SampleRate = InSampleRate;
-		AudioBufferSize = (int32) (InBufferLengthSec * (float)InSampleRate) + 1;
+		
+		// we cache this value because it is where we cap resizing the buffer
+		MaxBufferLengthSamples = InBufferLengthSec * (float)InSampleRate + 1;
 
-		if (AudioBuffer)
+		float InitialBufferSizeSeconds = InBufferLengthSec;
+
+		if (FDelayInitialAllocationSecondsCVar > 0.f)
 		{
-			delete[] AudioBuffer;
+			InitialBufferSizeSeconds = FMath::Min(InBufferLengthSec, FDelayInitialAllocationSecondsCVar);
 		}
-
-		AudioBuffer = new float[AudioBufferSize];
-
+		
+		AudioBufferSize = (int32)(InitialBufferSizeSeconds * (float)InSampleRate) + 1;
 		Reset();
 	}
 
+	// resize AudioBuffer, zero-out delay line, reset indicies
 	void FDelay::Reset()
 	{
-		if (AudioBuffer)
-		{
-			FMemory::Memzero(AudioBuffer, sizeof(float) * AudioBufferSize);
-		}
+		AudioBuffer.Reset(AudioBufferSize);
+		AudioBuffer.AddZeroed(AudioBufferSize);
 
 		WriteIndex = 0;
 		ReadIndex = 0;
@@ -60,23 +62,29 @@ namespace Audio
 	{
 		// Directly set the delay
 		const float NewDelayInSamples = InDelayMsec * SampleRate * 0.001f;
-		DelayInSamples = FMath::Min(NewDelayInSamples, static_cast<float>(AudioBufferSize));
+		DelayInSamples = FMath::Min(NewDelayInSamples, MaxBufferLengthSamples);
+		ResizeIfNeeded(DelayInSamples);
 		Update(true);
 	}
 
 	void FDelay::SetDelaySamples(const float InDelaySamples)
 	{
-		DelayInSamples = InDelaySamples;
+		DelayInSamples = FMath::Min(InDelaySamples, MaxBufferLengthSamples);
+		ResizeIfNeeded(DelayInSamples);
 		Update(true);
 	}
 
 	void FDelay::SetEasedDelayMsec(const float InDelayMsec, const bool bIsInit)
 	{
+		const float DesiredDelayInSamples = InDelayMsec * SampleRate * 0.001f;
+		const float TargetDelayInSamples = FMath::Min(DesiredDelayInSamples, MaxBufferLengthSamples);
+		ResizeIfNeeded(TargetDelayInSamples);
+
 		EaseDelayMsec.SetValue(InDelayMsec, bIsInit);
 		if (bIsInit)
 		{
 			const float NewDelayInSamples = InDelayMsec * SampleRate * 0.001f;
-			DelayInSamples = FMath::Min(NewDelayInSamples, static_cast<float>(AudioBufferSize));
+			DelayInSamples = TargetDelayInSamples;
 		}
 		Update(bIsInit);
 	}
@@ -173,6 +181,21 @@ namespace Audio
 		return OutputAttenuation * Yn;
 	}
 
+	void FDelay::ProcessAudioBuffer(const float* InAudio, int32 InNumSamples, float* OutAudio)
+	{
+		// Note: There is probably some optization that could be done here with 
+		// memcpys or someting, but for now we will do the simple version. Obviously
+		// it could get very complicated when the delay buffer is smaller than the
+		// number of samples being requested. 
+		for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+		{
+			Update();
+			const float Yn = DelayInSamples == 0 ? InAudio[SampleIndex] : Read();
+			WriteDelayAndInc(InAudio[SampleIndex]);
+			OutAudio[SampleIndex] = OutputAttenuation * Yn;
+		}
+	}
+
 	void FDelay::Update(bool bForce)
 	{
 		if (!EaseDelayMsec.IsDone() || bForce)
@@ -195,5 +218,40 @@ namespace Audio
 				ReadIndex += AudioBufferSize;
 			}
 		}
+	}
+
+	void FDelay::ResizeIfNeeded(const int32 InNewNumSamples)
+	{
+		// should be clamped by callers
+		ensure(InNewNumSamples <= MaxBufferLengthSamples);
+
+		// already large enough
+		if (InNewNumSamples <= AudioBufferSize)
+		{
+			return;
+		}
+
+		// resize the buffer
+		const int32 OldBufferSize = AudioBufferSize;
+		AudioBufferSize = FMath::Min(AudioBufferSize * 2, MaxBufferLengthSamples);
+		AudioBuffer.SetNumUninitialized(AudioBufferSize);
+
+		// see if we need to copy data to the end
+		if (ReadIndex < WriteIndex)
+		{
+			// no action needed, we will write over the uninitialzed data
+			// before we read from it.
+			return;
+		}
+
+		// (WriteIndex <= ReadIndex): our soon-to-be-read-data is in two chunks.
+		// we need to copy the second chunk to the end of the now resized array
+		// and update the read index.
+
+		// note: we can leave alone the old data since we will write to it before its read
+		const int32 SamplesToCopy = OldBufferSize - WriteIndex;
+		const int32 OldReadIndex = ReadIndex;
+		ReadIndex = AudioBufferSize - SamplesToCopy;
+		FMemory::Memmove(&AudioBuffer[WriteIndex], &AudioBuffer[AudioBufferSize - OldBufferSize], SamplesToCopy * sizeof(float));
 	}
 }

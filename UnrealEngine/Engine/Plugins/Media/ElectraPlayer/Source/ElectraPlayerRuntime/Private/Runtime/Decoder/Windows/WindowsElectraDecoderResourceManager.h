@@ -18,6 +18,9 @@ public:
 	struct FCallbacks
 	{
 		TFunction<bool(void ** /*OutD3DDevice*/, int32* /*OutD3DVersionTimes1000*/, void* /*UserValue*/)> GetD3DDevice;
+		TFunction<bool(TFunction<void()>&& CodeToRun, IAsyncConsecutiveTaskSync* TaskSync)> RunCodeAsync;
+		TFunction<TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync, ESPMode::ThreadSafe>()> CreateAsyncConsecutiveTaskSync;
+
 		void* UserValue = nullptr;
 	};
 
@@ -31,6 +34,9 @@ public:
 	void ReleasePlatformResource(void* InOwnerHandle, IDecoderPlatformResource* InHandleToDestroy) override;
 
 	virtual bool GetD3DDevice(void **OutD3DDevice, int32* OutD3DVersionTimes1000) override;
+
+	virtual TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync, ESPMode::ThreadSafe> CreateAsyncConsecutiveTaskSync() override;
+	virtual bool RunCodeAsync(TFunction<void()>&& CodeToRun, IAsyncConsecutiveTaskSync* TaskSync) override;
 
 	virtual ~FElectraDecoderResourceManagerWindows();
 

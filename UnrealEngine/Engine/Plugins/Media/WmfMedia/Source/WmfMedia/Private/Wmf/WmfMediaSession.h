@@ -63,14 +63,12 @@ public:
 	 */
 	void GetEvents(TArray<EMediaEvent>& OutEvents);
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	/**
 	 * Set which tracks object is being used by the player.
 	 *
 	 * @param InTracks Tracks object.
 	 */
 	void SetTracks(TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> InTracks);
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
 	/**
 	 * Initialize the media session.
@@ -123,7 +121,93 @@ public:
 	STDMETHODIMP QueryInterface(REFIID RefID, void** Object);
 	STDMETHODIMP_(ULONG) Release();
 
+public:
+	void Flush();
+
+	void RequestMoreVideoData();
+
+	enum class EWorkItemResult
+	{
+		Done,
+		RetryLater
+	};
+
+	struct FBaseWorkItemState
+	{
+		virtual ~FBaseWorkItemState() = default;
+	};
+
+	class FWorkItem
+	{
+	public:
+		typedef TFunction<EWorkItemResult(TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus, FBaseWorkItemState* BaseState)>	FWorkLoadType;
+
+		FWorkItem() = default;
+		FWorkItem(FWorkLoadType&& InWorkLoad, TSharedPtr<FBaseWorkItemState, ESPMode::ThreadSafe> InState = nullptr) : WorkLoad(MoveTemp(InWorkLoad)), State(InState) {}
+
+		FWorkLoadType WorkLoad;
+		TSharedPtr<FBaseWorkItemState, ESPMode::ThreadSafe> State;
+
+		bool IsValid() const
+		{
+			return (bool)WorkLoad;
+		}
+
+		void Reset()
+		{
+			WorkLoad.Reset();
+			State.Reset();
+		}
+	};
+
+public:
+	void EnqueueWorkItem(FWorkItem&& WorkItem);
+	void JamWorkItem(FWorkItem&& WorkItem);
+
 protected:
+	struct FTopologyWorkItemState : public FBaseWorkItemState
+	{
+		enum class EState
+		{
+			Begin,
+			Ready,
+			ReadyNeedsRestart,
+			WaitRestart,
+		};
+
+		EState State = EState::Begin;
+	};
+
+	struct FRateWorkItemState : public FBaseWorkItemState
+	{
+		enum class EState
+		{
+			Begin,
+			Ready,
+			ReadyNeedsRestart,
+			WaitForStopThenSetAndRestart,
+			WaitForPauseThenSetAndRestart,
+			WaitForSet,
+			WaitForSetAndRestart,
+			WaitForRestart,
+			WaitForPause,
+			WaitForStart
+		};
+
+		EState State = EState::Begin;
+		FTimespan LastTime;
+	};
+
+	struct FTimeWorkItemState : public FBaseWorkItemState
+	{
+		enum class EState
+		{
+			Begin,
+			WaitDone,
+		};
+
+		EState State = EState::Begin;
+	};
 
 	/**
 	 * Commit the specified play rate.
@@ -133,7 +217,7 @@ protected:
 	 * @param Rate The play rate to commit.
 	 * @see CommitTime, CommitTopology
 	 */
-	bool CommitRate(float Rate);
+	EWorkItemResult CommitRate(float Rate, FRateWorkItemState* State, MediaEventType EventType);
 
 	/**
 	 * Commit the specified play position.
@@ -151,24 +235,15 @@ protected:
 	 * @param Topology The topology to set.
 	 * @see CommitRate, CommitTime
 	 */
-	bool CommitTopology(IMFTopology* Topology);
-
-	/**
-	 * Discard all pending state changes.
-	 *
-	 * @see DoPendingChanges
-	 */
-	void DiscardPendingChanges();
-
-	/**
-	* Applies any pending state changes.
-	*
-	* @see DiscardPendingChanges
-	*/
-	void DoPendingChanges();
+	EWorkItemResult CommitTopology(IMFTopology* Topology, FTopologyWorkItemState* State, MediaEventType EventType);
 
 	/** Get the latest characteristics from the current media source. */
 	void UpdateCharacteristics();
+
+	void ExecuteNextWorkItems(TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus);
+	void ResetWorkItemQueue();
+
+	void SetSessionRate(float Rate);
 
 private:
 
@@ -178,14 +253,13 @@ private:
 	/** Callback for the MESessionEnded event. */
 	void HandleSessionEnded();
 
+	void HandlePresentationEnded();
+
 	/** Callback for the MESessionPaused event. */
 	void HandleSessionPaused(HRESULT EventStatus);
 
 	/** Callback for the MESessionRateChanged event. */
 	void HandleSessionRateChanged(HRESULT EventStatus, IMFMediaEvent& Event);
-
-	/** Callback for the MESessionScrubSampleComplete event. */
-	void HandleSessionScrubSampleComplete();
 
 	/** Callback for the MESessionStarted event. */
 	void HandleSessionStarted(HRESULT EventStatus);
@@ -233,9 +307,6 @@ private:
 	/** The last play head position before playback was stopped. */
 	FTimespan LastTime;
 
-	/** Whether one or more state changes are pending. */
-	bool PendingChanges;
-
 	/** The media session's clock. */
 	TComPtr<IMFPresentationClock> PresentationClock;
 
@@ -254,14 +325,19 @@ private:
 	/** Deferred playback topology to set. */
 	TComPtr<IMFTopology> RequestedTopology;
 
-	/** Deferred play time change value (MinValue = no change, MaxValue = current time). */
-	TOptional<FTimespan> RequestedTime;
-
 	/** If true then RequestedTime is due to the video looping. */
 	bool bIsRequestedTimeLoop;
 
+	/** If true then RequestedTime is due to the video seeking. */
+	bool bIsRequestedTimeSeek;
+
+	float LastSetRate;
+
 	/** The session's internal playback rate (not necessarily the same as GetRate). */
 	float SessionRate;
+
+	/** The session's last non-zero internal playback rate. */
+	float UnpausedSessionRate;
 
 	/** The session's current state (not necessarily the same as GetState). */
 	EMediaState SessionState;
@@ -281,13 +357,27 @@ private:
 	/** The unthinned play rates that the current media session supports. */
 	TRangeSet<float> UnthinnedRates;
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	/** Pointer to the tracks from the player. */
 	TWeakPtr<FWmfMediaTracks, ESPMode::ThreadSafe> Tracks;
 
 	/** True if we are waiting for the tracks to send out its last samples before we "end". */
 	bool bIsWaitingForEnd;
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
+
+	/** Number of user initiated seek calls accumulated for next actual seek executed */
+	uint32 UserIssuedSeeks;
+
+	/** True if seek is logically in progress */
+	bool bSeekActive;
+
+	/** Queue of work jobs for the player */
+	TArray<FWorkItem> WorkItemQueue;
+
+	/** The work item currently in progress (if valid) */
+	FWorkItem CurrentWorkItem;
+
+	/** Number of seek wokr-items in the queue currently */
+	int32 NumSeeksInWorkQueue;
+
 };
 
 

@@ -73,8 +73,8 @@ protected:
 
 private:
 	// Cluster node clients
-	TUniquePtr<FDisplayClusterClusterSyncClient>         ClusterSyncClient;
-	TUniquePtr<FDisplayClusterRenderSyncClient>          RenderSyncClient;
-	TUniquePtr<FDisplayClusterClusterEventsJsonClient>   ClusterEventsJsonClient;
-	TUniquePtr<FDisplayClusterClusterEventsBinaryClient> ClusterEventsBinaryClient;
+	TUniquePtr<FDisplayClusterClusterSyncClient, FDisplayClusterClientDeleter>         ClusterSyncClient;
+	TUniquePtr<FDisplayClusterRenderSyncClient, FDisplayClusterClientDeleter>          RenderSyncClient;
+	TUniquePtr<FDisplayClusterClusterEventsJsonClient, FDisplayClusterClientDeleter>   ClusterEventsJsonClient;
+	TUniquePtr<FDisplayClusterClusterEventsBinaryClient, FDisplayClusterClientDeleter> ClusterEventsBinaryClient;
 };

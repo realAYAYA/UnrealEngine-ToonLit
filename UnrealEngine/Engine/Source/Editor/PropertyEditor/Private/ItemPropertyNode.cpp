@@ -9,6 +9,8 @@
 #include "Settings/EditorStyleSettings.h"
 #include "UserInterface/PropertyEditor/SPropertyEditorArrayItem.h"
 
+#include "UObject/PropertyOptional.h"
+
 #define LOCTEXT_NAMESPACE "ItemPropertyNode"
 
 FItemPropertyNode::FItemPropertyNode()
@@ -95,17 +97,80 @@ uint8* FItemPropertyNode::GetValueAddress(uint8* StartAddress, bool bIsSparseDat
 /**
  * Overridden function for special setup
  */
-void FItemPropertyNode::InitExpansionFlags (void)
+TSharedPtr<FPropertyNode>& FItemPropertyNode::GetOrCreateOptionalValueNode(void)
+{
+	if (OptionalValueNode)
+	{
+		return OptionalValueNode;
+	}
+
+	FProperty* MyProperty = GetProperty();
+	if (FOptionalProperty* OptionalProperty = CastField<FOptionalProperty>(MyProperty))
+	{
+		void* Optional = NULL;
+		FReadAddressList Addresses;
+		if (GetReadAddress(Addresses))
+		{
+			for (int i = 0; i < Addresses.Num(); i++)
+			{
+				Optional = Addresses.GetAddress(i);
+				if (OptionalProperty->IsSet(Optional))
+				{
+					OptionalValueNode = TSharedRef<FPropertyNode>(new FItemPropertyNode());
+
+					FPropertyNodeInitParams InitParams;
+					InitParams.ParentNode = SharedThis(this);
+					InitParams.Property = OptionalProperty->GetValueProperty();
+					InitParams.bAllowChildren = true;
+					InitParams.bForceHiddenPropertyVisibility = !!HasNodeFlags(EPropertyNodeFlags::ShouldShowHiddenProperties);
+					InitParams.bCreateDisableEditOnInstanceNodes = !!HasNodeFlags(EPropertyNodeFlags::ShouldShowDisableEditOnInstance);
+
+					OptionalValueNode->OnRebuildChildren().AddLambda([this]() {
+						CachedReadAddresses.Reset();
+						bool bDestroySelf = false;
+						DestroyTree(bDestroySelf);
+
+						for (int i = 0; i < OptionalValueNode->GetNumChildNodes(); i++)
+						{
+							AddChildNode(OptionalValueNode->GetChildNode(i));
+						}
+
+						// Children have been rebuilt, clear any pending rebuild requests
+						bRebuildChildrenRequested = false;
+						bChildrenRebuilt = true;
+
+						// Notify any listener that children have been rebuilt
+						OnRebuildChildrenEvent.Broadcast();
+					});
+
+					OptionalValueNode->InitNode(InitParams);
+				}
+			}
+		}
+	}
+	return OptionalValueNode;
+}
+
+/**
+ * Overridden function for special setup
+ */
+void FItemPropertyNode::InitExpansionFlags(void)
 {
 	FProperty* MyProperty = GetProperty();
 
-	bool bExpandableType = CastField<FStructProperty>(MyProperty) 
+	if (TSharedPtr<FPropertyNode>& ValueNode = GetOrCreateOptionalValueNode())
+	{
+		// This is a set optional, so check its SetValue instead.
+		MyProperty = ValueNode->GetProperty();
+	}
+
+	bool bExpandableType = CastField<FStructProperty>(MyProperty)
 		|| (CastField<FArrayProperty>(MyProperty) || CastField<FSetProperty>(MyProperty) || CastField<FMapProperty>(MyProperty));
 
-	if(	bExpandableType
+	if (bExpandableType
 		|| HasNodeFlags(EPropertyNodeFlags::EditInlineNew)
 		|| HasNodeFlags(EPropertyNodeFlags::ShowInnerObjectProperties)
-		|| ( MyProperty->ArrayDim > 1 && ArrayIndex == -1 ) )
+		|| (MyProperty->ArrayDim > 1 && ArrayIndex == -1))
 	{
 		SetNodeFlags(EPropertyNodeFlags::CanBeExpanded, true);
 	}
@@ -632,7 +697,7 @@ FText FItemPropertyNode::GetDisplayName() const
 
 					if (EndIndex != -1)
 					{
-						TypeName.MidInline(0, EndIndex, false);
+						TypeName.MidInline(0, EndIndex, EAllowShrinking::No);
 					}
 				}
 

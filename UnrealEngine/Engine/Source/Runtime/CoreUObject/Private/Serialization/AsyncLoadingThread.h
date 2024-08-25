@@ -99,7 +99,7 @@ struct FAsyncLoadEventQueue
 			//@todoio check(FAsyncLoadingThread::IsInAsyncLoadThread());
 			if (EventQueue.Num())
 			{
-				EventQueue.HeapPop(Event, false);
+				EventQueue.HeapPop(Event, EAllowShrinking::No);
 				bResult = true;
 			}
 		}
@@ -348,6 +348,11 @@ public:
 	FAsyncLoadingThread(int32 InThreadIndex);
 	virtual ~FAsyncLoadingThread();
 
+	virtual ELoaderType GetLoaderType() const override
+	{
+		return ELoaderType::LegacyLoader;
+	}
+
 	IAsyncPackageLoader* GetIoStorePackageLoader() const
 	{
 		return IoStorePackageLoader;
@@ -375,6 +380,8 @@ public:
 	void StartThread() override;
 
 	bool ShouldAlwaysLoadPackageAsync(const FPackagePath& InPackagePath) override;
+
+	int32 LoadPackage(const FPackagePath& PackagePath, FLoadPackageAsyncOptionalParams OptionalParams) override;
 
 	int32 LoadPackage(
 			const FPackagePath& InPackagePath,

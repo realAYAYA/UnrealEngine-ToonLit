@@ -86,7 +86,7 @@ namespace InternationalizationUtilities
 		return SanitizedCurrencyCode;
 	}
 
-	FString GetCanonicalCultureName(const FString& Name, const FString& FallbackCulture)
+	FString GetCanonicalCultureName(const FString& Name, const FString& FallbackCulture, FInternationalization& I18N)
 	{
 		auto IsLanguageCode = [](const FString& InCode)
 		{
@@ -225,7 +225,7 @@ namespace InternationalizationUtilities
 		const FString SanitizedName = SanitizeCultureCode(Name);
 
 		// If the name matches a custom culture, then just accept it as-is
-		if (FInternationalization::Get().GetCustomCulture(SanitizedName))
+		if (I18N.GetCustomCulture(SanitizedName))
 		{
 			return SanitizedName;
 		}

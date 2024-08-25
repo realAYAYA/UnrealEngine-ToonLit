@@ -193,7 +193,7 @@ void FDirectedGraph::CleanUpDanglingEdges()
 		FDirectionalEdge Edge = SortedEdges[Index];
 		if (!IsNodeAllocated(Edge.ToNode) || !IsNodeAllocated(Edge.FromNode))
 		{
-			SortedEdges.RemoveAt(Index, 1, false);
+			SortedEdges.RemoveAt(Index, 1, EAllowShrinking::No);
 		}
 		else
 		{
@@ -264,7 +264,7 @@ void FDirectedGraph::DestroyEdge(uint16 FromNode, uint16 ToNode)
 	const int32 RemoveIndex = Algo::BinarySearch(SortedEdges, Edge);
 	if (RemoveIndex != INDEX_NONE)
 	{
-		SortedEdges.RemoveAt(RemoveIndex, 1, false);
+		SortedEdges.RemoveAt(RemoveIndex, 1, EAllowShrinking::No);
 	}
 }
 

@@ -14,7 +14,7 @@ CORE_API FMallocStomp2* GMallocStomp2 = nullptr;
 CORE_API bool GMallocStomp2Enabled = false;
 
 
-uint32 FMallocStomp2::DisableTlsSlot = 0;
+uint32 FMallocStomp2::DisableTlsSlot = FPlatformTLS::InvalidTlsSlot;
 SIZE_T FMallocStomp2::MinSize = 0;
 SIZE_T FMallocStomp2::MaxSize = 0;
 

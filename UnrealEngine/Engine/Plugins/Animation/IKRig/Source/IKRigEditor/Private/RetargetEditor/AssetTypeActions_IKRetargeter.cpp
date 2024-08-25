@@ -129,8 +129,6 @@ void FAssetTypeActions_IKRetargeter::ExtendAnimAssetMenusForBatchRetargeting()
 	{
 		"ContentBrowser.AssetContextMenu.AnimSequence",
 		"ContentBrowser.AssetContextMenu.BlendSpace",
-		"ContentBrowser.AssetContextMenu.AimOffsetBlendSpace",
-		"ContentBrowser.AssetContextMenu.BlendSpace1D",
 		"ContentBrowser.AssetContextMenu.PoseAsset",
 		"ContentBrowser.AssetContextMenu.AnimBlueprint",
 		"ContentBrowser.AssetContextMenu.AnimMontage"
@@ -142,39 +140,20 @@ void FAssetTypeActions_IKRetargeter::ExtendAnimAssetMenusForBatchRetargeting()
 		check(Menu);
 
 		FToolMenuSection& Section = Menu->FindOrAddSection("GetAssetActions");
-		Section.AddSubMenu(
-		"IKRetargetAnimSubmenu", 
-		LOCTEXT("IKRetargetAnimSubmenu", "Retarget Animation Assets"),
-		LOCTEXT("IKRetargetAnimSubmenu_ToolTip", "Opens the batch retargeting menu."),
-		FNewToolMenuDelegate::CreateLambda([](UToolMenu* AlignmentMenu)
-		{
-			FToolMenuSection& InSection = AlignmentMenu->AddSection("IKRetargetMenu", LOCTEXT("RetargetHeader", "IK Retargeting"));
-			InSection.AddDynamicEntry("IKRigActions", FNewToolMenuSectionDelegate::CreateLambda([](FToolMenuSection& InSection)
+		Section.AddMenuEntry(
+			"IKRetargetToDifferentSkeleton",
+			LOCTEXT("RetargetAnimation_Label", "Retarget Animations"),
+			LOCTEXT("RetargetAnimation_ToolTip", "Duplicate and retarget animation assets to a different skeleton. Works on sequences, blendspaces, pose assets, montages and animation blueprints."),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCurveEditor.TabIcon"),
+			FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& InContext)
 			{
-				FAssetTypeActions_IKRetargeter::CreateRetargetSubMenu(InSection);
-			}));
-		}),
-		false,
-		FSlateIcon(FAppStyle::GetAppStyleSetName(), "Persona.RetargetManager")
+				if (const UContentBrowserAssetContextMenuContext* Context = InContext.FindContext<UContentBrowserAssetContextMenuContext>())
+				{
+					SRetargetAnimAssetsWindow::ShowWindow(Context->LoadSelectedObjects<UObject>());
+				}
+			})
 		);
 	}
-}
-
-void FAssetTypeActions_IKRetargeter::CreateRetargetSubMenu(FToolMenuSection& InSection)
-{
-	InSection.AddMenuEntry(
-		"IKRetargetToDifferentSkeleton",
-		LOCTEXT("RetargetAnimation_Label", "Duplicate and Retarget Animation Assets/Blueprints"),
-		LOCTEXT("RetargetAnimation_ToolTip", "Duplicate an animation asset/blueprint and retarget to a different skeleton."),
-		FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCurveEditor.TabIcon"),
-		FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& InContext)
-		{
-        	if (const UContentBrowserAssetContextMenuContext* Context = InContext.FindContext<UContentBrowserAssetContextMenuContext>())
-        	{
-        		SRetargetAnimAssetsWindow::ShowWindow(Context->LoadSelectedObjects<UObject>());
-        	}
-		})
-	);
 }
 
 const TArray<FText>& FAssetTypeActions_IKRetargeter::GetSubMenus() const

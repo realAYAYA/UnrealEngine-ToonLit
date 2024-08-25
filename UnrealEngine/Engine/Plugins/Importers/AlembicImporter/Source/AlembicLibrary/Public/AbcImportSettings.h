@@ -218,7 +218,7 @@ struct FAbcConversionSettings
 		, bFlipU(false)
 		, bFlipV(true)
 		, Scale(FVector(1.0f, -1.0f, 1.0f))
-		, Rotation(FVector::ZeroVector)
+		, Rotation(FVector(90.0f, 0.0f, 0.0f))
 	{}
 
 	/** Currently preset that should be applied */

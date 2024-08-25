@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeColourParameter::Private::s_type =
-			NODE_TYPE( "ColourParameter", NodeColour::GetStaticType() );
+	FNodeType NodeColourParameter::Private::s_type =
+			FNodeType( "ColourParameter", NodeColour::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -28,93 +28,25 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeColourParameter::GetInputCount() const
-	{
-        return  m_pD->m_ranges.Num();
-    }
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeColourParameter::GetInputNode( int i ) const
-	{
-        check( i<GetInputCount() );
-        if (i<GetInputCount())
-        {
-            return m_pD->m_ranges[i].get();
-        }
-        return nullptr;
-    }
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeColourParameter::SetInputNode( int i, NodePtr n )
-	{
-        check( i<GetInputCount() );
-        if (i<GetInputCount())
-        {
-            m_pD->m_ranges[i] = dynamic_cast<NodeRange*>(n.get());
-        }
-    }
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-	const char* NodeColourParameter::GetName() const
+	void NodeColourParameter::SetName( const FString& strName )
 	{
-		return m_pD->m_name.c_str();
+		m_pD->m_name = strName;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeColourParameter::SetName( const char* strName )
+	void NodeColourParameter::SetUid( const FString& strUid )
 	{
-		if ( strName )
-		{
-			m_pD->m_name = strName;
-		}
-		else
-		{
-			m_pD->m_name = "";
-		}
-	}
-
-
-	const char* NodeColourParameter::GetUid() const
-	{
-		return m_pD->m_uid.c_str();
+		m_pD->m_uid = strUid;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeColourParameter::SetUid( const char* strUid )
+	void NodeColourParameter::SetDefaultValue(FVector4f Value)
 	{
-		if ( strUid )
-		{
-			m_pD->m_uid = strUid;
-		}
-		else
-		{
-			m_pD->m_uid = "";
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeColourParameter::GetDefaultValue( float* pR, float* pG, float* pB ) const
-	{
-		if (*pR) *pR = m_pD->m_defaultValue[0];
-		if (*pG) *pG = m_pD->m_defaultValue[1];
-		if (*pB) *pB = m_pD->m_defaultValue[2];
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeColourParameter::SetDefaultValue( float r, float g, float b )
-	{
-		m_pD->m_defaultValue = vec3<float>( r, g, b );
+		m_pD->m_defaultValue = Value;
 	}
 
 

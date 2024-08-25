@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "USDClassesEditorModule.h"
+
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/SWindow.h"
 
@@ -13,15 +15,15 @@ class UUsdAssetCache2;
 class SUsdDefaultAssetCacheDialog : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS( SUsdDefaultAssetCacheDialog ) {}
-		SLATE_ARGUMENT( TSharedPtr<SWindow>, WidgetWindow )
+	SLATE_BEGIN_ARGS(SUsdDefaultAssetCacheDialog){}
+	SLATE_ARGUMENT(TSharedPtr<SWindow>, WidgetWindow)
 	SLATE_END_ARGS()
 
 public:
 	UUsdAssetCache2* GetCreatedCache();
-	void Construct( const FArguments& InArgs );
+	void Construct(const FArguments& InArgs);
 
-	bool UserAccepted() const;
+	EDefaultAssetCacheDialogOption GetDialogOutcome() const;
 
 private:
 	virtual bool SupportsKeyboardFocus() const override;
@@ -30,13 +32,13 @@ private:
 	FReply OnCreateNew();
 	FReply OnDontCreate();
 
-	virtual FReply OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent ) override;
+	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
 	UUsdAssetCache2* ChosenCache;
 
-	TWeakPtr< SWindow > Window;
+	TWeakPtr<SWindow> Window;
 
 	FText AcceptText;
-	bool bAccepted;
+	EDefaultAssetCacheDialogOption DialogOutcome = EDefaultAssetCacheDialogOption::Cancel;
 };

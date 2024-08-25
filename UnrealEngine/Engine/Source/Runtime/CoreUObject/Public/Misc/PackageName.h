@@ -11,6 +11,7 @@
 #include "Containers/StringFwd.h"
 #include "Containers/StringView.h"
 #include "Containers/UnrealString.h"
+#include "Containers/VersePathFwd.h"
 #include "Delegates/Delegate.h"
 #include "HAL/Platform.h"
 #include "HAL/PlatformMath.h"
@@ -24,6 +25,7 @@ class FPackagePath;
 class UPackage;
 struct FFileStatData;
 struct FGuid;
+struct FSoftObjectPath;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogPackageName, Log, All);
 
@@ -79,6 +81,8 @@ public:
 	/** Return the LongPackageName of module's native script package. Does not check whether module is native. */
 	static COREUOBJECT_API FName GetModuleScriptPackageName(FName ModuleName);
 	static COREUOBJECT_API FString GetModuleScriptPackageName(FStringView ModuleName);
+	/** If PackageName is a script package (/Script/<ModuleName>), return true and set OutModuleName=<ModuleName> */
+	static COREUOBJECT_API bool TryConvertScriptPackageNameToModuleName(FStringView PackageName, FStringView& OutModuleName);
 
 	/**
 	 * Registers all short package names found in ini files.
@@ -103,6 +107,7 @@ public:
 	 * @return Returns true if the supplied filename properly maps to one of the long package roots.
 	 */
 	static COREUOBJECT_API bool TryConvertFilenameToLongPackageName(const FString& InFilename, FString& OutPackageName, FString* OutFailureReason = nullptr);
+	static COREUOBJECT_API bool TryConvertFilenameToLongPackageName(FStringView InFilename, FStringBuilderBase& OutPackageName, FStringBuilderBase* OutFailureReason = nullptr);
 
 	/** 
 	 * Converts the supplied filename to long package name.
@@ -122,6 +127,7 @@ public:
 	 * @return Package filename.
 	 */
 	static COREUOBJECT_API bool TryConvertLongPackageNameToFilename(const FString& InLongPackageName, FString& OutFilename, const FString& InExtension = TEXT(""));
+	static COREUOBJECT_API bool TryConvertLongPackageNameToFilename(FStringView InLongPackageName, FString& OutFilename, FStringView InExtension = {});
 
 	/** 
 	 * Find the MountPoint for a LocalPath, LongPackageName, or ObjectPath and return its elements. Use this function instead of TryConvertFilenameToLongPackageName or
@@ -149,6 +155,7 @@ public:
 
 	/** 
 	 * Returns the path to the specified package, excluding the short package name
+	 * e.g. given /Game/Maps/MyMap returns /Game/Maps
 	 *
 	 * @param InLongPackageName Long Package Name.
 	 * @return The path containing the specified package.
@@ -456,6 +463,13 @@ public:
 	 */
 	static COREUOBJECT_API FString GetLocalizedPackagePath(const FString& InSourcePackagePath, const FString& InCultureName);
 
+	/**
+	 * Gets the versepath of the object.
+	 *
+	 * @return The VersePath of the object
+	 */
+	static COREUOBJECT_API UE::Core::FVersePath GetVersePath(const FSoftObjectPath& ObjectPath);
+
 	/** 
 	 * Returns the file extension for packages containing assets.
 	 *
@@ -620,6 +634,12 @@ public:
 	 */
 	static COREUOBJECT_API void QueryRootContentPaths( TArray<FString>& OutRootContentPaths, bool bIncludeReadOnlyRoots = false, bool bWithoutLeadingSlashes = false, bool bWithoutTrailingSlashes = false);
 	
+	/**
+	 * Returns all of the local paths on disk of the root content paths, like
+	 * "c:\MyProjects\ProjectA\Content", "d:\Unreal\Engine\Content", "c:\MyProjects\ProjectA\Plugins\MyPlugin\Content"
+	 */
+	static COREUOBJECT_API TArray<FString> QueryMountPointLocalAbsPaths();
+
 	/** If the FLongPackagePathsSingleton is not created yet, this function will create it and thus allow mount points to be added */
 	static COREUOBJECT_API void OnCoreUObjectInitialized();
 
@@ -723,6 +743,33 @@ public:
 	static COREUOBJECT_API FWideStringView ObjectPathToObjectName(FWideStringView InObjectPath);
 	static COREUOBJECT_API FAnsiStringView ObjectPathToObjectName(FAnsiStringView InObjectPath);
 	static COREUOBJECT_API FString ObjectPathToObjectName(const FString& InObjectPath);
+
+	/**
+	 * Splits an ObjectPath string into the first component and the remainder. 
+	 *
+	 * "/Path/To/A/Package.Object:SubObject" -> { "/Path/To/A/Package", "Object:SubObject" }
+	 * "Object:SubObject" -> { "Object", "SubObject" }
+	 * "Object.SubObject" -> { "Object", "SubObject" }
+	 */
+	static COREUOBJECT_API void ObjectPathSplitFirstName(FWideStringView Text,
+		FWideStringView& OutFirst, FWideStringView& OutRemainder);
+	static COREUOBJECT_API void ObjectPathSplitFirstName(FAnsiStringView Text,
+		FAnsiStringView& OutFirst, FAnsiStringView& OutRemainder);
+
+	/**
+	 * Combines an ObjectPath with an ObjectName.
+	 * { "/Package", "Object" } -> "/Package.Object"
+	 * { "/Package.Object", "SubObject" } -> "/Package.Object:SubObject"
+	 * { "/Package.Object:SubObject", "NextSubObject" } -> "/Package.Object:SubObject.NextSubObject"
+	 * { "/Package", "Object.SubObject" } -> "/Package.Object:SubObject"
+	 * { "/Package", "/OtherPackage.Object:SubObject" } -> "/OtherPackage.Object:SubObject"
+	*/
+	static COREUOBJECT_API void ObjectPathAppend(FStringBuilderBase& ObjectPath, FStringView NextName);
+	/**
+	 * Combines an ObjectPath with an ObjectName, the same as ObjectPathAppend but returns the result rather
+	 * than modifying the input argument.
+	 */
+	static COREUOBJECT_API FString ObjectPathCombine(FStringView ObjectPath, FStringView NextName);
 
 	/**
 	 * Checks the package's path to see if it's a Verse package

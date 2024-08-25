@@ -32,7 +32,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "ZoneGraph Generator Config")
 	float MinGap = 100;
 
-	/** Minimum gap for spawning entities on a given lanes */
+	/** Maximum gap for spawning entities on a given lanes */
 	UPROPERTY(EditAnywhere, Category = "ZoneGraph Generator Config")
 	float MaxGap = 300;
 };

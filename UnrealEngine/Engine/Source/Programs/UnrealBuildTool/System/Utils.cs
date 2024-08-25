@@ -1073,6 +1073,16 @@ namespace UnrealBuildTool
 					}
 				}
 			}
+			else if (RuntimePlatform.IsLinux)
+			{
+				// query socket/logical core pairings.  There should not be duplicates in this list since each hyperthread
+				// will show up as it's own logical "cpu".  Including the socket number allows us to count multi-processor
+				// system cores correctly
+				string Output = RunLocalProcessAndReturnStdOut("lscpu", "-p='SOCKET,CPU'");
+				List<string> CPUs = Output.Split("\n").Where(x => !x.StartsWith("#")).ToList();
+
+				return CPUs.Count;
+			}
 			return Environment.ProcessorCount;
 		}
 
@@ -1133,6 +1143,16 @@ namespace UnrealBuildTool
 				{
 					return Value;
 				}
+			}
+			else if (RuntimePlatform.IsLinux)
+			{
+				// query socket/physical core pairings.  There will be duplicates in this if there are hyperthreads
+				// using the HashSet ensures that those duplicates are removed and we only count the first "cpu" found
+				// for each "core".  Including the socket number allows us to count multi-processor system cores correctly
+				string Output = RunLocalProcessAndReturnStdOut("lscpu", "-p='SOCKET,CORE'");
+				HashSet<string> CPUs = Output.Split("\n").Where(x => !x.StartsWith("#")).ToHashSet();
+
+				return CPUs.Count;
 			}
 
 			return -1;
@@ -1826,5 +1846,55 @@ namespace UnrealBuildTool
 		{
 			return Strings.Any(S => Encoding.UTF8.GetByteCount(S) != S.Length) ? new UTF8Encoding(false) : Encoding.ASCII;
 		}
+
+		/// <summary>
+		/// Attempts to create a symbolic link at location specified by Path pointing to location specified by PathToTarget.
+		/// Soft symlinks are available since Windows 10 build 14972 without elevated privileges if developer mode is enabled.
+		/// Hard links are available since Windows 8 for NTFS/NFS file systems.
+		/// </summary>
+		/// <param name="Path">Path to create the symbolic link at.</param>
+		/// <param name="PathToTarget">Path to which the symbolic link should point to.</param>
+		/// <param name="Logger">Logger for output.</param>
+		/// <returns>True if symlink was created, false if failed.</returns>
+		internal static bool TryCreateSymlink(string Path, string PathToTarget, ILogger Logger)
+		{
+			try
+			{
+				// passes SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE on valid Windows versions
+				FileSystemInfo Result = File.CreateSymbolicLink(Path, PathToTarget);
+				if (Result.Exists)
+				{
+					Logger.LogInformation("Created symlink '{Path}' -> '{PathToTarget}'", Path, PathToTarget);
+					return true;
+				}
+			}
+			catch
+			{
+				// ignored
+			}
+
+			if (RuntimePlatform.IsWindows)
+			{
+				try
+				{
+					WindowsKernelCreateHardLink(Path, PathToTarget, IntPtr.Zero);
+					// not 100% confident in a result value of CreateHardLink, so let's check for file to be extra sure 
+					if (File.Exists(Path))
+					{
+						Logger.LogInformation("Created hard link '{Path}' -> '{PathToTarget}'", Path, PathToTarget);
+						return true;
+					}
+				}
+				catch
+				{
+					// ignored
+				}
+			}
+
+			return false;
+		}
+
+		[DllImport("kernel32.dll", EntryPoint = "CreateHardLink", SetLastError = true, CharSet = CharSet.Auto)]
+		private static extern bool WindowsKernelCreateHardLink(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
 	}
 }

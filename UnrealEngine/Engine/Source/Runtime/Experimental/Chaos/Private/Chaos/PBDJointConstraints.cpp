@@ -127,9 +127,127 @@ namespace Chaos
 		return ConcreteContainer()->SetConstraintEnabledDuringResim(ConstraintIndex, bEnabled);
 	}
 
+	bool FPBDJointConstraintHandle::IsEnabledDuringResim() const
+	{
+		return ConcreteContainer()->IsConstraintEnabledDuringResim(ConstraintIndex);
+	}
+
 	EResimType FPBDJointConstraintHandle::ResimType() const
 	{
 		return ConcreteContainer()->GetConstraintResimType(ConstraintIndex);
+	}
+
+	constexpr int32 ConstraintChildIndex = 0;
+	constexpr int32 ConstraintParentIndex = 1;
+
+	FPBDJointSettings& FPBDJointConstraintHandle::GetConstraintSettingsInternal() 
+	{ 
+		return ConcreteContainer()->ConstraintSettings[ConstraintIndex]; 
+	}
+
+	void FPBDJointConstraintHandle::SetParentConnectorLocation(const FVec3 Location)
+	{
+		GetConstraintSettingsInternal().ConnectorTransforms[ConstraintParentIndex].SetLocation(Location);
+	}
+
+	void FPBDJointConstraintHandle::SetParentConnectorRotation(const FQuat Rotation)
+	{
+		GetConstraintSettingsInternal().ConnectorTransforms[ConstraintParentIndex].SetRotation(Rotation);
+	}
+
+	void FPBDJointConstraintHandle::SetChildConnectorLocation(const FVec3 Location)
+	{
+		GetConstraintSettingsInternal().ConnectorTransforms[ConstraintChildIndex].SetLocation(Location);
+	}
+
+	void FPBDJointConstraintHandle::SetChildConnectorRotation(const FQuat Rotation)
+	{
+		GetConstraintSettingsInternal().ConnectorTransforms[ConstraintChildIndex].SetRotation(Rotation);
+	}
+
+	void FPBDJointConstraintHandle::SetLinearDrivePositionTarget(const FVec3 Target)
+	{
+		GetConstraintSettingsInternal().LinearDrivePositionTarget = Target;
+	}
+
+	void FPBDJointConstraintHandle::SetAngularDrivePositionTarget(const FQuat Target)
+	{
+		GetConstraintSettingsInternal().AngularDrivePositionTarget = Target;
+	}
+
+	void FPBDJointConstraintHandle::SetLinearDriveVelocityTarget(const FVec3 Target)
+	{
+		GetConstraintSettingsInternal().LinearDriveVelocityTarget = Target;
+	}
+
+	void FPBDJointConstraintHandle::SetAngularDriveVelocityTarget(const FVec3 Target)
+	{
+		GetConstraintSettingsInternal().AngularDriveVelocityTarget = Target;
+	}
+
+	void FPBDJointConstraintHandle::SetLinearDriveStiffness(const FVec3 Stiffness)
+	{
+		GetConstraintSettingsInternal().LinearDriveStiffness = Stiffness;
+	}
+
+	void FPBDJointConstraintHandle::SetLinearDriveDamping(const FVec3 Damping)
+	{
+		GetConstraintSettingsInternal().LinearDriveDamping = Damping;
+	}
+
+	void FPBDJointConstraintHandle::SetLinearDriveMaxForce(const FVec3 MaxForce)
+	{
+		GetConstraintSettingsInternal().LinearDriveMaxForce = MaxForce;
+	}
+
+	void FPBDJointConstraintHandle::SetAngularDriveStiffness(const FVec3 Stiffness)
+	{
+		GetConstraintSettingsInternal().AngularDriveStiffness = Stiffness;
+	}
+
+	void FPBDJointConstraintHandle::SetAngularDriveDamping(const FVec3 Damping)
+	{
+		GetConstraintSettingsInternal().AngularDriveDamping = Damping;
+	}
+
+	void FPBDJointConstraintHandle::SetAngularDriveMaxTorque(const FVec3 MaxTorque)
+	{
+		GetConstraintSettingsInternal().AngularDriveMaxTorque = MaxTorque;
+	}
+
+	void FPBDJointConstraintHandle::SetCollisionEnabled(const bool bCollisionEnabled)
+	{
+		GetConstraintSettingsInternal().bCollisionEnabled = bCollisionEnabled;
+	}
+
+	void FPBDJointConstraintHandle::SetParentInvMassScale(const FReal ParentInvMassScale)
+	{
+		GetConstraintSettingsInternal().ParentInvMassScale = ParentInvMassScale;
+	}
+
+	void FPBDJointConstraintHandle::SetDriveParams(
+		const FVec3 LinearStiffness, const FVec3 LinearDamping, const FVec3 MaxForce,
+		const FVec3 AngularStiffness, const FVec3 AngularDamping, const FVec3 MaxTorque)
+	{
+		FPBDJointSettings& Settings = GetConstraintSettingsInternal();
+		Settings.LinearDriveStiffness = LinearStiffness;
+		Settings.LinearDriveDamping = LinearDamping;
+		Settings.LinearDriveMaxForce = MaxForce;
+		Settings.AngularDriveStiffness = AngularStiffness;
+		Settings.AngularDriveDamping = AngularDamping;
+		Settings.AngularDriveMaxTorque = MaxTorque;
+		Settings.bLinearPositionDriveEnabled[0] = LinearStiffness.X > 0;
+		Settings.bLinearPositionDriveEnabled[1] = LinearStiffness.Y > 0;
+		Settings.bLinearPositionDriveEnabled[2] = LinearStiffness.Z > 0;
+		Settings.bLinearVelocityDriveEnabled[0] = LinearDamping.X > 0;
+		Settings.bLinearVelocityDriveEnabled[1] = LinearDamping.Y > 0;
+		Settings.bLinearVelocityDriveEnabled[2] = LinearDamping.Z > 0;
+		Settings.bAngularSwingPositionDriveEnabled = AngularStiffness.X > 0;
+		Settings.bAngularTwistPositionDriveEnabled = AngularStiffness.Y > 0;
+		Settings.bAngularSLerpPositionDriveEnabled = AngularStiffness.Z > 0;
+		Settings.bAngularSwingVelocityDriveEnabled = AngularDamping.X > 0;
+		Settings.bAngularTwistVelocityDriveEnabled = AngularDamping.Y > 0;
+		Settings.bAngularSLerpVelocityDriveEnabled = AngularDamping.Z > 0;
 	}
 
 	const FPBDJointSettings& FPBDJointConstraintHandle::GetSettings() const
@@ -172,7 +290,7 @@ namespace Chaos
 
 	void FPBDJointConstraintHandle::SetConstraintEnabled(bool bInEnabled)
 	{
-		return ConcreteContainer()->SetConstraintEnabled(ConstraintIndex, bInEnabled);
+		ConcreteContainer()->SetConstraintEnabled(ConstraintIndex, bInEnabled);
 	}
 
 
@@ -444,12 +562,12 @@ namespace Chaos
 	{
 		FPBDJointSettings JointSettings;
 		JointSettings.ConnectorTransforms[0] = FRigidTransform3(
-			WorldConstraintFrame.GetTranslation() - InConstrainedParticles[0]->X(),
-			WorldConstraintFrame.GetRotation() * InConstrainedParticles[0]->R().Inverse()
+			WorldConstraintFrame.GetTranslation() - InConstrainedParticles[0]->GetX(),
+			WorldConstraintFrame.GetRotation() * InConstrainedParticles[0]->GetR().Inverse()
 			);
 		JointSettings.ConnectorTransforms[1] = FRigidTransform3(
-			WorldConstraintFrame.GetTranslation() - InConstrainedParticles[1]->X(),
-			WorldConstraintFrame.GetRotation() * InConstrainedParticles[1]->R().Inverse()
+			WorldConstraintFrame.GetTranslation() - InConstrainedParticles[1]->GetX(),
+			WorldConstraintFrame.GetRotation() * InConstrainedParticles[1]->GetR().Inverse()
 			);
 		return AddConstraint(InConstrainedParticles, JointSettings);
 	}
@@ -632,18 +750,21 @@ namespace Chaos
 
 	void FPBDJointConstraints::SetConstraintEnabled(int32 ConstraintIndex, bool bEnabled)
 	{
-		const FGenericParticleHandle Particle0 = FGenericParticleHandle(ConstraintParticles[ConstraintIndex][0]);
-		const FGenericParticleHandle Particle1 = FGenericParticleHandle(ConstraintParticles[ConstraintIndex][1]);
-
 		if (bEnabled)
 		{ 
-			// only enable constraint if the particles are valid and not disabled
-			// and if the constraint is not broken
-			if (Particle0->Handle() != nullptr && !Particle0->Disabled()
-				&& Particle1->Handle() != nullptr && !Particle1->Disabled()
-				&& !IsConstraintBroken(ConstraintIndex))
+			if (ConstraintStates[ConstraintIndex].bDisabled)
 			{
-				ConstraintStates[ConstraintIndex].bDisabled = false;
+				const FGenericParticleHandle Particle0 = FGenericParticleHandle(ConstraintParticles[ConstraintIndex][0]);
+				const FGenericParticleHandle Particle1 = FGenericParticleHandle(ConstraintParticles[ConstraintIndex][1]);
+
+				// only enable constraint if the particles are valid and not disabled
+				// and if the constraint is not broken
+				if (Particle0->Handle() != nullptr && !Particle0->Disabled()
+					&& Particle1->Handle() != nullptr && !Particle1->Disabled()
+					&& !IsConstraintBroken(ConstraintIndex))
+				{
+					ConstraintStates[ConstraintIndex].bDisabled = false;
+				}
 			}
 		}
 		else
@@ -778,6 +899,11 @@ namespace Chaos
 	void FPBDJointConstraints::SetConstraintEnabledDuringResim(int32 ConstraintIndex, bool bEnabled)
 	{
 		ConstraintStates[ConstraintIndex].bEnabledDuringResim = bEnabled;
+	}
+
+	bool FPBDJointConstraints::IsConstraintEnabledDuringResim(int32 ConstraintIndex) const
+	{
+		return ConstraintStates[ConstraintIndex].bEnabledDuringResim;
 	}
 
 	EResimType FPBDJointConstraints::GetConstraintResimType(int32 ConstraintIndex) const

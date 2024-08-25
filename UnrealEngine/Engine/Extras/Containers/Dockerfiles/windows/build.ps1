@@ -15,22 +15,28 @@ if ($release -ne "")
 }
 else
 {
-	# Retrieve the Windows release number (e.g. 1903, 1909, 2004, 20H2, etc.)
-	$displayVersion = (Get-ItemProperty -Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name DisplayVersion -ErrorAction SilentlyContinue)
-	if ($displayVersion) {
-		$windowsRelease = $displayVersion.DisplayVersion
-	} else {
-		$windowsRelease = (Get-ItemProperty -Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name ReleaseId).ReleaseId
-	}
-	
-	# Use LTSC2022 images under Windows 11 and Windows Server 2022
+	# Determine whether we are running under Windows Server 2022 / Windows 11, or an older version of Windows
 	[int]$kernelBuild = (Get-ItemProperty -Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name CurrentBuildNumber).CurrentBuildNumber
-	if ($kernelBuild -ge 20348) {
+	if ($kernelBuild -ge 20348)
+	{
+		# Use a Windows Server 2022 base image
 		$windowsRelease = "ltsc2022"
+		
+		# Use process isolation mode for improved performance
+		$isolation = "process"
 	}
-
-	# Use process isolation mode for improved performance
-	$isolation = "process"
+	else
+	{
+		# Use a Windows Server 2019 base image
+		$windowsRelease = "ltsc2019"
+		
+		# Use process isolation mode if we're running under Windows Server 2019 itself, otherwise use Hyper-V isolation mode (e.g. when running under Windows 10)
+		if ($kernelBuild -eq 17763) {
+			$isolation = "process"
+		} else {
+			$isolation = "hyperv"
+		}
+	}
 	
 	# Don't suffix the image tag
 	$tag = "runtime-windows"
@@ -42,6 +48,12 @@ if ($windowsRelease -eq "ltsc2022") {
 	$dllImage = "mcr.microsoft.com/windows/server"
 }
 
+# Identify any DLL files that are required for the specific version of Windows
+$versionSpecificDLLs = ""
+if ($windowsRelease -eq "ltsc2019") {
+	$versionSpecificDLLs = "ksuser.dll"
+}
+
 # Build our runtime container image using the correct base image for the selected Windows version
 "Building runtime container image for Windows version $windowsRelease with ``$isolation`` isolation mode and DLL files from ``$dllImage``..."
-docker build -t "ghcr.io/epicgames/unreal-engine:$tag" --isolation="$isolation" --build-arg "DLL_IMAGE=$dllImage" --build-arg "BASETAG=$windowsRelease" ./runtime
+docker build -t "ghcr.io/epicgames/unreal-engine:$tag" --isolation="$isolation" --build-arg "DLL_IMAGE=$dllImage" --build-arg "BASETAG=$windowsRelease" --build-arg "VERSION_SPECIFIC_DLLS=$versionSpecificDLLs" ./runtime

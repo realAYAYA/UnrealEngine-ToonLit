@@ -190,10 +190,11 @@ void ir_print_visitor::visit(ir_variable *ir)
 		"const_in ", "temp ", "shared ", "ref ", "refimg ", "refuniform " };
 	static const char *const interp[] = { "", "smooth", "flat", "noperspective" };
 
-	printf("(%s%s%s%s%s%s%s) ",
+	printf("(%s%s%s%s%s%s%s%s) ",
 		patch, cent, inv, mode[ir->mode], interp[ir->interpolation],
 		ir->semantic ? ": " : "",
-		ir->semantic ? ir->semantic : ""
+		ir->semantic ? ir->semantic : "",
+		ir->precise ? "precise " : ""
 		);
 
 	print_type(ir->type);

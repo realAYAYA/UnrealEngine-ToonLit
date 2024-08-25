@@ -7,6 +7,7 @@
 namespace UE::CADKernel
 {
 class FModelMesh;
+class FTopologicalShapeEntity;
 
 class CADKERNEL_API FMesher
 {

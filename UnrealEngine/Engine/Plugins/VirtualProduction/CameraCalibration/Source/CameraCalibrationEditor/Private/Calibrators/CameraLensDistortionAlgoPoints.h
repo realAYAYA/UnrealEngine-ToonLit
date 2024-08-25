@@ -38,7 +38,7 @@ struct FLensDistortionPointsCalibratorPointData
 
 	// 2D location of the calibrator point
 	UPROPERTY()
-	FVector2D Point2d = FVector2D::ZeroVector;
+	FVector2f Point2d = FVector2f::ZeroVector;
 };
 
 /** Holds information of the camera pose for a given sample of a 2d-3d correlation */
@@ -188,7 +188,7 @@ protected:
 	uint32 CurrentPatternIndex = 0;
 
 	/** The value of the current focal length of the lens (in mm), used to set a guess for the camera intrinsics fx/fy */
-	float CurrentFocalLengthMM = 0.0f;
+	double FocalLengthEstimate = 0.0;
 
 protected:
 

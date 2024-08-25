@@ -17,6 +17,7 @@ public class SourceCodeAccess : ModuleRules
 			new string[] {
 				"CoreUObject",
 				"Slate",
+				"SlateCore",
 			}
 		);
 	}

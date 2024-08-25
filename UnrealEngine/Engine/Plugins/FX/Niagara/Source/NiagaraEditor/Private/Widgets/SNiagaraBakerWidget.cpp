@@ -864,6 +864,19 @@ void SNiagaraBakerWidget::MakeSimTickRateMenu(FMenuBuilder& MenuBuilder) const
 		LOCTEXT("SimTickRate", "Simulation Tick Rate")
 	);
 
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("LockToSimulationFrameRate", "Lock To Simulation Frame Rate"),
+		LOCTEXT("LockToSimulationFrameRateTooltip", "When enabled we will update at the simulation frame rate.  I.e. only ever tick once per frame even if the application frame rate is lower, this will result in the sim slowing down."),
+		FSlateIcon(),
+		FUIAction(
+			FExecuteAction::CreateSP(ViewModel, &FNiagaraBakerViewModel::ToggleLockToSimulationFrameRate),
+			FCanExecuteAction(),
+			FIsActionChecked::CreateSP(ViewModel, &FNiagaraBakerViewModel::LockToSimulationFrameRate)
+		),
+		NAME_None,
+		EUserInterfaceActionType::ToggleButton
+	);
+
 	MenuBuilder.BeginSection("FPS", LOCTEXT("FPS", "FPS"));
 	{
 		static const int32 DefaultFPS[] = { 240, 120, 60, 50, 30, 20, 15 };
@@ -974,6 +987,12 @@ void SNiagaraBakerWidget::Tick(const FGeometry& AllottedGeometry, const double _
 		if (TSharedPtr<FNiagaraBakerViewModel> ViewModel = WeakViewModel.Pin())
 		{
 			DeltaTime *= ViewModel->GetPlaybackRate();
+		}
+
+		if (BakerSettings->bLockToSimulationFrameRate)
+		{
+			const float MaxTickRate = 1.0f / BakerSettings->FramesPerSecond;
+			DeltaTime = FMath::Min(MaxTickRate, DeltaTime);
 		}
 
 		if (PlaybackMode != EPlaybackMode::Stopped)

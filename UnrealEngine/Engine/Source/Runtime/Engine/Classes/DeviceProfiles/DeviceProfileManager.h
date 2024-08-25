@@ -25,7 +25,7 @@ DECLARE_MULTICAST_DELEGATE( FOnActiveDeviceProfileChanged );
 struct FPushedCVarSetting
 {
 	FPushedCVarSetting() : SetBy(ECVF_Default)	{}
-	FPushedCVarSetting(const FString& InValue, EConsoleVariableFlags InFlags) 
+	FPushedCVarSetting(const FString& InValue, EConsoleVariableFlags InFlags)
 		: Value(InValue)
 		, SetBy(EConsoleVariableFlags(InFlags & ECVF_SetByMask))
 	{}
@@ -85,6 +85,15 @@ public:
 	ENGINE_API bool HasLoadableProfileName(const FString& ProfileName, FName OptionalPlatformName = FName());
 
 	/**
+	 * Get a list of all a named device profiles that are available to call CreateProfile with.
+	 *
+	 * @param OptionalPlatformName - The platform name to use for loading.
+	 *
+	 * @return matching profiles.
+	 */
+	ENGINE_API TArray<FString> GetLoadableProfileNames(FName OptionalPlatformName = FName()) const;
+
+	/**
 	 * Delete a profile.
 	 *
 	 * @param Profile - The profile to delete.
@@ -95,9 +104,11 @@ public:
 	 * Find a profile based on the name.
 	 *
 	 * @param ProfileName - The profile name to find.
+	 * @param bCreateProfileOnFail - Whether to create the profile from config if the object doesn't exist yet.
+	 * @param OptionalPlatformName - The platform name to use for loading.
 	 * @return The found profile.
 	 */
-	ENGINE_API UDeviceProfile* FindProfile( const FString& ProfileName, bool bCreateProfileOnFail = true );
+	ENGINE_API UDeviceProfile* FindProfile(const FString& ProfileName, bool bCreateProfileOnFail = true, FName OptionalPlatformName = FName());
 
 	/**
 	* Overrides the device profile. The original profile can be restored with RestoreDefaultDeviceProfile
@@ -115,12 +126,12 @@ public:
 	* It does not change the actual DP. 
 	* Use RestorePreviewDeviceProfile to revert.
 	*/
-	ENGINE_API void SetPreviewDeviceProfile(UDeviceProfile* DeviceProfile);
+	ENGINE_API void SetPreviewDeviceProfile(UDeviceProfile* DeviceProfile, FName PreviewModeTag=NAME_None);
 
 	/**
 	* Revert the preview state.
 	*/
-	ENGINE_API void RestorePreviewDeviceProfile();
+	ENGINE_API void RestorePreviewDeviceProfile(FName PreviewModeTag=NAME_None);
 #endif
 
 	/**
@@ -324,10 +335,6 @@ private:
 	// Used to undo the DP before applying new state.
 	static ENGINE_API TMap<FString, FPushedCVarSetting> PushedSettings;
 
-#if ALLOW_OTHER_PLATFORM_CONFIG
-	// Original values of the CVars modified by SetPreviewDeviceProfile.
-	TMap<FString, FPushedCVarSetting> PreviewPushedSettings;
-#endif
 	// Holds the device profile that has been overridden, null no override active.
 	UDeviceProfile* BaseDeviceProfile = nullptr;
 

@@ -12,6 +12,7 @@
 #include "UObject/FortniteSeasonBranchObjectVersion.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
 #include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
 
 FActorDescArchive::FActorDescArchive(FArchive& InArchive, FWorldPartitionActorDesc* InActorDesc)
 	: FArchiveProxy(InArchive)
@@ -22,14 +23,17 @@ FActorDescArchive::FActorDescArchive(FArchive& InArchive, FWorldPartitionActorDe
 
 	SetIsPersistent(true);
 	SetIsLoading(InArchive.IsLoading());
+}
 
+void FActorDescArchive::Init(const FTopLevelAssetPath InClassPath)
+{
 	UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
 	UsingCustomVersion(FFortniteSeasonBranchObjectVersion::GUID);
 	UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
 
 	if (CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::WorldPartitionActorClassDescSerialize)
 	{
-		InnerArchive << InActorDesc->bIsDefaultActorDesc;
+		*this << ActorDesc->bIsDefaultActorDesc;
 	}
 
 	if (CustomVer(FFortniteSeasonBranchObjectVersion::GUID) >= FFortniteSeasonBranchObjectVersion::WorldPartitionActorDescNativeBaseClassSerialization)
@@ -37,28 +41,28 @@ FActorDescArchive::FActorDescArchive(FArchive& InArchive, FWorldPartitionActorDe
 		if (CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::WorldPartitionActorDescActorAndClassPaths)
 		{
 			FName BaseClassPathName;
-			InnerArchive << BaseClassPathName;
+			*this << BaseClassPathName;
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			InActorDesc->BaseClass = FAssetData::TryConvertShortClassNameToPathName(BaseClassPathName);
+			ActorDesc->BaseClass = FAssetData::TryConvertShortClassNameToPathName(BaseClassPathName);
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 		else
 		{
-			InnerArchive << InActorDesc->BaseClass;
+			*this << ActorDesc->BaseClass;
 		}
 	}
 
 	if (CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::WorldPartitionActorDescActorAndClassPaths)
 	{
 		FName NativeClassPathName;
-		InnerArchive << NativeClassPathName;
+		*this << NativeClassPathName;
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		InActorDesc->NativeClass = FAssetData::TryConvertShortClassNameToPathName(NativeClassPathName);
+		ActorDesc->NativeClass = FAssetData::TryConvertShortClassNameToPathName(NativeClassPathName);
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 	else
 	{
-		InnerArchive << InActorDesc->NativeClass;
+		*this << ActorDesc->NativeClass;
 	}
 
 	if (IsLoading())
@@ -75,22 +79,21 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 					InOutClassPath = FTopLevelAssetPath(RedirectedClassRedirect.ToString());
 				}
 
-				FSoftObjectPath FoundRedirection = GRedirectCollector.GetAssetPathRedirection(FSoftObjectPath(InOutClassPath.ToString()));
-				if (FoundRedirection.IsValid())
-				{
-					InOutClassPath = FoundRedirection.GetAssetPath();
-				}
+				FSoftObjectPath RedirectedClassPath(InOutClassPath.ToString());
+				UAssetRegistryHelpers::FixupRedirectedAssetPath(RedirectedClassPath);
+				InOutClassPath = RedirectedClassPath.GetAssetPath();
 			}
 		};
 
-		TryRedirectClass(InActorDesc->NativeClass);
-		TryRedirectClass(InActorDesc->BaseClass);
+		TryRedirectClass(ActorDesc->NativeClass);
+		TryRedirectClass(ActorDesc->BaseClass);
 	}
 
 	// Get the class descriptor to do delta serialization
 	FWorldPartitionClassDescRegistry& ClassDescRegistry = FWorldPartitionClassDescRegistry::Get();
-	const FTopLevelAssetPath ClassPath = InActorDesc->BaseClass.IsValid() ? InActorDesc->BaseClass : InActorDesc->NativeClass;
-	ClassDesc = InActorDesc->bIsDefaultActorDesc ? ClassDescRegistry.GetClassDescDefaultForClass(ClassPath) : ClassDescRegistry.GetClassDescDefaultForActor(ClassPath);
+	const FTopLevelAssetPath ClassPath = InClassPath.IsValid() ? InClassPath : (ActorDesc->BaseClass.IsValid() ? ActorDesc->BaseClass : ActorDesc->NativeClass);
+	ClassDesc = (ActorDesc->bIsDefaultActorDesc && !InClassPath.IsValid()) ? ClassDescRegistry.GetClassDescDefaultForClass(ClassPath) : ClassDescRegistry.GetClassDescDefaultForActor(ClassPath);
+
 	if (!ClassDesc)
 	{
 		if (IsLoading())
@@ -98,13 +101,13 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			bIsMissingClassDesc = true;
 
 			ClassDesc = ClassDescRegistry.GetClassDescDefault(FTopLevelAssetPath(TEXT("/Script/Engine.Actor")));
-			check(ClassDesc);
+			check(ClassDesc);			
 
-			UE_LOG(LogWorldPartition, Log, TEXT("Can't find class descriptor '%s' for loading '%s', using '%s'"), *ClassPath.ToString(), *InActorDesc->GetActorSoftPath().ToString(), *ClassDesc->GetActorSoftPath().ToString());
+			UE_LOG(LogWorldPartition, Log, TEXT("Can't find class descriptor '%s' for loading '%s', using '%s'"), *ClassPath.ToString(), *ActorDesc->GetActorSoftPath().ToString(), *ClassDesc->GetActorSoftPath().ToString());
 		}
 		else
 		{
-			UE_LOG(LogWorldPartition, Log, TEXT("Can't find class descriptor '%s' for saving '%s'"), *ClassPath.ToString(), *InActorDesc->GetActorSoftPath().ToString());
+			UE_LOG(LogWorldPartition, Log, TEXT("Can't find class descriptor '%s' for saving '%s'"), *ClassPath.ToString(), *ActorDesc->GetActorSoftPath().ToString());
 		}
 	}
 
@@ -117,9 +120,37 @@ FArchive& FActorDescArchive::operator<<(FSoftObjectPath& Value)
 
 	if (IsLoading())
 	{
-		FWorldPartitionHelpers::FixupRedirectedAssetPath(Value);
+		UAssetRegistryHelpers::FixupRedirectedAssetPath(Value);
 	}
 
 	return *this;
+}
+
+FArchive& FActorDescArchivePatcher::operator<<(FName& Value)
+{
+	TGuardValue<bool> GuardIsPatching(bIsPatching, true);
+	FActorDescArchive::operator<<(Value);
+	AssetDataPatcher->DoPatch(Value);
+	OutAr << Value;
+	return *this;
+}
+
+FArchive& FActorDescArchivePatcher::operator<<(FSoftObjectPath& Value)
+{
+	TGuardValue<bool> GuardIsPatching(bIsPatching, true);
+	FActorDescArchive::operator<<(Value);
+	AssetDataPatcher->DoPatch(Value);
+	Value.SerializePathWithoutFixup(OutAr);
+	return *this;
+}
+
+void FActorDescArchivePatcher::Serialize(void* V, int64 Length)
+{
+	FActorDescArchive::Serialize(V, Length);
+
+	if (!bIsPatching)
+	{
+		OutAr.Serialize(V, Length);
+	}
 }
 #endif

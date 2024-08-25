@@ -29,8 +29,8 @@ public:
 protected:
 	UGraphElement();
 
-	void SetUniqueIndex(int64 InUniqueIndex) { UniqueIndex = InUniqueIndex; }
-	int64 GetUniqueIndex() const { return UniqueIndex; }
+	void SetUniqueIndex(FGraphUniqueIndex InUniqueIndex) { UniqueIndex = InUniqueIndex; }
+	FGraphUniqueIndex GetUniqueIndex() const { return UniqueIndex; }
 
 	void SetParentGraph(TObjectPtr<UGraph> InGraph);
 	TObjectPtr<UGraph> GetGraph() const;
@@ -44,7 +44,7 @@ private:
 
 	/** Will match the UniqueIndex in the UGraphHandle that references this element. */
 	UPROPERTY()
-	int64 UniqueIndex = INDEX_NONE;
+	FGraphUniqueIndex UniqueIndex = FGraphUniqueIndex();
 
 	UPROPERTY()
 	TWeakObjectPtr<UGraph> ParentGraph;

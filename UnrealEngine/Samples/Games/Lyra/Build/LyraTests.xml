@@ -25,7 +25,11 @@
 	<Option Name="SkipUpdateAuditCollections" DefaultValue="false" Description="Whether to skip updating the audit collections (showing which files got cooked)" />
 
 	<Option Name="SymbolServerPath" DefaultValue="" Description="A shared symbols server for your office, debugging shipped builds."/>
-
+	
+	<Option Name="RunCookOnTheFlyTest" DefaultValue="false" Description="To run cook on the fly test"/>
+	
+	<Option Name="SourceBuildVersion" DefaultValue="" Description="The source build version for diffing"/>
+	
 	<!-- Turn off defaults so we can set out own -->
 	<Property Name="WithBATDefaults" Value="false" />
 
@@ -38,6 +42,7 @@
 	<Property Name="NetworkTempRootOverride" Value="" />
 	<Property Name="NetworkPublishRootOverride" Value="" />
 	<Property Name="NetworkReportRootOverride" Value="" />
+	<Property Name="WithInterchangeWorker" Value="true" />
 
 	<!-- If a build machine, turn off all defaults. Settings should be specified via the website UI -->
 	<Do If="$(IsBuildMachine)">
@@ -47,7 +52,9 @@
 		<Property Name="DefaultEditorTestList" Value="" />
 		<Property Name="DefaultTargetTestList" Value="" />
 	</Do>
-	
+
+	<Property Name="DefaultTargetTestList" Value="$(DefaultTargetTestList)+UE.CookOnTheFly" If="$(RunCookOnTheFlyTest)" />
+
 	<Property Name="ExtraStageAndPackageArguments" Value="-target=&quot;$(TargetName)&quot; -compressed -CrashReporter" />
 
 
@@ -65,23 +72,25 @@
 	<!-- CONTENT VALIDATION -->
 	<!-- =============================================================================== -->
 	
-	<Agent Name="$(ProjectName) Content Validation" Type="Win64">
-		<Node Name="$(ProjectName) Content Validation" Requires="$(PreNodeName)Compile Editor Win64">
-			<Property Name="RefExtensionsTypelist" Value=".uasset,.umap,.cpp,.c,.h,.inl,.ini,.uproject,.uplugin,.json"/>
+	<Do If="ContainsItem('$(RequiredEditorPlatforms)', 'Win64', '+')">
+		<Agent Name="$(ProjectName) Content Validation" Type="Win64">
+			<Node Name="$(ProjectName) Content Validation" Requires="$(PreNodeName)Compile Editor Win64">
+				<Property Name="RefExtensionsTypelist" Value=".uasset,.umap,.cpp,.c,.h,.inl,.ini,.uproject,.uplugin,.json"/>
 
-			<Property Name="CLArgs" Value="-CL=$(Change) -LastGoodContentCLPath=$(NetworkOutputDirectory)/AutoTest/LastGoodContentCL"/>
-			<Property Name="CLArgs" Value="-CL=$(PreflightChange) -shelved" If="$(IsPreflight)" />
-			<Property Name="CLArgs" Value="-opened" If="!$(IsBuildMachine)" />
+				<Property Name="CLArgs" Value="-CL=$(Change) -LastGoodContentCLPath=$(NetworkOutputDirectory)/AutoTest/LastGoodContentCL"/>
+				<Property Name="CLArgs" Value="-CL=$(PreflightChange) -shelved" If="$(IsPreflight)" />
+				<Property Name="CLArgs" Value="-opened" If="!$(IsBuildMachine)" />
 
-			<Property Name="CheckAssetReferencesArgs" Value="-Branch=$(Branch) $(CLArgs) -ExtTypeList=&quot;$(RefExtensionsTypelist)&quot; -MaxPackagesToLoad=3000" />
-			<Command Name="LyraContentValidation" Arguments="$(CheckAssetReferencesArgs)"/>
-		</Node>
-		<Label Category="Test" Name="Content Validation" Requires="$(ProjectName) Content Validation" />
-	</Agent>
+				<Property Name="CheckAssetReferencesArgs" Value="-Branch=$(Branch) $(CLArgs) -ExtTypeList=&quot;$(RefExtensionsTypelist)&quot; -MaxPackagesToLoad=3000" />
+				<Command Name="LyraContentValidation" Arguments="$(CheckAssetReferencesArgs)"/>
+			</Node>
+			<Label Category="Test" Name="Content Validation" Requires="$(ProjectName) Content Validation" />
+		</Agent>
 
-	<Do If="!$(SkipTest)">
-		<!-- Append Content Validation to the list of things to do -->
-		<Property Name="BuildAndTestExtendedRequirements" Value="$(BuildAndTestExtendedRequirements);$(ProjectName) Content Validation"/>
+		<Do If="!$(SkipTest)">
+			<!-- Append Content Validation to the list of things to do -->
+			<Property Name="BuildAndTestExtendedRequirements" Value="$(BuildAndTestExtendedRequirements);$(ProjectName) Content Validation"/>
+		</Do>
 	</Do>
 
 	<!-- =============================================================================== -->
@@ -89,7 +98,7 @@
 	<!-- =============================================================================== -->
 	<Option Name="SkipLocalization" DefaultValue="false" Description="Should we skip performing a localization gather?"/>
 	
-	<Do If="!$(SkipLocalization)">
+	<Do If="!$(SkipLocalization) and ContainsItem('$(RequiredEditorPlatforms)', 'Win64', '+')">
 
 		<Property Name="ProjectsIncludedInLocalization" Value="Game,EngineOverrides"/>
 		
@@ -100,10 +109,11 @@
 		<Option Name="XLoc_Server" DefaultValue="" Description="XLoc Server"/>
 		<Option Name="XLoc_APIKey" DefaultValue="" Description="XLoc API Key"/>
 		<Option Name="XLoc_APISecret" DefaultValue="" Description="XLoc API Secret"/>
-		<Option Name="XLoc_LocalizationId" DefaultValue="" Description="XLoc LocalizationId"/>
+		<Option Name="XLoc_LocalizationId" DefaultValue="" Description="XLoc LocalizationId"/>		
+		<Option Name="XLoc_AgentType" DefaultValue="Loc;Win64" Description="XLoc Agent Type"/>
 
 		<Do If="'$(XLoc_Server)' != '' And '$(XLoc_APIKey)' != '' And '$(XLoc_APISecret)' != '' And '$(XLoc_LocalizationId)' != ''">
-			<Agent Name="Localization" Type="Loc;Win64">
+			<Agent Name="Localization" Type="$(XLoc_AgentType)">
 				<Node Name="$(ProjectName) Localize" Requires="$(PreNodeName)Compile Editor Win64">
 					<Command Name="Localize" Arguments="-LocalizationProvider=XLoc_Sample -UEProjectDirectory=$(ProjectPath) -UEProjectName=$(ProjectName) -LocalizationProjectNames=$(ProjectsIncludedInLocalization) -LocalizationBranch=&quot;$(EscapedBranch)&quot; -Server=&quot;$(XLoc_Server)&quot; -APIKey=&quot;$(XLoc_APIKey)&quot; -APISecret=&quot;$(XLoc_APISecret)&quot; -LocalizationId=&quot;$(XLoc_LocalizationId)&quot;" />
 				</Node>
@@ -120,7 +130,7 @@
 		<Option Name="Crowdin_AccessToken" DefaultValue="" Description="Crowdin AccessToken"/>
 
 		<Do If="'$(Crowdin_ProjectId)' != '' And '$(Crowdin_AccessToken)' != ''">
-			<Agent Name="Localization" Type="Loc;Win64">
+			<Agent Name="Localization" Type="$(XLoc_AgentType)">
 				<Node Name="$(ProjectName) Localize" Requires="$(PreNodeName)Compile Editor Win64">
 					<Command Name="Localize" Arguments="-LocalizationProvider=Crowdin_Sample -UEProjectDirectory=$(ProjectPath) -UEProjectName=$(ProjectName) -LocalizationProjectNames=$(ProjectsIncludedInLocalization) -LocalizationBranch=&quot;$(EscapedBranch)&quot; -ProjectId=&quot;$(Crowdin_ProjectId)&quot; -AccessToken=&quot;$(Crowdin_AccessToken)&quot;" />
 				</Node>
@@ -213,8 +223,6 @@
 	
 	<!-- Finally this defines the actual aggregated build command that will run all the requirements. -->
 	<Aggregate Name="BuildAndTestExtended $(ProjectName)" Requires="$(BuildAndTestExtendedRequirements)" />
-
-
 
 	<!-- =============================================================================== -->
 	<!-- PGO BUILDS -->

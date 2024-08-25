@@ -15,6 +15,7 @@ namespace UnrealBuildTool.Rules
 					"DataprepCore",
 					"DataprepEditor",
 					"DatasmithContent",
+					"DerivedDataCache",
 					"EditorFramework",
 					"EditorScriptingUtilities",
 					"Engine",

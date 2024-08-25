@@ -16,6 +16,8 @@ class UScriptStruct;
 
 /** Delegate used with the Struct Viewer in 'struct picking' mode.  You'll bind a delegate when the struct viewer widget is created, which will be fired off when a struct is selected in the list */
 DECLARE_DELEGATE_OneParam(FOnStructPicked, const UScriptStruct*);
+/** Delegate used with the Struct Viewer in 'struct picking' mode.  You'll bind a delegate when the struct viewer widget is created, which will be fired off when a list of structs is opened for selection */
+DECLARE_DELEGATE_OneParam(FOnStructPickerOpened, const UScriptStruct*);
 
 enum class EStructViewerMode : uint8
 {
@@ -93,6 +95,9 @@ public:
 	/** true (the default) shows a background border behind the struct viewer widget. */
 	bool bShowBackgroundBorder;
 
+	/** Defined currently selected struct to scroll to to when struct picker is opened. */
+	const UScriptStruct* SelectedStruct;
+
 	/** Defines additional structs you want listed in the "Common Structs" section for the picker. */
 	TArray<const UScriptStruct*> ExtraPickerCommonStructs;
 
@@ -108,6 +113,7 @@ public:
 		, NameTypeToDisplay(EStructViewerNameTypeToDisplay::StructName)
 		, bAllowViewOptions(true)
 		, bShowBackgroundBorder(true)
+	    , SelectedStruct(nullptr)
 	{
 	}
 };

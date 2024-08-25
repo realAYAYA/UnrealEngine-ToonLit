@@ -99,6 +99,7 @@ public:
 	virtual bool MouseMove(FEditorViewportClient* ViewportClient, FViewport* Viewport, int32 x, int32 y) override;
 	virtual bool ProcessCapturedMouseMoves(FEditorViewportClient* InViewportClient, FViewport* InViewport, const TArrayView<FIntPoint>& CapturedMouseMoves) override;
 	virtual bool InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale) override;
+	virtual void Tick(FEditorViewportClient* ViewportClient,float DeltaTime);
 
 	bool IsPressingMoveTimeSlider(FViewport* InViewport) const;
 	bool IsDoingDrag(FViewport* InViewport) const;
@@ -146,6 +147,8 @@ private:
 
 	FMarqueeDragTool DragToolHandler;
 
+	/** If the pivot location needs to be updated */
+	bool bUpdatePivot = false;
 };
 
 /**

@@ -2,7 +2,7 @@
 
 #include "SequencerTrackBP.h"
 
-
+#include "UObject/AssetRegistryTagsContext.h"
 
 UMovieSceneSection* USequencerTrackBP::CreateNewSection()
 {
@@ -25,5 +25,12 @@ UMovieSceneSection* USequencerTrackBP::CreateNewSection()
 
 void USequencerTrackBP::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void USequencerTrackBP::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 }

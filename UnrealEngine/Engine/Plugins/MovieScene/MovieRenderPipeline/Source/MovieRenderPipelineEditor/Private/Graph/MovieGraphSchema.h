@@ -22,7 +22,7 @@ public:
 	virtual const FPinConnectionResponse CanCreateConnection(const UEdGraphPin* A, const UEdGraphPin* B) const override;
 	virtual bool TryCreateConnection(UEdGraphPin* InA, UEdGraphPin* InB) const override;
 	//virtual const FPinConnectionResponse CanMergeNodes(const UEdGraphNode* A, const UEdGraphNode* B) const override;
-	static FLinearColor GetTypeColor(const FName& InType);
+	static FLinearColor GetTypeColor(const FName& InPinCategory, const FName& InPinSubCategory);
 	virtual FLinearColor GetPinTypeColor(const FEdGraphPinType& PinType) const override;
 	virtual FConnectionDrawingPolicy* CreateConnectionDrawingPolicy(int32 InBackLayerID, int32 InFrontLayerID, float InZoomFactor, const FSlateRect& InClippingRect, FSlateWindowElementList& InDrawElements, UEdGraph* InGraphObj) const override;
 
@@ -33,15 +33,28 @@ public:
 	//virtual TSharedPtr<FEdGraphSchemaAction> GetCreateCommentAction() const override;
 	virtual void BreakPinLinks(UEdGraphPin& TargetPin, bool bSendsNodeNotification) const override;
 	virtual void BreakSinglePinLink(UEdGraphPin* SourcePin, UEdGraphPin* TargetPin) const override;
+	virtual bool SupportsPinTypeContainer(TWeakPtr<const FEdGraphSchemaAction> SchemaAction, const FEdGraphPinType& PinType, const EPinContainerType& ContainerType) const override;
+	virtual bool ShouldHidePinDefaultValue(UEdGraphPin* Pin) const override;
 	//~ End EdGraphSchema Interface
 	static void InitMoviePipelineNodeClasses();
 
 private:
 	/**
 	 * Determines if the connection between InputPin and OutputPin follows branch restriction rules. OutError is populated
-	 * with an error if the connection should be rejected.
+	 * with an error if the connection should be rejected and the function will return false.
 	 */
 	bool IsConnectionToBranchAllowed(const UEdGraphPin* InputPin, const UEdGraphPin* OutputPin, FText& OutError) const;
+
+	/**
+	 * Adds extra menu actions to the context/palette menu.
+	 */
+	void AddExtraMenuActions(FGraphActionMenuBuilder& ActionMenuBuilder) const;
+
+	/**
+	 * Returns a menu action for creating a new comment in the graph.
+	 * Note that this is not the same as adding a new comment to the graph via hotkey.
+	 */
+	TSharedRef<FMovieGraphSchemaAction_NewComment> CreateCommentMenuAction() const;
 
 public:
 	// Allowed "PinCategory" values for use on EdGraphPin
@@ -50,6 +63,7 @@ public:
 	static const FName PC_Byte;
 	static const FName PC_Integer;
 	static const FName PC_Int64;
+	static const FName PC_Real;
 	static const FName PC_Float;
 	static const FName PC_Double;
 	static const FName PC_Name;
@@ -101,7 +115,7 @@ struct FMovieGraphSchemaAction_NewNode : public FMovieGraphSchemaAction
 		: FMovieGraphSchemaAction()
 	{}
 
-	FMovieGraphSchemaAction_NewNode(FText InNodeCategory, FText InDisplayName, FText InToolTip);
+	FMovieGraphSchemaAction_NewNode(FText InNodeCategory, FText InDisplayName, FText InToolTip, int32 InGrouping, FText InKeywords);
 
 	virtual ~FMovieGraphSchemaAction_NewNode() override = default;
 	
@@ -157,6 +171,9 @@ struct FMovieGraphSchemaAction_NewComment : public FMovieGraphSchemaAction
 		static FName Type("FMovieGraphSchemaAction_NewComment");
 		return Type;
 	}
+
+	// Inherit the base class's constructors for context menu/palette
+	using FMovieGraphSchemaAction::FMovieGraphSchemaAction;
 
 	FMovieGraphSchemaAction_NewComment()
 		: FMovieGraphSchemaAction()

@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RCControllerModel.h"
 #include "Controller/RCCustomControllerUtilities.h"
@@ -6,8 +6,10 @@
 #include "IDetailTreeNode.h"
 #include "RCVirtualProperty.h"
 #include "RemoteControlPreset.h"
+#include "ScopedTransaction.h"
 #include "TypeTranslator/RCTypeTranslator.h"
 #include "UI/SRemoteControlPanel.h"
+#include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/STextComboBox.h"
 #include "Widgets/Text/SInlineEditableTextBlock.h"
 
@@ -24,10 +26,17 @@ FRCControllerModel::FRCControllerModel(URCVirtualPropertyBase* InVirtualProperty
 		{
 			InVirtualProperty->DisplayName = InVirtualProperty->PropertyName;
 		}
-		
-		SAssignNew(ControllerNameTextBox, SInlineEditableTextBlock)
+
+		SAssignNew(ControllerNameTextBox, SEditableTextBox)
+			.RevertTextOnEscape(true)
+			.SelectAllTextWhenFocused(true)
 			.Text(FText::FromName(InVirtualProperty->DisplayName))
 			.OnTextCommitted_Raw(this, &FRCControllerModel::OnControllerNameCommitted);
+
+		SAssignNew(ControllerDescriptionTextBox, SInlineEditableTextBlock)
+			.Text(InVirtualProperty->Description)
+			.MultiLine(true)
+			.OnTextCommitted_Raw(this, &FRCControllerModel::OnControllerDescriptionCommitted);
 
 		SAssignNew(ControllerFieldIdTextBox, SInlineEditableTextBlock)
 			.Text(FText::FromName(InVirtualProperty->FieldId))
@@ -46,13 +55,25 @@ TSharedRef<SWidget> FRCControllerModel::GetWidget() const
 {
 	const FNodeWidgets NodeWidgets = DetailTreeNodeWeakPtr.Pin()->CreateNodeWidgets();
 
+	// We need to add this metadata to the ColorController to avoid the update when dragging causing a lot of lag
+	const TSharedPtr<IPropertyHandle> PropertyHandle = DetailTreeNodeWeakPtr.Pin()->CreatePropertyHandle();
+	if (PropertyHandle.IsValid())
+	{
+		FStructProperty* StructProperty = CastField<FStructProperty>(PropertyHandle->GetProperty());
+		if (StructProperty && StructProperty->Struct &&
+			StructProperty->Struct.GetFName() == FName("Color") &&
+			!StructProperty->HasMetaData("OnlyUpdateOnInteractionEnd"))
+		{
+			StructProperty->AppendMetaData({{FName("OnlyUpdateOnInteractionEnd"), TEXT("true")}});
+		}
+	}
 	const TSharedRef<SHorizontalBox> FieldWidget = SNew(SHorizontalBox);
 	if (VirtualPropertyWeakPtr.IsValid())
 	{
 		static const FMargin SlotMargin(10.0f, 2.0f);
 		
 		// If this is a custom controller, we will use its custom widget
-		if (const TSharedPtr<SWidget>& CustomControllerWidget = IRemoteControlUIModule::Get().CreateCustomControllerWidget(VirtualPropertyWeakPtr.Get()))
+		if (const TSharedPtr<SWidget>& CustomControllerWidget = IRemoteControlUIModule::Get().CreateCustomControllerWidget(VirtualPropertyWeakPtr.Get(), DetailTreeNodeWeakPtr.Pin()->CreatePropertyHandle()))
 		{
 			FieldWidget->AddSlot()
 				.Padding(SlotMargin)
@@ -84,9 +105,19 @@ TSharedRef<SWidget> FRCControllerModel::GetWidget() const
 
 TSharedRef<SWidget> FRCControllerModel::GetNameWidget() const
 {
-	return SNew(SBox).Padding(10.f, 2.f)
+	return SNew(SBox)
+		.VAlign(VAlign_Center)
+		.Padding(10.f, 2.f)
 		[
 			ControllerNameTextBox.ToSharedRef()
+		];
+}
+
+TSharedRef<SWidget> FRCControllerModel::GetDescriptionWidget() const
+{
+	return SNew(SBox).Padding(10.f, 2.f)
+		[
+			ControllerDescriptionTextBox.ToSharedRef()
 		];
 }
 
@@ -118,16 +149,6 @@ TSharedRef<SWidget> FRCControllerModel::GetTypeSelectionWidget()
 				.InitiallySelectedItem(ControlledTypesAsStrings[CurrentControlValueTypeIndex])
 			];
 		}
-	}
-
-	return SNullWidget::NullWidget;
-}
-
-TSharedRef<SWidget> FRCControllerModel::GetCustomControllerWidget(const FString& InCustomControllerTypeName) const
-{
-	if (InCustomControllerTypeName == UE::RCCustomControllers::CustomTextureControllerName)
-	{		
-		return SNew(SCustomTextureControllerWidget, VirtualPropertyWeakPtr.Get());		
 	}
 
 	return SNullWidget::NullWidget;
@@ -180,16 +201,48 @@ void FRCControllerModel::UpdateSelectedBehaviourModel(TSharedPtr<FRCBehaviourMod
 	SelectedBehaviourModelWeakPtr = InModel;
 }
 
+void FRCControllerModel::PostUndo(bool bSuccess)
+{
+	if (bSuccess)
+	{
+		if (const URCVirtualPropertyBase* Controller = GetVirtualProperty())
+		{
+			if (URemoteControlPreset* Preset = GetPreset())
+			{
+				// Cache controllers label again here since during Undo/Redo the cache map won't be changed
+				Preset->CacheControllersLabels();
+			}
+			ControllerNameTextBox->SetText(FText::FromName(Controller->DisplayName));
+			ControllerDescriptionTextBox->SetText(Controller->Description);
+		}
+	}
+}
+
 void FRCControllerModel::OnControllerNameCommitted(const FText& InNewControllerName, ETextCommit::Type InCommitInfo)
+{
+	if (URemoteControlPreset* Preset = GetPreset())
+	{
+		if (const URCVirtualPropertyBase* Controller = GetVirtualProperty())
+		{
+			FScopedTransaction Transaction(LOCTEXT("RenameController", "Rename Controller"));
+			const FName OldName = Controller->DisplayName;
+			const FName AssignedLabel = Preset->SetControllerDisplayName(Controller->Id, FName(FText::TrimPrecedingAndTrailing(InNewControllerName).ToString()));
+			ControllerNameTextBox->SetText(FText::FromName(AssignedLabel));
+			Preset->OnControllerRenamed().Broadcast(Preset, OldName, AssignedLabel);
+		}
+	}
+}
+
+void FRCControllerModel::OnControllerDescriptionCommitted(const FText& InNewControllerDescription, ETextCommit::Type InCommitInfo)
 {
 	if (URemoteControlPreset* Preset = GetPreset())
 	{
 		if (URCVirtualPropertyBase* Controller = GetVirtualProperty())
 		{
-			const FName& OldName = Controller->DisplayName;
-			Controller->DisplayName = *InNewControllerName.ToString();
-			ControllerNameTextBox->SetText(InNewControllerName);
-			Preset->OnControllerRenamed().Broadcast(Preset, OldName, *InNewControllerName.ToString());
+			FScopedTransaction Transaction(LOCTEXT("ChangedControllerDescription", "Update controller description"));
+			Controller->Modify();
+			Controller->Description = InNewControllerDescription;
+			ControllerDescriptionTextBox->SetText(InNewControllerDescription);
 		}
 	}
 }
@@ -274,9 +327,9 @@ void FRCControllerModel::InitControlledTypes()
 	}
 }
 
-void FRCControllerModel::EnterRenameMode()
+void FRCControllerModel::EnterDescriptionEditingMode()
 {	
-	ControllerNameTextBox->EnterEditingMode();
+	ControllerDescriptionTextBox->EnterEditingMode();
 }
 
 FName FRCControllerModel::GetControllerDisplayName()
@@ -287,6 +340,16 @@ FName FRCControllerModel::GetControllerDisplayName()
 	}
 
 	return NAME_None;
+}
+
+FText FRCControllerModel::GetControllerDescription()
+{
+	if (URCVirtualPropertyBase* Controller = GetVirtualProperty())
+	{
+		return Controller->Description;
+	}
+
+	return FText::GetEmpty();
 }
 
 #undef LOCTEXT_NAMESPACE

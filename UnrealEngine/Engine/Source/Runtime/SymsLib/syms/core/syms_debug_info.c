@@ -94,6 +94,18 @@ syms_type_kind_is_user_defined(SYMS_TypeKind kind){
 }
 
 SYMS_API SYMS_B32
+syms_type_kind_is_record(SYMS_TypeKind kind){
+  SYMS_B32 result = (SYMS_TypeKind_Struct <= kind && kind <= SYMS_TypeKind_Union);
+  return(result);
+}
+
+SYMS_API SYMS_B32
+syms_type_kind_is_enum(SYMS_TypeKind kind){
+  SYMS_B32 result = (kind == SYMS_TypeKind_Enum);
+  return(result);
+}
+
+SYMS_API SYMS_B32
 syms_type_kind_is_forward(SYMS_TypeKind kind){
   SYMS_B32 result = (SYMS_TypeKind_ForwardStruct <= kind && kind <= SYMS_TypeKind_ForwardEnum);
   return(result);

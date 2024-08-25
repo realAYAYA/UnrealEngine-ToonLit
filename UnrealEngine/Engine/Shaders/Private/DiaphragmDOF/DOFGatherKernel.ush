@@ -443,7 +443,6 @@ void GatherRingSamples(
 		}
 
 		// Iterate over the pair of sample of the batch to share vgpr setup and rotating ALU
-		UNROLL
 		for (uint BatchSampleId = 0; BatchSampleId < SamplePairBatchSize; BatchSampleId++)
 		{
 			// Swizzle the batch positions' X and Y components.

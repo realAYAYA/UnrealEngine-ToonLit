@@ -18,7 +18,6 @@
 #include "Misc/MessageDialog.h"
 #include "Misc/PackageName.h"
 #include "Modules/ModuleManager.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Function.h"
 #include "UObject/Class.h"
 #include "UObject/Package.h"

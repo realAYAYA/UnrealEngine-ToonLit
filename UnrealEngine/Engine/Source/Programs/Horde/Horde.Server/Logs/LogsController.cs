@@ -9,13 +9,14 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Jobs;
 using EpicGames.Horde.Logs;
 using EpicGames.Horde.Storage;
 using Horde.Server.Acls;
 using Horde.Server.Agents.Sessions;
 using Horde.Server.Issues;
 using Horde.Server.Jobs;
-using Horde.Server.Logs.Data;
 using Horde.Server.Server;
 using Horde.Server.Storage;
 using Horde.Server.Utilities;
@@ -67,7 +68,7 @@ namespace Horde.Server.Logs
 			_jobService = jobService;
 			_storageService = storageService;
 			_globalConfig = globalConfig;
- 		}
+		}
 
 		/// <summary>
 		/// Retrieve metadata about a specific log file
@@ -79,20 +80,20 @@ namespace Horde.Server.Logs
 		[HttpGet]
 		[Route("/api/v1/logs/{logFileId}")]
 		[ProducesResponseType(typeof(GetLogFileResponse), 200)]
-		public async Task<ActionResult<object>> GetLog(LogId logFileId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
+		public async Task<ActionResult<object>> GetLogAsync(LogId logFileId, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
 			ILogFile? logFile = await _logFileService.GetLogFileAsync(logFileId, cancellationToken);
 			if (logFile == null)
 			{
 				return NotFound();
 			}
-			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User))
+			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User, cancellationToken))
 			{
 				return Forbid();
 			}
 
 			LogMetadata metadata = await _logFileService.GetMetadataAsync(logFile, cancellationToken);
-			return new GetLogFileResponse(logFile, metadata).ApplyFilter(filter);       
+			return new GetLogFileResponse(logFile, metadata).ApplyFilter(filter);
 		}
 
 		/// <summary>
@@ -105,20 +106,20 @@ namespace Horde.Server.Logs
 		[HttpPost]
 		[Route("/api/v1/logs/{logFileId}/blobs")]
 		[ProducesResponseType(typeof(WriteBlobResponse), 200)]
-		public async Task<ActionResult<WriteBlobResponse>> WriteLogBlob(LogId logFileId, IFormFile? file, CancellationToken cancellationToken = default)
+		public async Task<ActionResult<WriteBlobResponse>> WriteLogBlobAsync(LogId logFileId, IFormFile? file, CancellationToken cancellationToken = default)
 		{
 			ILogFile? logFile = await _logFileService.GetLogFileAsync(logFileId, cancellationToken);
 			if (logFile == null)
 			{
 				return NotFound();
 			}
-			if (!await AuthorizeAsync(logFile, LogAclAction.WriteLogData, User))
+			if (!await AuthorizeAsync(logFile, LogAclAction.WriteLogData, User, cancellationToken))
 			{
 				return Forbid();
 			}
 
-			IStorageClient storageClient = await _storageService.GetClientAsync(Namespace.Logs, cancellationToken);
-			return await StorageController.WriteBlobAsync(storageClient, file, $"{logFile.RefName}", cancellationToken);
+			IStorageBackend storageBackend = _storageService.CreateBackend(Namespace.Logs);
+			return await StorageController.WriteBlobAsync(storageBackend, file, $"{logFile.RefName}", cancellationToken);
 		}
 
 		/// <summary>
@@ -132,7 +133,7 @@ namespace Horde.Server.Logs
 		/// <returns>Raw log data for the requested range</returns>
 		[HttpGet]
 		[Route("/api/v1/logs/{logFileId}/data")]
-		public async Task<ActionResult> GetLogData(
+		public async Task<ActionResult> GetLogDataAsync(
 			LogId logFileId,
 			[FromQuery] LogOutputFormat format = LogOutputFormat.Raw,
 			[FromQuery] string? fileName = null,
@@ -144,7 +145,7 @@ namespace Horde.Server.Logs
 			{
 				return NotFound();
 			}
-			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User))
+			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User, cancellationToken))
 			{
 				return Forbid();
 			}
@@ -172,14 +173,14 @@ namespace Horde.Server.Logs
 		/// <returns>Information about the requested project</returns>
 		[HttpGet]
 		[Route("/api/v1/logs/{logFileId}/lines")]
-		public async Task<ActionResult> GetLogLines(LogId logFileId, [FromQuery] int index = 0, [FromQuery] int count = 100, CancellationToken cancellationToken = default)
+		public async Task<ActionResult> GetLogLinesAsync(LogId logFileId, [FromQuery] int index = 0, [FromQuery] int count = 100, CancellationToken cancellationToken = default)
 		{
 			ILogFile? logFile = await _logFileService.GetLogFileAsync(logFileId, cancellationToken);
 			if (logFile == null)
 			{
 				return NotFound();
 			}
-			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User))
+			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User, cancellationToken))
 			{
 				return Forbid();
 			}
@@ -194,7 +195,7 @@ namespace Horde.Server.Logs
 				stream.Write(Encoding.UTF8.GetBytes($"\"index\":{index},"));
 				stream.Write(Encoding.UTF8.GetBytes($"\"count\":{lines.Count},"));
 				stream.Write(Encoding.UTF8.GetBytes($"\"maxLineIndex\":{Math.Max(metadata.MaxLineIndex, index + lines.Count)},"));
-				stream.Write(Encoding.UTF8.GetBytes($"\"format\":{ (logFile.Type == LogType.Json ? "\"JSON\"" : "\"TEXT\"")},"));
+				stream.Write(Encoding.UTF8.GetBytes($"\"format\":{(logFile.Type == LogType.Json ? "\"JSON\"" : "\"TEXT\"")},"));
 
 				stream.Write(Encoding.UTF8.GetBytes($"\"lines\":["));
 				stream.WriteByte((byte)'\n');
@@ -274,7 +275,7 @@ namespace Horde.Server.Logs
 			{
 				return NotFound();
 			}
-			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User))
+			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User, cancellationToken))
 			{
 				return Forbid();
 			}
@@ -303,7 +304,7 @@ namespace Horde.Server.Logs
 			{
 				return NotFound();
 			}
-			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User))
+			if (!await AuthorizeAsync(logFile, LogAclAction.ViewLog, User, cancellationToken))
 			{
 				return Forbid();
 			}
@@ -320,7 +321,7 @@ namespace Horde.Server.Logs
 				int? issueId = null;
 				if (logEvent.SpanId != null && !spanIdToIssueId.TryGetValue(logEvent.SpanId.Value, out issueId))
 				{
-					IIssueSpan? span = await _issueCollection.GetSpanAsync(logEvent.SpanId.Value);
+					IIssueSpan? span = await _issueCollection.GetSpanAsync(logEvent.SpanId.Value, cancellationToken);
 					issueId = span?.IssueId;
 					spanIdToIssueId[logEvent.SpanId.Value] = issueId;
 				}
@@ -331,45 +332,20 @@ namespace Horde.Server.Logs
 		}
 
 		/// <summary>
-		/// Appends data to a log file
-		/// </summary>
-		/// <param name="logFileId">The logfile id</param>
-		/// <param name="offset">Offset within the log file</param>
-		/// <param name="lineIndex">The line index</param>
-		/// <param name="cancellationToken">Cancellation token for the request</param>
-		/// <returns>Http result code</returns>
-		[HttpPost]
-		[Route("/api/v1/logs/{logFileId}")]
-		public async Task<ActionResult> WriteData(LogId logFileId, [FromQuery] long offset, [FromQuery] int lineIndex, CancellationToken cancellationToken)
-		{
-			ILogFile? logFile = await _logFileService.GetLogFileAsync(logFileId, cancellationToken);
-			if (logFile == null)
-			{
-				return NotFound();
-			}
-			if (!await AuthorizeAsync(logFile, LogAclAction.WriteLogData, User))
-			{
-				return Forbid();
-			}
-
-			using (MemoryStream bodyStream = new MemoryStream())
-			{
-				await Request.Body.CopyToAsync(bodyStream, cancellationToken);
-				await _logFileService.WriteLogDataAsync(logFile, offset, lineIndex, bodyStream.ToArray(), false, cancellationToken: cancellationToken);
-			}
-			return Ok();
-		}
-
-		/// <summary>
 		/// Determines if the user is authorized to perform an action on a particular template
 		/// </summary>
 		/// <param name="logFile">The template to check</param>
 		/// <param name="action">The action being performed</param>
 		/// <param name="user">The principal to authorize</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the action is authorized</returns>
-		async Task<bool> AuthorizeAsync(ILogFile logFile, AclAction action, ClaimsPrincipal user)
+		async Task<bool> AuthorizeAsync(ILogFile logFile, AclAction action, ClaimsPrincipal user, CancellationToken cancellationToken)
 		{
 			GlobalConfig globalConfig = _globalConfig.Value;
+			if (user.HasAdminClaim())
+			{
+				return true;
+			}
 			if (logFile.LeaseId != null && user.HasLeaseClaim(logFile.LeaseId.Value))
 			{
 				return true;
@@ -378,7 +354,7 @@ namespace Horde.Server.Logs
 			{
 				return true;
 			}
-			if (logFile.JobId != JobId.Empty && await _jobService.AuthorizeAsync(logFile.JobId, action, user, globalConfig))
+			if (logFile.JobId != JobId.Empty && await _jobService.AuthorizeAsync(logFile.JobId, action, user, globalConfig, cancellationToken))
 			{
 				return true;
 			}

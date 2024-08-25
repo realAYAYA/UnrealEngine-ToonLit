@@ -151,7 +151,7 @@ void UAIPerceptionStimuliSourceComponent::UnregisterFromSense(TSubclassOf<UAISen
 		if (PerceptionSystem)
 		{
 			PerceptionSystem->UnregisterSource(*OwnerActor, SenseClass);
-			RegisterAsSourceForSenses.RemoveSingleSwap(SenseClass, /*bAllowShrinking=*/false);
+			RegisterAsSourceForSenses.RemoveSingleSwap(SenseClass, EAllowShrinking::No);
 			bSuccessfullyRegistered = RegisterAsSourceForSenses.Num() > 0;
 		}
 	}

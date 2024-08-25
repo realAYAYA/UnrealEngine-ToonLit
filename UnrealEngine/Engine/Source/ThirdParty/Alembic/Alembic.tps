@@ -3,7 +3,7 @@
   <Name>Alembic</Name>
   <Location>Engine/Source/ThirdParty/Alembic</Location>
   <Function>Alembic is an interchange framework for transferring static and animated geometry between software packages.</Function>
-  <Eula>https://github.com/alembic/alembic/blob/1.8.2/LICENSE.txt</Eula>
+  <Eula>https://github.com/alembic/alembic/blob/1.8.6/LICENSE.txt</Eula>
   <RedistributeTo>
     <EndUserGroup>Licensees</EndUserGroup>
     <EndUserGroup>Git</EndUserGroup>

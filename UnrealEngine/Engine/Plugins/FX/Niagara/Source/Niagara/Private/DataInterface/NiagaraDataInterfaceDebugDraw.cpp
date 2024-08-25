@@ -2303,10 +2303,12 @@ void UNiagaraDataInterfaceDebugDraw::PostInitProperties()
 	}
 }
 
+#if WITH_EDITORONLY_DATA
+
 // Codegen optimization degenerates for very long functions like GetFunctions when combined with the invocation of lots of FORCEINLINE methods.
 BEGIN_FUNCTION_BUILD_OPTIMIZATION
 
-void UNiagaraDataInterfaceDebugDraw::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+void UNiagaraDataInterfaceDebugDraw::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	OutFunctions.Reserve(OutFunctions.Num() + 22);
 	const int32 FirstFunction = OutFunctions.Num();
@@ -2691,19 +2693,14 @@ void UNiagaraDataInterfaceDebugDraw::GetFunctions(TArray<FNiagaraFunctionSignatu
 		Signature.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetColorDef(), TEXT("Color")));
 	}
 
-
-
-#if WITH_EDITORONLY_DATA
 	for (int i = FirstFunction; i < OutFunctions.Num(); ++i)
 	{
 		OutFunctions[i].FunctionVersion = FNiagaraDebugDrawDIFunctionVersion::LatestVersion;
 	}
-#endif
 }
 
 END_FUNCTION_BUILD_OPTIMIZATION
 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceDebugDraw::UpgradeFunctionCall(FNiagaraFunctionSignature& FunctionSignature)
 {
 	bool bWasChanged = false;
@@ -2717,7 +2714,7 @@ bool UNiagaraDataInterfaceDebugDraw::UpgradeFunctionCall(FNiagaraFunctionSignatu
 	if (FunctionSignature.FunctionVersion < FNiagaraDebugDrawDIFunctionVersion::AddedSphereExtraRotation && FunctionSignature.bIsCompileTagGenerator)
 	{
 		TArray<FNiagaraFunctionSignature> Sigs;
-		GetFunctions(Sigs);
+		GetFunctionsInternal(Sigs);
 		for (const FNiagaraFunctionSignature& Sig : Sigs)
 		{
 			if (Sig.Name == FunctionSignature.Name)

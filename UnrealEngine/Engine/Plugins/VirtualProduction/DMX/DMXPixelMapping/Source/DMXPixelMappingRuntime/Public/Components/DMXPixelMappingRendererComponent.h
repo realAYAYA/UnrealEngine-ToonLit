@@ -22,6 +22,15 @@ class UWorld;
 namespace UE::DMXPixelMapping::Rendering { class FPixelMapRenderElement; }
 
 
+UENUM(BlueprintType)
+enum class EDMXPixelMappingRendererPixelFormat : uint8
+{
+	Auto UMETA(ToolTip = "Use the format of the Input Texture, use 8-bit for Input Materials and UMG."),
+	RGBA8 UMETA(DisplayName = "Low Precision 8-bit (RGBA8)"),
+	RGBA16F UMETA(DisplayName = "High Precision 16-bit (RGBA16F)")
+};
+
+
 /** 
  * Component for rendering input texture.  
  */
@@ -38,6 +47,7 @@ public:
 	//~ Begin UObject implementation
 protected:
 	virtual void PostInitProperties() override;
+	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditUndo() override;
@@ -49,7 +59,7 @@ public:
 	//~ Begin UDMXPixelMappingBaseComponent implementation
 	virtual const FName& GetNamePrefix() override;
 	virtual bool CanBeMovedTo(const UDMXPixelMappingBaseComponent* Component) const override;
-	virtual void ResetDMX() override;
+	virtual void ResetDMX(EDMXPixelMappingResetDMXMode ResetMode = EDMXPixelMappingResetDMXMode::SendDefaultValues) override;
 	virtual void SendDMX() override;
 	virtual void Render() final;
 	virtual void RenderAndSendDMX() final;
@@ -81,7 +91,7 @@ public:
 	/** Returns a copy of the current pixel map render elements */
 	TArray<TSharedRef<UE::DMXPixelMapping::Rendering::FPixelMapRenderElement>> GetPixelMapRenderElements() const;
 
-	/** Type of rendering, Texture, Material, UMG, etc... */
+	/** Selects the input type. It can be a Texture, a Material or a User Widget. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Render Settings")
 	EDMXPixelMappingRendererType RendererType;
 
@@ -97,9 +107,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Render Settings")
 	TSubclassOf<UUserWidget> InputWidget;
 
-	/** The brightness of the renderer */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Render Settings", Meta = (ClampMin = "0", ClampMax = "1", UIMin = "0", UIMax = "1"))
+	/** The dynamic range of the renderer */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Render Settings")
+	EDMXPixelMappingRendererPixelFormat PixelFormat = EDMXPixelMappingRendererPixelFormat::Auto;
+
+	/** The exposure of the pixel mapping renderer. This property affects the DMX output. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Render Settings", Meta = (ClampMin = "0", UIMin = "0", UIMax = "1", DisplayName = "Exposure"))
 	float Brightness = 1.f;
+
+	/** If true, children are positioned relative to the size of this renderer */
+	UPROPERTY(EditAnywhere, Category = "Layout")
+	bool bChildrenFollowSize = true;
 
 	/** Layout script for the children of this component (hidden in customizations and displayed in its own panel). */
 	UPROPERTY(EditAnywhere, Instanced, Category = "Layout")
@@ -108,6 +126,12 @@ public:
 private:
 	/** Called when a component was added to or removed from the pixel mapping */
 	void OnComponentAddedOrRemoved(UDMXPixelMapping* PixelMapping, UDMXPixelMappingBaseComponent* Component);
+
+	/** When bChildrenFollowSize is true, rearranges children relatively to the current size */
+	void LetChildrenFollowSize();
+
+	/** Returns the pixel format depending on the current dynamic range setting */
+	EPixelFormat GetFormatFromDynamicRange() const;
 
 	/** Tries to get any world. If with editor, returns the editor world, in game returns GWorld */
 	UWorld* TryGetWorld() const;
@@ -128,8 +152,11 @@ private:
 
 	/** Renderer responsible to pixel map */
 	UPROPERTY()
-	UDMXPixelMappingPixelMapRenderer* PixelMapRenderer;
+	TObjectPtr<UDMXPixelMappingPixelMapRenderer> PixelMapRenderer;
 
+	/** The current rect in which children are laid out. Useful to compute UV position and size of children. */
+	UPROPERTY()
+	FVector2D LayoutRect;
 
 	//////////////////////
 	// Deprecated Members
@@ -183,14 +210,6 @@ public:
 	UE_DEPRECATED(5.3, "Please use UDMXPixelMappingPixelMapRenderer to render the pixel map")
 	void EmptyDownsampleBuffer();
 
-#if WITH_EDITOR
-	UE_DEPRECATED(5.1, "Pixel Mapping Components no longer hold their own widget, in an effort to separate Views from Data.")
-	TSharedRef<SWidget> TakeWidget();
-
-	UE_DEPRECATED(5.1, "Pixel Mapping Components no longer hold their own widget, in an effort to separate Views from Data.")
-	FORCEINLINE TSharedPtr<SConstraintCanvas> GetComponentsCanvas() const { return ComponentsCanvas_DEPRECATED; }
-#endif // WITH_EDITOR
-
 private:
 	UE_DEPRECATED(5.3, "Please use UDMXPixelMappingPixelMapRenderer to render the pixel map")
 	int32 GetTotalDownsamplePixelCount();
@@ -207,10 +226,6 @@ private:
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TSharedPtr<IDMXPixelMappingRenderer> PixelMappingRenderer_DEPRECATED;
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-#if WITH_EDITORONLY_DATA
-	TSharedPtr<SConstraintCanvas> ComponentsCanvas_DEPRECATED;
-#endif // WITH_EDITORONLY_DATA
 
 	UPROPERTY(Transient, DuplicateTransient)
 	TObjectPtr<UTextureRenderTarget2D> DownsampleBufferTarget_DEPRECATED;

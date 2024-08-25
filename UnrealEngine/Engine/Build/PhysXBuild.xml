@@ -10,11 +10,9 @@
 	<Option Name="Robomerge" DefaultValue="Merge" Description="Robomerge action for this build, defaults to Merge"/>
 	<Option Name="TargetLibs" DefaultValue="PhysX+APEX" Description="Target libs"/>
 	<Option Name="TargetConfigs" DefaultValue="profile+release+checked" Description="Target Configs"/>
-	<Option Name="TargetWindowsCompilers" DefaultValue="VisualStudio2019" Description="Target Compilers"/>
+	<Option Name="TargetWindowsCompilers" DefaultValue="VisualStudio2022" Description="Target Compilers"/>
 	<Option Name="WithWin64" DefaultValue="false" Description="Compile for Win64"/>
 	<Option Name="WithPS4" DefaultValue="false" Description="Compile for PS4"/>
-	<Option Name="WithXboxOne" DefaultValue="false" Description="Compile for Xbox One"/>
-	<Option Name="WithXboxOneGDK" DefaultValue="$(WithXboxOne)" Description="Compile for Xbox One"/>
 	<Option Name="WithLinux" DefaultValue="false" Description="Compile for Linux"/>
 	<Option Name="WithLinux-x86" DefaultValue="false" Description="Compile for Linux x86"/>
 	<Option Name="WithLinux-ARM32" DefaultValue="false" Description="Compile for Linux ARM32"/>
@@ -46,11 +44,6 @@
 	<Agent Name="PhysX PS4" Type="EngineWin64;PhysX_CompileWin64;Win64">
 		<Node Name="Compile PhysX PS4">
 			<Command Name="BuildPhysX" Arguments="-TargetPlatforms=PS4 -TargetConfigs=&quot;$(TargetConfigs)&quot; -TargetWindowsCompilers=&quot;$(TargetWindowsCompilers)&quot; $(OtherArgs)"/>
-		</Node>
-	</Agent>
-	<Agent Name="PhysX XboxOneGDK" Type="EngineWin64;PhysX_CompileWin64;Win64">
-		<Node Name="Compile PhysX XboxOneGDK">
-			<Command Name="BuildPhysX" Arguments="-TargetPlatforms=XboxOneGDK -TargetConfigs=&quot;$(TargetConfigs)&quot; -TargetWindowsCompilers=&quot;$(TargetWindowsCompilers)&quot; $(OtherArgs)"/>
 		</Node>
 	</Agent>
 	<Agent Name="PhysX Linux" Type="EngineWin64;PhysX_CompileWin64;Win64">
@@ -107,7 +100,6 @@
 	<Property Name="PhysXTargets" Value=""/>
 	<Property Name="PhysXTargets" Value="$(PhysXTargets);Compile PhysX Win64" If="$(WithWin64)"/>
 	<Property Name="PhysXTargets" Value="$(PhysXTargets);Compile PhysX PS4" If="$(WithPS4)"/>
-	<Property Name="PhysXTargets" Value="$(PhysXTargets);Compile PhysX XboxOneGDK" If="$(WithXboxOneGDK)"/>
 	<Property Name="PhysXTargets" Value="$(PhysXTargets);Compile PhysX Linux" If="$(WithLinux)"/>
 	<Property Name="PhysXTargets" Value="$(PhysXTargets);Compile PhysX Linux x86" If="$(WithLinux-x86)"/>
 	<Property Name="PhysXTargets" Value="$(PhysXTargets);Compile PhysX Linux ARM32" If="$(WithLinux-ARM32)"/>
@@ -125,7 +117,6 @@
 	
 	<Notify Nodes="Compile PhysX Win64" Users="$(AllEmailTargets)"/>
 	<Notify Nodes="Compile PhysX PS4" Users="$(AllEmailTargets);luke.thatcher@epicgames.com"/>
-	<Notify Nodes="Compile PhysX XboxOneGDK" Users="$(AllEmailTargets);jeff.campeau@epicgames.com"/>
 	<Notify Nodes="Compile PhysX Linux;Compile PhysX Linux x86;Compile PhysX Linux ARM32;Compile PhysX Linux ARM64" Users="$(AllEmailTargets);arciel.rekman@epicgames.com"/>
 	<Notify Nodes="Compile PhysX Android Armv7;Compile PhysX Android Arm64;Compile PhysX Android x86;Compile PhysX Android x64" Users="$(AllEmailTargets);chris.babcock@epicgames.com"/>
 	<Notify Nodes="Compile PhysX Mac;Compile PhysX IOS;Compile PhysX TVOS" Users="$(AllEmailTargets);michael.trepka@epicgames.com"/>

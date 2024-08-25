@@ -1,5 +1,38 @@
 # Significant changes per release
 
+## 2.0.6
+
+*  Force macro expansion in version namespace identifier
+*  Update to RTM v2.1.5
+*  Update sjson-cpp to v0.8.3
+
+## 2.0.5
+
+*  Add support for clang 12, 13, and 14
+*  Add support for GCC 11
+*  Add support for XCode 12 and 13
+*  Add support for Arm64 development on OS X and Linux
+*  Misc CI improvements
+*  Update to RTM v2.1.4
+*  Update to Catch2 v2.13.7
+
+## 2.0.4
+
+*  Disable versioned namespace by default to avoid breaking ABI in patch release
+
+## 2.0.3
+
+*  Update sjson-cpp to v0.8.2
+*  Update rtm to v2.1.3
+*  Add versioned namespace to allow multiple versions to coexist within a binary
+*  Fix database sampling interpolation when using a rounding mode other than `none`
+*  Other minor fixes
+
+## 2.0.2
+
+*  Fix potential heap corruption when stripping a database that isn't split
+*  Fix database tier bulk data size to include its padding
+
 ## 2.0.1
 
 *  Fix incorrect seek offset when seeking past 0.0 in a single frame clip

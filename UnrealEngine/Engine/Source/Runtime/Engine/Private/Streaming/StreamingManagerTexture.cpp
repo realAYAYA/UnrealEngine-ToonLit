@@ -14,10 +14,12 @@
 #include "Engine/Texture2DArray.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/StringBuilder.h"
 #include "RenderedTextureStats.h"
 #include "UObject/UObjectIterator.h"
 #include "DeviceProfiles/DeviceProfile.h"
 #include "DeviceProfiles/DeviceProfileManager.h"
+#include "ProfilingDebugging/CsvProfiler.h"
 #include "RenderAssetUpdate.h"
 #include "RenderingThread.h"
 #include "Streaming/AsyncTextureStreaming.h"
@@ -34,7 +36,7 @@ CSV_DECLARE_CATEGORY_MODULE_EXTERN(CORE_API, Basic);
 CSV_DEFINE_CATEGORY(TextureStreaming, true);
 
 #ifndef UE_STREAMINGRENDERASSETS_ARRAY_DEFAULT_RESERVED_SIZE
-// The default size will reserve ~4MB, the element size is ~208 bytes.
+// The default size will reserve ~3MB, the element size is 168 bytes.
 #define UE_STREAMINGRENDERASSETS_ARRAY_DEFAULT_RESERVED_SIZE 20000
 #endif
 
@@ -79,6 +81,13 @@ static TAutoConsoleVariable<int32> CVarFlushDeferredMipLevelChangeCallbacksBefor
 	TEXT("r.Streaming.FlushDeferredMipLevelChangeCallbacksBeforeGC"),
 	1,
 	TEXT("Whether to flush deferred mip level change callbacks before GC."),
+	ECVF_Default);
+
+// TODO: Remove once these calls have been proven safe in production
+static TAutoConsoleVariable<int32> CVarProcessAddedRenderAssetsAfterAsyncWork(
+	TEXT("r.Streaming.ProcessAddedRenderAssetsAfterAsyncWork"),
+	1,
+	TEXT("Whether to call ProcessAddedRenderAssets in subsqequent UpdateResourceStreaming stages after Async work has completed."),
 	ECVF_Default);
 
 bool TrackRenderAsset( const FString& AssetName );
@@ -467,7 +476,7 @@ void FRenderAssetStreamingManager::TickFastResponseAssets()
 
 		Asset.UpdateStreamingStatus(false);
 
-		if (Asset.ResidentMips != Asset.RequestedMips && Asset.ResidentMips < Asset.MaxAllowedMips)
+		if (Asset.ResidentMips == Asset.RequestedMips && Asset.ResidentMips < Asset.MaxAllowedMips)
 		{
 			RenderAsset->StreamIn(Asset.MaxAllowedMips, true);
 			RenderAsset->bHasStreamingUpdatePending = true;
@@ -500,7 +509,7 @@ void FRenderAssetStreamingManager::ProcessRemovedRenderAssets()
 		// This handles the case where the last element was also removed.
 		while (StreamingRenderAssets.IsValidIndex(AssetIndex) && !StreamingRenderAssets[AssetIndex].RenderAsset)
 		{
-			StreamingRenderAssets.RemoveAtSwap(AssetIndex, 1, false);
+			StreamingRenderAssets.RemoveAtSwap(AssetIndex, 1, EAllowShrinking::No);
 		}
 
 		if (StreamingRenderAssets.IsValidIndex(AssetIndex))
@@ -1246,7 +1255,7 @@ void FRenderAssetStreamingManager::UpdateIndividualRenderAsset( UStreamableRende
 	StreamingRenderAsset->StreamWantedMips(*this);
 }
 
-void FRenderAssetStreamingManager::FastForceFullyResident(UStreamableRenderAsset* RenderAsset)
+bool FRenderAssetStreamingManager::FastForceFullyResident(UStreamableRenderAsset* RenderAsset)
 {
 	check(IsInGameThread());
 	TArray<FStreamingRenderAsset>& StreamingRenderAssets = GetStreamingRenderAssetsAsyncSafe();
@@ -1268,8 +1277,10 @@ void FRenderAssetStreamingManager::FastForceFullyResident(UStreamableRenderAsset
 		if (Asset.ResidentMips < Asset.MaxAllowedMips)
 		{
 			FastResponseRenderAssets.Add(Asset.RenderAsset);
+			return true;
 		}
 	}
+	return false;
 }
 
 /**
@@ -1604,6 +1615,7 @@ void FRenderAssetStreamingManager::CheckUserSettings()
 		if (TexturePoolSize != GTexturePoolSize)
 		{
 			UE_LOG(LogContentStreaming,Log,TEXT("Texture pool size now %d MB"), int32(TexturePoolSize/1024/1024));
+			CSV_METADATA(TEXT("StreamingPoolSizeMB"), *WriteToString<32>(int32(TexturePoolSize / 1024 / 1024)));
 			GTexturePoolSize = TexturePoolSize;
 		}
 	}
@@ -1811,6 +1823,13 @@ void FRenderAssetStreamingManager::UpdateResourceStreaming( float DeltaTime, boo
 	{
 		STAT(int32 StartTime = (int32)FPlatformTime::Cycles();)
 
+		if (PendingStreamingRenderAssets.Num() > 0 && CVarProcessAddedRenderAssetsAfterAsyncWork.GetValueOnGameThread() && AsyncWork->IsDone())
+		{
+			// This will add to the StreamingRenderAssets array potentially reallocating it, but if the Async task has completed, that should be safe.
+			// As we're only adding items, existing indicies in InflightRenderAssets etc will still be valid.
+			ProcessAddedRenderAssets();
+		}
+
 		if (ProcessingStage == 1)
 		{
 			SetLastUpdateTime();
@@ -1847,6 +1866,13 @@ void FRenderAssetStreamingManager::UpdateResourceStreaming( float DeltaTime, boo
 	else if (AsyncWork->IsDone())
 	{
 		STAT(GatheredStats.StreamRenderAssetsCycles = -(int32)FPlatformTime::Cycles();)
+
+		if (PendingStreamingRenderAssets.Num() > 0 && CVarProcessAddedRenderAssetsAfterAsyncWork.GetValueOnGameThread())
+		{
+			// This will add to the StreamingRenderAssets array potentially reallocating it, but if the Async task has completed, that should be safe.
+			// As we're only adding items, existing indicies in InflightRenderAssets etc will still be valid.
+			ProcessAddedRenderAssets();
+		}
 
 		// Since this step is lightweight, tick each texture inflight here, to accelerate the state changes.
 		for (int32 TextureIndex : InflightRenderAssets)

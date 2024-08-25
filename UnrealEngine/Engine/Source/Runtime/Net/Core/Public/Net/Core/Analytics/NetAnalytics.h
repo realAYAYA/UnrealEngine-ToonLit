@@ -45,6 +45,7 @@
 // Forward Declarations
 class FNetAnalyticsAggregator;
 class IAnalyticsProvider;
+struct FAnalyticsEventAttribute;
 
 
 // Defines
@@ -342,6 +343,11 @@ public:
 	NETCORE_API void InitConfig();
 
 	/**
+	 * Adds game and engine specific attributes to the passed in array.
+	 */
+	NETCORE_API void AppendGameInstanceAttributes(TArray<FAnalyticsEventAttribute>& OutAttributes);
+
+	/**
 	 * Tells the analytics data holders to finish aggregating their analytics data, and to dispatch it.
 	 * Only called once, at NetDriver shutdown.
 	 */
@@ -374,6 +380,10 @@ public:
 		return NetDriverName;
 	}
 
+public:
+
+	using FAnalyticsAppender = TFunction<void(TArray<FAnalyticsEventAttribute>&)>;	
+	NETCORE_API void SetAnalyticsAppender(FAnalyticsAppender AppenderFunction);
 
 private:
 	/** The analytics provider we are aggregating data for */
@@ -390,6 +400,9 @@ private:
 
 	/** Maps analytics data holder names, to a config value specifying whether that data holder is enabled or not */
 	TMap<FName, bool> AnalyticsDataConfigMap;
+
+	/** Optional functor that can be used to append game specific attributes to your analytics */
+	FAnalyticsAppender AnalyticsAppender;
 
 	/** Whether or not analytics was already sent */
 	bool bSentAnalytics;

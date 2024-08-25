@@ -20,7 +20,7 @@ namespace mu
 	* Any subclass of this class can be managed using smart pointers through the Ptr<T> template.
 	* \warning This base allow multi-threaded manipulation of smart pointers, since the count increments and decrements are atomic.
 	*/
-	class MUTABLERUNTIME_API RefCounted : public Base
+	class MUTABLERUNTIME_API RefCounted
 	{
 	public:
 

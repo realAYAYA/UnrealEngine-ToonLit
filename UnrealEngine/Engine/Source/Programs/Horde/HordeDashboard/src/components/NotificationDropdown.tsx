@@ -5,10 +5,10 @@ import { observer } from "mobx-react-lite";
 import React, { useEffect } from "react";
 import backend from "../backend";
 import { CreateSubscriptionRequest, GetNotificationResponse, GetSubscriptionResponse, JobState, JobStepState, LabelCompleteEventRecord, LabelState, StepCompleteEventRecord, SubscriptonNotificationType, UpdateNotificationsRequest } from "../backend/Api";
-import { hordeClasses } from "../styles/Styles";
 import { action, makeObservable, observable } from "mobx";
 import { JobDetailsV2 } from './jobDetailsV2/JobDetailsViewCommon';
 import { useQuery } from "./JobDetailCommon";
+import { getHordeStyling } from "../styles/Styles";
 
 type NotificationType = "Job" | "Step" | "Label";
 type NotificationOutcome = "Warnings" | "Success" | "Failure";
@@ -433,6 +433,7 @@ const subHandler = new SubscriptionHandler();
 export const NotificationDropdown: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({ jobDetails }) => {
 
    const query = useQuery();
+   const { hordeClasses } = getHordeStyling();
 
    const stepId = query.get("step") ? query.get("step")! : undefined;
    let labelIdx = query.get("label") ? parseInt(query.get("label")!) : undefined;

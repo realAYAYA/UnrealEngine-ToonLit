@@ -14,15 +14,15 @@ public class GeometryCacheUSD : ModuleRules
 				"GeometryCache",
 				"GeometryCacheStreamer",
 				"RenderCore",
-				"RHI"
+				"RHI",
+				"UnrealUSDWrapper",
+				"USDUtilities"
 			}
 		);
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
-				"UnrealUSDWrapper",
 				"USDClasses",
-				"USDUtilities"
             }
         );
 

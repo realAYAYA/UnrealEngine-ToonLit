@@ -14,7 +14,7 @@ class TImplicitObjectIntersection : public FImplicitObject
   public:
 	using FImplicitObject::SignedDistance;
 
-	TImplicitObjectIntersection(TArray<TUniquePtr<FImplicitObject>>&& Objects)
+	TImplicitObjectIntersection(TArray<Chaos::FImplicitObjectPtr>&& Objects)
 	    : FImplicitObject(EImplicitObject::HasBoundingBox)
 	    , MObjects(MoveTemp(Objects))
 	    , MLocalBoundingBox(MObjects[0]->BoundingBox())
@@ -24,6 +24,16 @@ class TImplicitObjectIntersection : public FImplicitObject
 			MLocalBoundingBox.ShrinkToInclude(MObjects[i]->BoundingBox());
 		}
 	}
+	
+	UE_DEPRECATED(5.4, "Use TImplicitObjectIntersection constructor with FImplicitObjectPtr instead")
+	TImplicitObjectIntersection(TArray<TUniquePtr<FImplicitObject>>&& Objects)
+		: FImplicitObject(EImplicitObject::HasBoundingBox)
+		, MObjects()
+		, MLocalBoundingBox(MObjects[0]->BoundingBox())
+	{
+		check(false);
+	}
+	
 	TImplicitObjectIntersection(const TImplicitObjectIntersection<T, d>& Other) = delete;
 	TImplicitObjectIntersection(TImplicitObjectIntersection<T, d>&& Other)
 	    : FImplicitObject(EImplicitObject::HasBoundingBox)
@@ -62,7 +72,7 @@ class TImplicitObjectIntersection : public FImplicitObject
 	{
 		uint32 OutHash = MObjects.Num() > 0 ? MObjects[0]->GetTypeHash() : 0;
 
-		for(const TUniquePtr<FImplicitObject>& Ptr : MObjects)
+		for(const Chaos::FImplicitObjectPtr& Ptr : MObjects)
 		{
 			OutHash = HashCombine(Ptr->GetTypeHash(), OutHash);
 		}
@@ -93,7 +103,7 @@ private:
 	}
 
   private:
-	TArray<TUniquePtr<FImplicitObject>> MObjects;
+	TArray<Chaos::FImplicitObjectPtr> MObjects;
 	TAABB<T, d> MLocalBoundingBox;
 };
 }

@@ -29,6 +29,8 @@ struct FAnimNode_Slot : public FAnimNode_Base
 	bool bAlwaysUpdateSourcePose;
 
 protected:
+	virtual void PostEvaluateSourcePose(FPoseContext& SourceContext) {}
+
 	FSlotNodeWeightInfo WeightData;
 	FGraphTraversalCounter SlotNodeInitializationCounter;
 

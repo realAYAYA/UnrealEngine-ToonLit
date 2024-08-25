@@ -35,7 +35,7 @@ public:
 
 #if WITH_EDITOR
 	//~ Begin AActor Interface
-	virtual void CheckForErrors() override;
+	ENGINE_API virtual void CheckForErrors() override;
 	//~ End AActor Interface
 #endif
 

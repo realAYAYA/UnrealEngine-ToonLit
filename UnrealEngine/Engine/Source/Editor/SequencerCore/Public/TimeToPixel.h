@@ -27,7 +27,7 @@ public:
 		const double VisibleWidth = InLocalViewRange.Size<double>();
 
 		const float MaxPixelsPerSecond = 1000.f;
-		PixelsPerSecond = VisibleWidth > 0 ? WidthPx / VisibleWidth : MaxPixelsPerSecond;
+		PixelsPerSecond = VisibleWidth > 0 ? static_cast<float>(WidthPx / VisibleWidth) : MaxPixelsPerSecond;
 	}
 
 	/**
@@ -38,7 +38,7 @@ public:
 	 */
 	float SecondsToPixel( double Time ) const
 	{
-		return (Time - ViewRangeStartSeconds) * PixelsPerSecond;
+		return static_cast<float>((Time - ViewRangeStartSeconds) * PixelsPerSecond);
 	}
 
 	/**
@@ -49,7 +49,7 @@ public:
 	 */
 	float SecondsDeltaToPixel( double TimeDelta ) const
 	{
-		return TimeDelta * PixelsPerSecond;
+		return static_cast<float>(TimeDelta * PixelsPerSecond);
 	}
 
 	/**
@@ -71,7 +71,7 @@ public:
 	 */
 	float FrameToPixel( const FFrameTime& Time ) const
 	{
-		return (Time / TickResolution - ViewRangeStartSeconds) * PixelsPerSecond;
+		return static_cast<float>((Time / TickResolution - ViewRangeStartSeconds) * PixelsPerSecond);
 	}
 
 	/**
@@ -82,7 +82,7 @@ public:
 	 */
 	float FrameDeltaToPixel( const FFrameTime& TimeDelta) const
 	{
-		return (TimeDelta / TickResolution) * PixelsPerSecond;
+		return static_cast<float>((TimeDelta / TickResolution) * PixelsPerSecond);
 	}
 
 	/**

@@ -20,7 +20,6 @@
 
 DEFINE_LOG_CATEGORY_STATIC(DATAFLOWNODE_LOG, Error, All);
 
-
 UDataflowEdNode::UDataflowEdNode(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -201,13 +200,14 @@ void UDataflowEdNode::RemoveOptionPin()
 
 		if (const TSharedPtr<FDataflowNode> DataflowNode = DataflowGraph->FindBaseNode(DataflowNodeGuid))
 		{
-			const Dataflow::FPin Pin = DataflowNode->RemovePin();
+			const Dataflow::FPin Pin = DataflowNode->GetPinToRemove();
 			switch (Pin.Direction)
 			{
 			case Dataflow::FPin::EDirection::INPUT:
 				if (UEdGraphPin* const EdPin = FindPin(Pin.Name, EEdGraphPinDirection::EGPD_Input))
 				{
-					EdPin->BreakAllPinLinks();
+					constexpr bool bNotifyNodes = true;
+					EdPin->BreakAllPinLinks(bNotifyNodes);
 					RemovePin(EdPin);
 					ReconstructNode();
 				}
@@ -215,7 +215,8 @@ void UDataflowEdNode::RemoveOptionPin()
 			case Dataflow::FPin::EDirection::OUTPUT:
 				if (UEdGraphPin* const EdPin = FindPin(Pin.Name, EEdGraphPinDirection::EGPD_Output))
 				{
-					EdPin->BreakAllPinLinks();
+					constexpr bool bNotifyNodes = true;
+					EdPin->BreakAllPinLinks(bNotifyNodes);
 					RemovePin(EdPin);
 					ReconstructNode();
 				}
@@ -448,6 +449,34 @@ void UDataflowEdNode::AutowireNewNode(UEdGraphPin* FromPin)
 	}
 }
 
+void UDataflowEdNode::OnPinRemoved(UEdGraphPin* InRemovedPin)
+{
+	if (DataflowGraph && DataflowNodeGuid.IsValid())
+	{
+		if (const TSharedPtr<FDataflowNode> DataflowNode = DataflowGraph->FindBaseNode(DataflowNodeGuid))
+		{
+			if (InRemovedPin->Direction == EEdGraphPinDirection::EGPD_Input)
+			{
+				if (FDataflowInput* Con = DataflowNode->FindInput(FName(InRemovedPin->GetName())))
+				{
+					const Dataflow::FPin Pin = { Dataflow::FPin::EDirection::INPUT, Con->GetType(), Con->GetName() };
+					DataflowNode->OnPinRemoved(Pin);
+					DataflowNode->UnregisterPinConnection(Pin);
+				}
+			}
+			else if (InRemovedPin->Direction == EEdGraphPinDirection::EGPD_Output)
+			{
+				if (FDataflowOutput* Con = DataflowNode->FindOutput(FName(InRemovedPin->GetName())))
+				{
+					const Dataflow::FPin Pin = { Dataflow::FPin::EDirection::OUTPUT, Con->GetType(), Con->GetName() };
+					DataflowNode->OnPinRemoved(Pin);
+					DataflowNode->UnregisterPinConnection(Pin);
+				}
+			}
+		}
+	}
+}
+
 #endif
 
 
@@ -461,7 +490,7 @@ TArray<Dataflow::FRenderingParameter> UDataflowEdNode::GetRenderParameters() con
 }
 
 
-bool UDataflowEdNode::Render(GeometryCollection::Facades::FRenderingFacade& RenderData, TSharedPtr<Dataflow::FContext> Context) const
+bool UDataflowEdNode::Render(GeometryCollection::Facades::FRenderingFacade& RenderData, const TSharedPtr<Dataflow::FContext> Context) const
 {
 	bool bNeedsRefresh = false;
 	if (DataflowGraph)

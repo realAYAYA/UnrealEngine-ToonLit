@@ -82,7 +82,7 @@ namespace Audio
 
 					TSampleBuffer<> SampleBuffer(RawPCMData, NumSamples, SoundWave->NumChannels, SoundWave->GetSampleRateForCurrentPlatform());
 					LoadingSoundWaveInfo.OnLoaded(SoundWave, SampleBuffer);
-					LoadingSoundWaves.RemoveAtSwap(i, 1, false);
+					LoadingSoundWaves.RemoveAtSwap(i, 1, EAllowShrinking::No);
 				}
 			}
 		}
@@ -213,14 +213,8 @@ namespace Audio
 		return true;
 	}
 
-	bool FSoundWavePCMWriter::BeginWriteToWavFile(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, FString& FilePath, TFunction<void()> OnSuccess)
+	bool FSoundWavePCMWriter::PrepWavFileOutput(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, const FString& FilePath)
 	{
-		if (!IsDone())
-		{
-			UE_LOG(LogAudio, Error, TEXT("This instance of FSoundWavePCMWriter is already processing another write operation."));
-			return false;
-		}
-
 		const bool bIsRelativePath = FPaths::IsRelative(FilePath);
 		if (bIsRelativePath)
 		{
@@ -252,6 +246,22 @@ namespace Audio
 
 		CurrentBuffer = InSampleBuffer;
 
+		return true;
+	}
+
+	bool FSoundWavePCMWriter::BeginWriteToWavFile(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, const FString& FilePath, TFunction<void()> OnSuccess)
+	{
+		if (!IsDone())
+		{
+			UE_LOG(LogAudio, Error, TEXT("This instance of FSoundWavePCMWriter is already processing another write operation."));
+			return false;
+		}
+
+		if (!PrepWavFileOutput(InSampleBuffer, FileName, FilePath))
+		{
+			return false;
+		}
+
 		// For convenience in our async task, we only take void(USoundWave*) type lambdas. So let's wrap our void() lambda here:
 		TFunction<void(const USoundWave*)> WrappedCallback = [OnSuccess](const USoundWave*)
 		{
@@ -260,6 +270,30 @@ namespace Audio
 
 		CurrentOperation.Reset(new FAsyncSoundWavePCMWriterTask(this, ESoundWavePCMWriteTaskType::WriteWavFile, WrappedCallback));
 		CurrentOperation->StartBackgroundTask();
+
+		return true;
+	}
+
+	bool FSoundWavePCMWriter::SynchronouslyWriteToWavFile(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, const FString& FilePath, FString* OutFilePathName)
+	{
+		if (!IsDone())
+		{
+			UE_LOG(LogAudio, Error, TEXT("This instance of FSoundWavePCMWriter is already processing another write operation."));
+			return false;
+		}
+
+		if (!PrepWavFileOutput(InSampleBuffer, FileName, FilePath))
+		{
+			return false;
+		}
+
+		CurrentOperation.Reset(new FAsyncSoundWavePCMWriterTask(this, ESoundWavePCMWriteTaskType::WriteWavFile, [](const USoundWave*){}));
+		CurrentOperation->StartSynchronousTask();
+
+		if (OutFilePathName != nullptr)
+		{
+			*OutFilePathName = AbsoluteFilePath;
+		}
 
 		return true;
 	}

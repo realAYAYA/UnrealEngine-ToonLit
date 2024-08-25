@@ -77,6 +77,12 @@ void FContextSwitchesStateCommands::RegisterCommands()
 		EUserInterfaceActionType::ToggleButton,
 		FInputChord(EModifierKey::Shift, EKeys::L));
 
+	UI_COMMAND(Command_ShowNonTargetProcessEvents,
+		"Non-Target Process Events",
+		"Shows/hides the cpu core events that do not belong to the target process.",
+		EUserInterfaceActionType::ToggleButton,
+		FInputChord());
+
 	UI_COMMAND(Command_NavigateToCpuThreadEvent,
 		"Go To CPU Thread Track",
 		"Selects the context switch event in the corresponding CPU Thread track.",
@@ -115,6 +121,7 @@ FContextSwitchesSharedState::FContextSwitchesSharedState(STimingView* InTimingVi
 	, bAreContextSwitchesVisible(true)
 	, bAreOverlaysVisible(true)
 	, bAreExtendedLinesVisible(true)
+	, bAreNonTargetProcessEventsVisible(true)
 	, bSyncWithProviders(true)
 {
 }
@@ -146,6 +153,7 @@ void FContextSwitchesSharedState::OnBeginSession(Insights::ITimingViewSession& I
 	bAreContextSwitchesVisible = true;
 	bAreOverlaysVisible = true;
 	bAreExtendedLinesVisible = true;
+	bAreNonTargetProcessEventsVisible = true;
 
 	bSyncWithProviders = true;
 
@@ -238,6 +246,7 @@ void FContextSwitchesSharedState::BuildSubMenu(FMenuBuilder& InMenuBuilder)
 	InMenuBuilder.BeginSection("ContextSwitches", LOCTEXT("ContextMenu_Section_ContextSwitches", "Context Switches"));
 	{
 		InMenuBuilder.AddMenuEntry(FContextSwitchesStateCommands::Get().Command_ShowCoreTracks);
+		InMenuBuilder.AddMenuEntry(FContextSwitchesStateCommands::Get().Command_ShowNonTargetProcessEvents);
 		InMenuBuilder.AddMenuEntry(FContextSwitchesStateCommands::Get().Command_ShowContextSwitches);
 		InMenuBuilder.AddMenuEntry(FContextSwitchesStateCommands::Get().Command_ShowOverlays);
 		InMenuBuilder.AddMenuEntry(FContextSwitchesStateCommands::Get().Command_ShowExtendedLines);
@@ -307,6 +316,12 @@ void FContextSwitchesSharedState::AddCommands()
 		FExecuteAction::CreateSP(this, &FContextSwitchesSharedState::Command_ShowCoreTracks_Execute),
 		FCanExecuteAction::CreateSP(this, &FContextSwitchesSharedState::Command_ShowCoreTracks_CanExecute),
 		FIsActionChecked::CreateSP(this, &FContextSwitchesSharedState::Command_ShowCoreTracks_IsChecked));
+
+	CommandList->MapAction(
+		FContextSwitchesStateCommands::Get().Command_ShowNonTargetProcessEvents,
+		FExecuteAction::CreateSP(this, &FContextSwitchesSharedState::Command_ShowNonTargetProcessEvents_Execute),
+		FCanExecuteAction::CreateSP(this, &FContextSwitchesSharedState::Command_ShowNonTargetProcessEvents_CanExecute),
+		FIsActionChecked::CreateSP(this, &FContextSwitchesSharedState::Command_ShowNonTargetProcessEvents_IsChecked));
 
 	CommandList->MapAction(
 		FContextSwitchesStateCommands::Get().Command_ShowContextSwitches,
@@ -564,6 +579,30 @@ void FContextSwitchesSharedState::SetExtendedLinesVisible(bool bOnOff)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void FContextSwitchesSharedState::SetNonTargetProcessEventsVisible(bool bOnOff)
+{
+	if (bAreNonTargetProcessEventsVisible != bOnOff)
+	{
+		TSharedPtr<STimingView> TimingView = GetTimingView();
+		const TSharedPtr<ITimingEventFilter> EventFilter = TimingView->GetEventFilter();
+		for (auto Track : CpuCoreTimingTracks)
+		{
+			Track.Value->SetDirtyFlag();
+			if (!bOnOff && EventFilter)
+			{
+				if (EventFilter->FilterTrack(*Track.Value))
+				{
+					TimingView->ResetEventFilter();
+				}
+			}
+		}
+		
+		bAreNonTargetProcessEventsVisible = bOnOff;
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 bool FContextSwitchesSharedState::IsValidCpuCoreEventSelected() const
 {
 	TSharedPtr<STimingView> TimingView = GetTimingView();
@@ -620,11 +659,59 @@ void FContextSwitchesSharedState::Command_NavigateToCpuThreadEvent_Execute()
 				if (ThreadTimingTrack.IsValid() && ThreadTimingTrack->IsVisible())
 				{
 					TimingView->SelectTimingTrack(ThreadTimingTrack, true);
-					//TODO: ThreadTimingTrack->SearchEvent(..); + TimingView->SelectTimingEvent(..)
+					TSharedPtr<FBaseTimingTrack> ChildTrack = ThreadTimingTrack->GetChildTrack();
+					if (ChildTrack && ChildTrack->IsKindOf("FContextSwitchesTimingTrack"))
+					{
+						TSharedPtr<FContextSwitchesTimingTrack> ContextSwitchesTrack = StaticCastSharedPtr<FContextSwitchesTimingTrack>(ChildTrack);
+						if (ContextSwitchesTrack.IsValid())
+						{
+							TSharedPtr<const ITimingEvent> FoundEvent = ContextSwitchesTrack->SearchEvent(
+								FTimingEventSearchParameters(CpuCoreEvent.GetStartTime(), CpuCoreEvent.GetEndTime(), ETimingEventSearchFlags::StopAtFirstMatch));
+
+							if (FoundEvent.IsValid())
+							{
+								TimingView->SelectTimingEvent(FoundEvent, true);
+							}
+						}
+					}
 				}
 			}
 		}
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool FContextSwitchesSharedState::Command_NavigateToCpuThreadEvent_CanExecute() const
+{ 
+	if (!AreContextSwitchesAvailable() || !AreContextSwitchesVisible() || !IsValidCpuCoreEventSelected())
+	{
+		return false;
+	}
+
+	TSharedPtr<STimingView> TimingView = GetTimingView();
+
+	if (TimingView && IsValidCpuCoreEventSelected())
+	{
+		if (TargetTimingEvent.IsValid() && TargetTimingEvent->Is<FCpuCoreTimingEvent>())
+		{
+			const FCpuCoreTimingEvent& CpuCoreEvent = TargetTimingEvent->As<FCpuCoreTimingEvent>();
+			const uint32 SystemThreadId = CpuCoreEvent.GetSystemThreadId();
+			uint32 ThreadId;
+			const TCHAR* ThreadName;
+			GetThreadInfo(SystemThreadId, ThreadId, ThreadName);
+			if (ThreadId != ~0)
+			{
+				TSharedPtr<FThreadTimingTrack> ThreadTimingTrack = GetThreadTimingTrack(ThreadId);
+				if (ThreadTimingTrack.IsValid() && ThreadTimingTrack->IsVisible())
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -687,7 +774,13 @@ void FContextSwitchesSharedState::Command_NavigateToCpuCoreEvent_Execute()
 				if (CpuCoreTimingTrack.IsValid() && CpuCoreTimingTrack->IsVisible())
 				{
 					TimingView->SelectTimingTrack(CpuCoreTimingTrack, true);
-					//TODO: CpuCoreTimingTrack->SearchEvent(..); + TimingView->SelectTimingEvent(..)
+					TSharedPtr<const ITimingEvent> FoundEvent = CpuCoreTimingTrack->SearchEvent(
+						FTimingEventSearchParameters(ContextSwitchEvent.GetStartTime(), ContextSwitchEvent.GetEndTime(), ETimingEventSearchFlags::StopAtFirstMatch));
+
+					if (FoundEvent.IsValid())
+					{
+						TimingView->SelectTimingEvent(FoundEvent, true);
+					}
 				}
 			}
 		}

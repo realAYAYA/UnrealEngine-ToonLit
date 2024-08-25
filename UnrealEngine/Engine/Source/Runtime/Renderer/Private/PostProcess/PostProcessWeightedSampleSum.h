@@ -11,7 +11,7 @@ struct FGaussianBlurInputs
 	const TCHAR* NameY = nullptr;
 
 	// The input texture to be filtered.
-	FScreenPassTexture Filter;
+	FScreenPassTextureSlice Filter;
 
 	// The input texture to be added after filtering.
 	FScreenPassTexture Additive;

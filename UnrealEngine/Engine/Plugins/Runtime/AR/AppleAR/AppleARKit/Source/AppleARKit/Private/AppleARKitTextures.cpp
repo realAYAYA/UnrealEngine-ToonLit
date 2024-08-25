@@ -268,7 +268,7 @@ protected:
 		{
 			if (!ImageFilter)
 			{
-				id<MTLDevice> MetalDevice = (id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
+				id<MTLDevice> MetalDevice = (__bridge id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
 				ImageFilter = MakeShared<FAppleImageFilter, ESPMode::ThreadSafe>(MetalDevice);
 			}
 			

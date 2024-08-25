@@ -2,6 +2,7 @@
 
 import os
 import sys
+from pathlib import Path
 
 #-------------------------------------------------------------------------------
 def _enable_vt100():
@@ -33,11 +34,12 @@ def _main():
 
         collector.append(arg)
 
-    sys.path.append(os.path.abspath(__file__ + "/../lib"))
+    lib_dir = Path(__file__).resolve().parent / "lib"
+    sys.path.append(str(lib_dir))
 
     # Get all the channels ready and aggregated
     import bootstrap
-    working_dir, *channels_dirs = boot_dirs
+    working_dir, *channels_dirs = (Path(x) for x in boot_dirs)
     working_suffix = bootstrap.impl(working_dir, *channels_dirs)
 
     # Run the '$boot' command

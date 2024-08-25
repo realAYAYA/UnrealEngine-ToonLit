@@ -1151,7 +1151,7 @@ public:
 	bool CanDeleteNodes() const;
 
 	/** Callbacks to find references of the selected component */
-	void OnFindReferences();
+	void OnFindReferences(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags);
 
 	/** Removes an existing component node from the tree */
 	void RemoveComponentNode(FSCSEditorTreeNodePtrType InNodePtr);

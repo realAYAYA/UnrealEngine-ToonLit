@@ -42,14 +42,12 @@ public:
 	virtual bool IsNavigationRelevant() const override { return false; }
 	//~ End INavRelevantInterface Interface
 
-	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FComponentPSOPrecacheParamsList& OutParams) override;
+	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 
 	void Update();
 
 	/** Use this instead of GetMaterialRelevance, since this one will go over all materials from all tiles */
 	FMaterialRelevance GetWaterMaterialRelevance(ERHIFeatureLevel::Type InFeatureLevel) const;
-
-	void PushTessellatedWaterMeshBoundsToPoxy(const FBox2D& TessellatedWaterMeshBounds);
 
 	const FWaterQuadTree& GetWaterQuadTree() const { return WaterQuadTree; }
 
@@ -61,8 +59,10 @@ public:
 
 	float GetLODScale() const { return LODScale + LODScaleBiasScalability; }
 
-	void SetExtentInTiles(FIntPoint NewExtentInTiles);
-	FIntPoint GetExtentInTiles() const { return ExtentInTiles; }
+	FIntPoint GetExtentInTiles() const;
+
+	void SetDynamicWaterMeshCenter(const FVector2D& NewCenter);
+	FVector2D GetDynamicWaterMeshCenter() const { return DynamicWaterMeshCenter; }
 
 	void SetTileSize(float NewTileSize);
 	float GetTileSize() const { return TileSize; }
@@ -84,6 +84,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = Rendering)
 	bool IsEnabled() const { return bIsEnabled; }
+
+	UE_DEPRECATED(5.4, "The ExtentInTiles is now derived from the water zone extent and the tile size.")
+	void SetExtentInTiles(FIntPoint NewExtentInTiles) {}
 private:
 	//~ Begin USceneComponent Interface
 	virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
@@ -96,9 +99,12 @@ private:
 	UPROPERTY(EditAnywhere, Category = Rendering, meta = (ClampMin = "100", AllowPrivateAcces = "true"))
 	float TileSize = 2400.0f;
 
-	/** The extent of the system in number of tiles. Maximum number of tiles for this system will be ExtentInTiles.X*2*ExtentInTiles.Y*2 */
-	UPROPERTY(EditAnywhere, Category = Rendering, meta = (ClampMin = "1", AllowPrivateAcces = "true"))
-	FIntPoint ExtentInTiles = FIntPoint(64, 64);
+	/** The current quad tree resolution derived from the extent of the water zone and the water mesh tile size (Extent / TileSize). */
+	UPROPERTY(Transient, VisibleAnywhere, Category = Rendering)
+	mutable FIntPoint QuadTreeResolution = FIntPoint::ZeroValue;
+
+	/** The current center of the dynamic water mesh. Updated by the water view extension whenever the view location crosses the update bounds. */
+	FVector2D DynamicWaterMeshCenter = FVector2D::ZeroVector;
 
 	/** Tiles containing water, stored in a quad tree */
 	FWaterQuadTree WaterQuadTree;
@@ -106,6 +112,10 @@ private:
 	/** Unique list of materials used by this component */
 	UPROPERTY(Transient, NonPIEDuplicateTransient, TextExportTransient)
 	TSet<TObjectPtr<UMaterialInterface>> UsedMaterials;
+
+	/** Maps from materials assigned to each water body to actually used MIDs. Persists across rebuilds in order to cache MIDs */
+	UPROPERTY(Transient, NonPIEDuplicateTransient, TextExportTransient)
+	TMap<TObjectPtr<UMaterialInterface>, TObjectPtr<UMaterialInstanceDynamic>> MaterialToMID;
 
 	/** Forces the water mesh to always render the far mesh, regardless if there is an ocean or not.*/
 	UPROPERTY(Category = "Rendering|FarDistance", EditAnywhere)
@@ -139,6 +149,11 @@ private:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	//~ Begin USceneComponent Interface
 #endif
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	FIntPoint ExtentInTiles_DEPRECATED = FIntPoint(64, 64);
+#endif // WITH_EDITORONLY_DATA
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

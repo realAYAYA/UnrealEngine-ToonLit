@@ -2,6 +2,8 @@
 
 #include "ChaosVisualDebugger/ChaosVDContextProvider.h"
 
+#include "ChaosVisualDebugger/ChaosVisualDebuggerTrace.h"
+
 #if WITH_CHAOS_VISUAL_DEBUGGER
 bool FChaosVDThreadContext::GetCurrentContext(FChaosVDContext& OutContext)
 {
@@ -14,11 +16,13 @@ bool FChaosVDThreadContext::GetCurrentContext(FChaosVDContext& OutContext)
 	return false;
 }
 
-const FChaosVDContext* FChaosVDThreadContext::GetCurrentContext()
+const FChaosVDContext* FChaosVDThreadContext::GetCurrentContext(EChaosVDContextType Type)
 {
 	if (LocalContextStack.Num() > 0)
 	{
-		return &LocalContextStack.Top();
+		const FChaosVDContext* Context = &LocalContextStack.Top();
+
+		return Context && Context->Type == static_cast<int32>(Type) ? Context : nullptr;
 	}
 	else
 	{
@@ -26,13 +30,26 @@ const FChaosVDContext* FChaosVDThreadContext::GetCurrentContext()
 	}
 }
 
+const FChaosVDContext* FChaosVDThreadContext::GetCurrentContext()
+{
+	return LocalContextStack.Num() > 0 ? &LocalContextStack.Top() : nullptr;
+}
+
 void FChaosVDThreadContext::PushContext(const FChaosVDContext& InContext)
 {
+	if (!FChaosVisualDebuggerTrace::IsTracing())
+	{
+		return;
+	}
+
 	LocalContextStack.Add(InContext);
 }
 
 void FChaosVDThreadContext::PopContext()
 {
-	LocalContextStack.Pop();
+	if (LocalContextStack.Num() > 0)
+	{
+		LocalContextStack.Pop();
+	}
 }
 #endif //WITH_CHAOS_VISUAL_DEBUGGER

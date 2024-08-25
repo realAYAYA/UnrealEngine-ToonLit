@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
+using UnrealBuildBase;
 
 namespace UnrealBuildTool
 {
@@ -654,7 +655,7 @@ namespace UnrealBuildTool
 		}
 	}
 
-	class IOSPlatform : UEBuildPlatform
+	class IOSPlatform : AppleBuildPlatform
 	{
 		List<IOSProjectSettings> CachedProjectSettings = new List<IOSProjectSettings>();
 		List<IOSProjectSettings> CachedProjectSettingsByBundle = new List<IOSProjectSettings>();
@@ -699,7 +700,7 @@ namespace UnrealBuildTool
 				}
 
 				// if we are stripping the executable, or if the project requested it, or if it's a buildmachine, generate the dsym
-				if (Target.IOSPlatform.bStripSymbols || Target.IOSPlatform.ProjectSettings.bGeneratedSYMFile || Environment.GetEnvironmentVariable("IsBuildMachine") == "1")
+				if (Target.IOSPlatform.bStripSymbols || Target.IOSPlatform.ProjectSettings.bGeneratedSYMFile || Unreal.IsBuildMachine())
 				{
 					Target.IOSPlatform.bGeneratedSYM = true;
 				}
@@ -715,7 +716,7 @@ namespace UnrealBuildTool
 			{
 				Target.StaticAnalyzer = StaticAnalyzer.Default;
 				Target.StaticAnalyzerOutputType = (Environment.GetEnvironmentVariable("CLANG_ANALYZER_OUTPUT")?.Contains("html", StringComparison.OrdinalIgnoreCase) == true) ? StaticAnalyzerOutputType.Html : StaticAnalyzerOutputType.Text;
-				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow") ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
+				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow", StringComparison.OrdinalIgnoreCase) ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
 			}
 			else if (Target.StaticAnalyzer == StaticAnalyzer.Clang)
 			{
@@ -727,6 +728,9 @@ namespace UnrealBuildTool
 			{
 				Target.bDisableLinking = true;
 				Target.bIgnoreBuildOutputs = true;
+
+				// Clang static analysis requires non unity builds
+				Target.bUseUnityBuild = false;
 			}
 
 			// we assume now we are building with IOS8 or later
@@ -763,9 +767,11 @@ namespace UnrealBuildTool
 		{
 			base.ValidateModule(Module, Target);
 
+			// @todo temporarily disabling due to VisionOS rquiring newer Xcode than this will allow - we may remove this entirely
+#if false
 			if (BuildHostPlatform.Current.Platform == UnrealTargetPlatform.Mac && !Target.IOSPlatform.bSkipClangValidation)
 			{
-				IOSPlatformSDK SDK = (IOSPlatformSDK?)GetSDK() ?? new IOSPlatformSDK(Logger);
+				ApplePlatformSDK SDK = (ApplePlatformSDK?)GetSDK() ?? new ApplePlatformSDK(Logger);
 				foreach (FileReference LibLoc in Module.PublicLibraries)
 				{
 					switch (LibLoc.GetExtension())
@@ -804,6 +810,7 @@ namespace UnrealBuildTool
 					}
 				}
 			}
+#endif
 		}
 
 		/// <summary>
@@ -1247,7 +1254,7 @@ namespace UnrealBuildTool
 		/// </summary>
 		public override void RegisterBuildPlatforms(ILogger Logger)
 		{
-			ApplePlatformSDK SDK = new IOSPlatformSDK(Logger);
+			ApplePlatformSDK SDK = new ApplePlatformSDK(Logger);
 
 			// Register this build platform for IOS
 			UEBuildPlatform.RegisterBuildPlatform(new IOSPlatform(SDK, Logger), Logger);

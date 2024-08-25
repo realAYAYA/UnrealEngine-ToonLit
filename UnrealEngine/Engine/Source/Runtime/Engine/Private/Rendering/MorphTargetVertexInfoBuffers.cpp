@@ -16,7 +16,7 @@ void FMorphTargetVertexInfoBuffers::InitRHI(FRHICommandListBase& RHICmdList)
 	SCOPED_LOADTIMER(FFMorphTargetVertexInfoBuffers_InitRHI);
 
 	check(NumTotalBatches > 0);
-	check(!bRHIIntialized);
+	check(!bRHIInitialized);
 
 	const static FLazyName ClassName(TEXT("FMorphTargetVertexInfoBuffers"));
 
@@ -38,14 +38,14 @@ void FMorphTargetVertexInfoBuffers::InitRHI(FRHICommandListBase& RHICmdList)
 		bIsMorphCPUDataValid = false;
 	}
 
-	bRHIIntialized = true;
+	bRHIInitialized = true;
 }
 
 void FMorphTargetVertexInfoBuffers::ReleaseRHI()
 {
 	MorphDataBuffer.SafeRelease();
 	MorphDataSRV.SafeRelease();
-	bRHIIntialized = false;
+	bRHIInitialized = false;
 }
 
 uint32 FMorphTargetVertexInfoBuffers::GetMaximumThreadGroupSize()
@@ -121,7 +121,7 @@ void FMorphTargetVertexInfoBuffers::Serialize(FArchive& Ar)
 
 	if (Ar.IsLoading())
 	{
-		bRHIIntialized = false;
+		bRHIInitialized = false;
 		bIsMorphCPUDataValid = true;
 		bResourcesInitialized = true;
 		ValidateVertexBuffers(true);
@@ -174,7 +174,7 @@ private:
 
 void FMorphTargetVertexInfoBuffers::InitMorphResources(EShaderPlatform ShaderPlatform, const TArray<FSkelMeshRenderSection>& RenderSections, const TArray<UMorphTarget*>& MorphTargets, int NumVertices, int32 LODIndex, float TargetPositionErrorTolerance)
 {
-	check(!IsRHIIntialized());
+	check(!IsRHIInitialized());
 	check(!IsMorphResourcesInitialized());
 	check(!IsMorphCPUDataValid());
 

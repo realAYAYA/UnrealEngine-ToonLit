@@ -15,7 +15,7 @@
 #include "Evaluation/PreAnimatedState/MovieSceneRestoreStateParams.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStorageID.inl"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedObjectStorage.h"
-#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedEntityCaptureSource.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 
 
 namespace UE
@@ -198,12 +198,14 @@ struct TPreAnimatedPropertyStorageImpl<PropertyTraits, TPropertyMetaData<MetaDat
 				continue;
 			}
 
-			FPreAnimatedStateEntry Entry = this->MakeEntry(BoundObject, PropertyBindings[Index].PropertyPath);
-
-			if (!this->TrackCaptureSource(Entry, EPreAnimatedCaptureSourceTracking::CacheIfTracked))
+			if (!this->ShouldTrackCaptureSource(EPreAnimatedCaptureSourceTracking::CacheIfTracked, BoundObject, PropertyBindings[Index].PropertyPath))
 			{
 				continue;
 			}
+
+			FPreAnimatedStateEntry Entry = this->MakeEntry(BoundObject, PropertyBindings[Index].PropertyPath);
+
+			this->TrackCaptureSource(Entry, EPreAnimatedCaptureSourceTracking::CacheIfTracked);
 
 			EPreAnimatedStorageRequirement StorageRequirement = this->ParentExtension->GetStorageRequirement(Entry);
 			if (!this->IsStorageRequirementSatisfied(Entry.ValueHandle.StorageIndex, StorageRequirement))

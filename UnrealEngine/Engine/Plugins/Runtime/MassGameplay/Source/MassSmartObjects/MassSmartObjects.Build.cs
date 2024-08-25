@@ -6,7 +6,7 @@ namespace UnrealBuildTool.Rules
 	{
 		public MassSmartObjects(ReadOnlyTargetRules Target) : base(Target)
 		{
-			PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+			PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
 			PublicDependencyModuleNames.AddRange(
 				new string[] {
@@ -26,6 +26,12 @@ namespace UnrealBuildTool.Rules
 					"ZoneGraph",
 					"ZoneGraphAnnotations",
 					"MassGameplayExternalTraits"
+				}
+			);
+
+			PrivateDependencyModuleNames.AddRange(
+				new string[] {
+					"MassActors"
 				}
 			);
 		}

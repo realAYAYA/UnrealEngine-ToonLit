@@ -32,13 +32,15 @@ public class UnrealPakTarget : TargetRules
 		bCompileAgainstApplicationCore		= true;
 		bUsesSlate							= false;
 		bIsBuildingConsoleApplication		= true;
+		bForceBuildTargetPlatforms			= true;
+		bNeedsExtraShaderFormats			= true;
 
 		WindowsPlatform.bUseBundledDbgHelp = false;
 		WindowsPlatform.bPixProfilingEnabled = false;
 		WindowsPlatform.bMergeIdenticalCOMDATs = true;
 		WindowsPlatform.bStripUnreferencedSymbols = true;
 
-		GlobalDefinitions.Add("UE_TRACE_ENABLED=1");
+		bEnableTrace = true;
 		GlobalDefinitions.Add("UE_EXTERNAL_PROFILING_ENABLED=0");
 	}
 }

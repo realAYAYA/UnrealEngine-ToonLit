@@ -7,8 +7,7 @@
 #include "RHI.h"
 #include "RHIResources.h"
 
-#include "WarpBlend/DisplayClusterWarpContext.h"
-#include "WarpBlend/IDisplayClusterWarpBlend.h"
+#include "Containers/DisplayClusterWarpContext.h"
 
 struct FDisplayClusterShaderParameters_WarpBlend
 {
@@ -29,7 +28,7 @@ struct FDisplayClusterShaderParameters_WarpBlend
 	FResourceWithRect Dest;
 
 	// Warp interface
-	TSharedPtr<IDisplayClusterWarpBlend, ESPMode::ThreadSafe> WarpInterface;
+	TSharedPtr<class IDisplayClusterWarpBlend, ESPMode::ThreadSafe> WarpInterface;
 
 	// Context data
 	FDisplayClusterWarpContext Context;

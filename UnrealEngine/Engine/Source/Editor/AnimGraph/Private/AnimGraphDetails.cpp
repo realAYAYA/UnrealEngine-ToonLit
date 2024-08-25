@@ -329,9 +329,13 @@ FReply FAnimGraphDetails::OnRemoveInputPoseClicked(UAnimGraphNode_LinkedInputPos
 FText FAnimGraphDetails::OnGetGroupText() const
 {
 	UAnimGraphNode_Root* Root = FBlueprintEditorUtils::GetAnimGraphRoot(Graph);
-	if(Root->Node.GetGroup() == NAME_None)
+	if (Root->Node.GetGroup() == FAnimNode_Root::DefaultSharedGroup)
 	{
-		return LOCTEXT("DefaultGroup", "Default");
+		return LOCTEXT("DefaultGroupSharedGroup", "Default Shared Group");
+	}
+	else if(Root->Node.GetGroup() == NAME_None)
+	{
+		return LOCTEXT("DefaultGroupUngrouped", "Ungrouped");
 	}
 		
 	return FText::FromName(Root->Node.GetGroup());
@@ -343,7 +347,7 @@ void FAnimGraphDetails::OnGroupTextCommitted(const FText& NewText, ETextCommit::
 	{
 		// Remove excess whitespace and prevent categories with just spaces
 		FText GroupName = FText::TrimPrecedingAndTrailing(NewText);
-		if(GroupName.ToString().Equals(TEXT("Default")))
+		if(GroupName.ToString().Equals(TEXT("Ungrouped")))
 		{
 			GroupName = FText::GetEmpty();
 		}
@@ -361,7 +365,7 @@ void FAnimGraphDetails::OnGroupSelectionChanged(TSharedPtr<FText> ProposedSelect
 	if(ProposedSelection.IsValid())
 	{
 		FText GroupName = *ProposedSelection.Get();
-		if(GroupName.ToString().Equals(TEXT("Default")))
+		if(GroupName.ToString().Equals(TEXT("Ungrouped")))
 		{
 			GroupName = FText::GetEmpty();
 		}
@@ -402,7 +406,7 @@ void FAnimGraphDetails::RefreshGroupSource()
 	UAnimGraphNode_Root* Root = FBlueprintEditorUtils::GetAnimGraphRoot(Graph);
 	if(Root->Node.GetGroup() != NAME_None)
 	{
-		GroupSource.Add(MakeShared<FText>(LOCTEXT("DefaultGroup", "Default")));
+		GroupSource.Add(MakeShared<FText>(LOCTEXT("DefaultGroupUngrouped", "Ungrouped")));
 	}
 
 	// Pull groups from implemented functions

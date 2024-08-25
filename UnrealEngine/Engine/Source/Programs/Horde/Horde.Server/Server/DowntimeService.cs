@@ -28,7 +28,7 @@ namespace Horde.Server.Server
 	/// <summary>
 	/// Service which manages the downtime schedule
 	/// </summary>
-	public sealed class DowntimeService : IDowntimeService, IHostedService, IDisposable
+	public sealed class DowntimeService : IDowntimeService, IHostedService, IAsyncDisposable
 	{
 		/// <summary>
 		/// Whether the server is currently in downtime
@@ -55,7 +55,7 @@ namespace Horde.Server.Server
 			_logger = logger;
 
 			// Ensure the initial value to be correct
-			TickAsync(CancellationToken.None).AsTask().Wait();
+			Tick();
 
 			_ticker = clock.AddTicker<DowntimeService>(TimeSpan.FromMinutes(1.0), TickAsync, logger);
 		}
@@ -67,7 +67,7 @@ namespace Horde.Server.Server
 		public Task StopAsync(CancellationToken cancellationToken) => _ticker.StopAsync();
 
 		/// <inheritdoc/>
-		public void Dispose() => _ticker.Dispose();
+		public async ValueTask DisposeAsync() => await _ticker.DisposeAsync();
 
 		/// <summary>
 		/// Periodically called tick function
@@ -75,6 +75,12 @@ namespace Horde.Server.Server
 		/// <param name="stoppingToken">Token indicating that the service should stop</param>
 		/// <returns>Async task</returns>
 		ValueTask TickAsync(CancellationToken stoppingToken)
+		{
+			Tick();
+			return new ValueTask();
+		}
+
+		void Tick()
 		{
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 
@@ -108,8 +114,6 @@ namespace Horde.Server.Server
 					_logger.LogInformation("Leaving downtime");
 				}
 			}
-
-			return new ValueTask();
 		}
 	}
 }

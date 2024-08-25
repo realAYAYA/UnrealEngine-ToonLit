@@ -26,6 +26,21 @@ FullName:	Test User
 AuthMethod:	perforce
 EOF
 
+# Set up triggers
+cat > /trigger-log.sh <<'EOF'
+#!/bin/bash
+echo "Trigger: $@" >> /tmp/trigger.log
+EOF
+chmod +x /trigger-log.sh
+
+cat > /tmp/triggers.txt <<EOF
+Triggers:
+        FormSaveAll form-save change "/trigger-log.sh form-save<SEP>%client%<SEP>%clienthost%<SEP>%clientip%<SEP>%clientprog%<SEP>%clientversion%<SEP>%peerhost%<SEP>%peerip%<SEP>%serverhost%<SEP>%serverid%<SEP>%serverip%<SEP>%servername%<SEP>%serverport%<SEP>%submitserverid%<SEP>%user%<SEP>%formname%<SEP>%formtype%<SEP>%change%<SEP>%changeroot%"
+        ChangeCommitAll change-commit //... "/trigger-log.sh change-commit<SEP>%client%<SEP>%clienthost%<SEP>%clientip%<SEP>%clientprog%<SEP>%clientversion%<SEP>%peerhost%<SEP>%peerip%<SEP>%serverhost%<SEP>%serverid%<SEP>%serverip%<SEP>%servername%<SEP>%serverport%<SEP>%submitserverid%<SEP>%user%<SEP>%formname%<SEP>%formtype%<SEP>%change%<SEP>%changeroot%"
+        ChangeCommitAll shelve-commit //... "/trigger-log.sh shelve-commit<SEP>%client%<SEP>%clienthost%<SEP>%clientip%<SEP>%clientprog%<SEP>%clientversion%<SEP>%peerhost%<SEP>%peerip%<SEP>%serverhost%<SEP>%serverid%<SEP>%serverip%<SEP>%servername%<SEP>%serverport%<SEP>%submitserverid%<SEP>%user%<SEP>%formname%<SEP>%formtype%<SEP>%change%<SEP>%changeroot%"
+EOF
+p4 triggers -i < /tmp/triggers.txt
+
 # Create a stream depot
 p4 depot -i << EOF
 Depot:          Foo

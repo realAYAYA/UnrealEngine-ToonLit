@@ -7,11 +7,14 @@ public class ShaderFormatD3D : ModuleRules
 {
 	public ShaderFormatD3D(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PrivateIncludePathModuleNames.Add("TargetPlatform");
-		PrivateIncludePathModuleNames.Add("D3D11RHI");
-		PrivateIncludePathModuleNames.Add("D3D12RHI");
-
-		PrivateIncludePaths.Add("../Shaders/Shared");
+		PrivateIncludePathModuleNames.AddRange(
+			new string[]
+			{
+				"D3D11RHI",
+				"D3D12RHI",
+				"Shaders",
+				"TargetPlatform",
+			});
 
         PrivateDependencyModuleNames.AddRange(
 			new string[] {
@@ -28,7 +31,7 @@ public class ShaderFormatD3D : ModuleRules
 			string AmdAgsPath = Target.UEThirdPartySourceDirectory + "AMD/AMD_AGS/";
 			PublicSystemIncludePaths.Add(AmdAgsPath + "inc/");  // For amd_ags.h, to get AGS_DX12_SHADER_INSTRINSICS_SPACE_ID
 
-			RuntimeDependencies.Add(Path.Combine(DirectX.GetDllDir(Target), "d3dcompiler_47.dll"));
+			RuntimeDependencies.Add(Path.Combine(Target.WindowsPlatform.DirectXDllDir, "d3dcompiler_47.dll"));
 
 			string ShaderConductorDllsPath = Path.Combine(Target.UEThirdPartyBinariesDirectory, "ShaderConductor/Win64");
 			RuntimeDependencies.Add(Path.Combine(ShaderConductorDllsPath, "dxcompiler.dll"));

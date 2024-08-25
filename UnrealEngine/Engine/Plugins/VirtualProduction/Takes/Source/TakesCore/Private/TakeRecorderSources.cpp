@@ -456,6 +456,7 @@ void UTakeRecorderSources::StopRecording(class ULevelSequence* InSequence, const
 			{
 				const bool bUpperBoundOnly = false; // Expand the Play Range of the sub-section to encompass all sections within it.
 				TakesUtils::ClampPlaybackRangeToEncompassAllSections(SubSequence->GetMovieScene(), bUpperBoundOnly);
+				TakesUtils::ResetViewAndWorkRange(SubSequence->GetMovieScene());
 
 				// Lock the sequence so that it can't be changed without implicitly unlocking it now
 				if (Settings.bAutoLock)

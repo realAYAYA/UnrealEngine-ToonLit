@@ -13,10 +13,6 @@
 #include "IWebBrowserCookieManager.h"
 #include "WebBrowserLog.h"
 
-#if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
-#endif
-
 #if WITH_CEF3
 #include "Misc/ScopeLock.h"
 #include "Async/Async.h"
@@ -74,7 +70,7 @@ THIRD_PARTY_INCLUDES_END
 #	elif PLATFORM_MAC
 #		define CEF3_FRAMEWORK_DIR CEF3_BIN_DIR TEXT("/Mac/Chromium Embedded Framework.framework")
 #		define CEF3_RESOURCES_DIR CEF3_FRAMEWORK_DIR TEXT("/Resources")
-#		define CEF3_SUBPROCES_EXE TEXT("Binaries/Mac/EpicWebHelper.app/Contents/MacOS/EpicWebHelper")
+#		define CEF3_SUBPROCES_EXE TEXT("Binaries/Mac/EpicWebHelper")
 #	elif PLATFORM_LINUX // @todo Linux
 #		define CEF3_RESOURCES_DIR CEF3_BIN_DIR TEXT("/Linux/Resources")
 #		define CEF3_SUBPROCES_EXE TEXT("Binaries/Linux/EpicWebHelper")
@@ -383,7 +379,7 @@ void FWebBrowserSingleton::WaitForTaskQueueFlush()
 {
 	// Keep pumping messages until we see the one below clear the queue
 	bTaskFinished = false;
-	CefPostTask(TID_UI, new FCEFBrowserClosureTask(nullptr, [=]()
+	CefPostTask(TID_UI, new FCEFBrowserClosureTask(nullptr, [=, this]()
 		{
 			bTaskFinished = true;
 		}));

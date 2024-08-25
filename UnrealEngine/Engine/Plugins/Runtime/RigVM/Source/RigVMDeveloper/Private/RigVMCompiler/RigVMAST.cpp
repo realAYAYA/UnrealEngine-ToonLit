@@ -19,6 +19,7 @@
 #include "VisualGraphUtils.h"
 #include "RigVMModel/Nodes/RigVMDispatchNode.h"
 #include "UObject/FieldIterator.h"
+#include "Algo/Sort.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMAST)
 
@@ -121,6 +122,30 @@ const FRigVMExprAST* FRigVMExprAST::GetFirstParentOfType(EType InExprType) const
 	return nullptr;
 }
 
+bool FRigVMExprAST::IsParentedTo(const FRigVMExprAST* InParentExpr) const
+{
+	check(InParentExpr);
+
+	for(const FRigVMExprAST* Parent : Parents)
+	{
+		if(Parent == InParentExpr)
+		{
+			return true;
+		}
+		if(Parent->IsParentedTo(InParentExpr))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool FRigVMExprAST::IsParentOf(const FRigVMExprAST* InChildExpr) const
+{
+	check(InChildExpr);
+	return InChildExpr->IsParentedTo(this);
+}
+
 const FRigVMExprAST* FRigVMExprAST::GetFirstChildOfType(EType InExprType) const
 {
 	for (const FRigVMExprAST* Child : Children)
@@ -181,6 +206,202 @@ const FRigVMBlockExprAST* FRigVMExprAST::GetRootBlock() const
 	return nullptr;
 }
 
+FRigVMExprAST::FRigVMBlockArray FRigVMExprAST::GetBlocks(bool bSortByDepth) const
+{
+	FRigVMBlockArray Blocks;
+	GetBlocksImpl(Blocks);
+
+	if(bSortByDepth)
+	{
+		auto SortByDepth = [](const FRigVMExprAST* A, const FRigVMExprAST* B) -> bool
+		{
+			if(A->GetMaximumDepth() > B->GetMaximumDepth())
+			{
+				return true;
+			}
+			return A->Index < B->Index;
+		};
+		Algo::Sort(Blocks, SortByDepth);
+	}
+
+	// remove the obsolete block to avoid combining expressions on
+	// a branch which are supposed to be obsolete.
+	if(const FRigVMParserAST* Parser = GetParser())
+	{
+		Blocks.RemoveAll([](const FRigVMBlockExprAST* Block) -> bool
+		{
+			return Block->IsObsolete();
+		});
+	}
+
+	return Blocks;
+}
+
+TOptional<uint32> FRigVMExprAST::GetBlockCombinationHash() const
+{
+	if(IsA(EType::Literal))
+	{
+		return TOptional<uint32>();
+	}
+
+	// if this expression is a node which is mutable, we are not part of a lazy block
+	if(IsNode())
+	{
+		const FRigVMNodeExprAST* NodeExpr = To<FRigVMNodeExprAST>();
+		check(NodeExpr);
+		if(const URigVMNode* Node = NodeExpr->GetNode())
+		{
+			if(Node->IsMutable())
+			{
+				return TOptional<uint32>();
+			}
+		}
+	}
+
+	// if this expression is a var expression on a mutable node - we are not part of a lazy block
+	if(IsVar())
+	{
+		const FRigVMVarExprAST* VarExpr = To<FRigVMVarExprAST>();
+		check(VarExpr);
+		
+		if(const URigVMPin* Pin = VarExpr->GetPin())
+		{
+			if(const URigVMNode* Node = Pin->GetNode())
+			{
+				if(Node->IsMutable())
+				{
+					return TOptional<uint32>();
+				}
+
+				// variable node output pins may be shared across many blocks,
+				// since they represent data which is not considered scoped.
+				if(Node->IsA<URigVMVariableNode>())
+				{
+					if(Pin->GetName() == URigVMVariableNode::ValueName)
+					{
+						if(Pin->GetDirection() == ERigVMPinDirection::Output)
+						{
+							return TOptional<uint32>();
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if(BlockCombinationHash.IsSet())
+	{
+		return BlockCombinationHash.GetValue();
+	}
+	
+	// only consider cached / computed values for lazy blocks
+	if (IsA(FRigVMExprAST::CachedValue))
+	{
+		// find the first node expr child
+		FRigVMExprAST* const* NodeChildPtr = Children.FindByPredicate([](const FRigVMExprAST* Child)
+		{
+			return Child->IsNode();
+		});
+
+		if(NodeChildPtr)
+		{
+			const FRigVMExprAST* NodeExpression = *NodeChildPtr;
+			
+			// collect all of the blocks this expression is in
+			const FRigVMExprAST::FRigVMBlockArray Blocks = NodeExpression->GetBlocks(true);
+			if(Blocks.Num() > 1)
+			{
+				// compute a hash for the blocks
+				uint32 ComputedHash = 0;
+				for(const FRigVMBlockExprAST* Block : Blocks)
+				{
+					ComputedHash = HashCombine(ComputedHash, GetTypeHash(Block->Index));
+				}
+
+				BlockCombinationHash = TOptional<uint32>(ComputedHash);
+
+				if(const FRigVMParserAST* Parser = GetParser())
+				{
+					// compute a unique name for the block combination
+					if(!Parser->BlockCombinationHashToName.Contains(ComputedHash))
+					{
+						FString BlockCombinationName;
+						for(const FRigVMBlockExprAST* Block : Blocks)
+						{
+							static constexpr TCHAR BlockNameFormat[] = TEXT("%s%d");
+							const FString BlockNameAndIndex = FString::Printf(BlockNameFormat, *Block->GetName().ToString(), Block->Index);
+
+							if(BlockCombinationName.IsEmpty())
+							{
+								BlockCombinationName = BlockNameAndIndex;
+							}
+							else
+							{
+								static constexpr TCHAR JoinFormat[] = TEXT("%s_%s");
+								BlockCombinationName = FString::Printf(JoinFormat, *BlockCombinationName, *BlockNameAndIndex);
+							}
+						}
+						Parser->BlockCombinationHashToName.Add(ComputedHash, BlockCombinationName);
+					}
+				}
+
+				return BlockCombinationHash.GetValue();
+			}
+		}
+	}
+
+	// if we still don't have a hash - rely on the parents
+	if(!BlockCombinationHash.IsSet())
+	{
+		for(int32 ParentIndex = 0; ParentIndex < NumParents(); ParentIndex++)
+		{
+			const TOptional<uint32> ParentHash = ParentAt(ParentIndex)->GetBlockCombinationHash();
+			if(ParentHash.IsSet())
+			{
+				BlockCombinationHash = ParentHash;
+				return ParentHash;
+			}
+		}
+	}
+
+	BlockCombinationHash = TOptional<uint32>();
+	return BlockCombinationHash.GetValue();
+}
+
+const FString& FRigVMExprAST::GetBlockCombinationName() const
+{
+	const TOptional<uint32> CombinationHash = GetBlockCombinationHash();
+	if(CombinationHash.IsSet())
+	{
+		if(const FRigVMParserAST* Parser = GetParser())
+		{
+			if(const FString* CombinationName = Parser->BlockCombinationHashToName.Find(CombinationHash.GetValue()))
+			{
+				return *CombinationName;
+			}
+		}
+	}
+
+	static const FString EmptyString;
+	return EmptyString;
+}
+
+void FRigVMExprAST::GetBlocksImpl(FRigVMBlockArray& InOutBlocks) const
+{
+	if (IsA(EType::Block))
+	{
+		InOutBlocks.AddUnique(this->To<FRigVMBlockExprAST>());
+		return;
+	}
+	
+	for(int32 ParentIndex = 0; ParentIndex < NumParents(); ParentIndex++)
+	{
+		const FRigVMExprAST* ParentExpression = ParentAt(ParentIndex);
+		ParentExpression->GetBlocksImpl(InOutBlocks);
+	}
+}
+
+
 int32 FRigVMExprAST::GetMinChildIndexWithinParent(const FRigVMExprAST* InParentExpr) const
 {
 	int32 MinIndex = INDEX_NONE;
@@ -238,6 +459,8 @@ void FRigVMExprAST::AddParent(FRigVMExprAST* InParent)
 
 	InParent->Children.Add(this);
 	Parents.Add(InParent);
+
+	InvalidateCaches();
 }
 
 void FRigVMExprAST::RemoveParent(FRigVMExprAST* InParent)
@@ -266,6 +489,8 @@ void FRigVMExprAST::RemoveParent(FRigVMExprAST* InParent)
 		}
 		InParent->Children.Remove(this);
 	}
+	
+	InvalidateCaches();
 }
 
 void FRigVMExprAST::RemoveChild(FRigVMExprAST* InChild)
@@ -289,6 +514,7 @@ void FRigVMExprAST::ReplaceParent(FRigVMExprAST* InCurrentParent, FRigVMExprAST*
 			Parents[ParentIndex] = InNewParent;
 			InCurrentParent->Children.Remove(this);
 			InNewParent->Children.Add(this);
+			InvalidateCaches();
 		}
 	}
 }
@@ -306,6 +532,8 @@ void FRigVMExprAST::ReplaceChild(FRigVMExprAST* InCurrentChild, FRigVMExprAST* I
 			Children[ChildIndex] = InNewChild;
 			InCurrentChild->Parents.Remove(this);
 			InNewChild->Parents.Add(this);
+			InCurrentChild->InvalidateCaches();
+			InNewChild->InvalidateCaches();
 		}
 	}
 }
@@ -331,6 +559,22 @@ bool FRigVMExprAST::IsConstant() const
 		}
 	}
 	return true;
+}
+
+int32 FRigVMExprAST::GetMaximumDepth() const
+{
+	if(MaximumDepth.IsSet())
+	{
+		return MaximumDepth.GetValue();
+	}
+	int32 Depth = 0;
+	for(int32 ParentIndex = 0; ParentIndex < NumParents(); ParentIndex++)
+	{
+		const FRigVMExprAST* ParentExpression = ParentAt(ParentIndex);
+		Depth = FMath::Max<int32>(Depth, ParentExpression->GetMaximumDepth() + 1);
+	}
+	MaximumDepth = Depth;
+	return Depth;
 }
 
 FString FRigVMExprAST::DumpText(const FString& InPrefix) const
@@ -362,6 +606,30 @@ FString FRigVMExprAST::DumpText(const FString& InPrefix) const
 		}
 	}
 	return Result;
+}
+
+void FRigVMExprAST::InvalidateCaches()
+{
+	TArray<bool> Processed;
+	Processed.AddZeroed(GetParser()->Expressions.Num());
+	InvalidateCachesImpl(Processed);
+}
+
+void FRigVMExprAST::InvalidateCachesImpl(TArray<bool>& OutProcessed)
+{
+	if(OutProcessed[Index])
+	{
+		return;
+	}
+	
+	BlockCombinationHash.Reset();
+	MaximumDepth.Reset();
+	OutProcessed[Index] = true;
+
+	for(FRigVMExprAST* ChildExpression : Children)
+	{
+		ChildExpression->InvalidateCachesImpl(OutProcessed);
+	}
 }
 
 bool FRigVMBlockExprAST::ShouldExecute() const
@@ -418,6 +686,46 @@ bool FRigVMBlockExprAST::Contains(const FRigVMExprAST* InExpression, TMap<const 
 		ContainedExpressionsCache->Add(InExpression, false);
 	}
 	return false;
+}
+
+bool FRigVMBlockExprAST::IsObsolete() const
+{
+	if(bIsObsolete)
+	{
+		return true;
+	}
+
+	struct Local
+	{
+		static bool HasOnlyObsoleteParents(const FRigVMExprAST* InExpr)
+		{
+			for(int32 ParentIndex = 0; ParentIndex < InExpr->NumParents(); ParentIndex++)
+			{
+				const FRigVMExprAST* ParentExpr = InExpr->ParentAt(ParentIndex);
+				if(!IsObsoleteExpr(ParentExpr))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+		
+		static bool IsObsoleteExpr(const FRigVMExprAST* InExpr)
+		{
+			if(InExpr->IsA(EType::Block))
+			{
+				const FRigVMBlockExprAST* Block = InExpr->To<FRigVMBlockExprAST>();
+				if(!Block->bIsObsolete) // avoid further recursion here
+				{
+					return false;
+				}
+			}
+
+			return HasOnlyObsoleteParents(InExpr);
+		}
+	};
+
+	return Local::HasOnlyObsoleteParents(this);
 }
 
 bool FRigVMNodeExprAST::IsConstant() const
@@ -713,8 +1021,6 @@ FRigVMParserAST::FRigVMParserAST(TArray<URigVMGraph*> InGraphs, URigVMController
 	InjectExitsToEntries();
 	FoldNoOps();
 
-	BubbleUpExpressions();
-
 	if (InSettings.bFoldAssignments)
 	{
 		FoldAssignments();
@@ -724,39 +1030,6 @@ FRigVMParserAST::FRigVMParserAST(TArray<URigVMGraph*> InGraphs, URigVMController
 	{
 		FoldLiterals();
 	}
-}
-
-FRigVMParserAST::FRigVMParserAST(TArray<URigVMGraph*> InGraphs, const TArray<FRigVMASTProxy>& InNodesToCompute)
-	: LibraryNodeBeingCompiled(nullptr)
-{
-	check(!InGraphs.IsEmpty());
-
-	LastCycleCheckExpr = nullptr;
-
-	FRigVMBlockExprAST* Block = MakeExpr<FRigVMBlockExprAST>(FRigVMExprAST::EType::Block, FRigVMASTProxy());
-	Block->Name = TEXT("NodesToCompute");
-	RootExpressions.Add(Block);
-
-	NodeProxies = InNodesToCompute;
-	
-	Inline(InGraphs, InNodesToCompute);
-
-	for (const FRigVMASTProxy& NodeProxy : NodeProxies)
-	{
-		URigVMNode* Node = NodeProxy.GetSubjectChecked<URigVMNode>();
-		if (Node->IsEvent())
-		{
-			continue;
-		}
-		if (Node->IsMutable())
-		{
-			continue;
-		}
-		TraverseNode(NodeProxy, Block);
-	}
-
-	FRigVMExprAST* ExitExpr = MakeExpr<FRigVMExitExprAST>(FRigVMASTProxy());
-	ExitExpr->AddParent(Block);
 }
 
 FRigVMParserAST::~FRigVMParserAST()
@@ -869,6 +1142,76 @@ FRigVMExprAST* FRigVMParserAST::TraverseNode(const FRigVMASTProxy& InNodeProxy, 
 		return NodeExpr;
 	}
 
+	// if we hit a mutable node here that hasn't been traversed yet,
+	// it means that the node is not wired up correctly.
+	if(Node->IsMutable())
+	{
+		struct Local
+		{
+			static bool IsNodeWiredToEvent(const FRigVMASTProxy& InNodeProxy)
+			{
+				const URigVMNode* Node = InNodeProxy.GetSubjectChecked<URigVMNode>();
+				if(Node->IsEvent())
+				{
+					return true;
+				}
+
+				for(const URigVMPin* Pin : Node->GetPins())
+				{
+					if(Pin->GetDirection() != ERigVMPinDirection::Input &&
+						Pin->GetDirection() != ERigVMPinDirection::IO)
+							
+					{
+						continue;
+					}
+					if(!Pin->IsExecuteContext())
+					{
+						continue;
+					}
+					
+					const TArray<URigVMPin*> SourcePins = Pin->GetLinkedSourcePins();
+					for(const URigVMPin* SourcePin : SourcePins)
+					{
+						const FRigVMASTProxy SourceNodeProxy = InNodeProxy.GetSibling(SourcePin->GetNode());
+						if(IsNodeWiredToEvent(SourceNodeProxy))
+						{
+							return true;
+						}
+					}
+				}
+
+				// if we hit an entry node - we need to continue the search a level up.
+				// events cannot be placed inside of a function / collapse node so
+				// there's no need to dive into library nodes.
+				if(Node->IsA<URigVMFunctionEntryNode>())
+				{
+					return IsNodeWiredToEvent(InNodeProxy.GetParent());
+				}
+				return false;
+			}
+		};
+
+		if(!Local::IsNodeWiredToEvent(InNodeProxy))
+		{
+			bool bIsInObsoleteBlock = false;
+			if(InParentExpr)
+			{
+				if(InParentExpr->GetBlock() == GetObsoleteBlock())
+				{
+					bIsInObsoleteBlock = true;
+				}
+			}
+
+			if(!bIsInObsoleteBlock)
+			{
+				Settings.Report(
+					EMessageSeverity::Error,
+					Node,
+					TEXT("Node @@ is not linked to execution."));
+			}
+		}
+	}
+
 	FRigVMExprAST* NodeExpr = CreateExpressionForNode(InNodeProxy, InParentExpr);
 	if (NodeExpr)
 	{
@@ -974,10 +1317,24 @@ TArray<FRigVMExprAST*> FRigVMParserAST::TraversePins(const FRigVMASTProxy& InNod
 				}
 			}
 		}
+
+		// We might have extra non-native pins, add them afterwards
+		if (UnitNode->HasNonNativePins())
+		{
+			for (URigVMPin* Pin : Node->GetPins())
+			{
+				// We skip decorator pins as we don't want to traverse them
+				if (!Pin->IsDecoratorPin())
+				{
+					Pins.AddUnique(Pin);
+				}
+			}
+		}
 	}
 
-	if(Pins.IsEmpty())
+	if (Pins.IsEmpty())
 	{
+		// Just grab whatever pins we have
 		Pins = Node->GetPins();
 	}
 
@@ -1411,152 +1768,6 @@ void FRigVMParserAST::InjectExitsToEntries()
 			{
 				FRigVMExprAST* ExitExpr = MakeExpr<FRigVMExitExprAST>(FRigVMASTProxy());
 				ExitExpr->AddParent(RootExpr);
-			}
-		}
-	}
-}
-
-void FRigVMParserAST::BubbleUpExpressions()
-{
-	for (int32 ExpressionIndex = 0; ExpressionIndex < Expressions.Num(); ExpressionIndex++)
-	{
-		FRigVMExprAST* Expression = Expressions[ExpressionIndex];
-		if (!Expression->IsA(FRigVMExprAST::CachedValue))
-		{
-			continue;
-		}
-
-		if (Expression->NumParents() < 2)
-		{
-			continue;
-		}
-
-		// collect all of the blocks this is in and make sure it's bubbled up before that
-		TArray<FRigVMBlockExprAST*> Blocks;
-		for (int32 ParentIndex = 0; ParentIndex < Expression->NumParents(); ParentIndex++)
-		{
-			const FRigVMExprAST* ParentExpression = Expression->ParentAt(ParentIndex);
-			if (ParentExpression->IsA(FRigVMExprAST::Block))
-			{
-				Blocks.AddUnique((FRigVMBlockExprAST*)ParentExpression->To<FRigVMBlockExprAST>());
-			}
-			else
-			{
-				Blocks.AddUnique((FRigVMBlockExprAST*)ParentExpression->GetBlock());
-			}
-		}
-
-		if (Blocks.Num() > 1)
-		{
-			TArray<FRigVMBlockExprAST*> BlockCandidates;
-			BlockCandidates.Append(Blocks);
-			FRigVMBlockExprAST* OuterBlock = nullptr;
-
-			// check if we need to add this expression to the block representing the non-lazy pins on the node.
-			// the expressions in that block are supposed to run before the node can execute - since they are greedy. 
-			// note: for backwards compatibility this also works for the condition pin on the if node and the index pin
-			// on the select node
-			TArray<const FRigVMExprAST*> Parents;
-			TArray<const FRigVMExprAST*> GrandParents;
-
-			for(const FRigVMBlockExprAST* Block : Blocks)
-			{
-				const FRigVMExprAST* Parent = Block->GetParent();
-				Parents.AddUnique(Parent);
-				if(Parent)
-				{
-					GrandParents.AddUnique(Parent->GetParent());
-				}
-			}
-
-			// if any of the parents is nullptr - it means that the block didn't
-			// have a parent and thus is the top level block. in that case we cannot
-			// bubble up further.
-			if(!Parents.Contains(nullptr))
-			{
-				// if all blocks here are part of the same grandparent
-				// parent == pin, grandparent == node
-				if(GrandParents.Num() == 1 && !GrandParents.Contains(nullptr))
-				{
-					if(GrandParents[0]->IsA(FRigVMExprAST::EType::CallExtern))
-					{
-						const FRigVMNodeExprAST* NodeExpr = GrandParents[0]->To<FRigVMNodeExprAST>();
-
-						// find a pin on the node which is either an input or an io and not lazy
-						const URigVMNode* Node = NodeExpr->GetNode();
-						const FRigVMExprAST* TopLevelBlockExpression = nullptr;
-						for(const URigVMPin* Pin : Node->GetPins())
-						{
-							if(Pin->IsLazy())
-							{
-								continue;
-							}
-
-							if(Pin->GetDirection() == ERigVMPinDirection::Input ||
-								Pin->GetDirection() == ERigVMPinDirection::IO)
-							{
-								if(const FRigVMExprAST* PinExpr = NodeExpr->FindExprWithPinName(Pin->GetFName()))
-								{
-									TopLevelBlockExpression = PinExpr->GetFirstChildOfType(FRigVMExprAST::Block);
-								}
-							}
-
-							if(TopLevelBlockExpression)
-							{
-								break;
-							}
-						}
-
-						if(TopLevelBlockExpression)
-						{
-							OuterBlock = (FRigVMBlockExprAST*)TopLevelBlockExpression->To<FRigVMBlockExprAST>();
-							OuterBlock->Children.Add(Expression);
-							Expression->Parents.Insert(OuterBlock, 0);
-							continue;
-						}
-					}
-				}
-			}
-
-			// this expression is part of multiple blocks, and it needs to be bubbled up.
-			// for this we'll walk up the block tree and find the first block which contains all of them
-			for (int32 BlockCandidateIndex = 0; BlockCandidateIndex < BlockCandidates.Num(); BlockCandidateIndex++)
-			{
-				FRigVMBlockExprAST* BlockCandidate = BlockCandidates[BlockCandidateIndex];
-
-				bool bFoundCandidate = true;
-				TMap<const FRigVMExprAST*, bool> ContainedExpressionsCache;
-				for (int32 BlockIndex = 0; BlockIndex < Blocks.Num(); BlockIndex++)
-				{
-					FRigVMBlockExprAST* Block = Blocks[BlockIndex];
-					if (!BlockCandidate->Contains(Block, &ContainedExpressionsCache))
-					{
-						bFoundCandidate = false;
-						break;
-					}
-				}
-
-				if (bFoundCandidate)
-				{
-					OuterBlock = BlockCandidate;
-					break;
-				}
-
-				BlockCandidates.AddUnique((FRigVMBlockExprAST*)BlockCandidate->GetBlock());
-			}
-
-			// we found a block which contains all of our blocks.
-			// we are now going to inject this block as the first parent
-			// of the cached value, so that the traverser sees it earlier
-			if (OuterBlock)
-			{
-				MinIndexOfChildWithinParent.Reset();
-				int32 ChildIndex = Expression->GetMinChildIndexWithinParent(OuterBlock);
-				if (ChildIndex != INDEX_NONE)
-				{
-					OuterBlock->Children.Insert(Expression, ChildIndex);
-					Expression->Parents.Insert(OuterBlock, 0);
-				}
 			}
 		}
 	}
@@ -2146,7 +2357,78 @@ FString FRigVMParserAST::DumpDot() const
 
 	struct Local
 	{
-		static TArray<int32> VisitChildren(const FRigVMExprAST* InExpr, int32 InSubGraphIndex, FVisualGraph& OutGraph)
+		const TArray<FColor> BlockCombinationColors =
+		{
+			FColor(255,235,205),
+			FColor(220,20,60),
+			FColor(46,139,87),
+			FColor(0,0,205),
+			FColor(255,228,225),
+			FColor(255,218,185),
+			FColor(255,140,0),
+			FColor(255,228,181),
+			FColor(216,191,216),
+			FColor(210,105,30),
+			FColor(240,248,255),
+			FColor(30,144,255),
+			FColor(47,79,79),
+			FColor(245,245,220),
+			FColor(165,42,42),
+			FColor(255,245,238),
+			FColor(112,128,144),
+			FColor(220,220,220),
+			FColor(123,104,238),
+			FColor(139,0,139),
+			FColor(255,182,193),
+			FColor(250,128,114),
+			FColor(148,0,211),
+			FColor(224,255,255),
+			FColor(255,165,0),
+			FColor(255,250,240),
+			FColor(0,128,128),
+			FColor(175,238,238),
+			FColor(147,112,219),
+			FColor(255,160,122),
+			FColor(0,255,127),
+			FColor(255,240,245),
+			FColor(211,211,211),
+			FColor(173,255,47),
+			FColor(0,100,0),
+			FColor(0,128,0),
+			FColor(32,178,170),
+			FColor(123,104,238),
+			FColor(240,230,140),
+			FColor(139,69,19),
+			FColor(153,50,204),
+			FColor(219,112,147),
+			FColor(138,43,226),
+			FColor(245,245,245),
+			FColor(255,255,240),
+			FColor(255,69,0),
+			FColor(135,206,235),
+			FColor(240,255,255),
+			FColor(205,92,92),
+			FColor(255,250,205),
+			FColor(105,105,105),
+			FColor(255,250,250),
+			FColor(72,61,139),
+			FColor(255,248,220),
+			FColor(255,192,203),
+			FColor(222,184,135),
+			FColor(245,222,179),
+			FColor(0,0,128),
+			FColor(245,255,250),
+			FColor(25,25,112),
+			FColor(244,164,96),
+			FColor(238,130,238),
+			FColor(240,255,240),
+			FColor(34,139,34),
+		};
+
+		int32 BlockCombinationColorIndex = 0;
+		TMap<uint32, int32> BlockCombinationHashToColor; 
+
+		TArray<int32> VisitChildren(const FRigVMExprAST* InExpr, int32 InSubGraphIndex, FVisualGraph& OutGraph)
 		{
 			TArray<int32> ChildNodeIndices;
 			for (FRigVMExprAST* Child : InExpr->Children)
@@ -2156,7 +2438,7 @@ FString FRigVMParserAST::DumpDot() const
 			return ChildNodeIndices;
 		}
 		
-		static int32 VisitExpr(const FRigVMExprAST* InExpr, int32 InSubGraphIndex, FVisualGraph& OutGraph)
+		int32 VisitExpr(const FRigVMExprAST* InExpr, int32 InSubGraphIndex, FVisualGraph& OutGraph)
 		{
 			const FName NodeName = *FString::Printf(TEXT("node_%d"), InExpr->GetIndex());
 
@@ -2306,8 +2588,24 @@ FString FRigVMParserAST::DumpDot() const
 
 			if (!Label.IsEmpty())
 			{
+				TOptional<FLinearColor> Color;
+				const TOptional<uint32> BlockCombinationHash = InExpr->GetBlockCombinationHash();
+				if(BlockCombinationHash.IsSet())
+				{
+					const uint32 Hash = BlockCombinationHash.GetValue();
+					if(!BlockCombinationHashToColor.Contains(Hash))
+					{
+						BlockCombinationHashToColor.Add(Hash, BlockCombinationColorIndex++);
+						if(BlockCombinationColorIndex >= BlockCombinationColors.Num())
+						{
+							BlockCombinationColorIndex = 0;
+						}
+					}
+					Color = BlockCombinationColors[BlockCombinationHashToColor.FindChecked(Hash)];
+				}
+				
 				const TOptional<FName> DisplayName = FName(*Label);
-				NodeIndex = OutGraph.AddNode(NodeName, DisplayName, TOptional<FLinearColor>(), Shape);
+				NodeIndex = OutGraph.AddNode(NodeName, DisplayName, Color, Shape);
 				OutGraph.AddNodeToSubGraph(NodeIndex, SubGraphIndex);
 			}
 
@@ -2328,6 +2626,7 @@ FString FRigVMParserAST::DumpDot() const
 		}
 	};
 
+	Local LocalStruct;
 	for (FRigVMExprAST* Expr : RootExpressions)
 	{
 		if (Expr == GetObsoleteBlock(false))
@@ -2335,7 +2634,7 @@ FString FRigVMParserAST::DumpDot() const
 			continue;
 		}
 
-		Local::VisitExpr(Expr, INDEX_NONE, VisualGraph);
+		LocalStruct.VisitExpr(Expr, INDEX_NONE, VisualGraph);
 	}
 
 	return VisualGraph.DumpDot();
@@ -2519,7 +2818,7 @@ const FRigVMASTLinkDescription& FRigVMParserAST::GetLink(int32 InLinkIndex) cons
 	return Links[InLinkIndex];
 }
 
-void FRigVMParserAST::Inline(TArray<URigVMGraph*> InGraphs)
+void FRigVMParserAST::Inline(const TArray<URigVMGraph*>& InGraphs)
 {
 	TArray<FRigVMASTProxy> LocalNodeProxies;
 	for(URigVMGraph* Graph : InGraphs)
@@ -2532,7 +2831,7 @@ void FRigVMParserAST::Inline(TArray<URigVMGraph*> InGraphs)
 	Inline(InGraphs, LocalNodeProxies);
 }
 
-void FRigVMParserAST::Inline(TArray<URigVMGraph*> InGraphs, const TArray<FRigVMASTProxy>& InNodeProxies)
+void FRigVMParserAST::Inline(const TArray<URigVMGraph*>& InGraphs, const TArray<FRigVMASTProxy>& InNodeProxies)
 {
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
 

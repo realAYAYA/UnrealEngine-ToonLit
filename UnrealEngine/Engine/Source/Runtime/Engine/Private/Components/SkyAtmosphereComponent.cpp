@@ -79,6 +79,9 @@ USkyAtmosphereComponent::USkyAtmosphereComponent(const FObjectInitializer& Objec
 
 	TraceSampleCountScale = 1.0f;
 
+	bHoldout = false;
+	bRenderInMainPass = true;
+
 	memset(OverrideAtmosphericLight, 0, sizeof(OverrideAtmosphericLight));
 
 	ValidateStaticLightingGUIDs();
@@ -387,6 +390,24 @@ SKY_DECLARE_BLUEPRINT_SETFUNCTION_LINEARCOEFFICIENT(SkyLuminanceFactor);
 SKY_DECLARE_BLUEPRINT_SETFUNCTION(float, AerialPespectiveViewDistanceScale);
 SKY_DECLARE_BLUEPRINT_SETFUNCTION(float, HeightFogContribution);
 
+void USkyAtmosphereComponent::SetHoldout(bool bNewHoldout)
+{
+	if (bHoldout != bNewHoldout)
+	{
+		bHoldout = bNewHoldout;
+		MarkRenderStateDirty();
+	}
+}
+
+void USkyAtmosphereComponent::SetRenderInMainPass(bool bValue)
+{
+	if (bRenderInMainPass != bValue)
+	{
+		bRenderInMainPass = bValue;
+		MarkRenderStateDirty();
+	}
+}
+
 FLinearColor USkyAtmosphereComponent::GetAtmosphereTransmitanceOnGroundAtPlanetTop(UDirectionalLightComponent* DirectionalLight)
 {
 	if(DirectionalLight != nullptr)
@@ -470,6 +491,8 @@ ASkyAtmosphere::ASkyAtmosphere(const FObjectInitializer& ObjectInitializer)
 FSkyAtmosphereSceneProxy::FSkyAtmosphereSceneProxy(const USkyAtmosphereComponent* InComponent)
 	: bStaticLightingBuilt(false)
 	, AtmosphereSetup(*InComponent)
+	, bHoldout(InComponent->bHoldout > 0)
+	, bRenderInMainPass(InComponent->bRenderInMainPass > 0)
 {
 	SkyLuminanceFactor = InComponent->SkyLuminanceFactor;
 	AerialPespectiveViewDistanceScale = InComponent->AerialPespectiveViewDistanceScale;

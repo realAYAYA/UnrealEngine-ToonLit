@@ -31,7 +31,8 @@ public class LandscapeEditor : ModuleRules
 				"ToolWidgets",
 				"SourceControl",
 				"DirectoryWatcher",
-				"DeveloperSettings"
+				"DeveloperSettings",
+				"PlacementMode"
 			}
 			);
 

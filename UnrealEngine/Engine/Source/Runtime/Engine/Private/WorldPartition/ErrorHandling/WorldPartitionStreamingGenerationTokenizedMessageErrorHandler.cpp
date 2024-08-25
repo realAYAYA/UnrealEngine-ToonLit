@@ -6,12 +6,12 @@
 #include "Misc/PackageName.h"
 #include "Misc/UObjectToken.h"
 #include "Misc/MapErrors.h"
+#include "WorldPartition/DataLayer/DataLayerAsset.h"
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
-#include "WorldPartition/WorldPartitionActorDescView.h"
 
 #define LOCTEXT_NAMESPACE "WorldPartition"
 
-void ITokenizedMessageErrorHandler::OnInvalidRuntimeGrid(const FWorldPartitionActorDescView& ActorDescView, FName GridName)
+void ITokenizedMessageErrorHandler::OnInvalidRuntimeGrid(const IWorldPartitionActorDescInstanceView& ActorDescView, FName GridName)
 {
 	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
 	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_Actor", "Actor")))
@@ -23,28 +23,26 @@ void ITokenizedMessageErrorHandler::OnInvalidRuntimeGrid(const FWorldPartitionAc
 	HandleTokenizedMessage(MoveTemp(Message));
 }
 
-void ITokenizedMessageErrorHandler::OnInvalidReference(const FWorldPartitionActorDescView& ActorDescView, const FGuid& ReferenceGuid, FWorldPartitionActorDescView* ReferenceActorDescView)
+void ITokenizedMessageErrorHandler::OnInvalidReference(const IWorldPartitionActorDescInstanceView& ActorDescView, const FGuid& ReferenceGuid, IWorldPartitionActorDescInstanceView* ReferenceActorDescView)
 {
-	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
-	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_Actor", "Actor")))
-		->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
-		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_HaveMissingRefsTo", "has an invalid reference to")));
-
+	// Don't report invalid references to non-existing actors as it can happen in valid scenarios, as the linker code will silently null out references when loading actors with missing
+	// references.
 	if (ReferenceActorDescView)
 	{
+		TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
+		Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_Actor", "Actor")))
+			->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
+			->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_HaveMissingRefsTo", "has an invalid reference to")));
+
 		Message->AddToken(FActorToken::Create(ReferenceActorDescView->GetActorSoftPath().ToString(), ReferenceActorDescView->GetGuid(), FText::FromString(GetActorName(*ReferenceActorDescView))));
-	}
-	else
-	{
-		Message->AddToken(FTextToken::Create(FText::FromString(ReferenceGuid.ToString())));
-	}
 
-	Message->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_MissingActorReference_CheckForErrors")));
+		Message->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_MissingActorReference_CheckForErrors")));
 
-	HandleTokenizedMessage(MoveTemp(Message));
+		HandleTokenizedMessage(MoveTemp(Message));
+	}
 }
 
-void ITokenizedMessageErrorHandler::OnInvalidReferenceGridPlacement(const FWorldPartitionActorDescView& ActorDescView, const FWorldPartitionActorDescView& ReferenceActorDescView)
+void ITokenizedMessageErrorHandler::OnInvalidReferenceGridPlacement(const IWorldPartitionActorDescInstanceView& ActorDescView, const IWorldPartitionActorDescInstanceView& ReferenceActorDescView)
 {
 	const FText SpatiallyLoadedActor(LOCTEXT("TokenMessage_WorldPartition_SpatiallyLoadedActor", "Spatially loaded actor"));
 	const FText NonSpatiallyLoadedActor(LOCTEXT("TokenMessage_WorldPartition_NonSpatiallyLoadedActor", "Non-spatially loaded actor"));
@@ -61,19 +59,32 @@ void ITokenizedMessageErrorHandler::OnInvalidReferenceGridPlacement(const FWorld
 	HandleTokenizedMessage(MoveTemp(Message));
 }
 
-void ITokenizedMessageErrorHandler::OnInvalidReferenceDataLayers(const FWorldPartitionActorDescView& ActorDescView, const FWorldPartitionActorDescView& ReferenceActorDescView)
+void ITokenizedMessageErrorHandler::OnInvalidReferenceDataLayers(const IWorldPartitionActorDescInstanceView& ActorDescView, const IWorldPartitionActorDescInstanceView& ReferenceActorDescView, EDataLayerInvalidReason Reason)
 {
+	FText ReasonText;
+
+	switch (Reason)
+	{
+	case EDataLayerInvalidReason::ReferencedActorDifferentRuntimeDataLayers:
+		ReasonText = LOCTEXT("TokenMessage_WorldPartition_ReferenceActorInOtherDataLayers", "references an actor in a different set of runtime data layers");
+		break;
+	case EDataLayerInvalidReason::ReferencedActorDifferentExternalDataLayer:
+		ReasonText = LOCTEXT("TokenMessage_WorldPartition_ReferenceActorInOtherExternalDataLayer", "references an actor assigned to a different external data layer");
+		break;
+	};
+
 	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
+
 	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_Actor", "Actor")))
-		->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(),  FText::FromString(GetActorName(ActorDescView))))
-		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_ReferenceActorInOtherDataLayers", "references an actor in a different set of runtime data layers")))
+		->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
+		->AddToken(FTextToken::Create(ReasonText))
 		->AddToken(FActorToken::Create(ReferenceActorDescView.GetActorSoftPath().ToString(), ReferenceActorDescView.GetGuid(), FText::FromString(GetActorName(ReferenceActorDescView))))
-		->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_ActorReferenceActorInAnotherDataLayer_CheckForErrors")));
+		->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_ActorInvalidReferenceDataLayers_CheckForErrors")));
 
 	HandleTokenizedMessage(MoveTemp(Message));
 }
 
-void ITokenizedMessageErrorHandler::OnInvalidReferenceRuntimeGrid(const FWorldPartitionActorDescView& ActorDescView, const FWorldPartitionActorDescView& ReferenceActorDescView)
+void ITokenizedMessageErrorHandler::OnInvalidReferenceRuntimeGrid(const IWorldPartitionActorDescInstanceView& ActorDescView, const IWorldPartitionActorDescInstanceView& ReferenceActorDescView)
 {
 	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
 	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_Actor", "Actor")))
@@ -85,26 +96,25 @@ void ITokenizedMessageErrorHandler::OnInvalidReferenceRuntimeGrid(const FWorldPa
 	HandleTokenizedMessage(MoveTemp(Message));
 }
 
-void ITokenizedMessageErrorHandler::OnInvalidReferenceLevelScriptStreamed(const FWorldPartitionActorDescView& ActorDescView)
+void ITokenizedMessageErrorHandler::OnInvalidWorldReference(const IWorldPartitionActorDescInstanceView& ActorDescView, EWorldReferenceInvalidReason Reason)
 {
 	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
-	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_LevelScriptBlueprintStreamedActorReference", "Level Script Blueprint references streamed actor")))
-		->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
-		->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_LevelScriptBlueprintRefefenceStreamed_CheckForErrors")));
 
-	HandleTokenizedMessage(MoveTemp(Message));
-	
-}
+	switch(Reason)
+	{
+	case EWorldReferenceInvalidReason::ReferencedActorIsSpatiallyLoaded:
+		Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_WorldReferenceSpatiallyLoadedActor", "World references spatially loaded actor")))
+			->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
+			->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_WorldReferenceSpatiallyLoadedActor_CheckForErrors")));
+		break;
+	case EWorldReferenceInvalidReason::ReferencedActorHasDataLayers:
+		Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_WorldReferenceActorWithDataLayers", "World references actor with data layers")))
+			->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
+			->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_WorldReferenceActorWithDataLayers_CheckForErrors")));
+		break;
+	}
 
-void ITokenizedMessageErrorHandler::OnInvalidReferenceLevelScriptDataLayers(const FWorldPartitionActorDescView& ActorDescView)
-{
-	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
-	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_LevelScriptBlueprintActorReference", "Level Script Blueprint references actor")))
-		->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
-		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_LevelScriptBlueprintDataLayerReference", "with a non empty set of data layers")))
-		->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_LevelScriptBlueprintRefefenceDataLayer_CheckForErrors")));
-
-	HandleTokenizedMessage(MoveTemp(Message));
+	HandleTokenizedMessage(MoveTemp(Message));	
 }
 
 void ITokenizedMessageErrorHandler::OnInvalidReferenceDataLayerAsset(const UDataLayerInstanceWithAsset* DataLayerInstance)
@@ -114,6 +124,19 @@ void ITokenizedMessageErrorHandler::OnInvalidReferenceDataLayerAsset(const UData
 		->AddToken(FUObjectToken::Create(DataLayerInstance))
 		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_DataLayers_NullAsset", "Does not have Data Layer Asset")))
 		->AddToken(FMapErrorToken::Create(TEXT("DataLayers_InvalidAsset_CheckForErrors")));
+
+	HandleTokenizedMessage(MoveTemp(Message));
+}
+
+void ITokenizedMessageErrorHandler::OnInvalidDataLayerAssetType(const UDataLayerInstanceWithAsset* DataLayerInstance, const UDataLayerAsset* DataLayerAsset)
+{
+	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
+	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_DataLayers_DataLayer", "Data layer")))
+		->AddToken(FUObjectToken::Create(DataLayerInstance))
+		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_DataLayers_InvalidAssetType_NotCompatible", "is not compatible with its Data Layer Asset")))
+		->AddToken(FUObjectToken::Create(DataLayerAsset))
+		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_DataLayers_InvalidAssetType_type", "type")))
+		->AddToken(FMapErrorToken::Create(TEXT("DataLayers_InvalidDataLayerAssetType_CheckForErrors")));
 
 	HandleTokenizedMessage(MoveTemp(Message));
 }
@@ -145,7 +168,7 @@ void ITokenizedMessageErrorHandler::OnDataLayerAssetConflict(const UDataLayerIns
 	HandleTokenizedMessage(MoveTemp(Message));
 }
 
-void ITokenizedMessageErrorHandler::OnActorNeedsResave(const FWorldPartitionActorDescView& ActorDescView)
+void ITokenizedMessageErrorHandler::OnActorNeedsResave(const IWorldPartitionActorDescInstanceView& ActorDescView)
 {
 	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Info);
 	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_ActorNeedsResave", "Actor needs resave")))
@@ -155,7 +178,7 @@ void ITokenizedMessageErrorHandler::OnActorNeedsResave(const FWorldPartitionActo
 	HandleTokenizedMessage(MoveTemp(Message));
 }
 
-void ITokenizedMessageErrorHandler::OnLevelInstanceInvalidWorldAsset(const FWorldPartitionActorDescView& ActorDescView, FName WorldAsset, ELevelInstanceInvalidReason Reason)
+void ITokenizedMessageErrorHandler::OnLevelInstanceInvalidWorldAsset(const IWorldPartitionActorDescInstanceView& ActorDescView, FName WorldAsset, ELevelInstanceInvalidReason Reason)
 {
 	FSoftObjectPath ActorPath(ActorDescView.GetActorSoftPath());
 	EMessageSeverity::Type MessageSeverity = EMessageSeverity::Info;
@@ -198,7 +221,7 @@ void ITokenizedMessageErrorHandler::OnLevelInstanceInvalidWorldAsset(const FWorl
 	HandleTokenizedMessage(MoveTemp(Message));
 }
 
-void ITokenizedMessageErrorHandler::OnInvalidActorFilterReference(const FWorldPartitionActorDescView& ActorDescView, const FWorldPartitionActorDescView& ReferenceActorDescView)
+void ITokenizedMessageErrorHandler::OnInvalidActorFilterReference(const IWorldPartitionActorDescInstanceView& ActorDescView, const IWorldPartitionActorDescInstanceView& ReferenceActorDescView)
 {
 	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
 	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_Actor", "Actor")))
@@ -206,6 +229,18 @@ void ITokenizedMessageErrorHandler::OnInvalidActorFilterReference(const FWorldPa
 		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_ActorFilterFailed", "will not be filtered out because it is referenced by actor")))
 		->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
 		->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_MissingActorReference_CheckForErrors")));
+
+	HandleTokenizedMessage(MoveTemp(Message));
+}
+
+void ITokenizedMessageErrorHandler::OnInvalidHLODLayer(const IWorldPartitionActorDescInstanceView& ActorDescView)
+{
+	TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error);
+	Message->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_Actor", "Actor")))
+		->AddToken(FActorToken::Create(ActorDescView.GetActorSoftPath().ToString(), ActorDescView.GetGuid(), FText::FromString(GetActorName(ActorDescView))))
+		->AddToken(FTextToken::Create(LOCTEXT("TokenMessage_WorldPartition_HaveInvalidHLODLayer", "has an invalid HLOD layer")))
+		->AddToken(FAssetNameToken::Create(ActorDescView.GetHLODLayer().ToString()))
+		->AddToken(FMapErrorToken::Create(TEXT("WorldPartition_InvalidActorHLODLayer_CheckForErrors")));
 
 	HandleTokenizedMessage(MoveTemp(Message));
 }

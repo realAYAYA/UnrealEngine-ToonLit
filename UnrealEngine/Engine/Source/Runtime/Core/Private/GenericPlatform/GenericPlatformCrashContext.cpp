@@ -1,8 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GenericPlatform/GenericPlatformCrashContext.h"
+#include "GenericPlatform/GenericPlatformCrashContextEx.h"
 #include "HAL/PlatformTime.h"
 #include "HAL/PlatformStackWalk.h"
+#include "Misc/Char.h"
 #include "Misc/Parse.h"
 #include "Misc/FileHelper.h"
 #include "Misc/CommandLine.h"
@@ -74,7 +76,7 @@ static bool NeedsEscape(FStringView Str)
 	return false;
 }
 
-static const TCHAR* AttendedStatusToString(EUnattendedStatus Status)
+const TCHAR* AttendedStatusToString(const EUnattendedStatus Status)
 {
 	switch(Status)
 	{
@@ -85,6 +87,167 @@ static const TCHAR* AttendedStatusToString(EUnattendedStatus Status)
 		return TEXT("Unknown");
 	}
 }
+
+/* GPU breadcrumbs */
+class FGPUBreadcrumbQueueCrashData
+{
+public:
+	FGPUBreadcrumbQueueCrashData(const FString& InProcessedBreadcrumbString, const FSHAHash& InFullHash, const FSHAHash& InActiveHash)
+		: ProcessedBreadcrumbString(InProcessedBreadcrumbString), FinalizedFullHash(InFullHash), FinalizedActiveHash(InActiveHash)
+	{
+	}
+
+	FGPUBreadcrumbQueueCrashData(const TArray<FBreadcrumbNode>& Breadcrumbs)
+	{
+		for (const FBreadcrumbNode& Node : Breadcrumbs)
+		{
+			ProcessBreadcrumbNode(Node);
+		}
+
+		FinalizedFullHash = FullHash.Finalize();
+		FinalizedActiveHash = ActiveHash.Finalize();
+	}
+
+	const FString& GetProcessedBreadcrumbString() const { return ProcessedBreadcrumbString; }
+	const FSHAHash GetFullHash() const { return FinalizedFullHash; }
+	const FSHAHash GetActiveHash() const { return FinalizedActiveHash; }
+
+private:
+	void ProcessBreadcrumbNode(const FBreadcrumbNode& Node)
+	{
+		HashNode(Node);
+
+		ProcessedBreadcrumbString.Append(FString::Printf(TEXT("{{%s},%c"), *SanitizeBreadcrumbEventName(Node.Name), Node.GetStateString()[0]));
+		if (!Node.Children.IsEmpty())
+		{
+			ProcessedBreadcrumbString.Append(TEXT(",{"));
+			for (int32 Child = 0; Child < Node.Children.Num(); Child++)
+			{
+				ProcessBreadcrumbNode(Node.Children[Child]);
+				if (Child != Node.Children.Num() - 1)
+				{
+					ProcessedBreadcrumbString.AppendChar(',');
+				}
+			}
+			ProcessedBreadcrumbString.AppendChar('}');
+		}
+		ProcessedBreadcrumbString.AppendChar('}');
+	}
+
+	void HashNode(const FBreadcrumbNode& Node)
+	{
+		FString NameForHash = SanitizeBreadcrumbEventNameForHash(Node.Name);
+		FullHash.UpdateWithString(*NameForHash, NameForHash.Len());
+		if (Node.State == EBreadcrumbState::Active)
+		{
+			ActiveHash.UpdateWithString(*NameForHash, NameForHash.Len());
+		}
+	}
+
+	// Sanitize the event name string to remove characters that are used
+	// as delimiters for parsing.
+	static FString SanitizeBreadcrumbEventName(const FString& EventName)
+	{
+		return EventName.Replace(TEXT("{"), TEXT("(")).Replace(TEXT("}"), TEXT(")"));
+	}
+
+	// Event names include parameters, mostly numeric (e.g. "Frame 1234"), that should
+	// be ignored when computing the hash.
+	static FString SanitizeBreadcrumbEventNameForHash(const FString& EventName)
+	{
+		FString SanitizedName;
+		SanitizedName.Reserve(EventName.Len());
+		for (const TCHAR& Char : EventName)
+		{
+			if (!FChar::IsDigit(Char))
+			{
+				SanitizedName.AppendChar(Char);
+			}
+		}
+		return SanitizedName;
+	}
+
+	FString ProcessedBreadcrumbString;	
+
+	FSHA1 FullHash;
+	FSHAHash FinalizedFullHash;
+	FSHA1 ActiveHash;
+	FSHAHash FinalizedActiveHash;
+};
+
+struct FGPUBreadcrumbCrashData
+{
+	/**
+	 * This must be incremented whenever the format of the breadcrumb string
+	 * changes, in order to help parsers in dealing with strings from multiple
+	 * versions.
+	 */
+	static constexpr TCHAR const CurrentVersion[] = TEXT("1.0");
+
+	FGPUBreadcrumbCrashData(const FString& InSourceName, const FString& InVersion)
+		: SourceName(InSourceName), Version(InVersion)
+	{
+	}
+
+	FGPUBreadcrumbCrashData()
+		: Version(CurrentVersion)
+	{
+	}
+
+	FString SourceName;
+	FString Version;
+	TMap<FString, FGPUBreadcrumbQueueCrashData> Queues;
+};
+
+static FGPUBreadcrumbCrashData GPUBreadcrumbsFromSharedContext(const FGPUBreadcrumbsSharedContext& Context)
+{
+	FGPUBreadcrumbCrashData DstData(Context.SourceName, Context.Version);
+
+	for (uint32 QueueIdx = 0; QueueIdx < Context.NumQueues; ++QueueIdx)
+	{
+		const FGPUBreadcrumbsSharedContext::FQueueData& SrcQueue = Context.Queues[QueueIdx];
+
+		FSHAHash FullHash, ActiveHash;
+		FullHash.FromString(SrcQueue.FullHash);
+		ActiveHash.FromString(SrcQueue.ActiveHash);
+
+		FGPUBreadcrumbQueueCrashData DstQueueData(SrcQueue.Breadcrumbs, FullHash, ActiveHash);
+		DstData.Queues.Emplace(SrcQueue.QueueName, MoveTemp(DstQueueData));
+	}
+	
+	return DstData;
+}
+
+static void GPUBreadcrumbsToSharedContext(const FGPUBreadcrumbCrashData& GPUBreadcrumbs, FGPUBreadcrumbsSharedContext& OutSharedContext)
+{
+	FCString::Strncpy(OutSharedContext.Version, *GPUBreadcrumbs.Version, CR_MAX_GENERIC_FIELD_CHARS);
+	FCString::Strncpy(OutSharedContext.SourceName, *GPUBreadcrumbs.SourceName, CR_MAX_GENERIC_FIELD_CHARS);
+
+	OutSharedContext.NumQueues = 0;
+	for (const TPair<FString, FGPUBreadcrumbQueueCrashData>& SrcQueueData : GPUBreadcrumbs.Queues)
+	{
+		const FGPUBreadcrumbQueueCrashData& SrcBreadcrumbs = SrcQueueData.Value;
+
+		// Skip queues with no breadcrumb data or with too many breadcrumbs.
+		if (SrcBreadcrumbs.GetProcessedBreadcrumbString().IsEmpty() || SrcBreadcrumbs.GetProcessedBreadcrumbString().Len() >= CR_MAX_GPU_BREADCRUMBS_STRING_CHARS)
+		{
+			continue;
+		}
+
+		FGPUBreadcrumbsSharedContext::FQueueData& DstQueue = OutSharedContext.Queues[OutSharedContext.NumQueues];
+		FCString::Strncpy(DstQueue.QueueName, *SrcQueueData.Key, CR_MAX_GENERIC_FIELD_CHARS);
+		FCString::Strncpy(DstQueue.FullHash, *SrcBreadcrumbs.GetFullHash().ToString(), CR_MAX_GENERIC_FIELD_CHARS);
+		FCString::Strncpy(DstQueue.ActiveHash, *SrcBreadcrumbs.GetActiveHash().ToString(), CR_MAX_GENERIC_FIELD_CHARS);
+		FCString::Strncpy(DstQueue.Breadcrumbs, *SrcBreadcrumbs.GetProcessedBreadcrumbString(), CR_MAX_GPU_BREADCRUMBS_STRING_CHARS);
+
+		OutSharedContext.NumQueues++;
+		if (OutSharedContext.NumQueues >= CR_MAX_GPU_BREADCRUMBS_QUEUES)
+		{
+			break;
+		}
+	}
+}
+
 
 /*-----------------------------------------------------------------------------
 	FGenericCrashContext
@@ -105,7 +268,31 @@ const TCHAR* const FGenericCrashContext::RuntimePropertiesTag = TEXT( "RuntimePr
 const TCHAR* const FGenericCrashContext::PlatformPropertiesTag = TEXT( "PlatformProperties" );
 const TCHAR* const FGenericCrashContext::EngineDataTag = TEXT( "EngineData" );
 const TCHAR* const FGenericCrashContext::GameDataTag = TEXT( "GameData" );
+const TCHAR* const FGenericCrashContext::GameNameTag = TEXT( "GameName" );
 const TCHAR* const FGenericCrashContext::EnabledPluginsTag = TEXT("EnabledPlugins");
+const TCHAR* const FGenericCrashContext::CrashVersionTag = TEXT("CrashVersion");
+const TCHAR* const FGenericCrashContext::ExecutionGuidTag = TEXT("ExecutionGuid");
+const TCHAR* const FGenericCrashContext::CrashGuidTag = TEXT("CrashGUID");
+const TCHAR* const FGenericCrashContext::IsEnsureTag = TEXT("IsEnsure");
+const TCHAR* const FGenericCrashContext::IsStallTag = TEXT("IsStall");
+const TCHAR* const FGenericCrashContext::IsAssertTag = TEXT("IsAssert");
+const TCHAR* const FGenericCrashContext::CrashTypeTag = TEXT("CrashType");
+const TCHAR* const FGenericCrashContext::ErrorMessageTag = TEXT("ErrorMessage");
+const TCHAR* const FGenericCrashContext::CrashReporterMessageTag = TEXT("CrashReporterMessage");
+const TCHAR* const FGenericCrashContext::AttendedStatusTag = TEXT("CrashReporterMessage");
+const TCHAR* const FGenericCrashContext::ProcessIdTag = TEXT("ProcessId");
+const TCHAR* const FGenericCrashContext::SecondsSinceStartTag = TEXT("SecondsSinceStart");
+const TCHAR* const FGenericCrashContext::BuildVersionTag = TEXT("BuildVersion");
+const TCHAR* const FGenericCrashContext::CallStackTag = TEXT("CallStack");
+const TCHAR* const FGenericCrashContext::PortableCallStackTag = TEXT("PCallStack");
+const TCHAR* const FGenericCrashContext::PortableCallStackHashTag = TEXT("PCallStackHash");
+const TCHAR* const FGenericCrashContext::IsRequestingExitTag = TEXT("IsRequestingExit");
+const TCHAR* const FGenericCrashContext::LogFilePathTag = TEXT("LogFilePath");
+const TCHAR* const FGenericCrashContext::IsInternalBuildTag = TEXT("IsInternalBuild");
+const TCHAR* const FGenericCrashContext::IsPerforceBuildTag = TEXT("IsPerforceBuild");
+const TCHAR* const FGenericCrashContext::IsWithDebugInfoTag = TEXT("IsWithDebugInfo");
+const TCHAR* const FGenericCrashContext::IsSourceDistributionTag = TEXT("IsSourceDistribution");
+
 const TCHAR* const FGenericCrashContext::UEMinidumpName = TEXT( "UEMinidump.dmp" );
 const TCHAR* const FGenericCrashContext::NewLineTag = TEXT( "&nl;" );
 
@@ -117,6 +304,7 @@ const TCHAR* const FGenericCrashContext::CrashTypeGPU = TEXT("GPUCrash");
 const TCHAR* const FGenericCrashContext::CrashTypeHang = TEXT("Hang");
 const TCHAR* const FGenericCrashContext::CrashTypeAbnormalShutdown = TEXT("AbnormalShutdown");
 const TCHAR* const FGenericCrashContext::CrashTypeOutOfMemory = TEXT("OutOfMemory");
+const TCHAR* const FGenericCrashContext::CrashTypeVerseRuntimeError = TEXT("VerseRuntimeError");
 
 const TCHAR* const FGenericCrashContext::EngineModeExUnknown = TEXT("Unset");
 const TCHAR* const FGenericCrashContext::EngineModeExDirty = TEXT("Dirty");
@@ -146,6 +334,7 @@ namespace NCached
 	static TArray<FString> EnabledPluginsList;
 	static TMap<FString, FString> EngineData;
 	static TMap<FString, FString> GameData;
+	static FGPUBreadcrumbCrashData GPUBreadcrumbs;
 
 	template <size_t CharCount, typename CharType>
 	void Set(CharType(&Dest)[CharCount], const CharType* pSrc)
@@ -191,6 +380,11 @@ void FGenericCrashContext::Initialize()
 	Symbols = FString::Printf(TEXT("%s-%s"), *Symbols, *FString(UE_BUILD_FLAVOR));
 #endif
 	NCached::Set(NCached::Session.SymbolsLabel, *Symbols);
+	if (Symbols.Len() >= UE_ARRAY_COUNT(NCached::Session.SymbolsLabel))
+	{
+		UE_LOG(LogInit, Error, TEXT("Symbols label too long (%d) for field size(%d), truncated. This may cause problems with crash report symbolication."),
+			Symbols.Len(), UE_ARRAY_COUNT(NCached::Session.SymbolsLabel));
+	}
 
 	FString OsVersion, OsSubVersion;
 	FPlatformMisc::GetOSVersions(OsVersion, OsSubVersion);
@@ -206,8 +400,8 @@ void FGenericCrashContext::Initialize()
 	NCached::Set(NCached::Session.UserName, FPlatformProcess::UserName());
 	NCached::Set(NCached::Session.DefaultLocale, *FPlatformMisc::GetDefaultLocale());
 
-	NCached::Set(NCached::Session.PlatformName, FPlatformProperties::PlatformName());
-	NCached::Set(NCached::Session.PlatformNameIni, FPlatformProperties::IniPlatformName());
+	NCached::Set(NCached::Session.PlatformName, ANSI_TO_TCHAR(FPlatformProperties::PlatformName()));
+	NCached::Set(NCached::Session.PlatformNameIni, ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName()));
 	NCached::Set(NCached::Session.AttendedStatus, AttendedStatusToString(EUnattendedStatus::Unknown));
 
 	// Information that cannot be gathered if command line is not initialized (e.g. crash during static init)
@@ -417,6 +611,27 @@ void FGenericCrashContext::InitializeFromContext(const FSessionContext& Session,
 	bIsInitialized = true;
 }
 
+void InitializeFromCrashContextEx(const FSessionContext& Session, const TCHAR* EnabledPluginsStr, const TCHAR* EngineDataStr, const TCHAR* GameDataStr, const FGPUBreadcrumbsSharedContext* GPUBreadcrumbs)
+{
+	if (GPUBreadcrumbs && GPUBreadcrumbs->NumQueues > 0)
+	{
+		NCached::GPUBreadcrumbs = GPUBreadcrumbsFromSharedContext(*GPUBreadcrumbs);
+	}
+
+	FGenericCrashContext::InitializeFromContext(Session, EnabledPluginsStr, EngineDataStr, GameDataStr);
+}
+
+const FSessionContext& FGenericCrashContext::GetCachedSessionContext()
+{
+	return NCached::Session;
+}
+
+FString FGenericCrashContext::GetGameName()
+{
+	return FString::Printf(TEXT("UE-%s"), FApp::GetProjectName());
+}
+
+
 void FGenericCrashContext::CopySharedCrashContext(FSharedCrashContext& Dst)
 {
 	//Copy the session
@@ -461,7 +676,15 @@ void FGenericCrashContext::CopySharedCrashContext(FSharedCrashContext& Dst)
 	}
 	DynamicDataPtr += FCString::Strlen(DynamicDataPtr) + 1;
 
-	#undef CR_DYNAMIC_BUFFER_REMAIN
+	#undef CR_DYNAMIC_BUFFER_REMAIN	
+}
+
+void CopyGPUBreadcrumbsToSharedCrashContext(FSharedCrashContextEx& InOutSharedContext)
+{
+	if (!NCached::GPUBreadcrumbs.Queues.IsEmpty())
+	{
+		GPUBreadcrumbsToSharedContext(NCached::GPUBreadcrumbs, InOutSharedContext.GPUBreadcrumbs);
+	}
 }
 
 void FGenericCrashContext::SetMemoryStats(const FPlatformMemoryStats& InMemoryStats)
@@ -482,8 +705,7 @@ void FGenericCrashContext::InitializeFromConfig()
 	PurgeOldCrashConfig();
 
 	const bool bForceGetSection = false;
-	const bool bConstSection = true;
-	FConfigSection* CRCConfigSection = GConfig->GetSectionPrivate(ConfigSectionName, bForceGetSection, bConstSection, GEngineIni);
+	const FConfigSection* CRCConfigSection = GConfig->GetSection(ConfigSectionName, bForceGetSection, GEngineIni);
 
 	if (CRCConfigSection != nullptr)
 	{
@@ -537,6 +759,35 @@ void FGenericCrashContext::UpdateLocalizedStrings()
 		NCached::Set(NCached::Session.CrashReportClientRichText, *CrashReportClientRichText.ToString());
 	}
 #endif
+}
+
+void FGenericCrashContext::SetAnticheatProvider(const FString& AnticheatProvider)
+{
+	NCached::Set(NCached::Session.AnticheatProvider, *AnticheatProvider);
+
+	SerializeTempCrashContextToFile();
+}
+
+void FGenericCrashContext::OnThreadStuck(uint32 ThreadId)
+{
+	if (!NCached::Session.bIsStuck || NCached::Session.StuckThreadId != ThreadId)
+	{
+		NCached::Session.bIsStuck = true;
+		NCached::Session.StuckThreadId = ThreadId;
+
+		SerializeTempCrashContextToFile();
+	}
+}
+
+void FGenericCrashContext::OnThreadUnstuck(uint32 ThreadId)
+{
+	if (NCached::Session.bIsStuck)
+	{
+		NCached::Session.bIsStuck = false;
+		NCached::Session.StuckThreadId = 0;
+
+		SerializeTempCrashContextToFile();
+	}
 }
 
 FGenericCrashContext::FGenericCrashContext(ECrashContextType InType, const TCHAR* InErrorMessage)
@@ -646,28 +897,28 @@ void FGenericCrashContext::SerializeTempCrashContextToFile()
 // fields in NCached!
 void FGenericCrashContext::SerializeSessionContext(FString& Buffer)
 {
-	AddCrashPropertyInternal(Buffer, TEXT("ProcessId"), NCached::Session.ProcessId);
-	AddCrashPropertyInternal(Buffer, TEXT("SecondsSinceStart"), NCached::Session.SecondsSinceStart);
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::ProcessIdTag, NCached::Session.ProcessId);
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::SecondsSinceStartTag, NCached::Session.SecondsSinceStart);
 
-	AddCrashPropertyInternal(Buffer, TEXT("IsInternalBuild"), NCached::Session.bIsInternalBuild);
-	AddCrashPropertyInternal(Buffer, TEXT("IsPerforceBuild"), NCached::Session.bIsPerforceBuild);
-	AddCrashPropertyInternal(Buffer, TEXT("IsWithDebugInfo"), NCached::Session.bWithDebugInfo);
-	AddCrashPropertyInternal(Buffer, TEXT("IsSourceDistribution"), NCached::Session.bIsSourceDistribution);
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::IsInternalBuildTag, NCached::Session.bIsInternalBuild);
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::IsPerforceBuildTag, NCached::Session.bIsPerforceBuild);
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::IsWithDebugInfoTag, NCached::Session.bWithDebugInfo);
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::IsSourceDistributionTag, NCached::Session.bIsSourceDistribution);
 
 	if (FCString::Strlen(NCached::Session.GameName) > 0)
 	{
-		AddCrashPropertyInternal(Buffer, TEXT("GameName"), NCached::Session.GameName);
+		AddCrashPropertyInternal(Buffer, FGenericCrashContext::GameNameTag, NCached::Session.GameName);
 	}
 	else
 	{
 		const TCHAR* ProjectName = FApp::GetProjectName();
 		if (ProjectName != nullptr && ProjectName[0] != 0)
 		{
-			AddCrashPropertyInternal(Buffer, TEXT("GameName"), *FString::Printf(TEXT("UE-%s"), ProjectName));
+			AddCrashPropertyInternal(Buffer, FGenericCrashContext::GameNameTag, *FString::Printf(TEXT("UE-%s"), ProjectName));
 		}
 		else
 		{
-			AddCrashPropertyInternal(Buffer, TEXT("GameName"), TEXT(""));
+			AddCrashPropertyInternal(Buffer, FGenericCrashContext::GameNameTag, TEXT(""));
 		}
 	}
 	AddCrashPropertyInternal(Buffer, TEXT("ExecutableName"), NCached::Session.ExecutableName);
@@ -687,12 +938,12 @@ void FGenericCrashContext::SerializeSessionContext(FString& Buffer)
 	AddCrashPropertyInternal(Buffer, TEXT("CommandLine"), NCached::Session.CommandLine);
 	AddCrashPropertyInternal(Buffer, TEXT("LanguageLCID"), NCached::Session.LanguageLCID);
 	AddCrashPropertyInternal(Buffer, TEXT("AppDefaultLocale"), NCached::Session.DefaultLocale);
-	AddCrashPropertyInternal(Buffer, TEXT("BuildVersion"), NCached::Session.BuildVersion);
+	AddCrashPropertyInternal(Buffer, BuildVersionTag, NCached::Session.BuildVersion);
 	AddCrashPropertyInternal(Buffer, TEXT("Symbols"), NCached::Session.SymbolsLabel);
 	AddCrashPropertyInternal(Buffer, TEXT("IsUERelease"), NCached::Session.bIsUERelease);
 
 	// Need to set this at the time of the crash to check if requesting exit had been called
-	AddCrashPropertyInternal(Buffer, TEXT("IsRequestingExit"), NCached::Session.bIsExitRequested);
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::IsRequestingExitTag, NCached::Session.bIsExitRequested);
 
 	// Remove periods from user names to match AutoReporter user names
 	// The name prefix is read by CrashRepository.AddNewCrash in the website code
@@ -722,6 +973,12 @@ void FGenericCrashContext::SerializeSessionContext(FString& Buffer)
 	AddCrashPropertyInternal(Buffer, TEXT("Misc.PrimaryGPUBrand"), NCached::Session.PrimaryGPUBrand);
 	AddCrashPropertyInternal(Buffer, TEXT("Misc.OSVersionMajor"), NCached::Session.OsVersion);
 	AddCrashPropertyInternal(Buffer, TEXT("Misc.OSVersionMinor"), NCached::Session.OsSubVersion);
+	AddCrashPropertyInternal(Buffer, TEXT("Misc.AnticheatProvider"), NCached::Session.AnticheatProvider);
+	if (NCached::Session.bIsStuck)
+	{
+		AddCrashPropertyInternal(Buffer, TEXT("Misc.IsStuck"), NCached::Session.bIsStuck);
+		AddCrashPropertyInternal(Buffer, TEXT("Misc.StuckThreadId"), NCached::Session.StuckThreadId);
+	}
 
 	// FPlatformMemory::GetConstants is called in the GCreateMalloc, so we can assume it is always valid.
 	{
@@ -750,7 +1007,7 @@ void FGenericCrashContext::SerializeUserSettings(FString& Buffer)
 	AddCrashPropertyInternal(Buffer, TEXT("NoDialog"), NCached::UserSettings.bNoDialog);
 	AddCrashPropertyInternal(Buffer, TEXT("SendUnattendedBugReports"), NCached::UserSettings.bSendUnattendedBugReports);
 	AddCrashPropertyInternal(Buffer, TEXT("SendUsageData"), NCached::UserSettings.bSendUsageData);
-	AddCrashPropertyInternal(Buffer, TEXT("LogFilePath"), FPlatformOutputDevices::GetAbsoluteLogFilename()); // Don't use the value cached, it may be out of date.
+	AddCrashPropertyInternal(Buffer, FGenericCrashContext::LogFilePathTag, FPlatformOutputDevices::GetAbsoluteLogFilename()); // Don't use the value cached, it may be out of date.
 }
 
 // This function may be called in the crashing executable or in an external crash reporter program. Take care with accessing global variables vs member variables or 
@@ -769,17 +1026,17 @@ void FGenericCrashContext::SerializeContentToBuffer() const
 	AddHeader(CommonBuffer);
 
 	BeginSection( CommonBuffer, RuntimePropertiesTag );
-	AddCrashProperty( TEXT( "CrashVersion" ), (int32)ECrashDescVersions::VER_3_CrashContext );
-	AddCrashProperty( TEXT( "ExecutionGuid" ), *ExecutionGuid.ToString() );
-	AddCrashProperty( TEXT( "CrashGUID" ), (const TCHAR*)CrashGUID);
+	AddCrashProperty( CrashVersionTag, (int32)ECrashDescVersions::VER_3_CrashContext );
+	AddCrashProperty( ExecutionGuidTag, *ExecutionGuid.ToString() );
+	AddCrashProperty( CrashGuidTag, (const TCHAR*)CrashGUID);
 
-	AddCrashProperty( TEXT( "IsEnsure" ), (Type == ECrashContextType::Ensure) );
-	AddCrashProperty( TEXT( "IsStall"), (Type == ECrashContextType::Stall) );
-	AddCrashProperty( TEXT( "IsAssert" ), (Type == ECrashContextType::Assert) );
-	AddCrashProperty( TEXT( "CrashType" ), GetCrashTypeString(Type) );
-	AddCrashProperty( TEXT( "ErrorMessage" ), ErrorMessage );
-	AddCrashProperty( TEXT( "CrashReporterMessage" ), NCached::Session.CrashReportClientRichText );
-	AddCrashProperty( TEXT( "AttendedStatus"), NCached::Session.AttendedStatus);
+	AddCrashProperty( IsEnsureTag, (Type == ECrashContextType::Ensure) );
+	AddCrashProperty( IsStallTag, (Type == ECrashContextType::Stall) );
+	AddCrashProperty( IsAssertTag, (Type == ECrashContextType::Assert) );
+	AddCrashProperty( CrashTypeTag, GetCrashTypeString(Type) );
+	AddCrashProperty( ErrorMessageTag, ErrorMessage );
+	AddCrashProperty( CrashReporterMessageTag, NCached::Session.CrashReportClientRichText );
+	AddCrashProperty( AttendedStatusTag, NCached::Session.AttendedStatus);
 
 	SerializeSessionContext(CommonBuffer);
 
@@ -796,6 +1053,8 @@ void FGenericCrashContext::SerializeContentToBuffer() const
 	// Add new portable callstack element with crash stack
 	AddPortableCallStack();
 	AddPortableCallStackHash();
+
+	AddGPUBreadcrumbs();
 
 	{
 		FString AllThreadStacks;
@@ -978,16 +1237,44 @@ void FGenericCrashContext::AddPortableCallStack() const
 {	
 	if (CallStack.Num() == 0)
 	{
-		AddCrashProperty(TEXT("PCallStack"), TEXT(""));
+		AddCrashProperty(PortableCallStackTag, TEXT(""));
 		return;
 	}
 
-	BeginSection(CommonBuffer, TEXT("PCallStack"));
+	BeginSection(CommonBuffer, PortableCallStackTag);
 	AppendPortableCallstack(CommonBuffer, CallStack);
-	EndSection(CommonBuffer, TEXT("PCallStack"));
+	EndSection(CommonBuffer, PortableCallStackTag);
 }
 
+void FGenericCrashContext::AddGPUBreadcrumbs() const
+{
+	if (NCached::GPUBreadcrumbs.Queues.IsEmpty())
+	{
+		return;
+	}
+	
+	BeginSection(CommonBuffer, TEXT("GPUBreadcrumbs"));
 
+	// We use a version indicator for the format used by the breadcrumbs
+	// string, so that parsers can know what to expect and don't break
+	// if changes are made in the format exported by the engine.
+	AddCrashProperty(TEXT("FormatVersion"), NCached::GPUBreadcrumbs.Version);
+
+	AddCrashProperty(TEXT("Source"), NCached::GPUBreadcrumbs.SourceName);
+
+	for (auto& [Queue, Breadcrumbs] : NCached::GPUBreadcrumbs.Queues)
+	{
+		BeginSection(CommonBuffer, TEXT("Queue"));
+
+		AddCrashProperty(TEXT("Name"), Queue);
+		AddCrashProperty(TEXT("FullHash"), Breadcrumbs.GetFullHash().ToString());
+		AddCrashProperty(TEXT("ActiveHash"), Breadcrumbs.GetActiveHash().ToString());
+		AddCrashProperty(TEXT("Breadcrumbs"), Breadcrumbs.GetProcessedBreadcrumbString());
+
+		EndSection(CommonBuffer, TEXT("Queue"));
+	}
+	EndSection(CommonBuffer, TEXT("GPUBreadcrumbs"));
+}
 
 void FGenericCrashContext::AddHeader(FString& Buffer)
 {
@@ -1008,6 +1295,13 @@ void FGenericCrashContext::BeginSection(FString& Buffer, const TCHAR* SectionNam
 void FGenericCrashContext::EndSection(FString& Buffer, const TCHAR* SectionName)
 {
 	Buffer.Appendf(TEXT("</%s>" LINE_TERMINATOR_ANSI), SectionName);
+}
+
+void FGenericCrashContext::AddSection(FString& Buffer, const TCHAR* SectionName, const FString& SectionContent)
+{
+	BeginSection(Buffer, SectionName);
+	Buffer.Appendf(TEXT("%s"), *FXmlEscapedString(SectionContent));
+	EndSection(Buffer, SectionName);
 }
 
 template<typename DEST>
@@ -1088,6 +1382,8 @@ const TCHAR* FGenericCrashContext::GetCrashTypeString(ECrashContextType Type)
 		return CrashTypeAbnormalShutdown;
 	case ECrashContextType::OutOfMemory:
 		return CrashTypeOutOfMemory;
+	case ECrashContextType::VerseRuntimeError:
+		return CrashTypeVerseRuntimeError;
 	default:
 		return CrashTypeCrash;
 	}
@@ -1178,6 +1474,27 @@ void FGenericCrashContext::SetEngineData(const FString& Key, const FString& Valu
 	}
 
 	OnEngineDataSet.Broadcast(Key, Value);
+}
+
+void FGenericCrashContext::SetGPUBreadcrumbs(const FString& GPUQueueName, const TArray<FBreadcrumbNode>& Breadcrumbs)
+{
+	NCached::GPUBreadcrumbs.Queues.Emplace(GPUQueueName, FGPUBreadcrumbQueueCrashData(Breadcrumbs));
+}
+
+void FGenericCrashContext::SetGPUBreadcrumbsSource(const FString& GPUBreadcrumbsSource)
+{
+	NCached::GPUBreadcrumbs.SourceName = GPUBreadcrumbsSource;
+}
+
+const FString& FGenericCrashContext::GetGPUBreadcrumbsSource()
+{
+	return NCached::GPUBreadcrumbs.SourceName;
+}
+
+void FGenericCrashContext::ResetGPUBreadcrumbsData()
+{
+	NCached::GPUBreadcrumbs.Queues.Empty();
+	NCached::GPUBreadcrumbs.SourceName.Empty();
 }
 
 const TMap<FString, FString>& FGenericCrashContext::GetEngineData()
@@ -1374,6 +1691,14 @@ void FGenericCrashContext::GetPortableCallStack(const uint64* StackFrames, int32
 		{
 			OutCallStack.Add(FCrashStackFrame(FPaths::GetBaseFilename(FoundModule->ImageName), FoundModule->BaseOfImage, StackFrame - FoundModule->BaseOfImage));
 		}
+	}
+}
+
+void FGenericCrashContext::AddPortableThreadCallStacks(TConstArrayView<FThreadCallStack> Threads)
+{
+	for (const FThreadCallStack& Thread : Threads)
+	{
+		AddPortableThreadCallStack(Thread.ThreadId, Thread.ThreadName, Thread.StackFrames.GetData(), Thread.StackFrames.Num());
 	}
 }
 

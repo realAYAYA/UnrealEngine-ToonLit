@@ -58,5 +58,7 @@ public class Slate : ModuleRules
         {
             DynamicallyLoadedModuleNames.Add("Settings");
         }
+
+		PrivateIncludePaths.Add(System.IO.Path.Combine(EngineDirectory,"Source/ThirdParty/AHEasing/AHEasing-1.3.2"));
 	}
 }

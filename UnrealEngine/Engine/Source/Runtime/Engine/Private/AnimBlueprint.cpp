@@ -8,6 +8,7 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimBlueprint)
 
 #if WITH_EDITOR
+#include "IAnimationBlueprintEditorModule.h"
 #include "Settings/AnimBlueprintSettings.h"
 #endif
 #if WITH_EDITORONLY_DATA
@@ -31,6 +32,8 @@ UAnimBlueprint::UAnimBlueprint(const FObjectInitializer& ObjectInitializer)
 		// Ensure that we are able to compile this anim BP by loading the compiler's module
 		FModuleManager::Get().LoadModuleChecked("AnimGraph");
 	}
+
+	DefaultBindingClass = FindObject<UClass>(nullptr, TEXT("/Script/AnimGraph.AnimGraphNodeBinding_Base"));
 #endif
 }
 
@@ -286,6 +289,22 @@ void UAnimBlueprint::PostEditChangeProperty(struct FPropertyChangedEvent& Proper
 	{
 		bRefreshExtensions = true;
 	}
+}
+
+void UAnimBlueprint::GetTypeActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const
+{
+	Super::GetTypeActions(ActionRegistrar);
+
+	const IAnimationBlueprintEditorModule& AnimationBlueprintEditorModule = FModuleManager::LoadModuleChecked<IAnimationBlueprintEditorModule>(TEXT("AnimationBlueprintEditor"));
+	AnimationBlueprintEditorModule.GetTypeActions(ActionRegistrar);
+}
+
+void UAnimBlueprint::GetInstanceActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const
+{
+	Super::GetInstanceActions(ActionRegistrar);
+
+	const IAnimationBlueprintEditorModule& AnimationBlueprintEditorModule = FModuleManager::LoadModuleChecked<IAnimationBlueprintEditorModule>(TEXT("AnimationBlueprintEditor"));
+	AnimationBlueprintEditorModule.GetInstanceActions(this, ActionRegistrar);
 }
 
 #endif

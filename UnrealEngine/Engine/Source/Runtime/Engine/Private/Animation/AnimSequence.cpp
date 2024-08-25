@@ -8,6 +8,7 @@
 
 #include "Algo/Find.h"
 #include "Animation/AnimData/CurveIdentifier.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/FrameworkObjectVersion.h"
 #include "Animation/AnimData/IAnimationDataController.h"
 #include "UObject/ObjectSaveContext.h"
@@ -25,7 +26,6 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimRootMotionProvider.h"
 #include "Animation/BlendSpace.h"
-#include "Animation/Rig.h"
 #include "Animation/AnimationSettings.h"
 #include "Animation/AnimBoneCompressionSettings.h"
 #include "Animation/AnimCurveCompressionCodec.h"
@@ -416,24 +416,31 @@ void UAnimSequence::PostInitProperties()
 
 void UAnimSequence::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UAnimSequence::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 #if WITH_EDITORONLY_DATA
 	if (AssetImportData)
 	{
-		OutTags.Add( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
+		Context.AddTag( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
 	}
 
 	if (DataModelInterface.GetObject() && DataModelInterface->HasBeenPopulated())
 	{
-		OutTags.Add(FAssetRegistryTag(TEXT("Compression Ratio"), FString::Printf(TEXT("%.03f"), (float)GetApproxCompressedSize() / (float)GetUncompressedRawSize()), FAssetRegistryTag::TT_Numerical));
-		OutTags.Add(FAssetRegistryTag(TEXT("Source Frame Rate"), FString::Printf(TEXT("%.2f"), DataModelInterface->GetFrameRate().AsDecimal()), FAssetRegistryTag::TT_Numerical));
-		OutTags.Add(FAssetRegistryTag(TEXT("Number of Frames"), FString::Printf(TEXT("%.i"), DataModelInterface->GetNumberOfFrames()), FAssetRegistryTag::TT_Numerical));
-		OutTags.Add(FAssetRegistryTag(TEXT("Number of Keys"), FString::Printf(TEXT("%i"), DataModelInterface->GetNumberOfKeys()), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag(TEXT("Compression Ratio"), FString::Printf(TEXT("%.03f"), (float)GetApproxCompressedSize() / (float)GetUncompressedRawSize()), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag(TEXT("Source Frame Rate"), FString::Printf(TEXT("%.2f"), DataModelInterface->GetFrameRate().AsDecimal()), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag(TEXT("Number of Frames"), FString::Printf(TEXT("%.i"), DataModelInterface->GetNumberOfFrames()), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag(TEXT("Number of Keys"), FString::Printf(TEXT("%i"), DataModelInterface->GetNumberOfKeys()), FAssetRegistryTag::TT_Numerical));
 	}
 	else
 	{
-		OutTags.Add(FAssetRegistryTag(TEXT("Source Frame Rate"), TEXT("0.0"), FAssetRegistryTag::TT_Numerical));
-		OutTags.Add(FAssetRegistryTag(TEXT("Number of Frames"), TEXT("0"), FAssetRegistryTag::TT_Numerical));
-		OutTags.Add(FAssetRegistryTag(TEXT("Number of Keys"), TEXT("0"), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag(TEXT("Source Frame Rate"), TEXT("0.0"), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag(TEXT("Number of Frames"), TEXT("0"), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag(TEXT("Number of Keys"), TEXT("0"), FAssetRegistryTag::TT_Numerical));
 	}
 
 	// Output unique sync marker names we use
@@ -446,12 +453,12 @@ void UAnimSequence::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) con
 		SyncMarkersBuilder.Append(USkeleton::AnimSyncMarkerTagDelimiter);
 	}
 
-	OutTags.Add(FAssetRegistryTag(USkeleton::AnimSyncMarkerTag, SyncMarkersBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(USkeleton::AnimSyncMarkerTag, SyncMarkersBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
 #endif
 
-	OutTags.Add(FAssetRegistryTag(TEXT("Compressed Size (KB)"), FString::Printf(TEXT("%.02f"), (float)GetApproxCompressedSize() / 1024.0f), FAssetRegistryTag::TT_Numerical));
-	OutTags.Add(FAssetRegistryTag(TEXT("Target Frame Rate"), FString::Printf(TEXT("%.2f"), PlatformTargetFrameRate.Default.AsDecimal()), FAssetRegistryTag::TT_Numerical));
-	Super::GetAssetRegistryTags(OutTags);
+	Context.AddTag(FAssetRegistryTag(TEXT("Compressed Size (KB)"), FString::Printf(TEXT("%.02f"), (float)GetApproxCompressedSize() / 1024.0f), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag(TEXT("Target Frame Rate"), FString::Printf(TEXT("%.2f"), PlatformTargetFrameRate.Default.AsDecimal()), FAssetRegistryTag::TT_Numerical));
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UAnimSequence::AddReferencedObjects(UObject* This, FReferenceCollector& Collector)
@@ -682,7 +689,11 @@ void UAnimSequence::Serialize(FArchive& Ar)
 		const bool bIsTransacting = Ar.IsTransacting();
 		const bool bIsCookingWithoutAVData = bIsCooking && !Ar.CookingTarget()->AllowAudioVisualData();
 		const bool bIsCountingMemory = Ar.IsCountingMemory();
-		const bool bCookingTargetNeedsCompressedData = bIsCooking && (!UAnimationSettings::Get()->bStripAnimationDataOnDedicatedServer || !bIsCookingWithoutAVData || bEnableRootMotion);
+
+		const bool bStripAnimDataOnDedicatedServer = StripAnimDataOnDedicatedServer == EStripAnimDataOnDedicatedServerSettings::UseProjectSetting ? UAnimationSettings::Get()->bStripAnimationDataOnDedicatedServer :
+			StripAnimDataOnDedicatedServer == EStripAnimDataOnDedicatedServerSettings::StripAnimDataOnDedicatedServer;
+
+		const bool bCookingTargetNeedsCompressedData = bIsCooking && (!bStripAnimDataOnDedicatedServer || !bIsCookingWithoutAVData || bEnableRootMotion);
 
 		bool bSerializeCompressedData = bCookingTargetNeedsCompressedData || bIsDuplicating || bIsTransacting || bIsCountingMemory;
 		Ar << bSerializeCompressedData;
@@ -1140,7 +1151,7 @@ void UAnimSequence::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 
 	// @Todo fix me: This is temporary fix to make sure they always have compressed data
 	ValidateModel();
-	if (IsDataModelValid() && DataModelInterface->GetNumBoneTracks() && bNeedPostProcess)
+	if (IsDataModelValid() && bNeedPostProcess)
 	{		
 		ClearAllCachedCookedPlatformData();
 		BeginCacheDerivedDataForCurrentPlatform();
@@ -1259,7 +1270,7 @@ void UAnimSequence::GetBoneTransform(FTransform& OutAtom, FSkeletonPoseBoneIndex
 
 	if ( bEvaluateCompressedData && IsCompressedDataValid())
 	{
-		FAnimSequenceDecompressionContext DecompContext(PlatformTargetFrameRate.Default, PlatformTargetFrameRate.Default.AsFrameTime(GetPlayLength()).RoundToFrame().Value, Interpolation, GetRetargetTransformsSourceName(), *CompressedData.CompressedDataStructure, GetSkeleton()->GetRefLocalPoses(), CompressedData.CompressedTrackToSkeletonMapTable, GetSkeleton(), IsValidAdditive());
+		FAnimSequenceDecompressionContext DecompContext(PlatformTargetFrameRate.Default, PlatformTargetFrameRate.Default.AsFrameTime(GetPlayLength()).RoundToFrame().Value, Interpolation, GetRetargetTransformsSourceName(), *CompressedData.CompressedDataStructure, GetSkeleton()->GetRefLocalPoses(), CompressedData.CompressedTrackToSkeletonMapTable, GetSkeleton(), IsValidAdditive(), AdditiveAnimType);
 		DecompContext.Seek(Time);
 		if (CompressedData.BoneCompressionCodec)
 		{
@@ -1630,7 +1641,7 @@ void UAnimSequence::GetBonePose(FAnimationPoseData& OutAnimationPoseData, const 
 		{
 			TArray<FTransform> const& AuthoredOnRefSkeleton = GetRetargetTransforms();
 			// Map from this sequence its Skeleton to target
-			const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry::Get().GetRemapping(GetSkeleton(), RequiredBones.GetSkeletonAsset());
+			const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry::Get().GetRemapping(MySkeleton, RequiredBones.GetSkeletonAsset());
 			for (FCompactPoseBoneIndex PoseBoneIndex : OutPose.ForEachBoneIndex())
 			{
 				int32 SkeletonBoneIndex = RequiredBones.GetSkeletonPoseIndexFromCompactPoseIndex(PoseBoneIndex).GetInt();
@@ -1684,7 +1695,7 @@ void UAnimSequence::GetBonePose(FAnimationPoseData& OutAnimationPoseData, const 
 	if (NumTracks != 0)
 	{
 		// Evaluate compressed bone data
-		FAnimSequenceDecompressionContext DecompContext(PlatformTargetFrameRate.Default, PlatformTargetFrameRate.Default.AsFrameTime(GetPlayLength()).RoundToFrame().Value, Interpolation, GetRetargetTransformsSourceName(), *CompressedData.CompressedDataStructure, GetSkeleton()->GetRefLocalPoses(), CompressedData.CompressedTrackToSkeletonMapTable, GetSkeleton(), IsValidAdditive());
+		FAnimSequenceDecompressionContext DecompContext(PlatformTargetFrameRate.Default, PlatformTargetFrameRate.Default.AsFrameTime(GetPlayLength()).RoundToFrame().Value, Interpolation, GetRetargetTransformsSourceName(), *CompressedData.CompressedDataStructure, GetSkeleton()->GetRefLocalPoses(), CompressedData.CompressedTrackToSkeletonMapTable, GetSkeleton(), IsValidAdditive(), AdditiveAnimType);
 		UE::Anim::Decompression::DecompressPose(OutPose, CompressedData, ExtractionContext, DecompContext, GetRetargetTransforms(), RootMotionReset);
 	}
 
@@ -1857,9 +1868,9 @@ bool UAnimSequence::CanEvaluateRawAnimationData() const
 {
 #if WITH_EDITOR
 	return IsDataModelValid();
-#endif
-
+#else
 	return false;
+#endif
 }
 
 #if WITH_EDITORONLY_DATA
@@ -2197,114 +2208,6 @@ int32 FindMeshBoneIndexFromBoneName(USkeleton * Skeleton, const FName &BoneName)
 	return BoneIndex;
 }
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-void FillUpTransformBasedOnRig(USkeleton* Skeleton, TArray<FTransform>& NodeSpaceBases, TArray<FTransform> &Rotations, TArray<FVector>& Translations, TArray<bool>& TranslationParentFlags)
-{
-	TArray<FTransform> SpaceBases;
-	FAnimationRuntime::FillUpComponentSpaceTransformsRetargetBasePose(Skeleton, SpaceBases);
-
-	const URig* Rig = Skeleton->GetRig();
-
-	if (Rig)
-	{
-		// this one has to collect all Nodes in Rig data
-		// since we're comparing two of them together. 
-		int32 NodeNum = Rig->GetNodeNum();
-
-		if (NodeNum > 0)
-		{
-			NodeSpaceBases.Empty(NodeNum);
-			NodeSpaceBases.AddUninitialized(NodeNum);
-
-			Rotations.Empty(NodeNum);
-			Rotations.AddUninitialized(NodeNum);
-
-			Translations.Empty(NodeNum);
-			Translations.AddUninitialized(NodeNum);
-
-			TranslationParentFlags.Empty(Translations.Num());
-			TranslationParentFlags.AddZeroed(Translations.Num());
-
-			const USkeletalMesh* PreviewMesh = Skeleton->GetPreviewMesh();
-
-			for (int32 Index = 0; Index < NodeNum; ++Index)
-			{
-				const FName NodeName = Rig->GetNodeName(Index);
-				const FName& BoneName = Skeleton->GetRigBoneMapping(NodeName);
-				const int32& BoneIndex = FindMeshBoneIndexFromBoneName(Skeleton, BoneName);
-
-				if (BoneIndex == INDEX_NONE)
-				{
-					// add identity
-					NodeSpaceBases[Index].SetIdentity();
-					Rotations[Index].SetIdentity();
-					Translations[Index] = FVector::ZeroVector;
-				}
-				else
-				{
-					// initialize with SpaceBases - assuming World Based
-					NodeSpaceBases[Index] = SpaceBases[BoneIndex];
-					Rotations[Index] = SpaceBases[BoneIndex];
-					Translations[Index] = SpaceBases[BoneIndex].GetLocation();
-
-					const FTransformBase* TransformBase = Rig->GetTransformBaseByNodeName(NodeName);
-
-					if (TransformBase != nullptr)
-					{
-						// orientation constraint			
-						const auto& RotConstraint = TransformBase->Constraints[EControlConstraint::Type::Orientation];
-
-						if (RotConstraint.TransformConstraints.Num() > 0)
-						{
-							const FName& ParentBoneName = Skeleton->GetRigBoneMapping(RotConstraint.TransformConstraints[0].ParentSpace);
-							const int32& ParentBoneIndex = FindMeshBoneIndexFromBoneName(Skeleton, ParentBoneName);
-
-							if (ParentBoneIndex != INDEX_NONE)
-							{
-								Rotations[Index] = SpaceBases[BoneIndex].GetRelativeTransform(SpaceBases[ParentBoneIndex]);
-							}
-						}
-
-						// translation constraint
-						const auto& TransConstraint = TransformBase->Constraints[EControlConstraint::Type::Translation];
-
-						if (TransConstraint.TransformConstraints.Num() > 0)
-						{
-							const FName& ParentBoneName = Skeleton->GetRigBoneMapping(TransConstraint.TransformConstraints[0].ParentSpace);
-							const int32& ParentBoneIndex = FindMeshBoneIndexFromBoneName(Skeleton, ParentBoneName);
-
-							if (ParentBoneIndex != INDEX_NONE)
-							{
-								// I think translation has to include rotation, otherwise it won't work
-								Translations[Index] = SpaceBases[BoneIndex].GetLocation() - SpaceBases[ParentBoneIndex].GetLocation();
-								TranslationParentFlags[Index] = true;
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-int32 FindValidTransformParentTrack(const URig* Rig, int32 NodeIndex, bool bTranslate, const TArray<FName>& ValidNodeNames)
-{
-	int32 ParentIndex = Rig->FindTransformParentNode(NodeIndex, bTranslate);
-
-	// verify if it exists in ValidNodeNames
-	if (ParentIndex != INDEX_NONE)
-	{
-		FName NodeName = Rig->GetNodeName(ParentIndex);
-
-		return ValidNodeNames.Find(NodeName);
-	}
-
-	return INDEX_NONE;
-}
-
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-
 void UAnimSequence::RemapTracksToNewSkeleton( USkeleton* NewSkeleton, bool bConvertSpaces )
 {
 	// this is not cheap, so make sure it only happens in editor
@@ -2319,220 +2222,9 @@ void UAnimSequence::RemapTracksToNewSkeleton( USkeleton* NewSkeleton, bool bConv
 	if (bConvertSpaces)
 	{
 		USkeleton* OldSkeleton = GetSkeleton();
-
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		// first check if both has same rig, if so, we'll retarget using it
-		if (OldSkeleton && OldSkeleton->GetRig() != nullptr && NewSkeleton->GetRig() == OldSkeleton->GetRig() && OldSkeleton->GetPreviewMesh() && NewSkeleton->GetPreviewMesh())
-		{
-			const URig* Rig = OldSkeleton->GetRig();
-
-			// we'll have to save the relative space bases transform from old ref pose to new refpose
-			TArray<FTransform> RelativeToNewSpaceBases;
-			// save the ratio of translation change
-			TArray<float> OldToNewTranslationRatio;
-			// create relative transform in component space between old skeleton and new skeleton
-			{
-				// first calculate component space ref pose to get the relative transform between
-				// two ref poses. It is very important update ref pose before getting here. 
-				TArray<FTransform> NewRotations, OldRotations, NewSpaceBases, OldSpaceBases;
-				TArray<FVector> NewTranslations, OldTranslations;
-				TArray<bool> NewTranslationParentFlags, OldTranslationParentFlags;
-				// get the spacebases transform
-				FillUpTransformBasedOnRig(NewSkeleton, NewSpaceBases, NewRotations, NewTranslations, NewTranslationParentFlags);
-				FillUpTransformBasedOnRig(OldSkeleton, OldSpaceBases, OldRotations, OldTranslations, OldTranslationParentFlags);
-
-				// now we'd like to get the relative transform from old to new ref pose in component space
-				// PK2*K2 = PK1*K1*theta where theta => P1*R1*theta = P2*R2 
-				// where	P1 - parent transform in component space for original skeleton
-				//			R1 - local space of the current bone for original skeleton
-				//			P2 - parent transform in component space for new skeleton
-				//			R2 - local space of the current bone for new skeleton
-				// what we're looking for is theta, so that we can apply that to animated transform
-				// this has to have all of nodes since comparing two skeletons, that might have different configuration
-				int32 NumNodes = Rig->GetNodeNum();
-				// saves the theta data per node
-				RelativeToNewSpaceBases.AddUninitialized(NumNodes);
-				// saves the translation conversion datao
-				OldToNewTranslationRatio.AddUninitialized(NumNodes);
-
-				const TArray<FNode>& Nodes = Rig->GetNodes();
-				// calculate the relative transform to new skeleton
-				// so that we can apply the delta in component space
-				for (int32 NodeIndex = 0; NodeIndex < NumNodes; ++NodeIndex)
-				{
-					// theta (RelativeToNewTransform) = (P1*R1)^(-1) * P2*R2 where theta => P1*R1*theta = P2*R2
-					RelativeToNewSpaceBases[NodeIndex] = NewSpaceBases[NodeIndex].GetRelativeTransform(OldSpaceBases[NodeIndex]); 
-
-					// also savees the translation difference between old to new
-					FVector OldTranslation = OldTranslations[NodeIndex];
-					FVector NewTranslation = NewTranslations[NodeIndex];
-
-					// skip root because we don't really have clear relative point to test with it
-					if (NodeIndex != 0 && NewTranslationParentFlags[NodeIndex] == OldTranslationParentFlags[NodeIndex])
-					{
-						// only do this if parent status matches, otherwise, you'll have invalid state 
-						// where one is based on shoulder, where the other is missing the shoulder node
-						float OldTranslationSize = OldTranslation.Size();
-						float NewTranslationSize = NewTranslation.Size();
-
-						OldToNewTranslationRatio[NodeIndex] = (FMath::IsNearlyZero(OldTranslationSize)) ? 1.f/*do not touch new translation size*/ : NewTranslationSize / OldTranslationSize;
-					}
-					else
-					{
-						OldToNewTranslationRatio[NodeIndex] = 1.f; // set to be 1, we don't know what it is
-					}
-
-					UE_LOG(LogAnimation, Verbose, TEXT("Retargeting (%s : %d) : OldtoNewTranslationRatio (%0.2f), Relative Transform (%s)"), *Nodes[NodeIndex].Name.ToString(), NodeIndex, 
-						OldToNewTranslationRatio[NodeIndex], *RelativeToNewSpaceBases[NodeIndex].ToString());
-					UE_LOG(LogAnimation, Verbose, TEXT("\tOldSpaceBase(%s), NewSpaceBase(%s)"), *OldSpaceBases[NodeIndex].ToString(), *NewSpaceBases[NodeIndex].ToString());
-				}
-			}
-
-			FAnimSequenceTrackContainer RiggingAnimationData;
-
-			// now convert animation data to rig data
-			ConvertAnimationDataToRiggingData(RiggingAnimationData);
-
-			// here we have to watch out the index
-			// The RiggingAnimationData will contain only the nodes that are mapped to source skeleton
-			// and here we convert everything that is in RiggingAnimationData which means based on source data
-			// when mapped back to new skeleton, it will discard results that are not mapped to target skeleton
-			
-			TArray<FName> SrcValidNodeNames;
-			int32 SrcNumTracks = OldSkeleton->GetMappedValidNodes(SrcValidNodeNames);
-
-			// now convert to space bases animation 
-			TArray< TArray<FTransform> > ComponentSpaceAnimations, ConvertedLocalSpaceAnimations, ConvertedSpaceAnimations;
-			ComponentSpaceAnimations.AddZeroed(SrcNumTracks);
-			ConvertedSpaceAnimations.AddZeroed(SrcNumTracks);
-			ConvertedLocalSpaceAnimations.AddZeroed(SrcNumTracks);
-
-			const int32 NumKeys = DataModelInterface->GetNumberOfKeys();
-			float Interval = DataModelInterface->GetFrameRate().AsInterval();
-
-			// allocate arrays
-			for(int32 SrcTrackIndex=0; SrcTrackIndex<SrcNumTracks; ++SrcTrackIndex)
-			{
-				ComponentSpaceAnimations[SrcTrackIndex].AddUninitialized(NumKeys);
-				ConvertedLocalSpaceAnimations[SrcTrackIndex].AddUninitialized(NumKeys);
-				ConvertedSpaceAnimations[SrcTrackIndex].AddUninitialized(NumKeys);
-			}
-
-			for (int32 SrcTrackIndex=0; SrcTrackIndex<SrcNumTracks; ++SrcTrackIndex)		
-			{
-				int32 NodeIndex = Rig->FindNode(SrcValidNodeNames[SrcTrackIndex]);
-				check (NodeIndex != INDEX_NONE);
-				auto& RawAnimation = RiggingAnimationData.AnimationTracks[SrcTrackIndex];
-
-				// find rotation parent node
-				int32 RotParentTrackIndex = FindValidTransformParentTrack(Rig, NodeIndex, false, SrcValidNodeNames);
-				int32 TransParentTrackIndex = FindValidTransformParentTrack(Rig, NodeIndex, true, SrcValidNodeNames);
-				// fill up keys - calculate PK1 * K1
-				for(int32 Key=0; Key<NumKeys; ++Key)
-				{
-					FTransform AnimatedLocalKey;
-					//ExtractBoneTransform(RiggingAnimationData.AnimationTracks[SrcTrackIndex], AnimatedLocalKey, Interval * Key);
-					FAnimationUtils::ExtractTransformFromTrack(RiggingAnimationData.AnimationTracks[SrcTrackIndex], Interval* Key, NumberOfSampledKeys, GetPlayLength(), Interpolation, AnimatedLocalKey);
-
-					AnimatedLocalKey.ScaleTranslation(OldToNewTranslationRatio[NodeIndex]);
-
-					if(RotParentTrackIndex != INDEX_NONE)
-					{
-						FQuat ComponentSpaceRotation = ComponentSpaceAnimations[RotParentTrackIndex][Key].GetRotation() * AnimatedLocalKey.GetRotation();
-						ComponentSpaceAnimations[SrcTrackIndex][Key].SetRotation(ComponentSpaceRotation);
-					}
-					else
-					{
-						ComponentSpaceAnimations[SrcTrackIndex][Key].SetRotation(AnimatedLocalKey.GetRotation());
-					}
-
-					if (TransParentTrackIndex != INDEX_NONE)
-					{
-						FVector ComponentSpaceTranslation = ComponentSpaceAnimations[TransParentTrackIndex][Key].TransformPosition(AnimatedLocalKey.GetTranslation());
-						ComponentSpaceAnimations[SrcTrackIndex][Key].SetTranslation(ComponentSpaceTranslation);
-						FVector ParentComponentSpaceScale3D = ComponentSpaceAnimations[TransParentTrackIndex][Key].GetScale3D();
-						ComponentSpaceAnimations[SrcTrackIndex][Key].SetScale3D(ParentComponentSpaceScale3D * AnimatedLocalKey.GetScale3D());
-					}
-					else
-					{
-						ComponentSpaceAnimations[SrcTrackIndex][Key].SetTranslation(AnimatedLocalKey.GetTranslation());
-						ComponentSpaceAnimations[SrcTrackIndex][Key].SetScale3D(AnimatedLocalKey.GetScale3D());
-					}
-				}
-			}
-
-			// now animation is converted to component space
-			TArray<struct FRawAnimSequenceTrack> NewRawAnimationData = RiggingAnimationData.AnimationTracks;
-			for (int32 SrcTrackIndex=0; SrcTrackIndex<SrcNumTracks; ++SrcTrackIndex)
-			{
-				int32 NodeIndex = Rig->FindNode(SrcValidNodeNames[SrcTrackIndex]);
-				// find rotation parent node
-				int32 RotParentTrackIndex = FindValidTransformParentTrack(Rig, NodeIndex, false, SrcValidNodeNames);
-				int32 TransParentTrackIndex = FindValidTransformParentTrack(Rig, NodeIndex, true, SrcValidNodeNames);
-
-				// clear translation;
-				RelativeToNewSpaceBases[NodeIndex].SetTranslation(FVector::ZeroVector);
-
-				for(int32 Key=0; Key<NumKeys; ++Key)
-				{
-					// now convert to the new space and save to local spaces
-					ConvertedSpaceAnimations[SrcTrackIndex][Key] = RelativeToNewSpaceBases[NodeIndex] * ComponentSpaceAnimations[SrcTrackIndex][Key];
-
-					if(RotParentTrackIndex != INDEX_NONE)
-					{
-						FQuat LocalRotation = ConvertedSpaceAnimations[RotParentTrackIndex][Key].GetRotation().Inverse() * ConvertedSpaceAnimations[SrcTrackIndex][Key].GetRotation();
-						ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].SetRotation(LocalRotation);
-					}
-					else
-					{
-						ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].SetRotation(ConvertedSpaceAnimations[SrcTrackIndex][Key].GetRotation());
-					}
-
-					if(TransParentTrackIndex != INDEX_NONE)
-					{
-						FTransform LocalTransform = ConvertedSpaceAnimations[SrcTrackIndex][Key].GetRelativeTransform(ConvertedSpaceAnimations[TransParentTrackIndex][Key]);
-						ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].SetTranslation(LocalTransform.GetLocation());
-						ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].SetScale3D(LocalTransform.GetScale3D());
-					}
-					else
-					{
-						ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].SetTranslation(ConvertedSpaceAnimations[SrcTrackIndex][Key].GetTranslation());
-						ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].SetScale3D(ConvertedSpaceAnimations[SrcTrackIndex][Key].GetScale3D());
-					}
-				}
-
-				auto& RawAnimation = NewRawAnimationData[SrcTrackIndex];
-				RawAnimation.PosKeys.Empty(NumKeys);
-				RawAnimation.PosKeys.AddUninitialized(NumKeys);
-				RawAnimation.RotKeys.Empty(NumKeys);
-				RawAnimation.RotKeys.AddUninitialized(NumKeys);
-				RawAnimation.ScaleKeys.Empty(NumKeys);
-				RawAnimation.ScaleKeys.AddUninitialized(NumKeys);
-
-				for(int32 Key=0; Key<NumKeys; ++Key)
-				{
-					RawAnimation.PosKeys[Key] = FVector3f(ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].GetLocation());
-					RawAnimation.RotKeys[Key] = FQuat4f(ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].GetRotation());
-					RawAnimation.ScaleKeys[Key] = FVector3f(ConvertedLocalSpaceAnimations[SrcTrackIndex][Key].GetScale3D());
-
-					// normalize rotation
-					RawAnimation.RotKeys[Key].Normalize();
-				}
-			}
-
-			RiggingAnimationData.AnimationTracks = MoveTemp(NewRawAnimationData);
-			RiggingAnimationData.TrackNames = MoveTemp(SrcValidNodeNames);
-
-			// set new skeleton
-			SetSkeleton(NewSkeleton);
-
-			// convert back to animated data with new skeleton
-			ConvertRiggingDataToAnimationData(RiggingAnimationData);
-		}
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-		// @todo end rig testing
-		// @IMPORTANT: now otherwise this will try to do bone to bone mapping
-		else if(OldSkeleton && OldSkeleton != NewSkeleton)
+		
+		// this will try to do bone to bone mapping
+		if(OldSkeleton && OldSkeleton != NewSkeleton)
 		{
 			// Validate animation tracks against the new skeleton, any tracks linked to bones that do not exist in the new hierarchy are removed
 			Controller->RemoveBoneTracksMissingFromSkeleton(NewSkeleton);
@@ -2818,17 +2510,7 @@ void UAnimSequence::ReplaceReferredAnimations(const TMap<UAnimationAsset*, UAnim
 	}
 }
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-int32 FindParentNodeIndex(URig* Rig, USkeleton* Skeleton, FName ParentNodeName)
-{
-	const int32& ParentNodeIndex = Rig->FindNode(ParentNodeName);
-	const FName& ParentBoneName = Skeleton->GetRigBoneMapping(ParentNodeName);
-	
-	return Skeleton->GetReferenceSkeleton().FindBoneIndex(ParentBoneName);
-}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-int32 UAnimSequence::GetSpaceBasedAnimationData(TArray< TArray<FTransform> >& AnimationDataInComponentSpace, FAnimSequenceTrackContainer * RiggingAnimationData) const
+int32 UAnimSequence::GetSpaceBasedAnimationData(TArray< TArray<FTransform> >& AnimationDataInComponentSpace) const
 {
 	USkeleton* MySkeleton = GetSkeleton();
 
@@ -2850,433 +2532,53 @@ int32 UAnimSequence::GetSpaceBasedAnimationData(TArray< TArray<FTransform> >& An
 	{
 		AnimationDataInComponentSpace[BoneIndex].AddUninitialized(NumKeys);
 	}
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (RiggingAnimationData)
+	
+	// now calculating old animated space bases
+	// this one calculates animated space per bones and per key
+	TArray<FTransform> BoneTransforms;
+	for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
 	{
-		const URig* Rig = MySkeleton->GetRig();
+		const FName BoneName = MySkeleton->GetReferenceSkeleton().GetBoneName(BoneIndex);
+		const int32 ParentBoneIndex = MySkeleton->GetReferenceSkeleton().GetParentIndex(BoneIndex);
 
-		check(Rig);
-
-		// to fix the issue where parent of rig doesn't correspond to parent of this skeleton
-		// we do this in multiple iteration if needed. 
-		// this flag will be used to evaluate all of them until done
-		TArray<bool> BoneEvaluated;
-		BoneEvaluated.AddZeroed(NumBones);
-
-		bool bCompleted = false;
-		do
+		if (DataModelInterface->IsValidBoneTrackName(BoneName))
 		{
-			for(int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
+			BoneTransforms.Reset();
+			DataModelInterface->GetBoneTrackTransforms(BoneName, BoneTransforms);
+			// fill up keys - calculate PK1 * K1
+			for (int32 Key = 0; Key < NumKeys; ++Key)
 			{
-				if ( !BoneEvaluated[BoneIndex] )
+				FTransform AnimatedLocalKey = BoneTransforms[Key];
+				if (ParentBoneIndex != INDEX_NONE)
 				{
-					const FName& BoneName = RefSkeleton.GetBoneName(BoneIndex);
-					const FName& NodeName = MySkeleton->GetRigNodeNameFromBoneName(BoneName);
-					const FTransformBase* TransformBase = Rig->GetTransformBaseByNodeName(NodeName);
-					const int32 NodeIndex = RiggingAnimationData->TrackNames.Find(NodeName);
-					if(NodeIndex != INDEX_NONE)
-					{
-						check(TransformBase);
-
-						// now calculate the component space
-						const TArray<FRigTransformConstraint>	& RotTransformConstraints = TransformBase->Constraints[EControlConstraint::Type::Orientation].TransformConstraints;
-
-						FQuat ComponentRotation;
-						FTransform ComponentTranslation;
-						FVector ComponentScale;
-
-						// rotation first
-						// this is easy since we just make sure it's evaluated or not
-						{
-							const FName& ParentNodeName = RotTransformConstraints[0].ParentSpace;
-							const FName& ParentBoneName = MySkeleton->GetRigBoneMapping(ParentNodeName);
-							const int32& ParentBoneIndex = RefSkeleton.FindBoneIndex(ParentBoneName);
-
-							if(ParentBoneIndex != INDEX_NONE)
-							{
-								if (BoneEvaluated[ParentBoneIndex])
-								{
-									for(int32 Key = 0; Key < NumKeys; ++Key)
-									{
-										ComponentRotation = AnimationDataInComponentSpace[ParentBoneIndex][Key].GetRotation() * FQuat(RiggingAnimationData->AnimationTracks[NodeIndex].RotKeys[Key]);
-										AnimationDataInComponentSpace[BoneIndex][Key].SetRotation(ComponentRotation);
-									}
-
-									BoneEvaluated[BoneIndex] = true;
-								}
-							}
-							else
-							{
-								for(int32 Key = 0; Key < NumKeys; ++Key)
-								{
-									ComponentRotation = FQuat(RiggingAnimationData->AnimationTracks[NodeIndex].RotKeys[Key]);
-									AnimationDataInComponentSpace[BoneIndex][Key].SetRotation(ComponentRotation);
-								}
-
-								BoneEvaluated[BoneIndex] = true;
-							}
-						}
-
-						const TArray<FRigTransformConstraint>	& PosTransformConstraints = TransformBase->Constraints[EControlConstraint::Type::Translation].TransformConstraints;
-
-						// now time to check translation
-						// this is a bit more complicated
-						// since we have to make sure if it's true to start with
-						// did we succeed on getting rotation?
-						if (BoneEvaluated[BoneIndex])
-						{
-							const FName& ParentNodeName = PosTransformConstraints[0].ParentSpace;
-							const FName& ParentBoneName = MySkeleton->GetRigBoneMapping(ParentNodeName);
-							const int32& ParentBoneIndex = RefSkeleton.FindBoneIndex(ParentBoneName);
-
-							if(ParentBoneIndex != INDEX_NONE)
-							{
-								// this has to be check
-								if (BoneEvaluated[ParentBoneIndex])
-								{
-									for(int32 Key = 0; Key < NumKeys; ++Key)
-									{
-										const FTransform& AnimCompSpace = AnimationDataInComponentSpace[ParentBoneIndex][Key];
-										ComponentTranslation = FTransform(FVector(RiggingAnimationData->AnimationTracks[NodeIndex].PosKeys[Key])) * AnimCompSpace;
-										AnimationDataInComponentSpace[BoneIndex][Key].SetTranslation(ComponentTranslation.GetTranslation());
-
-										ComponentScale = AnimCompSpace.GetScale3D() * FVector(RiggingAnimationData->AnimationTracks[NodeIndex].ScaleKeys[Key]);
-										AnimationDataInComponentSpace[BoneIndex][Key].SetScale3D(ComponentScale);
-									}
-								}
-								else
-								{
-									// if we failed to get parent clear the flag
-									// because if translation has been calculated, BoneEvaluated[BoneIndex] might be true
-									BoneEvaluated[BoneIndex] = false;
-								}
-							}
-							else
-							{
-								for(int32 Key = 0; Key < NumKeys; ++Key)
-								{
-									ComponentTranslation = FTransform(FVector(RiggingAnimationData->AnimationTracks[NodeIndex].PosKeys[Key]));
-									AnimationDataInComponentSpace[BoneIndex][Key].SetTranslation(ComponentTranslation.GetTranslation());
-									
-									ComponentScale = FVector(RiggingAnimationData->AnimationTracks[NodeIndex].ScaleKeys[Key]);
-									AnimationDataInComponentSpace[BoneIndex][Key].SetScale3D(ComponentScale);
-								}
-							}
-						}
-					}
-					else
-					{
-						int32 ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
-						const FTransform& LocalSpace = RefSkeleton.GetRefBonePose()[BoneIndex];
-						if(ParentIndex != INDEX_NONE)
-						{
-							// if parent is evaluated, do it
-							if (BoneEvaluated[ParentIndex])
-							{
-								for(int32 Key = 0; Key < NumKeys; ++Key)
-								{
-									AnimationDataInComponentSpace[BoneIndex][Key] = LocalSpace * AnimationDataInComponentSpace[ParentIndex][Key];
-								}
-
-								BoneEvaluated[BoneIndex] = true;
-							}
-						}
-						else
-						{
-							BoneEvaluated[BoneIndex] = true;
-
-							for(int32 Key = 0; Key < NumKeys; ++Key)
-							{
-								AnimationDataInComponentSpace[BoneIndex][Key] = LocalSpace;
-							}
-						}
-					}
-				}
-			}
-
-			bCompleted = true;
-			// see if we can get out, brute force for now
-			for(int32 BoneIndex = 0; BoneIndex < NumBones && bCompleted; ++BoneIndex)
-			{
-				bCompleted &= !!BoneEvaluated[BoneIndex];
-			}
-		} while (bCompleted == false);
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	else
-	{
-		// now calculating old animated space bases
-		// this one calculates aniamted space per bones and per key
-		TArray<FTransform> BoneTransforms;
-		for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
-		{
-			const FName BoneName = MySkeleton->GetReferenceSkeleton().GetBoneName(BoneIndex);
-			const int32 ParentBoneIndex = MySkeleton->GetReferenceSkeleton().GetParentIndex(BoneIndex);
-
-			if (DataModelInterface->IsValidBoneTrackName(BoneName))
-			{
-				BoneTransforms.Reset();
-				DataModelInterface->GetBoneTrackTransforms(BoneName, BoneTransforms);
-				// fill up keys - calculate PK1 * K1
-				for (int32 Key = 0; Key < NumKeys; ++Key)
-				{
-					FTransform AnimatedLocalKey = BoneTransforms[Key];
-					if (ParentBoneIndex != INDEX_NONE)
-					{
-						AnimationDataInComponentSpace[BoneIndex][Key] = AnimatedLocalKey * AnimationDataInComponentSpace[ParentBoneIndex][Key];
-					}
-					else
-					{
-						AnimationDataInComponentSpace[BoneIndex][Key] = AnimatedLocalKey;
-					}
-				}
-			}
-			else
-			{
-				// get local spaces from refpose and use that to fill it up
-				FTransform LocalTransform = MySkeleton->GetReferenceSkeleton().GetRefBonePose()[BoneIndex];
-
-				for (int32 Key = 0; Key < NumKeys; ++Key)
-				{
-					if (ParentBoneIndex != INDEX_NONE)
-					{
-						AnimationDataInComponentSpace[BoneIndex][Key] = LocalTransform * AnimationDataInComponentSpace[ParentBoneIndex][Key];
-					}
-					else
-					{
-						AnimationDataInComponentSpace[BoneIndex][Key] = LocalTransform;
-					}
-				}
-			}	
-		}
-
-	}
-
-	return AnimationDataInComponentSpace.Num();
-}
-
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-bool UAnimSequence::ConvertAnimationDataToRiggingData(FAnimSequenceTrackContainer& RiggingAnimationData)
-{
-	USkeleton* MySkeleton = GetSkeleton();
-	if (MySkeleton && MySkeleton->GetRig())
-	{
-		const URig* Rig = MySkeleton->GetRig();
-		TArray<FName> ValidNodeNames;
-		int32 NumNodes = MySkeleton->GetMappedValidNodes(ValidNodeNames);
-		TArray< TArray<FTransform> > AnimationDataInComponentSpace;
-		int32 NumBones = GetSpaceBasedAnimationData(AnimationDataInComponentSpace, nullptr);
-
-		ValidateModel();
-		const int32 NumModelKeys = DataModelInterface->GetNumberOfKeys();
-
-		if (NumBones > 0)
-		{
-			RiggingAnimationData.Initialize(ValidNodeNames);
-
-			// first we copy all space bases back to it
-			for (int32 NodeIndex = 0; NodeIndex < NumNodes; ++NodeIndex)
-			{
-				struct FRawAnimSequenceTrack& Track = RiggingAnimationData.AnimationTracks[NodeIndex];
-				const FName& NodeName = ValidNodeNames[NodeIndex];
-				const FName& BoneName = MySkeleton->GetRigBoneMapping(NodeName);
-				const int32& BoneIndex = MySkeleton->GetReferenceSkeleton().FindBoneIndex(BoneName);
-
-				if (ensure(BoneIndex != INDEX_NONE))
-				{
-					Track.PosKeys.Empty(NumModelKeys);
-					Track.RotKeys.Empty(NumModelKeys);
-					Track.ScaleKeys.Empty(NumModelKeys);
-					Track.PosKeys.AddUninitialized(NumModelKeys);
-					Track.RotKeys.AddUninitialized(NumModelKeys);
-					Track.ScaleKeys.AddUninitialized(NumModelKeys);
-
-					int32 RigConstraintIndex = Rig->FindTransformBaseByNodeName(NodeName);
-
-					if (RigConstraintIndex != INDEX_NONE)
-					{
-						const auto* RigConstraint = Rig->GetTransformBase(RigConstraintIndex);
-
-						// apply orientation - for now only one
-						const TArray<FRigTransformConstraint>& RotationTransformConstraint = RigConstraint->Constraints[EControlConstraint::Type::Orientation].TransformConstraints;
-
-						if (RotationTransformConstraint.Num() > 0)
-						{
-							const FName& ParentSpace = RotationTransformConstraint[0].ParentSpace;
-							const FName& ParentBoneName = MySkeleton->GetRigBoneMapping(ParentSpace);
-							const int32& ParentBoneIndex = MySkeleton->GetReferenceSkeleton().FindBoneIndex(ParentBoneName);
-							if (ParentBoneIndex != INDEX_NONE)
-							{
-								// if no rig control, component space is used
-								for (int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-								{
-									FTransform ParentTransform = AnimationDataInComponentSpace[ParentBoneIndex][KeyIndex];
-									FTransform RelativeTransform = AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetRelativeTransform(ParentTransform);
-									Track.RotKeys[KeyIndex] = FQuat4f(RelativeTransform.GetRotation());
-								}
-							}
-							else
-							{
-								// if no rig control, component space is used
-								for (int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-								{
-									Track.RotKeys[KeyIndex] = FQuat4f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetRotation());
-								}
-							}
-						}
-						else
-						{
-							// if no rig control, component space is used
-							for (int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-							{
-								Track.RotKeys[KeyIndex] = FQuat4f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetRotation());
-							}
-						}
-
-						// apply translation - for now only one
-						const TArray<FRigTransformConstraint>& TranslationTransformConstraint = RigConstraint->Constraints[EControlConstraint::Type::Translation].TransformConstraints;
-
-						if (TranslationTransformConstraint.Num() > 0)
-						{
-							const FName& ParentSpace = TranslationTransformConstraint[0].ParentSpace;
-							const FName& ParentBoneName = MySkeleton->GetRigBoneMapping(ParentSpace);
-							const int32& ParentBoneIndex = MySkeleton->GetReferenceSkeleton().FindBoneIndex(ParentBoneName);
-							if (ParentBoneIndex != INDEX_NONE)
-							{
-								// if no rig control, component space is used
-								for (int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-								{
-									FTransform ParentTransform = AnimationDataInComponentSpace[ParentBoneIndex][KeyIndex];
-									FTransform RelativeTransform = AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetRelativeTransform(ParentTransform);
-									Track.PosKeys[KeyIndex] = FVector3f(RelativeTransform.GetTranslation());
-									Track.ScaleKeys[KeyIndex] = FVector3f(RelativeTransform.GetScale3D());
-								}
-							}
-							else
-							{
-								for (int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-								{
-									Track.PosKeys[KeyIndex] = FVector3f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetTranslation());
-									Track.ScaleKeys[KeyIndex] = FVector3f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetScale3D());
-								}
-							}
-						}
-						else
-						{
-							for (int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-							{
-								Track.PosKeys[KeyIndex] = FVector3f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetTranslation());
-								Track.ScaleKeys[KeyIndex] = FVector3f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetScale3D());
-							}
-						}
-					}
-					else
-					{
-						// if no rig control, component space is used
-						for (int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-						{
-							Track.PosKeys[KeyIndex] = FVector3f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetTranslation());
-							Track.RotKeys[KeyIndex] = FQuat4f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetRotation());
-							Track.ScaleKeys[KeyIndex] = FVector3f(AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetScale3D());
-						}
-					}
-				}
-			}
-		}
-
-		return true;
-	}
-
-	return false;
-}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-bool UAnimSequence::ConvertRiggingDataToAnimationData(FAnimSequenceTrackContainer& RiggingAnimationData)
-{
-	if (RiggingAnimationData.GetNum() > 0)
-	{
-		ValidateModel();
-
-		IAnimationDataController::FScopedBracket ScopedBracket(Controller, LOCTEXT("ConvertRiggingDataToAnimationData_Bracket", "Converting Rigging Data to Animation Data"));
-
-		TArray< TArray<FTransform> > AnimationDataInComponentSpace;
-		int32 NumBones = GetSpaceBasedAnimationData(AnimationDataInComponentSpace, &RiggingAnimationData);
-
-		USkeleton* MySkeleton = GetSkeleton();
-		TArray<FName> ValidNodeNames;
-		MySkeleton->GetMappedValidNodes(ValidNodeNames);
-		// remove from ValidNodeNames if it doesn't belong to AnimationTrackNames
-		for (int32 NameIndex=0; NameIndex<ValidNodeNames.Num(); ++NameIndex)
-		{
-			if (RiggingAnimationData.TrackNames.Contains(ValidNodeNames[NameIndex]) == false)
-			{
-				ValidNodeNames.RemoveAt(NameIndex);
-				--NameIndex;
-			}
-		}
-
-		int32 ValidNumNodes = ValidNodeNames.Num();
-
-		// get local spaces
-		// add all tracks?
-		Controller->RemoveAllBoneTracks();
-
-		// Reused track data arrays
-		TArray<FVector3f> PosKeys;
-		TArray<FQuat4f> RotKeys;
-		TArray<FVector3f> ScaleKeys;
-
-		const int32 NumModelKeys = DataModelInterface->GetNumberOfKeys();
-		const FReferenceSkeleton& RefSkeleton = MySkeleton->GetReferenceSkeleton();
-		for (int32 NodeIndex = 0; NodeIndex < ValidNumNodes; ++NodeIndex)
-		{
-			FName BoneName = MySkeleton->GetRigBoneMapping(ValidNodeNames[NodeIndex]);
-			int32 BoneIndex = RefSkeleton.FindBoneIndex(BoneName);
-
-			if (BoneIndex != INDEX_NONE)
-			{
-				// Add a new track by name
-				Controller->AddBoneCurve(BoneName);
-
-				PosKeys.SetNumUninitialized(NumModelKeys);
-				RotKeys.SetNumUninitialized(NumModelKeys);
-				ScaleKeys.SetNumUninitialized(NumModelKeys);
-
-				const int32& ParentBoneIndex = RefSkeleton.GetParentIndex(BoneIndex);
-
-				if(ParentBoneIndex != INDEX_NONE)
-				{
-					for(int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-					{
-						const FTransform LocalTransform = AnimationDataInComponentSpace[BoneIndex][KeyIndex].GetRelativeTransform(AnimationDataInComponentSpace[ParentBoneIndex][KeyIndex]);
-
-						PosKeys[KeyIndex] = FVector3f(LocalTransform.GetTranslation());
-						RotKeys[KeyIndex] = FQuat4f(LocalTransform.GetRotation());
-						ScaleKeys[KeyIndex] = FVector3f(LocalTransform.GetScale3D());
-					}
+					AnimationDataInComponentSpace[BoneIndex][Key] = AnimatedLocalKey * AnimationDataInComponentSpace[ParentBoneIndex][Key];
 				}
 				else
 				{
-					for(int32 KeyIndex = 0; KeyIndex < NumModelKeys; ++KeyIndex)
-					{
-						const FTransform LocalTransform = AnimationDataInComponentSpace[BoneIndex][KeyIndex];
-
-						PosKeys[KeyIndex] = FVector3f(LocalTransform.GetTranslation());
-						RotKeys[KeyIndex] = FQuat4f(LocalTransform.GetRotation());
-						ScaleKeys[KeyIndex] = FVector3f(LocalTransform.GetScale3D());
-					}
+					AnimationDataInComponentSpace[BoneIndex][Key] = AnimatedLocalKey;
 				}
-
-				// Set the track's key data
-				Controller->SetBoneTrackKeys(BoneName, PosKeys, RotKeys, ScaleKeys);
 			}
 		}
+		else
+		{
+			// get local spaces from refpose and use that to fill it up
+			FTransform LocalTransform = MySkeleton->GetReferenceSkeleton().GetRefBonePose()[BoneIndex];
 
-		return true;
+			for (int32 Key = 0; Key < NumKeys; ++Key)
+			{
+				if (ParentBoneIndex != INDEX_NONE)
+				{
+					AnimationDataInComponentSpace[BoneIndex][Key] = LocalTransform * AnimationDataInComponentSpace[ParentBoneIndex][Key];
+				}
+				else
+				{
+					AnimationDataInComponentSpace[BoneIndex][Key] = LocalTransform;
+				}
+			}
+		}	
 	}
 
-	return false;
+	return AnimationDataInComponentSpace.Num();
 }
 
 void UAnimSequence::AddKeyToSequence(float Time, const FName& BoneName, const FTransform& AdditiveTransform)
@@ -3566,7 +2868,7 @@ bool IsMarkerValid(const FAnimSyncMarker* Marker, bool bLooping, const TArray<FN
 void UAnimSequence::AdvanceMarkerPhaseAsLeader(bool bLooping, float MoveDelta, const TArray<FName>& ValidMarkerNames, float& CurrentTime, FMarkerPair& PrevMarker, FMarkerPair& NextMarker, TArray<FPassedMarker>& MarkersPassed, const UMirrorDataTable* MirrorTable) const
 {
 	check(MoveDelta != 0.f);
-	const bool bPlayingForwards = MoveDelta > 0.f;
+	const bool bPlayingForwards = MoveDelta >= 0.f;
 	float CurrentMoveDelta = MoveDelta;
 
 	// Hard to reproduce issue triggering this, ensure & clamp for now
@@ -3580,7 +2882,7 @@ void UAnimSequence::AdvanceMarkerPhaseAsLeader(bool bLooping, float MoveDelta, c
 		// Repeat until there is no more move delta to handle.
 		while (true)
 		{
-			// Our next marker is the end boundary.
+			// Our next marker is the end boundary. (Only possible if sequence is not looping)
 			if (NextMarker.MarkerIndex == MarkerIndexSpecialValues::AnimationBoundary)
 			{
 				const float PrevCurrentTime = CurrentTime;
@@ -3607,7 +2909,7 @@ void UAnimSequence::AdvanceMarkerPhaseAsLeader(bool bLooping, float MoveDelta, c
 
 				// Make our new previous marker be the marker we just passed.
 				PrevMarker.MarkerIndex = NextMarker.MarkerIndex; 
-				PrevMarker.TimeToMarker = -CurrentMoveDelta;
+				PrevMarker.TimeToMarker = 0.0f;
 
 				// Record that we just passed a marker.
 				const int32 PassedMarker = MarkersPassed.Add(FPassedMarker());
@@ -3694,7 +2996,7 @@ void UAnimSequence::AdvanceMarkerPhaseAsLeader(bool bLooping, float MoveDelta, c
 
 				// Make our new next marker be the marker we just passed.
 				NextMarker.MarkerIndex = PrevMarker.MarkerIndex;
-				NextMarker.TimeToMarker = -CurrentMoveDelta;
+				NextMarker.TimeToMarker = 0.0f;
 
 				// Record that we just passed a marker.
 				const int32 PassedMarker = MarkersPassed.Add(FPassedMarker());
@@ -4234,7 +3536,7 @@ void UAnimSequence::MoveAttributesToModel()
 
 void UAnimSequence::AdvanceMarkerPhaseAsFollower(const FMarkerTickContext& Context, float DeltaRemaining, bool bLooping, float& CurrentTime, FMarkerPair& PreviousMarker, FMarkerPair& NextMarker, const UMirrorDataTable* MirrorTable) const
 {
-	const bool bPlayingForwards = DeltaRemaining > 0.f;
+	const bool bPlayingForwards = DeltaRemaining >= 0.f;
 
 	// Ensures the sequence's markers match the sync start position.
 	ValidateCurrentPosition(Context.GetMarkerSyncStartPosition(), bPlayingForwards, bLooping, CurrentTime, PreviousMarker, NextMarker, MirrorTable);
@@ -4289,6 +3591,8 @@ void UAnimSequence::AdvanceMarkerPhaseAsFollower(const FMarkerTickContext& Conte
 		// Ensure next marker matches leader's next marker after tick.
 		if (NextMarker.MarkerIndex != MarkerIndexSpecialValues::AnimationBoundary && Context.MarkersPassedThisTick.Num() > 0)
 		{
+			PreviousMarker.MarkerIndex = NextMarker.MarkerIndex;
+			
 			AdvanceMarkerForwards(NextMarker.MarkerIndex, LeaderEndPosition.NextMarkerName, bLooping, AuthoredSyncMarkers, MirrorTable);
 		}
 
@@ -4355,6 +3659,8 @@ void UAnimSequence::AdvanceMarkerPhaseAsFollower(const FMarkerTickContext& Conte
 		// Ensure previous marker match leader's previous marker after tick
 		if (PreviousMarker.MarkerIndex != MarkerIndexSpecialValues::AnimationBoundary && Context.MarkersPassedThisTick.Num() > 0)
 		{
+			NextMarker.MarkerIndex = PreviousMarker.MarkerIndex;
+			
 			AdvanceMarkerBackwards(PreviousMarker.MarkerIndex, LeaderEndPosition.PreviousMarkerName, bLooping, AuthoredSyncMarkers, MirrorTable);
 		}
 
@@ -4756,6 +4062,11 @@ void UAnimSequence::EnableRootMotionSettingFromMontage(bool bInEnableRootMotion,
 	}
 }
 
+bool UAnimSequence::GetEnableRootMotionSettingFromMontage() const
+{
+	return bRootMotionSettingsCopiedFromMontage;
+}
+
 bool UAnimSequence::IsCompressedDataValid() const
 {
 	// For bone compressed data, we don't check if we have a codec. It is valid to have no compressed data
@@ -5056,7 +4367,7 @@ void UAnimSequence::OnModelModified(const EAnimDataModelNotifyType& NotifyType, 
 				const auto LengthChangingNotifies = { EAnimDataModelNotifyType::SequenceLengthChanged, EAnimDataModelNotifyType::FrameRateChanged, EAnimDataModelNotifyType::Reset };
 				const auto ResamplingNotifies = { EAnimDataModelNotifyType::TrackAdded, EAnimDataModelNotifyType::TrackChanged, EAnimDataModelNotifyType::TrackRemoved,  EAnimDataModelNotifyType::Populated };
 				const auto RecompressNotifies = { EAnimDataModelNotifyType::CurveAdded, EAnimDataModelNotifyType::CurveChanged, EAnimDataModelNotifyType::CurveRemoved, EAnimDataModelNotifyType::CurveFlagsChanged, EAnimDataModelNotifyType::CurveScaled,
-				EAnimDataModelNotifyType::AttributeAdded, EAnimDataModelNotifyType::AttributeChanged, EAnimDataModelNotifyType::AttributeRemoved };
+				EAnimDataModelNotifyType::AttributeAdded, EAnimDataModelNotifyType::AttributeChanged, EAnimDataModelNotifyType::AttributeRemoved, EAnimDataModelNotifyType::SkeletonChanged };
 
 				bShouldMarkPackageDirty = NotifyCollector.WasDataModified();
 				
@@ -5134,6 +4445,7 @@ void UAnimSequence::OnModelModified(const EAnimDataModelNotifyType& NotifyType, 
 		}
 
 		case EAnimDataModelNotifyType::CurveColorChanged:
+		case EAnimDataModelNotifyType::CurveCommentChanged:
 		{
 			break;
 		}
@@ -5144,6 +4456,16 @@ void UAnimSequence::OnModelModified(const EAnimDataModelNotifyType& NotifyType, 
 			UpdateCompressedCurveName(TypedPayload.Identifier.CurveName, TypedPayload.NewIdentifier.CurveName);
 			break;
 		}
+
+		case EAnimDataModelNotifyType::SkeletonChanged:
+		{
+			if (NotifyCollector.IsNotWithinBracket())
+			{
+				HandleTrackDataChanged();
+			}
+			break;
+		}
+
 		default:
 		{
 			checkf(false, TEXT("Missing case statement for animation model notify type"));
@@ -5271,6 +4593,10 @@ FIoHash UAnimSequence::BeginCacheDerivedData(const ITargetPlatform* TargetPlatfo
 		return FIoHash::Zero;
 	}
 
+	// Wait for any in-flight requests to finish
+	// Once a compression request finishes, it might modify the compression settings below and the key hash as well
+	UE::Anim::FAnimSequenceCompilingManager::Get().FinishCompilation({ this });
+
 	// Ensure that there are valid compression settings
 	if (BoneCompressionSettings == nullptr || !BoneCompressionSettings->AreSettingsValid())
 	{
@@ -5286,7 +4612,7 @@ FIoHash UAnimSequence::BeginCacheDerivedData(const ITargetPlatform* TargetPlatfo
 		VariableFrameStrippingSettings = FAnimationUtils::GetDefaultVariableFrameStrippingSettings();
 	}
 
-	// Make sure all our required dependencies are loaded
+	// Make sure all our required dependencies are loaded, we need them to compute the KeyHash
 	FAnimationUtils::EnsureAnimSequenceLoaded(*this);
 		
 	const FIoHash KeyHash = CreateDerivedDataKeyHash(TargetPlatform);
@@ -5296,10 +4622,6 @@ FIoHash UAnimSequence::BeginCacheDerivedData(const ITargetPlatform* TargetPlatfo
 		return KeyHash;
 	}
 
-	// Wait for any in-flight requests
-	UE::Anim::FAnimSequenceCompilingManager::Get().FinishCompilation({this});
-
-	// We should wait here for any previous compilations?
 	FCompressedAnimSequence* TargetData = nullptr;
 	if (TargetPlatform->IsRunningPlatform())
 	{

@@ -5,6 +5,7 @@
 #include "OptimusComponentSource.h"
 #include "OptimusEditorGraph.h"
 #include "OptimusEditorGraphNode.h"
+#include "OptimusFunctionNodeGraph.h"
 
 #include "OptimusNode.h"
 #include "OptimusResourceDescription.h"
@@ -94,6 +95,50 @@ UEdGraphNode* FOptimusGraphSchemaAction_NewDataInterfaceNode::PerformAction(
 	return nullptr;
 }
 
+UEdGraphNode* FOptimusGraphSchemaAction_NewLoopTerminalNodes::PerformAction(UEdGraph* InParentGraph, UEdGraphPin* FromPin,
+	const FVector2D Location, bool bInSelectNewNode)
+{
+	UOptimusEditorGraph* Graph = Cast<UOptimusEditorGraph>(InParentGraph);
+	
+	if (ensure(Graph != nullptr))
+	{
+		TArray<UOptimusNode*> Nodes = Graph->GetModelGraph()->AddLoopTerminalNodes(Location);
+
+		if (ensure(Nodes.Num() == 2))
+		{
+			UOptimusEditorGraphNode* GraphNode = Graph->FindGraphNodeFromModelNode(Nodes[0]);
+			if (GraphNode && bInSelectNewNode)
+			{
+				Graph->SelectNodeSet({GraphNode});
+			}
+			return GraphNode;
+		}
+	}
+
+	return nullptr;
+}
+
+UEdGraphNode* FOptimusGraphSchemaAction_NewFunctionReferenceNode::PerformAction(UEdGraph* InParentGraph, UEdGraphPin* InFromPin, const FVector2D InLocation, bool bInSelectNewNode)
+{
+	UOptimusEditorGraph* Graph = Cast<UOptimusEditorGraph>(InParentGraph);
+	
+	if (ensure(Graph != nullptr))
+	{
+		UOptimusNode* ModelNode = Graph->GetModelGraph()->AddFunctionReferenceNode(GraphPath, InLocation);
+
+		// FIXME: Automatic connection from the given pin.
+
+		UOptimusEditorGraphNode* GraphNode = Graph->FindGraphNodeFromModelNode(ModelNode);
+		if (GraphNode && bInSelectNewNode)
+		{
+			Graph->SelectNodeSet({GraphNode});
+		}
+		return GraphNode;
+	}
+
+	return nullptr;
+}
+
 
 static FText GetGraphTooltip(UOptimusNodeGraph* InGraph)
 {
@@ -103,31 +148,29 @@ static FText GetGraphTooltip(UOptimusNodeGraph* InGraph)
 
 FOptimusSchemaAction_Graph::FOptimusSchemaAction_Graph(
 	UOptimusNodeGraph* InGraph,
-	int32 InGrouping,
 	const FText& InCategory) : 
 		FEdGraphSchemaAction(
 			InCategory, 
 			FText::FromString(InGraph->GetName()), 
 			GetGraphTooltip(InGraph), 
-			InGrouping, 
+			0, 
 			FText(), 
 			int32(EOptimusSchemaItemGroup::Graphs) 
 		), 
 		GraphType(InGraph->GetGraphType())
 {
-	GraphPath = InGraph->GetGraphPath();
+	GraphPath = InGraph->GetCollectionPath();
 }
 
 
 FOptimusSchemaAction_Binding::FOptimusSchemaAction_Binding(
-	UOptimusComponentSourceBinding* InBinding,
-	int32 InGrouping
+	UOptimusComponentSourceBinding* InBinding
 	) :
 	FEdGraphSchemaAction(
 			FText::GetEmpty(),
 			FText::FromString(InBinding->GetName()),
 			FText::GetEmpty(),
-			InGrouping,
+			0,
 			FText(),
 			int32(EOptimusSchemaItemGroup::Bindings)
 		)
@@ -138,13 +181,13 @@ FOptimusSchemaAction_Binding::FOptimusSchemaAction_Binding(
 
 
 FOptimusSchemaAction_Resource::FOptimusSchemaAction_Resource(
-	UOptimusResourceDescription* InResource, 
-	int32 InGrouping ) :
+	UOptimusResourceDescription* InResource
+	) :
 	FEdGraphSchemaAction(
 			FText::GetEmpty(),
 			FText::FromString(InResource->GetName()),
 			FText::GetEmpty(),
-			InGrouping,
+			0,
 			FText(),
 			int32(EOptimusSchemaItemGroup::Resources)
 		)
@@ -154,13 +197,13 @@ FOptimusSchemaAction_Resource::FOptimusSchemaAction_Resource(
 
 
 FOptimusSchemaAction_Variable::FOptimusSchemaAction_Variable(
-	UOptimusVariableDescription* InVariable, 
-	int32 InGrouping ) : 
+	UOptimusVariableDescription* InVariable 
+	) : 
 	FEdGraphSchemaAction(
           FText::GetEmpty(),
           FText::FromString(InVariable->GetName()),
           FText::GetEmpty(),
-          InGrouping,
+          0,
           FText(),
           int32(EOptimusSchemaItemGroup::Variables))
 {

@@ -196,7 +196,7 @@ FText URigVMTemplateNode::GetToolTipTextForPin(const URigVMPin* InPin) const
 			{
 				FString Tooltip;
 				
-				if(Arg->GetTypeIndices().Num() > 100)
+				if(Arg->GetNumTypes() > 100)
 				{
 					Tooltip = TEXT("Supports any type.");
 				}
@@ -207,7 +207,7 @@ FText URigVMTemplateNode::GetToolTipTextForPin(const URigVMPin* InPin) const
 					TArray<TRigVMTypeIndex> TypesPrinted;
 					for (int32 Index=0; Index<Template->NumPermutations(); ++Index)
 					{
-						const TRigVMTypeIndex TypeIndex = Arg->GetTypeIndices()[Index];
+						const TRigVMTypeIndex TypeIndex = Arg->GetTypeIndex(Index);
 						if (TypesPrinted.Contains(TypeIndex))
 						{
 							continue;
@@ -573,7 +573,7 @@ FString URigVMTemplateNode::GetInitialDefaultValueForPin(const FName& InRootPinN
 		{
 			FString NewDefaultValue;
 
-			const TRigVMTypeIndex TypeIndex = Argument->GetTypeIndices()[PermutationIndex];
+			const TRigVMTypeIndex TypeIndex = Argument->GetTypeIndex(PermutationIndex);
 
 			// INDEX_NONE indicates deleted permutation
 			if (TypeIndex == INDEX_NONE)
@@ -763,8 +763,8 @@ TArray<int32> URigVMTemplateNode::FindPermutationsForTypes(const TArray<FRigVMTe
 				const FRigVMTemplateArgument* Argument = Args[ArgIndex];
 				if (Argument)
 				{
-					if ((bAllowCasting && !Registry.CanMatchTypes(Argument->GetTypeIndices()[i], TypeIndices[ArgIndex], true)) ||
-						(!bAllowCasting && Argument->GetTypeIndices()[i] != TypeIndices[ArgIndex]))
+					if ((bAllowCasting && !Registry.CanMatchTypes(Argument->GetTypeIndex(i), TypeIndices[ArgIndex], true)) ||
+						(!bAllowCasting && Argument->GetTypeIndex(i) != TypeIndices[ArgIndex]))
 					{
 						bAllArgsMatched = false;
 						break;

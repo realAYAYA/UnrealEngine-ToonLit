@@ -149,6 +149,7 @@ namespace UnrealGameSync
 			this.Controls.Add(this.ArgumentsList);
 			this.Controls.Add(this.CancelBtn);
 			this.Controls.Add(this.OkButton);
+			this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
 			this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
 			this.Name = "ArgumentsWindow";
 			this.ShowInTaskbar = false;

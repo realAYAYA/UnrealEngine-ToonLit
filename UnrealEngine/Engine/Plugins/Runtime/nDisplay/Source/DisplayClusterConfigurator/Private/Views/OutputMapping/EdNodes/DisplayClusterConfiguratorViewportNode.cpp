@@ -13,7 +13,10 @@
 #include "DisplayClusterConfigurationTypes_ViewportRemap.h"
 #include "DisplayClusterConfiguratorBlueprintEditor.h"
 #include "DisplayClusterRootActor.h"
-#include "Components/DisplayClusterPreviewComponent.h"
+
+#include "Render/Viewport/IDisplayClusterViewportPreview.h"
+#include "Engine/TextureRenderTarget2D.h"
+
 
 void UDisplayClusterConfiguratorViewportNode::Initialize(const FString& InNodeName, int32 InNodeZIndex, UObject* InObject, const TSharedRef<FDisplayClusterConfiguratorBlueprintEditor>& InToolkit)
 {
@@ -97,7 +100,7 @@ void UDisplayClusterConfiguratorViewportNode::DeleteObject()
 	}
 
 	UDisplayClusterConfigurationViewport* Viewport = GetObjectChecked<UDisplayClusterConfigurationViewport>();
-	FDisplayClusterConfiguratorClusterUtils::RemoveViewportFromClusterNode(Viewport);
+	UE::DisplayClusterConfiguratorClusterUtils::RemoveViewportFromClusterNode(Viewport);
 }
 
 void UDisplayClusterConfiguratorViewportNode::WriteNodeStateToObject()
@@ -225,10 +228,13 @@ UTexture* UDisplayClusterConfiguratorViewportNode::GetPreviewTexture() const
 
 	if (ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(Toolkit->GetPreviewActor()))
 	{
-		UDisplayClusterConfiguratorWindowNode* ParentWindow = GetParentChecked<UDisplayClusterConfiguratorWindowNode>();
-		if (UDisplayClusterPreviewComponent* PreviewComp = RootActor->GetPreviewComponent(ParentWindow->GetNodeName(), GetNodeName()))
+		if (IDisplayClusterViewportManager* ViewportManager = RootActor->GetViewportManager())
 		{
-			return PreviewComp->GetViewportPreviewTexture2D();
+			const FString ViewportId = GetNodeName();
+			if (IDisplayClusterViewport* Viewport = ViewportManager->FindViewport(ViewportId))
+			{
+				return Viewport->GetViewportPreview().GetPreviewTextureRenderTarget2D();
+			}
 		}
 	}
 

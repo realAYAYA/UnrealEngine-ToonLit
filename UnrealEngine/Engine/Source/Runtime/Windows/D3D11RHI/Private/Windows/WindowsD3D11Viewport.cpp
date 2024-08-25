@@ -5,14 +5,12 @@
 =============================================================================*/
 
 #include "D3D11RHIPrivate.h"
-#include "RenderCore.h"
 #include "Misc/CommandLine.h"
+#include "Windows/IDXGISwapchainProvider.h"
+#include "Features/IModularFeatures.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <dwmapi.h>
-
-#include "Windows/IDXGISwapchainProvider.h"
-#include "Features/IModularFeatures.h"
 
 #ifndef DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
 #define DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING  2048

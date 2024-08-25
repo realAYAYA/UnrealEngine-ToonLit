@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
@@ -11,55 +12,19 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Windows.Forms.VisualStyles;
-using System.Threading;
 using EpicGames.Core;
+using EpicGames.Horde;
 using EpicGames.Perforce;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
-using System.Diagnostics.CodeAnalysis;
-using EpicGames.OIDC;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 
 namespace UnrealGameSync
 {
-	public class UncontrolledChangelist
-	{
-		public string Guid { get; set; } = String.Empty;
-		public string Name { get; set; } = String.Empty;
-		public List<string> Files { get; } = new List<string>();
-	}
-
-	public class UncontrolledChangelistPersistency
-	{
-		public int Version { get; set; }
-		public List<UncontrolledChangelist> Changelists { get; } = new List<UncontrolledChangelist>();
-	}
-
-	interface IWorkspaceControlOwner
-	{
-		ToolUpdateMonitor ToolUpdateMonitor { get; }
-
-		void EditSelectedProject(WorkspaceControl workspace);
-		void RequestProjectChange(WorkspaceControl workspace, UserSelectedProjectSettings project, bool modal);
-		void ShowAndActivate();
-		void StreamChanged(WorkspaceControl workspace);
-		void SetTabNames(TabLabels tabNames);
-		void SetupScheduledSync();
-		void UpdateProgress();
-		void ModifyApplicationSettings();
-		void UpdateAlertWindows();
-		void UpdateTintColors();
-
-		IssueMonitor CreateIssueMonitor(string? apiUrl, string userName);
-		void ReleaseIssueMonitor(IssueMonitor issueMonitor);
-	}
-
-	delegate void WorkspaceStartupCallback(WorkspaceControl workspace, bool cancel);
-	delegate void WorkspaceUpdateCallback(WorkspaceUpdateResult result);
-
 	partial class WorkspaceControl : UserControl, IMainWindowTabPanel
 	{
 		enum HorizontalAlignment
@@ -212,6 +177,7 @@ namespace UnrealGameSync
 		readonly IServiceProvider _serviceProvider;
 		readonly ILogger _logger;
 		readonly IPerforceSettings _perforceSettings;
+		readonly IHordeClient? _hordeClient;
 		ProjectInfo ProjectInfo { get; }
 
 		readonly UserSettings _settings;
@@ -231,7 +197,6 @@ namespace UnrealGameSync
 		readonly SynchronizationContext _mainThreadSynchronizationContext;
 		bool _isDisposing;
 
-//		JupiterMonitor _jupiterMonitor;
 		PerforceMonitor _perforceMonitor;
 		Workspace _workspace;
 #pragma warning disable CA2213 //warning CA2213: 'WorkspaceControl' contains field '_issueMonitor' that is of IDisposable type 'IssueMonitor', but it is never disposed. Change the Dispose method on 'WorkspaceControl' to call Close or Dispose on this field.
@@ -244,7 +209,7 @@ namespace UnrealGameSync
 		HashSet<int> _promotedChangeNumbers = new HashSet<int>();
 		List<int> _listIndexToChangeIndex = new List<int>();
 		List<int> _sortedChangeNumbers = new List<int>();
-		readonly Dictionary<string, Dictionary<int, string?>> _archiveToChangeNumberToArchiveKey = new Dictionary<string, Dictionary<int, string?>>();
+		readonly Dictionary<string, Dictionary<int, IArchive?>> _archiveToChangeNumberToArchiveKey = new Dictionary<string, Dictionary<int, IArchive?>>();
 		readonly Dictionary<int, ChangeLayoutInfo> _changeNumberToLayoutInfo = new Dictionary<int, ChangeLayoutInfo>();
 		readonly List<ContextMenuStrip> _customStatusPanelMenus = new List<ContextMenuStrip>();
 		readonly List<(string, Action<Point, Rectangle>)> _customStatusPanelLinks = new List<(string, Action<Point, Rectangle>)>();
@@ -299,9 +264,14 @@ namespace UnrealGameSync
 		// Placeholder text that is in the control and cleared when the user starts editing.
 		const string AuthorFilterPlaceholderText = "<username>";
 
+		static readonly Bitmap s_hackToolStripMenuGutter = new Bitmap(1, 1);
+
 		public WorkspaceControl(IWorkspaceControlOwner owner, DirectoryReference appDataFolder, string? apiUrl, OpenProjectInfo openProjectInfo, IServiceProvider serviceProvider, UserSettings settings)
 		{
 			InitializeComponent();
+
+			// Winforms doesn't seem to DPI scale the left gutter for toolstrip menus correctly, but setting a custom image forces it to work correctly. (?)
+			OptionsContextMenu_ApplicationSettings.Image = s_hackToolStripMenuGutter;
 
 			_mainThreadSynchronizationContext = SynchronizationContext.Current!;
 
@@ -316,6 +286,7 @@ namespace UnrealGameSync
 			_settings = settings;
 			_workspaceSettings = openProjectInfo.WorkspaceSettings;
 			_projectSettings = settings.FindOrAddProjectSettings(openProjectInfo.ProjectInfo, openProjectInfo.WorkspaceSettings, _logger);
+			_hordeClient = serviceProvider.GetService<IHordeClient>();
 
 			DesiredTaskbarState = Tuple.Create(TaskbarState.NoProgress, 0.0f);
 
@@ -373,14 +344,17 @@ namespace UnrealGameSync
 
 			ProjectInfo project = openProjectInfo.ProjectInfo;
 
-			_workspace = new Workspace(perforceClientSettings, project, openProjectInfo.WorkspaceStateWrapper, openProjectInfo.WorkspaceProjectConfigFile, openProjectInfo.WorkspaceProjectStreamFilter, new LogControlTextWriter(SyncLog), _serviceProvider);
+			_workspace = new Workspace(perforceClientSettings, project, openProjectInfo.WorkspaceStateWrapper, openProjectInfo.WorkspaceProjectConfigFile, openProjectInfo.WorkspaceProjectStreamFilter,
+				new LogControlTextWriter(SyncLog), _serviceProvider);
+
 			_workspace.OnStateChanged += StateChangedCallback;
 			_workspace.OnUpdateComplete += UpdateCompleteCallback;
 
 			FileReference projectLogBaseName = FileReference.Combine(_workspaceDataFolder, "sync.log");
 
 			ILogger perforceLogger = _serviceProvider.GetRequiredService<ILogger<PerforceMonitor>>();
-			_perforceMonitor = new PerforceMonitor(perforceClientSettings, openProjectInfo.ProjectInfo, openProjectInfo.LatestProjectConfigFile, openProjectInfo.ProjectInfo.CacheFolder, openProjectInfo.LocalConfigFiles, openProjectInfo.OidcTokenClient, _serviceProvider);
+			_perforceMonitor = new PerforceMonitor(perforceClientSettings, openProjectInfo.ProjectInfo, openProjectInfo.LatestProjectConfigFile, openProjectInfo.ProjectInfo.CacheFolder, openProjectInfo.LocalConfigFiles, _serviceProvider);
+
 			_perforceMonitor.OnUpdate += UpdateBuildListCallback;
 			_perforceMonitor.OnUpdateMetadata += UpdateBuildMetadataCallback;
 			_perforceMonitor.OnStreamChange += StreamChanged;
@@ -389,9 +363,6 @@ namespace UnrealGameSync
 			ILogger eventLogger = _serviceProvider.GetRequiredService<ILogger<EventMonitor>>();
 			_eventMonitor = new EventMonitor(_apiUrl, PerforceUtils.GetClientOrDepotDirectoryName(SelectedProjectIdentifier), openProjectInfo.PerforceSettings.UserName, _serviceProvider);
 			_eventMonitor.OnUpdatesReady += UpdateReviewsCallback;
-
-//			ILogger<JupiterMonitor> jupiterLogger = _serviceProvider.GetRequiredService<ILogger<JupiterMonitor>>();
-//			_jupiterMonitor = JupiterMonitor.CreateFromConfigFile(inOidcTokenManager, jupiterLogger, openProjectInfo.LatestProjectConfigFile, SelectedProjectIdentifier);
 
 			UpdateColumnSettings(true);
 			Font = new System.Drawing.Font("Segoe UI", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
@@ -410,12 +381,12 @@ namespace UnrealGameSync
 			_perforceMonitor.Start();
 			_eventMonitor.Start();
 
-			_startupTimer = new System.Threading.Timer(x => _mainThreadSynchronizationContext.Post((o) => 
-			{ 
-				if (!IsDisposed) 
-				{ 
-					StartupTimerElapsed(false); 
-				} 
+			_startupTimer = new System.Threading.Timer(x => _mainThreadSynchronizationContext.Post((o) =>
+			{
+				if (!IsDisposed)
+				{
+					StartupTimerElapsed(false);
+				}
 			}, null), null, TimeSpan.FromSeconds(20.0), TimeSpan.FromMilliseconds(-1.0));
 			_startupCallbacks = new List<WorkspaceStartupCallback>();
 
@@ -443,12 +414,12 @@ namespace UnrealGameSync
 
 		public void IssueMonitor_OnIssuesChangedAsync()
 		{
-			_mainThreadSynchronizationContext.Post((o) => 
-			{ 
-				if (_issueMonitor != null) 
-				{ 
-					IssueMonitor_OnIssuesChanged(); 
-				} 
+			_mainThreadSynchronizationContext.Post((o) =>
+			{
+				if (_issueMonitor != null)
+				{
+					IssueMonitor_OnIssuesChanged();
+				}
 			}, null);
 		}
 
@@ -766,11 +737,6 @@ namespace UnrealGameSync
 				_badgeFont.Dispose();
 				_badgeFont = null!;
 			}
-//			if (_jupiterMonitor != null)
-//			{
-//				_jupiterMonitor.Dispose();
-//				_jupiterMonitor = null!;
-//			}
 
 			base.Dispose(disposing);
 		}
@@ -934,23 +900,23 @@ namespace UnrealGameSync
 			WorkspaceUpdateContext context = new WorkspaceUpdateContext(changeNumber, options, GetEditorBuildConfig(), combinedSyncFilter, _projectSettings.BuildSteps, null);
 			if (options.HasFlag(WorkspaceUpdateOptions.SyncArchives))
 			{
-				IReadOnlyList<IArchiveInfo> archives = GetArchives();
-				foreach (IArchiveInfo archive in archives)
+				IReadOnlyList<IArchiveChannel> archives = GetArchiveChannels();
+				foreach (IArchiveChannel archive in archives)
 				{
 					context.ArchiveTypeToArchive[archive.Type] = null;
 				}
 
-				List<IArchiveInfo> selectedArchives = GetSelectedArchives(archives);
-				foreach (IArchiveInfo archive in selectedArchives)
+				List<IArchiveChannel> selectedArchiveChannels = GetSelectedArchiveChannels(archives);
+				foreach (IArchiveChannel archiveChannel in selectedArchiveChannels)
 				{
-					string? archivePath = GetArchiveKeyForChangeNumber(archive, changeNumber);
+					IArchive? archivePath = GetArchiveForChangeNumber(archiveChannel, changeNumber);
 					if (archivePath == null)
 					{
-						MessageBox.Show(String.Format("There are no compiled {0} binaries for this change. To sync it, you must disable syncing of precompiled editor binaries.", archive.Name));
+						MessageBox.Show(String.Format("There are no compiled {0} binaries for this change. To sync it, you must disable syncing of precompiled editor binaries.", archiveChannel.Name));
 						return;
 					}
 
-					if (archive.Type == IArchiveInfo.EditorArchiveType)
+					if (archiveChannel.Type == IArchiveChannel.EditorArchiveType)
 					{
 						context.Options &= ~(WorkspaceUpdateOptions.Build | WorkspaceUpdateOptions.GenerateProjectFiles | WorkspaceUpdateOptions.OpenSolutionAfterSync);
 					}
@@ -961,7 +927,7 @@ namespace UnrealGameSync
 						context.SyncFilter.AddRange(zippedBinariesSyncFilter);
 					}
 
-					context.ArchiveTypeToArchive[archive.Type] = new Tuple<IArchiveInfo, string>(archive, archivePath);
+					context.ArchiveTypeToArchive[archiveChannel.Type] = archivePath;
 				}
 			}
 			StartWorkspaceUpdate(context, callback);
@@ -990,17 +956,22 @@ namespace UnrealGameSync
 			{
 				if (!context.Options.HasFlag(WorkspaceUpdateOptions.ContentOnly) && (context.CustomBuildSteps == null || context.CustomBuildSteps.Count == 0))
 				{
-					FileReference targetFile = ConfigUtils.GetEditorTargetFile(_workspace.Project, _workspace.ProjectConfigFile);
-					foreach (BuildConfig config in Enum.GetValues(typeof(BuildConfig)).OfType<BuildConfig>())
+					bool usingPrecompiledEditor = context.ArchiveTypeToArchive.TryGetValue(IArchiveChannel.EditorArchiveType, out IArchive? archive) && archive != null;
+					bool usingLastSyncedEditorArchive = archive != null && archive.Key == _workspace.State.LastSyncEditorArchive;
+					if (!usingPrecompiledEditor || !usingLastSyncedEditorArchive)
 					{
-						FileReference receiptFile = ConfigUtils.GetReceiptFile(_workspace.Project, _workspace.ProjectConfigFile, targetFile, config.ToString());
-						if (FileReference.Exists(receiptFile))
+						FileReference targetFile = ConfigUtils.GetEditorTargetFile(_workspace.Project, _workspace.ProjectConfigFile);
+						foreach (BuildConfig config in Enum.GetValues(typeof(BuildConfig)).OfType<BuildConfig>())
 						{
-							try 
-							{ 
-								FileReference.Delete(receiptFile); 
-							} 
-							catch (Exception) { }
+							FileReference receiptFile = ConfigUtils.GetReceiptFile(_workspace.Project, _workspace.ProjectConfigFile, targetFile, config.ToString());
+							if (FileReference.Exists(receiptFile))
+							{
+								try
+								{
+									FileReference.Delete(receiptFile);
+								}
+								catch (Exception) { }
+							}
 						}
 					}
 				}
@@ -1037,19 +1008,22 @@ namespace UnrealGameSync
 
 		void StateChangedCallback(ReadOnlyWorkspaceState state)
 		{
-			_changeNumberToLayoutInfo.Clear();
-			UpdateBuildList();
-			UpdateStatusPanel();
+			if (!_isDisposing)
+			{
+				_changeNumberToLayoutInfo.Clear();
+				UpdateBuildList();
+				UpdateStatusPanel();
+			}
 		}
 
 		void UpdateCompleteCallback(WorkspaceUpdateContext context, WorkspaceUpdateResult result, string resultMessage)
 		{
-			_mainThreadSynchronizationContext.Post((o) => 
-			{ 
-				if (!_isDisposing) 
-				{ 
-					UpdateComplete(context, result); 
-				} 
+			_mainThreadSynchronizationContext.Post((o) =>
+			{
+				if (!_isDisposing)
+				{
+					UpdateComplete(context, result);
+				}
 			}, null);
 		}
 
@@ -1073,11 +1047,23 @@ namespace UnrealGameSync
 				_owner.UpdateProgress();
 
 				FlashWindow(ParentForm.Handle, true);
-				using DeleteWindow window = new DeleteWindow(context.DeleteFiles);
-				if (window.ShowDialog(this) == DialogResult.OK)
+
+				if (context.DeleteFiles.Count > 2000)
 				{
-					StartWorkspaceUpdate(context, _updateCallback);
-					return;
+					if (MessageBox.Show($"{context.DeleteFiles.Count:n0} files will be removed from your workspace by the current sync filter. Would you like to continue?", "Delete Files", MessageBoxButtons.OKCancel) == DialogResult.OK)
+					{
+						StartWorkspaceUpdate(context, _updateCallback);
+						return;
+					}
+				}
+				else
+				{
+					using DeleteWindow window = new DeleteWindow(context.DeleteFiles);
+					if (window.ShowDialog(this) == DialogResult.OK)
+					{
+						StartWorkspaceUpdate(context, _updateCallback);
+						return;
+					}
 				}
 			}
 			else if (result == WorkspaceUpdateResult.FilesToClobber)
@@ -1101,12 +1087,19 @@ namespace UnrealGameSync
 					ParseUncontrolledChangelistsPersistencyFile(Path.GetDirectoryName(SelectedProject.LocalPath)!, uncontrolledFiles);
 				}
 
-				using ClobberWindow window = new ClobberWindow(context.ClobberFiles, uncontrolledFiles);
-
-				if (window.ShowDialog(this) == DialogResult.OK)
+				if (_settings.Global.AlwaysClobberFiles)
 				{
 					StartWorkspaceUpdate(context, _updateCallback);
 					return;
+				}
+				else
+				{
+					using ClobberWindow window = new ClobberWindow(context.ClobberFiles, uncontrolledFiles);
+					if (window.ShowDialog(this) == DialogResult.OK)
+					{
+						StartWorkspaceUpdate(context, _updateCallback);
+						return;
+					}
 				}
 			}
 			else if (result == WorkspaceUpdateResult.FailedToCompileWithCleanWorkspace)
@@ -1143,13 +1136,13 @@ namespace UnrealGameSync
 			UpdateStatusPanel();
 			UpdateSyncActionCheckboxes();
 
+			FlashWindow(ParentForm.Handle, true);
+
 			// Do this last because it may result in the control being disposed
 			if (result == WorkspaceUpdateResult.FailedToSyncLoginExpired)
 			{
 				LoginExpired();
 			}
-
-			FlashWindow(ParentForm.Handle, true);
 		}
 
 		void UpdateBuildListCallback()
@@ -1157,13 +1150,13 @@ namespace UnrealGameSync
 			if (!_updateBuildListPosted)
 			{
 				_updateBuildListPosted = true;
-				_mainThreadSynchronizationContext.Post((o) => 
-				{ 
-					_updateBuildListPosted = false; 
-					if (!_isDisposing) 
-					{ 
-						UpdateBuildList(); 
-					} 
+				_mainThreadSynchronizationContext.Post((o) =>
+				{
+					_updateBuildListPosted = false;
+					if (!_isDisposing)
+					{
+						UpdateBuildList();
+					}
 				}, null);
 			}
 		}
@@ -1497,13 +1490,13 @@ namespace UnrealGameSync
 			if (!_updateBuildMetadataPosted)
 			{
 				_updateBuildMetadataPosted = true;
-				_mainThreadSynchronizationContext.Post((o) => 
-				{ 
-					_updateBuildMetadataPosted = false; 
-					if (!_isDisposing) 
-					{ 
-						UpdateBuildMetadata(); 
-					} 
+				_mainThreadSynchronizationContext.Post((o) =>
+				{
+					_updateBuildMetadataPosted = false;
+					if (!_isDisposing)
+					{
+						UpdateBuildMetadata();
+					}
 				}, null);
 			}
 		}
@@ -1770,13 +1763,13 @@ namespace UnrealGameSync
 			if (!_updateReviewsPosted)
 			{
 				_updateReviewsPosted = true;
-				_mainThreadSynchronizationContext.Post((o) => 
-				{ 
-					_updateReviewsPosted = false; 
-					if (!_isDisposing) 
-					{ 
-						UpdateReviews(); 
-					} 
+				_mainThreadSynchronizationContext.Post((o) =>
+				{
+					_updateReviewsPosted = false;
+					if (!_isDisposing)
+					{
+						UpdateReviews();
+					}
 				}, null);
 			}
 		}
@@ -1909,10 +1902,10 @@ namespace UnrealGameSync
 
 				// Set the link to open the right build pages
 				int highlightChange = notifyBuilds.Max(x => x.ChangeNumber);
-				_notificationWindow.OnMoreInformation = () => 
-				{ 
-					_owner.ShowAndActivate(); 
-					SelectChange(highlightChange); 
+				_notificationWindow.OnMoreInformation = () =>
+				{
+					_owner.ShowAndActivate();
+					SelectChange(highlightChange);
 				};
 
 				// Don't show messages for this change again
@@ -2027,40 +2020,58 @@ namespace UnrealGameSync
 			}
 		}
 
-		private string? GetArchiveKeyForChangeNumber(IArchiveInfo archive, int changeNumber)
+		private IArchive? GetArchiveForChangeNumber(IArchiveChannel archiveChannel, int changeNumber)
 		{
-			Dictionary<int, string?>? changeNumberToArchivePath;
-			if (!_archiveToChangeNumberToArchiveKey.TryGetValue(archive.Name, out changeNumberToArchivePath))
+			Dictionary<int, IArchive?>? changeNumberToArchive;
+			if (!_archiveToChangeNumberToArchiveKey.TryGetValue(archiveChannel.Name, out changeNumberToArchive))
 			{
-				changeNumberToArchivePath = new Dictionary<int, string?>();
-				_archiveToChangeNumberToArchiveKey[archive.Name] = changeNumberToArchivePath;
+				changeNumberToArchive = new Dictionary<int, IArchive?>();
+				_archiveToChangeNumberToArchiveKey[archiveChannel.Name] = changeNumberToArchive;
 			}
-			return GetArchiveKeyForChangeNumber(archive, changeNumber, changeNumber, changeNumberToArchivePath);
+			return GetArchiveForChangeNumber(archiveChannel, changeNumber, changeNumber, changeNumberToArchive);
 		}
 
-		private string? GetArchiveKeyForChangeNumber(IArchiveInfo archive, int changeNumber, int maxChangeNumber, Dictionary<int, string?> changeNumberToArchivePath)
+		private IArchive? GetArchiveForChangeNumber(IArchiveChannel archiveChannel, int changeNumber, int maxChangeNumber, Dictionary<int, IArchive?> changeNumberToArchive)
 		{
-			string? archivePath;
-			if (!changeNumberToArchivePath.TryGetValue(changeNumber, out archivePath))
+			IArchive? archive;
+			if (!changeNumberToArchive.TryGetValue(changeNumber, out archive))
 			{
-				PerforceChangeDetails? details;
-				if (_perforceMonitor.TryGetChangeDetails(changeNumber, out details))
-				{
-					// Try to get the archive for this CL
-					if (!archive.TryGetArchiveKeyForChangeNumber(changeNumber, maxChangeNumber, out archivePath) && !details.ContainsCode)
-					{
-						// Otherwise if it's a content-only change, find the previous build any use the archive path from that
-						int index = _sortedChangeNumbers.BinarySearch(changeNumber);
-						if (index > 0)
-						{
-							archivePath = GetArchiveKeyForChangeNumber(archive, _sortedChangeNumbers[index - 1], maxChangeNumber, changeNumberToArchivePath);
-						}
-					}
-				}
-				changeNumberToArchivePath.Add(changeNumber, archivePath);
+				archive = GetArchiveForChangeNumberUncached(archiveChannel, changeNumber, maxChangeNumber);
+				changeNumberToArchive.Add(changeNumber, archive);
+			}
+			return archive;
+		}
+
+		private IArchive? GetArchiveForChangeNumberUncached(IArchiveChannel archiveChannel, int changeNumber, int maxChangeNumber)
+		{
+			int idx = _sortedChangeNumbers.BinarySearch(changeNumber);
+			if (idx < 0)
+			{
+				return null;
 			}
 
-			return archivePath;
+			PerforceChangeDetails? details;
+			while (idx > 0 && _perforceMonitor.TryGetChangeDetails(_sortedChangeNumbers[idx], out details) && !details.ContainsCode)
+			{
+				idx--;
+			}
+
+			for (; ; )
+			{
+				IArchive? archive = archiveChannel.TryGetArchiveForChangeNumber(_sortedChangeNumbers[idx], maxChangeNumber);
+				if (archive != null)
+				{
+					return archive;
+				}
+
+				idx++;
+				if (idx >= _sortedChangeNumbers.Count 
+					|| !_perforceMonitor.TryGetChangeDetails(_sortedChangeNumbers[idx], out details) 
+					|| details.ContainsCode)
+				{
+					return null;
+				}
+			}
 		}
 
 		private static Color Blend(Color first, Color second, float t)
@@ -2075,8 +2086,8 @@ namespace UnrealGameSync
 				return false;
 			}
 
-			List<IArchiveInfo> selectedArchives = GetSelectedArchives(GetArchives());
-			return selectedArchives.Count == 0 || selectedArchives.All(x => GetArchiveKeyForChangeNumber(x, changeNumber) != null);
+			List<IArchiveChannel> selectedArchives = GetSelectedArchiveChannels(GetArchiveChannels());
+			return selectedArchives.Count == 0 || selectedArchives.All(x => GetArchiveForChangeNumber(x, changeNumber) != null);
 		}
 
 		/// <summary>
@@ -2084,8 +2095,6 @@ namespace UnrealGameSync
 		/// Determines if the ini specified INI filter is a subset of the InBadges passed
 		/// BadgeGroupSyncFilter - is used as the ini 
 		/// </summary>
-		/// <param name="inBadges"></param>
-		/// <returns></returns>
 		private static bool DoRequiredBadgesExist(List<string> requiredBadgeList, List<BadgeData> inBadges)
 		{
 			Dictionary<string, BadgeData> inBadgeDictionary = new Dictionary<string, BadgeData>();
@@ -2233,15 +2242,15 @@ namespace UnrealGameSync
 				float minX = 4 * dpiScaleX;
 				if ((summary != null && _eventMonitor.WasSyncedByCurrentUser(summary.ChangeNumber)) || (_workspace != null && _workspace.CurrentChangeNumber == change.Number))
 				{
-					e.Graphics.DrawImage(Properties.Resources.Icons, minX * dpiScaleX, iconY, PreviousSyncIcon, GraphicsUnit.Pixel);
+					e.Graphics.DrawImage(Properties.Resources.Icons, minX, iconY, PreviousSyncIcon, GraphicsUnit.Pixel);
 				}
 				else if (_workspaceSettings != null && _workspace != null && _workspace.State.AdditionalChangeNumbers.Contains(change.Number))
 				{
-					e.Graphics.DrawImage(Properties.Resources.Icons, minX * dpiScaleX, iconY, AdditionalSyncIcon, GraphicsUnit.Pixel);
+					e.Graphics.DrawImage(Properties.Resources.Icons, minX, iconY, AdditionalSyncIcon, GraphicsUnit.Pixel);
 				}
 				else if (allowSync && ((summary != null && summary.LastStarReview != null && summary.LastStarReview.Type == EventType.Starred) || _promotedChangeNumbers.Contains(change.Number)))
 				{
-					e.Graphics.DrawImage(Properties.Resources.Icons, minX * dpiScaleX, iconY, PromotedBuildIcon, GraphicsUnit.Pixel);
+					e.Graphics.DrawImage(Properties.Resources.Icons, minX, iconY, PromotedBuildIcon, GraphicsUnit.Pixel);
 				}
 				minX += PromotedBuildIcon.Width * dpiScaleX;
 
@@ -2364,12 +2373,12 @@ namespace UnrealGameSync
 				{
 					Tuple<string, float> progress = _workspace.CurrentProgress;
 
-					maxX -= CancelIcon.Width;
+					maxX -= CancelIcon.Width * dpiScaleX;
 					e.Graphics.DrawImage(Properties.Resources.Icons, maxX, iconY, CancelIcon, GraphicsUnit.Pixel);
 
 					if (!Splitter.IsLogVisible())
 					{
-						maxX -= InfoIcon.Width;
+						maxX -= InfoIcon.Width * dpiScaleX;
 						e.Graphics.DrawImage(Properties.Resources.Icons, maxX, iconY, InfoIcon, GraphicsUnit.Pixel);
 					}
 
@@ -2842,8 +2851,8 @@ namespace UnrealGameSync
 					{
 						ToolStripMenuItem item = new ToolStripMenuItem();
 						item.Text = additionalUrl.Text;
-    					item.Click += (sender, e) => SafeProcessStart(additionalUrl.Url);
-    					BadgeContextMenu.Items.Add(item);
+						item.Click += (sender, e) => SafeProcessStart(additionalUrl.Url);
+						BadgeContextMenu.Items.Add(item);
 					}
 
 					BadgeContextMenu.Show(control, point);
@@ -3326,7 +3335,7 @@ namespace UnrealGameSync
 			SafeProcessStart("p4v.exe", commandLine.ToString());
 		}
 
-		void RunTool(ToolDefinition tool, ToolLink link)
+		void RunTool(ToolInfo tool, ToolLink link)
 		{
 			DirectoryReference? toolDir = _owner.ToolUpdateMonitor.GetToolPath(tool.Name);
 			if (toolDir != null)
@@ -3354,6 +3363,23 @@ namespace UnrealGameSync
 			}, null);
 		}
 
+		private void AddHordeStatus(StatusLine statusLine)
+		{
+			if (_hordeClient != null)
+			{
+				statusLine.AddText("  |  ");
+
+				if (_hordeClient.IsConnected())
+				{
+					statusLine.AddLink("Connected to Horde", FontStyle.Regular, (p, r) => Utility.OpenUrl(_hordeClient.ServerUrl.ToString()));
+				}
+				else
+				{
+					statusLine.AddLink("Connect to Horde...", FontStyle.Bold | FontStyle.Underline, (p, r) => ConnectToHorde(_hordeClient));
+				}
+			}
+		}
+
 		private void UpdateStatusPanel()
 		{
 			if (_workspace == null)
@@ -3365,40 +3391,99 @@ namespace UnrealGameSync
 			StatusPanel.SetContentWidth(newContentWidth);
 
 			List<StatusLine> lines = new List<StatusLine>();
-			if (_workspace.IsBusy())
+			if (_workspace.IsBusy() || _workspace.IsExternalSyncActive())
 			{
-				// Sync in progress
-				Tuple<string, float> progress = _workspace.CurrentProgress;
+				// Project
+				StatusLine projectLine = new StatusLine();
+				projectLine.AddText("Opened " + SelectedFileName.FullName);
+				AddHordeStatus(projectLine);
+				lines.Add(projectLine);
 
+				// Spacer
+				lines.Add(new StatusLine() { LineHeight = 0.5f });
+
+				// Sync in progress
 				StatusLine summaryLine = new StatusLine();
-				if (_workspace.PendingChangeNumber == -1)
+				if (_workspace.IsBusy())
 				{
-					summaryLine.AddText("Working... | ");
+					Tuple<string, float> progress = _workspace.CurrentProgress;
+
+					if (_workspace.PendingChangeNumber == -1)
+					{
+						summaryLine.AddText("Working... | ");
+					}
+					else
+					{
+						summaryLine.AddText("Syncing to changelist ");
+						summaryLine.AddLink(_workspace.PendingChangeNumber.ToString(), FontStyle.Regular, () => { SelectChange(_workspace.PendingChangeNumber); });
+						summaryLine.AddText("... | ");
+					}
+					summaryLine.AddLink(Splitter.IsLogVisible() ? "Hide Log" : "Show Log", FontStyle.Bold | FontStyle.Underline, () => { ToggleLogVisibility(); });
+					summaryLine.AddText(" | ");
+					summaryLine.AddLink("Cancel", FontStyle.Bold | FontStyle.Underline, () => { CancelWorkspaceUpdate(); });
+					lines.Add(summaryLine);
+
+					StatusLine progressLine = new StatusLine();
+					progressLine.AddText(String.Format("{0}  ", progress.Item1));
+					if (progress.Item2 > 0.0f)
+					{
+						progressLine.AddProgressBar(progress.Item2);
+					}
+					lines.Add(progressLine);
 				}
 				else
 				{
-					summaryLine.AddText("Syncing to changelist ");
-					summaryLine.AddLink(_workspace.PendingChangeNumber.ToString(), FontStyle.Regular, () => { SelectChange(_workspace.PendingChangeNumber); });
-					summaryLine.AddText("... | ");
+					summaryLine.AddText("Command-line sync in progress...");
+					lines.Add(summaryLine);
 				}
-				summaryLine.AddLink(Splitter.IsLogVisible() ? "Hide Log" : "Show Log", FontStyle.Bold | FontStyle.Underline, () => { ToggleLogVisibility(); });
-				summaryLine.AddText(" | ");
-				summaryLine.AddLink("Cancel", FontStyle.Bold | FontStyle.Underline, () => { CancelWorkspaceUpdate(); });
-				lines.Add(summaryLine);
 
-				StatusLine progressLine = new StatusLine();
-				progressLine.AddText(String.Format("{0}  ", progress.Item1));
-				if (progress.Item2 > 0.0f)
+				// Programs
+				StatusLine programsLine = new StatusLine();
+
+				string[]? sdkInfoEntries;
+				if (TryGetProjectSetting(_perforceMonitor.LatestProjectConfigFile, "SdkInfo", out sdkInfoEntries))
 				{
-					progressLine.AddProgressBar(progress.Item2);
+					programsLine.AddLink("SDK Info", FontStyle.Regular, () => { ShowRequiredSdkInfo(); });
+					programsLine.AddText("  |  ");
 				}
-				lines.Add(progressLine);
-			}
-			else if (_workspace.IsExternalSyncActive())
-			{
-				StatusLine summaryLine = new StatusLine();
-				summaryLine.AddText("Command-line sync in progress...");
-				lines.Add(summaryLine);
+
+				programsLine.AddLink("Perforce", FontStyle.Regular, () => { OpenPerforce(); });
+				programsLine.AddText("  |  ");
+				if (!ShouldSyncPrecompiledEditor)
+				{
+					programsLine.AddLink("Visual Studio", FontStyle.Regular, () => { OpenSolution(); });
+					programsLine.AddText("  |  ");
+				}
+
+				IReadOnlyList<ToolInfo> tools = _owner.ToolUpdateMonitor.GetEnabledTools();
+				foreach (ToolInfo tool in tools)
+				{
+					if (tool.Settings.SafeWhenBusy)
+					{
+						foreach (ToolLink link in tool.Settings.StatusPanelLinks)
+						{
+							programsLine.AddLink(link.Label, FontStyle.Regular, () => RunTool(tool, link));
+							programsLine.AddText("  |  ");
+						}
+					}
+				}
+
+				programsLine.AddLink("Windows Explorer", FontStyle.Regular, () => { SafeProcessStart("explorer.exe", String.Format("\"{0}\"", SelectedFileName.Directory.FullName)); });
+
+				if (GetDefaultIssueFilter() != null)
+				{
+					programsLine.AddText("  |  ");
+					if (_userHasOpenIssues)
+					{
+						programsLine.AddBadge("Build Health", GetBuildBadgeColor(BadgeResult.Failure), (p, r) => ShowBuildHealthMenu(r));
+					}
+					else
+					{
+						programsLine.AddLink("Build Health", FontStyle.Regular, (p, r) => { ShowBuildHealthMenu(r); });
+					}
+				}
+
+				lines.Add(programsLine);
 			}
 			else
 			{
@@ -3406,23 +3491,7 @@ namespace UnrealGameSync
 				StatusLine projectLine = new StatusLine();
 				projectLine.AddText(String.Format("Opened "));
 				projectLine.AddLink(SelectedFileName.FullName + " \u25BE", FontStyle.Regular, (p, r) => { SelectRecentProject(r); });
-
-				OidcTokenClient? oidcClient = _perforceMonitor.LatestOidcTokenClient;
-				if (oidcClient != null)
-				{
-				projectLine.AddText("  |  ");
-
-					StatusLine hordeLine = new StatusLine();
-					if (oidcClient.GetStatus() == OidcStatus.Connected)
-					{
-						projectLine.AddText("Connected to Horde.");
-					}
-					else
-					{
-						projectLine.AddLink("Connect to Horde", FontStyle.Bold | FontStyle.Underline, (p, r) => DoOidcLogin());
-					}
-				}
-
+				AddHordeStatus(projectLine);
 				projectLine.AddText("  |  ");
 				projectLine.AddLink("Settings...", FontStyle.Regular, (p, r) => { _owner.EditSelectedProject(this); });
 				lines.Add(projectLine);
@@ -3504,7 +3573,8 @@ namespace UnrealGameSync
 							ChangesRecord? foundRecord = null;
 							async Task<bool> GetChangesRecordFunc(IPerforceConnection perforce, CancellationToken cancellationToken)
 							{
-								List<ChangesRecord> changes = await perforce.GetChangesAsync(ChangesOptions.None, 1, ChangeStatus.Submitted, $"//{_perforceSettings.ClientName}/...@{_workspace.CurrentChangeNumber},{_workspace.CurrentChangeNumber}", cancellationToken);
+								List<ChangesRecord> changes = await perforce.GetChangesAsync(ChangesOptions.None, 1, ChangeStatus.Submitted, $"//...@{_workspace.CurrentChangeNumber},{_workspace.CurrentChangeNumber}", cancellationToken);
+
 								if (changes.Count == 1)
 								{
 									foundRecord = changes[0];
@@ -3562,16 +3632,13 @@ namespace UnrealGameSync
 					programsLine.AddText("  |  ");
 				}
 
-				List<ToolDefinition> tools = _owner.ToolUpdateMonitor.Tools;
-				foreach (ToolDefinition tool in tools)
+				IReadOnlyList<ToolInfo> tools = _owner.ToolUpdateMonitor.GetEnabledTools();
+				foreach (ToolInfo tool in tools)
 				{
-					if (tool.Enabled)
+					foreach (ToolLink link in tool.Settings.StatusPanelLinks)
 					{
-						foreach (ToolLink link in tool.StatusPanelLinks)
-						{
-							programsLine.AddLink(link.Label, FontStyle.Regular, () => RunTool(tool, link));
-							programsLine.AddText("  |  ");
-						}
+						programsLine.AddLink(link.Label, FontStyle.Regular, () => RunTool(tool, link));
+						programsLine.AddText("  |  ");
 					}
 				}
 
@@ -3656,10 +3723,17 @@ namespace UnrealGameSync
 			}
 
 			StatusLine? caption = null;
-			if (StreamName != null && !_workspace.IsBusy())
+			if (StreamName != null)
 			{
 				caption = new StatusLine();
-				caption.AddLink(StreamName + "\u25BE", FontStyle.Bold, (p, r) => { SelectOtherStream(r); });
+				if (_workspace.IsBusy() || _workspace.IsExternalSyncActive())
+				{
+					caption.AddText(StreamName);
+				}
+				else
+				{
+					caption.AddLink(StreamName + "\u25BE", FontStyle.Bold, (p, r) => { SelectOtherStream(r); });
+				}
 			}
 
 			StatusLine? alert = null;
@@ -3697,24 +3771,20 @@ namespace UnrealGameSync
 			StatusPanel.Set(lines, caption, alert, tintColor);
 		}
 
-		private void DoOidcLogin()
+		private void ConnectToHorde(IHordeClient hordeClient)
 		{
-			OidcTokenClient? oidcClient = _perforceMonitor.LatestOidcTokenClient;
-			if (oidcClient != null)
+			ModalTask.Execute(this, "Horde Login", "Connecting to Horde...", async cancellationToken =>
 			{
-				ModalTask.Execute(this, "OIDC Login", "Opening OIDC login page (check your browser).", async cancellationToken =>
+				try
 				{
-					try
-					{
-						await oidcClient.LoginAsync(cancellationToken);
-					}
-					catch when (cancellationToken.IsCancellationRequested)
-					{
-						// nop
-					}
-				});
-				UpdateStatusPanel();
-			}
+					await hordeClient.ConnectAsync(true, cancellationToken);
+				}
+				catch when (cancellationToken.IsCancellationRequested)
+				{
+					// nop
+				}
+			});
+			UpdateStatusPanel();
 		}
 
 		private void ShowBuildHealthMenu(Rectangle bounds)
@@ -4038,6 +4108,13 @@ namespace UnrealGameSync
 						{
 							StatusPanel.SuspendLayout();
 							StreamChanged();
+
+							// Reset the last code change we found when switching streams
+							_workspace.ModifyState(x =>
+							{
+								x.CurrentCodeChangeNumber = -1;
+							});
+
 							StatusPanel.ResumeLayout();
 							break;
 						}
@@ -4080,6 +4157,7 @@ namespace UnrealGameSync
 
 		private void ShowActionsMenu(Rectangle bounds)
 		{
+			MoreToolsContextMenu_CleanWorkspace.Image = s_hackToolStripMenuGutter;
 			MoreToolsContextMenu.Show(StatusPanel, new Point(bounds.Left, bounds.Bottom), ToolStripDropDownDirection.BelowRight);
 		}
 
@@ -4281,20 +4359,23 @@ namespace UnrealGameSync
 
 						if (!badgeWasClicked)
 						{
-						    _contextMenuChange = (ChangesRecord)hitTest.Item.Tag;
-						    // Show time related context menu items if the click was made on the time column :
-						    bool isTimeColumn = (hitTest.Item.SubItems.IndexOf(hitTest.SubItem) == TimeColumn.Index);
-						    ShowChangelistContextMenu(BuildList, showTimeRelatedItems: isTimeColumn, args.Location);
-					    }
-				    }
-			    }
-		    }
+							_contextMenuChange = (ChangesRecord)hitTest.Item.Tag;
+							// Show time related context menu items if the click was made on the time column :
+							bool isTimeColumn = (hitTest.Item.SubItems.IndexOf(hitTest.SubItem) == TimeColumn.Index);
+							ShowChangelistContextMenu(BuildList, showTimeRelatedItems: isTimeColumn, args.Location);
+						}
+					}
+				}
+			}
 		}
 
 		private void ShowChangelistContextMenu(Control parentControl, bool showTimeRelatedItems, Point location, ToolStripDropDownDirection direction = ToolStripDropDownDirection.BelowRight)
 		{
 			if (_contextMenuChange != null)
 			{
+				BuildListContextMenu_Sync.Image = s_hackToolStripMenuGutter;
+				BuildListContextMenu_Cancel.Image = s_hackToolStripMenuGutter;
+
 				BuildListContextMenu_WithdrawReview.Visible = (_eventMonitor.GetReviewByCurrentUser(_contextMenuChange.Number) != null);
 				BuildListContextMenu_StartInvestigating.Visible = !_eventMonitor.IsUnderInvestigationByCurrentUser(_contextMenuChange.Number);
 				BuildListContextMenu_FinishInvestigating.Visible = _eventMonitor.IsUnderInvestigation(_contextMenuChange.Number);
@@ -4482,10 +4563,10 @@ namespace UnrealGameSync
 			return null;
 		}
 
-		private List<IArchiveInfo> GetSelectedArchives(IReadOnlyList<IArchiveInfo> archives)
+		private List<IArchiveChannel> GetSelectedArchiveChannels(IReadOnlyList<IArchiveChannel> archives)
 		{
-			Dictionary<string, KeyValuePair<IArchiveInfo, int>> archiveTypeToSelection = new Dictionary<string, KeyValuePair<IArchiveInfo, int>>();
-			foreach (IArchiveInfo archive in archives)
+			Dictionary<string, KeyValuePair<IArchiveChannel, int>> archiveTypeToSelection = new Dictionary<string, KeyValuePair<IArchiveChannel, int>>();
+			foreach (IArchiveChannel archive in archives)
 			{
 				ArchiveSettings? archiveSettings = _settings.Archives.FirstOrDefault(x => x.Type == archive.Type);
 				if (archiveSettings != null && archiveSettings.Enabled)
@@ -4496,10 +4577,10 @@ namespace UnrealGameSync
 						preference = archiveSettings.Order.Count;
 					}
 
-					KeyValuePair<IArchiveInfo, int> existingItem;
+					KeyValuePair<IArchiveChannel, int> existingItem;
 					if (!archiveTypeToSelection.TryGetValue(archive.Type, out existingItem) || existingItem.Value > preference)
 					{
-						archiveTypeToSelection[archive.Type] = new KeyValuePair<IArchiveInfo, int>(archive, preference);
+						archiveTypeToSelection[archive.Type] = new KeyValuePair<IArchiveChannel, int>(archive, preference);
 					}
 				}
 			}
@@ -4517,7 +4598,7 @@ namespace UnrealGameSync
 			UpdateSelectedArchives();
 		}
 
-		private void SetSelectedArchive(IArchiveInfo archive, bool selected)
+		private void SetSelectedArchive(IArchiveChannel archive, bool selected)
 		{
 			ArchiveSettings? archiveSettings = _settings.Archives.FirstOrDefault(x => x.Type == archive.Type);
 			if (archiveSettings == null)
@@ -4551,11 +4632,12 @@ namespace UnrealGameSync
 		private void OptionsButton_Click(object sender, EventArgs e)
 		{
 			OptionsContextMenu_AutoResolveConflicts.Checked = _settings.Global.AutoResolveConflicts;
+			OptionsContextMenu_AlwaysClobberFiles.Checked = _settings.Global.AlwaysClobberFiles;
 
 			OptionsContextMenu_SyncPrecompiledBinaries.DropDownItems.Clear();
 
-			IReadOnlyList<IArchiveInfo> archives = GetArchives();
-			if (archives == null || archives.Count == 0)
+			IReadOnlyList<IArchiveChannel> channels = GetArchiveChannels();
+			if (channels == null || channels.Count == 0)
 			{
 				OptionsContextMenu_SyncPrecompiledBinaries.Enabled = false;
 				OptionsContextMenu_SyncPrecompiledBinaries.ToolTipText = String.Format("Precompiled binaries are not available for {0}", SelectedProjectIdentifier);
@@ -4563,13 +4645,13 @@ namespace UnrealGameSync
 			}
 			else
 			{
-				List<IArchiveInfo> selectedArchives = GetSelectedArchives(archives);
+				List<IArchiveChannel> selectedArchives = GetSelectedArchiveChannels(channels);
 
 				OptionsContextMenu_SyncPrecompiledBinaries.Enabled = true;
 				OptionsContextMenu_SyncPrecompiledBinaries.ToolTipText = null;
 				OptionsContextMenu_SyncPrecompiledBinaries.Checked = selectedArchives.Count > 0;
 
-				if (archives.Count > 1 || archives[0].Type != IArchiveInfo.EditorArchiveType)
+				if (channels.Count > 1 || channels[0].Type != IArchiveChannel.EditorArchiveType)
 				{
 					ToolStripMenuItem disableItem = new ToolStripMenuItem("Disable (compile locally)");
 					disableItem.Checked = (selectedArchives.Count == 0);
@@ -4579,16 +4661,13 @@ namespace UnrealGameSync
 					ToolStripSeparator separator = new ToolStripSeparator();
 					OptionsContextMenu_SyncPrecompiledBinaries.DropDownItems.Add(separator);
 
-					foreach (IArchiveInfo archive in archives)
+					foreach (IArchiveChannel channel in channels)
 					{
-						ToolStripMenuItem item = new ToolStripMenuItem(archive.Name);
-						item.Enabled = archive.Exists();
-						if (!item.Enabled)
-						{
-							item.ToolTipText = String.Format("No valid archives found at {0}", archive.BasePath);
-						}
-						item.Checked = selectedArchives.Contains(archive);
-						item.Click += (sender, args) => SetSelectedArchive(archive, !item.Checked);
+						ToolStripMenuItem item = new ToolStripMenuItem(channel.Name);
+						item.Enabled = channel.HasAny();
+						item.ToolTipText = channel.ToolTip;
+						item.Checked = selectedArchives.Contains(channel);
+						item.Click += (sender, args) => SetSelectedArchive(channel, !item.Checked);
 						OptionsContextMenu_SyncPrecompiledBinaries.DropDownItems.Add(item);
 					}
 				}
@@ -4610,21 +4689,14 @@ namespace UnrealGameSync
 			OptionsContextMenu.Show(OptionsButton, new Point(OptionsButton.Width - OptionsContextMenu.Size.Width, OptionsButton.Height));
 		}
 
-		private IReadOnlyList<IArchiveInfo> GetArchives()
+		private IReadOnlyList<IArchiveChannel> GetArchiveChannels()
 		{
-//			IReadOnlyList<IArchiveInfo>? availableArchives = _jupiterMonitor?.AvailableArchives;
-//			if (availableArchives != null && availableArchives.Count != 0)
-//			{
-//				return availableArchives;
-//			}
-
-			// if jupiter had no archives we fallback to the perforce monitor
 			if (_perforceMonitor != null)
 			{
-				return _perforceMonitor.AvailableArchives;
+				return _perforceMonitor.AvailableArchiveChannels;
 			}
 
-			return new List<IArchiveInfo>();
+			return new List<IArchiveChannel>();
 		}
 
 		private void BuildAfterSyncCheckBox_CheckedChanged(object sender, EventArgs e)
@@ -5064,6 +5136,13 @@ namespace UnrealGameSync
 			_settings.Save(_logger);
 		}
 
+		private void OptionsContextMenu_AlwaysClobberFiles_Click(object sender, EventArgs e)
+		{
+			OptionsContextMenu_AlwaysClobberFiles.Checked ^= true;
+			_settings.Global.AlwaysClobberFiles = OptionsContextMenu_AlwaysClobberFiles.Checked;
+			_settings.Save(_logger);
+		}
+
 		private void OptionsContextMenu_EditorArguments_Click(object sender, EventArgs e)
 		{
 			ModifyEditorArguments();
@@ -5371,7 +5450,21 @@ namespace UnrealGameSync
 			string[] combinedSyncFilter = UserSettings.GetCombinedSyncFilter(GetSyncCategories(), _settings.Global.Filter, _workspaceSettings.Filter, _perforceMonitor.LatestPerforceConfigSection());
 			List<string> syncPaths = WorkspaceUpdate.GetSyncPaths(_workspace.Project, _workspaceSettings.Filter.AllProjects ?? _settings.Global.Filter.AllProjects ?? false, combinedSyncFilter);
 
-			CleanWorkspaceWindow.DoClean(ParentForm, _perforceSettings, BranchDirectoryName, _workspace.Project.ClientRootPath, syncPaths, extraSafeToDeleteFolders.Split('\n'), extraSafeToDeleteExtensions.Split('\n'), _serviceProvider.GetRequiredService<ILogger<CleanWorkspaceWindow>>());
+			bool performedClean = CleanWorkspaceWindow.DoClean(ParentForm, _perforceSettings, BranchDirectoryName, _workspace.Project.ClientRootPath, syncPaths, extraSafeToDeleteFolders.Split('\n'), extraSafeToDeleteExtensions.Split('\n'), _serviceProvider.GetRequiredService<ILogger<CleanWorkspaceWindow>>());
+
+			if (performedClean)
+			{
+				_workspace.ModifyState(x =>
+				{
+					x.LastSyncEditorArchive = "0";
+				});
+			}
+		}
+
+		private void MoreToolsContextMenu_UpdateTools_Click(object sender, EventArgs e)
+		{
+			_logger.LogInformation("Checking for tools updates...");
+			_owner.ToolUpdateMonitor.UpdateNow();
 		}
 
 		private void UpdateBuildSteps()
@@ -5592,7 +5685,7 @@ namespace UnrealGameSync
 			}
 		}
 
-		private bool ShouldSyncPrecompiledEditor => _settings.Archives.Any(x => x.Enabled && x.Type == IArchiveInfo.EditorArchiveType) && GetArchives().Any(x => x.Type == "Editor");
+		private bool ShouldSyncPrecompiledEditor => _settings.Archives.Any(x => x.Enabled && x.Type == IArchiveChannel.EditorArchiveType) && GetArchiveChannels().Any(x => x.Type == "Editor");
 
 		public BuildConfig GetEditorBuildConfig()
 		{
@@ -5629,7 +5722,7 @@ namespace UnrealGameSync
 		{
 			if (OptionsContextMenu_SyncPrecompiledBinaries.DropDownItems.Count == 0)
 			{
-				IArchiveInfo? editorArchive = GetArchives().FirstOrDefault(x => x.Type == IArchiveInfo.EditorArchiveType);
+				IArchiveChannel? editorArchive = GetArchiveChannels().FirstOrDefault(x => x.Type == IArchiveChannel.EditorArchiveType);
 				if (editorArchive != null)
 				{
 					SetSelectedArchive(editorArchive, !OptionsContextMenu_SyncPrecompiledBinaries.Checked);
@@ -5685,6 +5778,8 @@ namespace UnrealGameSync
 				SyncContexMenu_EnterChangelist,
 				toolStripSeparator8
 			});
+
+			SyncContexMenu_EnterChangelist.Image = s_hackToolStripMenuGutter;
 
 			foreach (LatestChangeType changeType in GetCustomLatestChangeTypes())
 			{
@@ -6131,6 +6226,12 @@ namespace UnrealGameSync
 
 		private void FilterButton_Click(object sender, EventArgs e)
 		{
+			// Hack for toolstrip dpi scaling
+			foreach (ToolStripMenuItem item in FilterContextMenu.Items.OfType<ToolStripMenuItem>())
+			{
+				item.Image = null;
+			}
+
 			FilterContextMenu_Default.Checked = !_settings.ShowAutomatedChanges && _projectSettings.FilterType == FilterType.None && _projectSettings.FilterBadges.Count == 0;
 
 			FilterContextMenu_Type.Checked = _projectSettings.FilterType != FilterType.None;
@@ -6177,6 +6278,16 @@ namespace UnrealGameSync
 
 			// Set checks if an author filter string is set
 			FilterContextMenu_Author.Checked = !String.IsNullOrEmpty(_authorFilterText) && _authorFilterText != AuthorFilterPlaceholderText;
+
+			// Hack for toolstrip dpi scaling
+			foreach (ToolStripMenuItem item in FilterContextMenu.Items.OfType<ToolStripMenuItem>())
+			{
+				if (!item.Checked)
+				{
+					item.Image = s_hackToolStripMenuGutter;
+					break;
+				}
+			}
 
 			FilterContextMenu.Show(FilterButton, new Point(0, FilterButton.Height));
 		}
@@ -6450,4 +6561,39 @@ namespace UnrealGameSync
 			}
 		}
 	}
+
+	public class UncontrolledChangelist
+	{
+		public string Guid { get; set; } = String.Empty;
+		public string Name { get; set; } = String.Empty;
+		public List<string> Files { get; } = new List<string>();
+	}
+
+	public class UncontrolledChangelistPersistency
+	{
+		public int Version { get; set; }
+		public List<UncontrolledChangelist> Changelists { get; } = new List<UncontrolledChangelist>();
+	}
+
+	interface IWorkspaceControlOwner
+	{
+		ToolUpdateMonitor ToolUpdateMonitor { get; }
+
+		void EditSelectedProject(WorkspaceControl workspace);
+		void RequestProjectChange(WorkspaceControl workspace, UserSelectedProjectSettings project, bool modal);
+		void ShowAndActivate();
+		void StreamChanged(WorkspaceControl workspace);
+		void SetTabNames(TabLabels tabNames);
+		void SetupScheduledSync();
+		void UpdateProgress();
+		void ModifyApplicationSettings();
+		void UpdateAlertWindows();
+		void UpdateTintColors();
+
+		IssueMonitor CreateIssueMonitor(string? apiUrl, string userName);
+		void ReleaseIssueMonitor(IssueMonitor issueMonitor);
+	}
+
+	delegate void WorkspaceStartupCallback(WorkspaceControl workspace, bool cancel);
+	delegate void WorkspaceUpdateCallback(WorkspaceUpdateResult result);
 }

@@ -12,10 +12,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EpicGames.Core;
 using System.Data;
+using Gauntlet.Utils;
 
 namespace Gauntlet
 {
-
 	/// <summary>
 	/// Device performance specification
 	/// </summary>
@@ -70,7 +70,7 @@ namespace Gauntlet
 
 		public UnrealDeviceTargetConstraint(UnrealTargetPlatform? Platform, EPerfSpec PerfSpec = EPerfSpec.Unspecified, string Model = null)
 		{
-			this.Platform = Platform;			
+			this.Platform = Platform;
 			this.PerfSpec = PerfSpec;
 			this.Model = Model == null ? string.Empty : Model;
 		}
@@ -206,6 +206,9 @@ namespace Gauntlet
 	/// </summary>
 	public class DeviceReservationStates
 	{
+		private Dictionary<string, ResevationState> RequiredCollection;
+		private Dictionary<string, int> ProblemCollection;
+
 		public DeviceReservationStates()
 		{
 			ResetRequirements();
@@ -318,9 +321,6 @@ namespace Gauntlet
 			public int NumLacking;
 		}
 
-		private Dictionary<string, ResevationState> RequiredCollection;
-		private Dictionary<string, int> ProblemCollection;
-
 		private ResevationState FindClosestState(string DeviceKey)
 		{
 			if (RequiredCollection.ContainsKey(DeviceKey))
@@ -349,33 +349,42 @@ namespace Gauntlet
 	/// Singleton class that's responsible for providing a list of devices and reserving them. Code should call
 	/// EnumerateDevices to build a list of desired devices, which must then be reserved by calling ReserveDevices.
 	/// Once done ReleaseDevices should be called.
-	/// 
+	///
 	/// These reservations exist at the process level and we rely on the device implementation to provide arbitrage 
 	/// between difference processes and machines
-	/// 
+	///
 	/// </summary>
 	public class DevicePool : IDisposable
 	{
+		/// <summary>
+		/// Access to our singleton
+		/// </summary>
+		public static DevicePool Instance { get; private set; } = new DevicePool();
+
+		/// <summary>
+		/// Device reservation service URL
+		/// </summary>
+		public string DeviceURL;
 
 		/// <summary>
 		/// Object used for locking access to internal data
 		/// </summary>
-		private Object LockObject = new Object();
+		private object LockObject = new object();
 
 		/// <summary>
 		/// List of all provisioned devices that are available for reservations
 		/// </summary>
-		List<ITargetDevice> AvailableDevices = new List<ITargetDevice>();
+		private List<ITargetDevice> AvailableDevices = new List<ITargetDevice>();
 
 		/// <summary>
 		/// List of all devices that have been reserved
 		/// </summary>
-		List<ITargetDevice> ReservedDevices = new List<ITargetDevice>();
+		private List<ITargetDevice> ReservedDevices = new List<ITargetDevice>();
 
 		/// <summary>
 		/// List of platforms we've had devices for
 		/// </summary>
-		HashSet<UnrealTargetPlatform?> UsedPlatforms = new HashSet<UnrealTargetPlatform?>();
+		private HashSet<UnrealTargetPlatform?> UsedPlatforms = new HashSet<UnrealTargetPlatform?>();
 
 		/// <summary>
 		/// Device reservation left to fulfill
@@ -383,54 +392,45 @@ namespace Gauntlet
 		private DeviceReservationStates ReservationStates;
 
 		/// <summary>
-		/// Device reservation service URL 
-		/// </summary>
-		public string DeviceURL;
-
-		/// <summary>
 		/// Device to reservation lookup
 		/// </summary>
-		Dictionary<ITargetDevice, DeviceReservationAutoRenew> ServiceReservations = new Dictionary<ITargetDevice, DeviceReservationAutoRenew>();
-
+		private Dictionary<ITargetDevice, DeviceReservationAutoRenew> ServiceReservations = new Dictionary<ITargetDevice, DeviceReservationAutoRenew>();
 
 		/// <summary>
 		/// Target device info, private for reservation use
 		/// </summary>
-		Dictionary<ITargetDevice, DeviceDefinition> ServiceDeviceInfo = new Dictionary<ITargetDevice, DeviceDefinition>();
+		private Dictionary<ITargetDevice, DeviceDefinition> ServiceDeviceInfo = new Dictionary<ITargetDevice, DeviceDefinition>();
 
 		/// <summary>
 		/// List of device definitions that can be provisioned on demand
 		/// </summary>
-		List<DeviceDefinition> UnprovisionedDevices = new List<DeviceDefinition>();
+		private List<DeviceDefinition> UnprovisionedDevices = new List<DeviceDefinition>();
 
 		/// <summary>
 		/// List of definitions that failed to provision
 		/// </summary>
-		List<DeviceDefinition> FailedProvisions = new List<DeviceDefinition>();
+		private List<DeviceDefinition> FailedProvisions = new List<DeviceDefinition>();
 
 		/// <summary>
 		/// Local connection state for any device. We use this to avoid disconnecting devices that the
 		/// user may already be connected to when running tests
 		/// </summary>
-		Dictionary<ITargetDevice, bool> InitialConnectState = new Dictionary<ITargetDevice, bool>();
+		private Dictionary<ITargetDevice, bool> InitialConnectState = new Dictionary<ITargetDevice, bool>();
 
 		/// <summary>
 		/// Device constraints for performance profiles, etc
 		/// </summary>
-		Dictionary<ITargetDevice, UnrealDeviceTargetConstraint> Constraints = new Dictionary<ITargetDevice, UnrealDeviceTargetConstraint>();
+		private Dictionary<ITargetDevice, UnrealDeviceTargetConstraint> Constraints = new Dictionary<ITargetDevice, UnrealDeviceTargetConstraint>();
 
 		/// <summary>
-		/// Local tempdir...
+		/// Directory automation artifacts are saved to
 		/// </summary>
-		string LocalTempDir;
-
-
-		bool UniqueLocalTemps;
+		private string LocalTempDir;
 
 		/// <summary>
-		/// Static instance
+		/// Whether or not Unique temporary directories should be created
 		/// </summary>
-		private static DevicePool _Instance;
+		private bool bUniqueTemps;
 
 		/// <summary>
 		/// The maximum number of problem devices to report to device backend
@@ -443,35 +443,20 @@ namespace Gauntlet
 		/// </summary>
 		protected DevicePool()
 		{
-			if (_Instance == null)
-			{
-				_Instance = this;
-			}
-
 			// create two local devices by default?
 			AddLocalDevices(2);
-
 			ReservationStates = new DeviceReservationStates();
+
+			if(Instance == null)
+			{
+				Instance = this;
+			}
 		}
 
+		#region IDisposable Support
 		~DevicePool()
 		{
 			Dispose(false);
-		}
-
-		/// <summary>
-		/// Access to our singleton
-		/// </summary>
-		public static DevicePool Instance
-		{
-			get
-			{
-				if (_Instance == null)
-				{
-					new DevicePool();
-				}
-				return _Instance;
-			}
 		}
 
 		/// <summary>
@@ -479,11 +464,8 @@ namespace Gauntlet
 		/// </summary>
 		public static void Shutdown()
 		{
-			if (_Instance != null)
-			{
-				_Instance.Dispose();
-				_Instance = null;
-			}
+			Instance?.Dispose();
+			Instance = null;
 		}
 
 		public void Dispose()
@@ -547,275 +529,78 @@ namespace Gauntlet
 				}
 			}
 		}
-
-		static private void CleanupDevices(IEnumerable<UnrealTargetPlatform?> Platforms)
-		{
-			IEnumerable<IDeviceService> DeviceServices = Gauntlet.Utils.InterfaceHelpers.FindImplementations<IDeviceService>();
-			if (DeviceServices.Any())
-			{
-				foreach (UnrealTargetPlatform? Platform in Platforms)
-				{
-					IDeviceService DeviceService = DeviceServices.Where(D => D.CanSupportPlatform(Platform)).FirstOrDefault();
-					if (DeviceService != null)
-					{
-						DeviceService.CleanupDevices();
-					}
-				}
-			}
-		}
-
-		/// <summary>
-		/// Explicitly release all device reservations
-		/// </summary>
-		private void ReleaseReservations()
-		{
-
-			ServiceDeviceInfo.Clear();
-
-			foreach (ITargetDevice Device in ServiceReservations.Keys)
-			{
-				AvailableDevices.Remove(Device);
-				ReservedDevices.Remove(Device);
-				Device.Dispose();
-			}
-
-			foreach (DeviceReservationAutoRenew reservation in ServiceReservations.Values.Distinct())
-			{
-				reservation.Dispose();
-			}
-
-			ServiceReservations.Clear();
-
-		}
-
-		/// <summary>
-		/// Release all devices in the provided list from our reserved list
-		/// </summary>
-		/// <param name="DeviceList"></param>
-		public void ReleaseDevices(IEnumerable<ITargetDevice> DeviceList)
-		{
-			lock (LockObject)
-			{
-				// remove all these devices from our reserved list
-				ReservedDevices = ReservedDevices.Where(D => DeviceList.Contains(D) == false).ToList();
-
-				// disconnect them
-				List<ITargetDevice> KeepList = new List<ITargetDevice>();
-				foreach (ITargetDevice Device in DeviceList)
-				{
-					if (Device.IsConnected && InitialConnectState[Device] == false)
-					{
-						Device.Disconnect();
-					}
-
-					// if device is from reservation service, unregister it
-					DeviceReservationAutoRenew Reservation;
-					if (ServiceReservations.TryGetValue(Device, out Reservation))
-					{
-						bool DisposeReservation = ServiceReservations.Count(Entry => Entry.Value == Reservation) == 1;
-
-						// remove and dispose of device
-						// @todo: add support for reservation modification on server (partial device release)
-						ServiceReservations.Remove(Device);
-						ServiceDeviceInfo.Remove(Device);
-						AvailableDevices.Remove(Device);
-
-						InitialConnectState.Remove(Device);
-						Constraints.Remove(Device);
-
-						Device.Dispose();
-
-						// if last device in reservation, dispose the reservation
-						if (DisposeReservation)
-						{
-							Reservation.Dispose();
-						}
-					}
-					else
-					{
-						KeepList.Add(Device);
-					}
-
-				}
-
-				// Put all devices back into the available list at the front - if another device is requested we want to
-				// try and use one we just put a build on
-				KeepList.ForEach(D => { AvailableDevices.Remove(D); AvailableDevices.Insert(0, D); });
-			}
-		}
-
-		/// <summary>
-		/// Report target device issue to service with given error message
-		/// </summary>
-		public void ReportDeviceError(ITargetDevice Device, string ErrorMessage)
-		{
-			DeviceDefinition Def = null;
-			if (!ServiceDeviceInfo.TryGetValue(Device, out Def))
-			{
-				return;
-			}
-
-			ReportDeviceError(Def.Name, ErrorMessage);
-		}
-
-		/// <summary>
-		/// Reporting device issue using the device name provided by service
-		/// </summary>
-		private void ReportDeviceError(string ServiceDeviceName, string ErrorMessage)
-		{
-			if (MaxDeviceErrorReports == 0)
-			{
-				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Maximum device errors reported to backend, {Name} : {Message} ignored", ServiceDeviceName, ErrorMessage);
-				return;
-			}
-
-			MaxDeviceErrorReports--;
-
-			Reservation.ReportDeviceError(DeviceURL, ServiceDeviceName, ErrorMessage);
-		}
+		#endregion
 
 		/// <summary>
 		/// Get the reservation status as an array
 		/// </summary>
 		/// <returns></returns>
-		public string[] GetReservationStatuses()
-		{
-			return ReservationStates != null? ReservationStates.GetStatuses() : null;
-		}
+		public string[] GetReservationStatuses() => ReservationStates != null ? ReservationStates.GetStatuses() : null;
 
 		/// <summary>
 		/// Get the reserved device marked with problems as an array
 		/// </summary>
 		/// <returns></returns>
-		public string[] GetDeviceProblems()
-		{
-			return ReservationStates != null ? ReservationStates.GetProblems() : null;
-		}
+		public string[] GetDeviceProblems() => ReservationStates != null ? ReservationStates.GetProblems() : null;
 
 		/// <summary>
-		/// Report on Device reservation state
+		/// Returns the number of available devices of the provided type. This includes unprovisioned devices but not reserved ones.
+		/// Note: unprovisioned devices are currently only returned when device is not constrained
 		/// </summary>
-		public void ReportDeviceReservationState()
-		{
-			string PoolId = string.IsNullOrEmpty(Globals.DevicePoolId) ? "Local" : Globals.DevicePoolId;
-			string[] DeviceReservationStatus = GetReservationStatuses();
-			if (DeviceReservationStatus != null && DeviceReservationStatus.Length > 0)
-			{
-				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Device Reservation status from {Pool} pool: {Status}", PoolId, string.Join(", ", DeviceReservationStatus));
-			}
-			string[] DeviceProblemStatus = GetDeviceProblems();
-			if (DeviceProblemStatus != null && DeviceProblemStatus.Length > 0)
-			{
-				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Reserved Devices marked with problems from {Pool} pool: {Status}", PoolId, string.Join(", ", DeviceProblemStatus));
-			}
-		}
-
-		/// <summary>
-		/// Force clean the cache path by setting all of the files in the cache path
-		/// to have "normal" attributes (i.e. not read-only) before attempting to delete.
-		/// </summary>
-		public bool ForceCleanCachePath(string ClientTempDir)
-		{
-			DirectoryInfo ClientTempDirInfo = new DirectoryInfo(ClientTempDir) { Attributes = FileAttributes.Normal };
-
-			Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Setting files in {0} to have normal attributes (no longer read-only).", ClientTempDir);
-			foreach (FileSystemInfo info in ClientTempDirInfo.GetFileSystemInfos("*", SearchOption.AllDirectories))
-			{
-				info.Attributes = FileAttributes.Normal;
-			}
-
-			try
-			{
-				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Clearing artifact path {0} (force)", ClientTempDir);
-				Directory.Delete(ClientTempDir, true);
-			}
-			catch (Exception Ex)
-			{
-				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to force delete {File}. {Exception}", ClientTempDir, Ex.Message);
-				return false;
-			}
-
-			return true;
-		}
-
-		/// <summary>
-		/// Construct a path to hold cache files and make sure it is empty
-		/// </summary>
-		private string GetCleanCachePath(DeviceDefinition InDeviceDefiniton)
-		{
-			// Give the desktop platform a temp folder with its name under the device cache 
-			string PlatformCache = Path.Combine(LocalTempDir, "DeviceCache", InDeviceDefiniton.Platform.ToString());
-			string ClientTempDir = Path.Combine(PlatformCache, InDeviceDefiniton.Name);
-
-			int CleanAttempts = 1;
-
-			// Make sure this is a fresh directory 
-			while (Directory.Exists(ClientTempDir))
-			{
-				try
-				{
-					Directory.Delete(ClientTempDir, true);
-				}
-				catch (Exception Ex)
-				{
-					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Clearing artifact path {0} failed - attempting to force clean", ClientTempDir);
-					if (!ForceCleanCachePath(ClientTempDir))
-					{
-						// warn and use a different directory
-						Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to delete {Folder}. {Message}", ClientTempDir, Ex.Message);
-						ClientTempDir = Path.Combine(PlatformCache, string.Format("{0}_{1}", InDeviceDefiniton.Name, CleanAttempts++));
-					}
-				}
-			}
-			// create this path
-			Directory.CreateDirectory(ClientTempDir);
-
-			return ClientTempDir;
-		}
-
-		/// <summary>
-		/// Reserve all devices in the provided list. Once reserved a device will not be seen by any code that
-		/// calls EnumerateDevices
-		/// </summary>
-		/// <param name="DeviceList"></param>
-		/// <returns></returns>
-		public bool ReserveDevices(IEnumerable<ITargetDevice> DeviceList)
+		public int GetAvailableDeviceCount(UnrealDeviceTargetConstraint Constraint, Func<ITargetDevice, bool> Validate = null)
 		{
 			lock (LockObject)
 			{
-				// can reserve if not reserved...
-				if (ReservedDevices.Intersect(DeviceList).Count() > 0)
-				{
-					return false;
-				}
-
-				// remove these devices from the available list
-				AvailableDevices = AvailableDevices.Where(D => DeviceList.Contains(D) == false).ToList();
-
-				ReservedDevices.AddRange(DeviceList);
-				DeviceList.All(D => UsedPlatforms.Add(D.Platform));
+				return AvailableDevices.Where(D => Validate == null ? Constraint.Check(D) : Validate(D)).Count() +
+					UnprovisionedDevices.Where(D => Constraint.Check(D)).Count();
 			}
-			return true;
+		}
+
+		/// <summary>
+		/// Returns the number of available devices of the provided type. This includes unprovisioned devices but not reserved ones
+		/// Note: unprovisioned devices are currently only returned when device is not constrained
+		/// </summary>
+		public int GetTotalDeviceCount(UnrealDeviceTargetConstraint Constraint, Func<ITargetDevice, bool> Validate = null)
+		{
+			lock (LockObject)
+			{
+				return AvailableDevices.Union(ReservedDevices).Where(D => Validate == null ? Constraint.Check(D) : Validate(D)).Count() +
+					UnprovisionedDevices.Where(D => Constraint.Check(D)).Count();
+			}
+		}
+
+		public UnrealDeviceTargetConstraint GetConstraint(ITargetDevice Device)
+		{
+
+			if (!Constraints.ContainsKey(Device))
+			{
+				throw new AutomationException("Device pool has no contstaint for {0} (device was likely released)", Device);
+			}
+
+			return Constraints[Device];
 		}
 
 		public void SetLocalOptions(string InLocalTemp, bool InUniqueTemps, string InDeviceURL = "")
 		{
 			LocalTempDir = InLocalTemp;
-			UniqueLocalTemps = InUniqueTemps;
+			bUniqueTemps = InUniqueTemps;
 			DeviceURL = InDeviceURL;
 		}
 
 		public void AddLocalDevices(int MaxCount)
 		{
-			UnrealTargetPlatform LocalPlat = BuildHostPlatform.Current.Platform;
+			AddLocalDevices(MaxCount, BuildHostPlatform.Current.Platform);
+		}
 
-			int NumDevices = GetAvailableDeviceCount(new UnrealDeviceTargetConstraint(LocalPlat));
+		public void AddLocalDevices(int MaxCount, UnrealTargetPlatform LocalPlatform)
+		{
+			int NumDevices = GetAvailableDeviceCount(new UnrealDeviceTargetConstraint(LocalPlatform));
 
 			for (int i = NumDevices; i < MaxCount; i++)
 			{
 				DeviceDefinition Def = new DeviceDefinition();
 				Def.Name = string.Format("LocalDevice{0}", i);
-				Def.Platform = LocalPlat;
+				Def.Platform = LocalPlatform;
 				UnprovisionedDevices.Add(Def);
 			}
 		}
@@ -837,158 +622,11 @@ namespace Gauntlet
 					{
 						DeviceDefinition Def = new DeviceDefinition();
 						Def.Name = string.Format("Virtual{0}{1}", DevicePlatform.ToString(), i);
-						Def.Platform = DevicePlatform??BuildHostPlatform.Current.Platform;
+						Def.Platform = DevicePlatform ?? BuildHostPlatform.Current.Platform;
 						UnprovisionedDevices.Add(Def);
 					}
 				}
 			}
-		}
-
-		/// <summary>
-		/// Reserve devices from service
-		/// </summary>
-		public bool ReserveDevicesFromService(string DeviceURL, Dictionary<UnrealDeviceTargetConstraint, int> DeviceTypes)
-		{
-			if (String.IsNullOrEmpty(DeviceURL))
-			{
-				return false;
-			}
-
-			ReservationStates.ResetRequirements();
-
-			Dictionary<UnrealTargetPlatform, string> DeviceMap = new Dictionary<UnrealTargetPlatform, string>();
-
-			foreach (string Platform in UnrealTargetPlatform.GetValidPlatformNames())
-			{
-				DeviceMap.Add(UnrealTargetPlatform.Parse(Platform), Platform);
-			}
-
-			// convert devices to request list
-			foreach (KeyValuePair<UnrealDeviceTargetConstraint, int> Entry in DeviceTypes)
-			{
-				if (Entry.Key.Platform == null)
-				{
-					continue;
-				}
-
-                if (!DeviceMap.ContainsKey(Entry.Key.Platform.Value))
-				{
-					// if an unsupported device, we can't reserve it
-					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to reserve service device of type: {Type}", Entry.Key);
-					return false;
-				}
-
-				if (!string.IsNullOrEmpty(Entry.Key.Model))
-				{
-					// if specific device model, we can't currently reserve it from (legacy) service
-					if (DeviceURL.ToLower().Contains("deviceservice.epicgames.net"))
-					{
-						Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to reserve service device of model: {Model} on legacy service", Entry.Key.Model);
-						return false;
-					}
-									
-				}
-
-				for (int i = 0; i < Entry.Value; i++)
-				{
-					// @todo: if any additional reservation requirements, encode constraint into json
-					ReservationStates.AddRequired(Entry.Key.FormatWithIdentifier(), Entry.Value);
-				}				
-			}
-
-			// reserve devices
-			Uri ReservationServerUri;
-			if (Uri.TryCreate(DeviceURL, UriKind.Absolute, out ReservationServerUri))
-			{
-				DeviceReservationAutoRenew DeviceReservation = null;
-
-				string PoolID = Globals.DevicePoolId;
-
-				try
-				{
-					DeviceReservation = new DeviceReservationAutoRenew(DeviceURL, 0, PoolID, ReservationStates.GetRequirements());
-				}
-				catch (Exception Ex)
-				{
-					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to make device registration with constraint {Constraint}: {Exception}", string.Join(", ", ReservationStates.GetRequirements()), Ex);
-					return false;
-				}
-
-				if (DeviceReservation != null)
-				{
-					// Update RequiredContraints list with what the reservation satisfied.
-					foreach (var Device in DeviceReservation.Devices)
-					{
-						ReservationStates.MarkReserved(Device);
-					}
-				}
-
-				if (DeviceReservation == null || DeviceReservation.Devices.Count != ReservationStates.RequiredCount())
-				{
-					return false;
-				}
-
-				// Add target devices from reservation
-				List<ITargetDevice> ReservedDevices = new List<ITargetDevice>();
-				foreach (var Device in DeviceReservation.Devices)
-				{
-					DeviceDefinition Def = new DeviceDefinition();
-					Def.Address = Device.IPOrHostName;
-					Def.Name = Device.Name;
-					Def.Platform = DeviceMap.FirstOrDefault(Entry => Entry.Value == Device.Type.Replace("-DevKit", "", StringComparison.OrdinalIgnoreCase)).Key;
-					Def.DeviceData = Device.DeviceData;
-					Def.Model = Device.Model;
-
-					EPerfSpec Out = EPerfSpec.Unspecified;
-					if (!String.IsNullOrEmpty(Device.PerfSpec) && !Enum.TryParse<EPerfSpec>(Device.PerfSpec, true, out Out))
-					{
-						throw new AutomationException("Unable to convert perfspec '{0}' into an EPerfSpec", Device.PerfSpec);
-					}
-					Def.PerfSpec = Out;
-
-				    ITargetDevice TargetDevice = CreateAndRegisterDeviceFromDefinition(Def);
-
-					// If a device from service can't be added, fail reservation and cleanup devices
-					// @todo: device problem reporting, requesting additional devices
-					if (TargetDevice == null)
-					{
-
-						ReportDeviceError(Device.Name, "CreateDeviceError");
-						ReservationStates.MarkProblem(Device);
-
-						// If some devices from reservation have been created, release them which will also dispose of reservation
-						if (ReservedDevices.Count > 0)
-						{
-							ReleaseDevices(ReservedDevices);
-						}
-						else
-						{
-							// otherwise, no devices have been creation so just cancel this reservation
-							DeviceReservation.Dispose();
-						}
-
-						Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to make device registration: device registration failed for {Platform}:{Name}", Def.Platform, Def.Name);
-						Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, " Device Reservation status from {Pool} pool: {Status}", PoolID, string.Join(", ", ReservationStates.GetStatuses()));
-						return false;
-					}
-					else
-					{						
-						ReservedDevices.Add(TargetDevice);
-						UsedPlatforms.Add(TargetDevice.Platform);
-					}
-
-					ServiceDeviceInfo[TargetDevice] = Def;
-					ServiceReservations[TargetDevice] = DeviceReservation;
-				}
-
-				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Successfully reserved service devices");
-				Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, " Device Reservation status from {Pool} pool: {Status}", PoolID, string.Join(", ", ReservationStates.GetStatuses()));
-				return true;
-			}
-
-			Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to reserve service devices:");
-			Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, " Device Reservation status from {Pool} pool: {Status}", Globals.DevicePoolId, string.Join(", ", ReservationStates.GetStatuses()));
-			return false;
 		}
 
 		/// <summary>
@@ -997,7 +635,7 @@ namespace Gauntlet
 		/// <param name="InputReference"></param>
 		/// <param name="InLocalTempDir"></param>
 		/// <param name="ObeyConstraints"></param>
-		public void AddDevices(UnrealTargetPlatform DefaultPlatform, string InputReference, bool ObeyConstraints=true)
+		public void AddDevices(UnrealTargetPlatform DefaultPlatform, string InputReference, bool ObeyConstraints = true)
 		{
 			lock (LockObject)
 			{
@@ -1011,7 +649,7 @@ namespace Gauntlet
 				if (PossibleFileName && File.Exists(InputReference))
 				{
 					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Adding devices from {Reference}", InputReference);
-					List<DeviceDefinition> DeviceDefinitions = JsonSerializer.Deserialize<List < DeviceDefinition >>(
+					List<DeviceDefinition> DeviceDefinitions = JsonSerializer.Deserialize<List<DeviceDefinition>>(
 						File.ReadAllText(InputReference),
 						new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
 					);
@@ -1093,7 +731,7 @@ namespace Gauntlet
 						string[] DevicesList = InputReference.Split(',');
 
 						foreach (string DeviceRef in DevicesList)
-						{							
+						{
 
 							// check for <platform>:<address>:<port>|<model>. We pass address:port to device constructor
 							Match M = Regex.Match(DeviceRef, @"(.+?):(.+)");
@@ -1103,7 +741,7 @@ namespace Gauntlet
 							string Model = string.Empty;
 
 							// when using device service, skip adding local non-desktop devices to pool
-							bool IsDesktop = UnrealBuildTool.Utils.GetPlatformsInClass(UnrealPlatformClass.Desktop).Contains(DevicePlatform);							
+							bool IsDesktop = UnrealBuildTool.Utils.GetPlatformsInClass(UnrealPlatformClass.Desktop).Contains(DevicePlatform);
 							if (!IsDesktop && DeviceRef.Equals("default", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrEmpty(DeviceURL))
 							{
 								continue;
@@ -1126,7 +764,7 @@ namespace Gauntlet
 									Model = Components[1];
 								}
 
-							} 
+							}
 
 							Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Added device {Platform}:{Address} to pool", DevicePlatform, DeviceAddress);
 							DeviceDefinition Def = new DeviceDefinition();
@@ -1179,202 +817,8 @@ namespace Gauntlet
 		}
 
 		/// <summary>
-		/// Created and registered a device from the provided definition 
-		/// </summary>
-		/// <param name="Def"></param>
-		/// <returns></returns>
-		protected ITargetDevice CreateAndRegisterDeviceFromDefinition(DeviceDefinition Def)
-		{
-			ITargetDevice NewDevice = null;
-
-			IDeviceFactory Factory = Gauntlet.Utils.InterfaceHelpers.FindImplementations<IDeviceFactory>()
-					.Where(F => F.CanSupportPlatform(Def.Platform))
-					.FirstOrDefault();
-
-			if (Factory == null)
-			{
-				throw new AutomationException("No IDeviceFactory implementation that supports {0}", Def.Platform);
-			}
-
-			try
-			{
-				bool IsDesktop = Def.Platform != null && UnrealBuildTool.Utils.GetPlatformsInClass(UnrealPlatformClass.Desktop).Contains(Def.Platform!.Value);
-
-				string ClientTempDir = GetCleanCachePath(Def);
-
-				if (IsDesktop)
-				{
-					NewDevice = Factory.CreateDevice(Def.Name, ClientTempDir);
-				}
-				else
-				{
-					NewDevice = Factory.CreateDevice(Def.Address, ClientTempDir, Def.DeviceData);
-				}
-
-				if (NewDevice.IsAvailable == false)
-				{
-					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Assigned device {Name} reports unavailable. Requesting a forced disconnect", NewDevice);
-					NewDevice.Disconnect(true);
-
-					if  (NewDevice.IsAvailable == false)
-					{
-						Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Assigned device {Name} still  unavailable. Requesting a reboot", NewDevice);
-						NewDevice.Reboot();
-					}
-				}
-					
-				lock (LockObject)
-				{
-					if (NewDevice != null)
-					{
-						RegisterDevice(NewDevice, new UnrealDeviceTargetConstraint(NewDevice.Platform, Def.PerfSpec, Def.Model));
-					}
-				}
-			}
-			catch (Exception Ex)
-			{
-				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to create device {Name}. {Message}\n{StackTrace}", Def.ToString(), Ex.Message, Ex.StackTrace);
-			}
-
-			return NewDevice;
-		}
-
-		public UnrealDeviceTargetConstraint GetConstraint(ITargetDevice Device)
-		{
-
-			if (!Constraints.ContainsKey(Device))
-			{
-				throw new AutomationException("Device pool has no contstaint for {0} (device was likely released)", Device);
-			}
-
-			return Constraints[Device];
-		}
-
-		/// <summary>
-		/// Returns the number of available devices of the provided type. This includes unprovisioned devices but not reserved ones.
-		/// Note: unprovisioned devices are currently only returned when device is not constrained
-		/// </summary>
-		public int GetAvailableDeviceCount(UnrealDeviceTargetConstraint Constraint, Func<ITargetDevice, bool> Validate = null)
-		{
-			lock (LockObject)
-			{
-				return AvailableDevices.Where(D => Validate == null ? Constraint.Check(D) : Validate(D)).Count() +
-					UnprovisionedDevices.Where(D => Constraint.Check(D)).Count();
-			}
-		}
-
-		/// <summary>
-		/// Returns the number of available devices of the provided type. This includes unprovisioned devices but not reserved ones
-		/// Note: unprovisioned devices are currently only returned when device is not constrained
-		/// </summary>
-		public int GetTotalDeviceCount(UnrealDeviceTargetConstraint Constraint, Func<ITargetDevice, bool> Validate = null)
-		{
-			lock (LockObject)
-			{
-				return AvailableDevices.Union(ReservedDevices).Where(D => Validate == null ? Constraint.Check(D) : Validate(D)).Count() +
-					UnprovisionedDevices.Where(D => Constraint.Check(D)).Count();
-			}
-		}
-
-		/// <summary>
-		///	Checks whether device pool can accommodate requirements, optionally add service devices to meet demand
-		/// </summary>
-		public bool CheckAvailableDevices(Dictionary<UnrealDeviceTargetConstraint, int> RequiredDevices, IReadOnlyCollection<ProblemDevice> ProblemDevices = null, bool UseServiceDevices = true)
-		{
-			Dictionary<UnrealDeviceTargetConstraint, int> AvailableDeviceTypes = new Dictionary<UnrealDeviceTargetConstraint, int>();
-			Dictionary<UnrealDeviceTargetConstraint, int> TotalDeviceTypes = new Dictionary<UnrealDeviceTargetConstraint, int>();
-
-			// Do these "how many available" checks every time because the DevicePool provisions on demand so while it may think it has N machines, 
-			// some of them may fail to be provisioned and we could end up with none!
-
-			// See how many of these types are in device pool (mostly to supply informative info if we can't meet these)
-
-			foreach (var PlatformRequirement in RequiredDevices)
-			{
-				UnrealDeviceTargetConstraint Constraint = PlatformRequirement.Key;
-
-				Func<ITargetDevice, bool> Validate = (ITargetDevice Device) =>
-				{
-
-					if (!Constraint.Check(Device))
-					{
-						return false;
-					}
-
-					if (ProblemDevices == null)
-					{
-						return true;
-					}
-
-					foreach (ProblemDevice PDevice in ProblemDevices)
-					{
-						if (PDevice.Platform == Device.Platform && PDevice.Name == Device.Name)
-						{
-							return false;
-						}
-					}
-
-					return true;
-				};
-
-				AvailableDeviceTypes[Constraint] = DevicePool.Instance.GetAvailableDeviceCount(Constraint, Validate);
-				TotalDeviceTypes[Constraint] = DevicePool.Instance.GetTotalDeviceCount(Constraint, Validate);
-
-
-				Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, "{Constraint}: {Platform} devices required. Total:{Total}, Available:{Available}",
-					Constraint, PlatformRequirement.Value,
-					TotalDeviceTypes[PlatformRequirement.Key], AvailableDeviceTypes[PlatformRequirement.Key]);
-			}
-
-			// get a list of any platforms where we don't have enough
-			var TooFewTotalDevices = RequiredDevices.Where(KP => TotalDeviceTypes[KP.Key] < RequiredDevices[KP.Key]).Select(KP => KP.Key);
-			var TooFewCurrentDevices = RequiredDevices.Where(KP => AvailableDeviceTypes[KP.Key] < RequiredDevices[KP.Key]).Select(KP => KP.Key);
-
-
-			var Devices = TooFewTotalDevices.Concat(TooFewCurrentDevices);		
-
-			// Request devices from the service if we need them
-			if (UseServiceDevices && !String.IsNullOrEmpty(DeviceURL)  && (TooFewTotalDevices.Count() > 0 || TooFewCurrentDevices.Count() > 0))
-			{				
-
-				Dictionary<UnrealDeviceTargetConstraint, int> DeviceCounts = new Dictionary<UnrealDeviceTargetConstraint, int>();
-
-				Devices.ToList().ForEach(Platform => DeviceCounts[Platform] = RequiredDevices[Platform]);
-
-				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Requesting devices from service at {URL}", DeviceURL);
-
-				// Acquire necessary devices from service
-				if (!ReserveDevicesFromService(DeviceURL, DeviceCounts))
-				{
-					return false;
-				}
-			}
-			else
-			{
-				// if we can't ever run then throw an exception
-				if (TooFewTotalDevices.Count() > 0)
-				{
-					var MissingDeviceStrings = TooFewTotalDevices.Select(D => string.Format("Not enough devices of type {0} exist for test. ({1} required, {2} available)", D, RequiredDevices[D], AvailableDeviceTypes[D]));
-					Log.Error(KnownLogEvents.Gauntlet_DeviceEvent, string.Join("\n", MissingDeviceStrings));
-					throw new AutomationException("Not enough devices available");
-				}
-
-				// if we can't  run now then return false
-				if (TooFewCurrentDevices.Count() > 0)
-				{
-					var MissingDeviceStrings = TooFewCurrentDevices.Select(D => string.Format("Not enough devices of type {0} available for test. ({1} required, {2} available)", D, RequiredDevices[D], AvailableDeviceTypes[D]));
-					Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, string.Join("\n", MissingDeviceStrings));
-					return false;
-				}
-			}
-
-			return true;
-
-		}
-
-		/// <summary>
 		/// Run the provided function across all our devices until it returns false. Devices are provisioned on demand (e.g turned from info into an ITargetDevice)
-		/// </summary>		
+		/// </summary>
 		public void EnumerateDevices(UnrealTargetPlatform Platform, Func<ITargetDevice, bool> Predicate)
 		{
 			EnumerateDevices(new UnrealDeviceTargetConstraint(Platform), Predicate);
@@ -1385,7 +829,7 @@ namespace Gauntlet
 			lock (LockObject)
 			{
 				List<ITargetDevice> Selection = new List<ITargetDevice>();
-				
+
 				Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, $"Enumerating devices for constraint {Constraint}");
 
 				Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, $"   Available devices:");
@@ -1393,7 +837,7 @@ namespace Gauntlet
 
 				Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, $"   Unprovisioned devices:");
 				UnprovisionedDevices.ForEach(D => Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, $"      {D}"));
-				
+
 				// randomize the order of all devices that are of this platform
 				var MatchingProvisionedDevices = AvailableDevices.Where(D => Constraint.Check(D)).ToList();
 				var MatchingUnprovisionedDevices = UnprovisionedDevices.Where(D => Constraint.Check(D)).ToList();
@@ -1459,6 +903,628 @@ namespace Gauntlet
 				} while (OutOfDevices == false && ContinuePredicate);
 			}
 		}
+
+		/// <summary>
+		/// Reserve all devices in the provided list. Once reserved a device will not be seen by any code that
+		/// calls EnumerateDevices
+		/// </summary>
+		/// <param name="DeviceList"></param>
+		/// <returns></returns>
+		public bool ReserveDevices(IEnumerable<ITargetDevice> DeviceList)
+		{
+			lock (LockObject)
+			{
+				// can reserve if not reserved...
+				if (ReservedDevices.Intersect(DeviceList).Count() > 0)
+				{
+					return false;
+				}
+
+				// remove these devices from the available list
+				AvailableDevices = AvailableDevices.Where(D => DeviceList.Contains(D) == false).ToList();
+
+				ReservedDevices.AddRange(DeviceList);
+				DeviceList.All(D => UsedPlatforms.Add(D.Platform));
+			}
+			return true;
+		}
+
+		/// <summary>
+		/// Reserve devices from service
+		/// </summary>
+		public bool ReserveDevicesFromService(string DeviceURL, Dictionary<UnrealDeviceTargetConstraint, int> DeviceTypes)
+		{
+			if (String.IsNullOrEmpty(DeviceURL))
+			{
+				return false;
+			}
+
+			ReservationStates.ResetRequirements();
+
+			Dictionary<UnrealTargetPlatform, string> DeviceMap = new Dictionary<UnrealTargetPlatform, string>();
+
+			foreach (string Platform in UnrealTargetPlatform.GetValidPlatformNames())
+			{
+				DeviceMap.Add(UnrealTargetPlatform.Parse(Platform), Platform);
+			}
+
+			// convert devices to request list
+			foreach (KeyValuePair<UnrealDeviceTargetConstraint, int> Entry in DeviceTypes)
+			{
+				if (Entry.Key.Platform == null)
+				{
+					continue;
+				}
+
+				if (!DeviceMap.ContainsKey(Entry.Key.Platform.Value))
+				{
+					// if an unsupported device, we can't reserve it
+					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to reserve service device of type: {Type}", Entry.Key);
+					return false;
+				}
+
+				if (!string.IsNullOrEmpty(Entry.Key.Model))
+				{
+					// if specific device model, we can't currently reserve it from (legacy) service
+					if (DeviceURL.ToLower().Contains("deviceservice.epicgames.net"))
+					{
+						Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to reserve service device of model: {Model} on legacy service", Entry.Key.Model);
+						return false;
+					}
+				}
+
+				for (int i = 0; i < Entry.Value; i++)
+				{
+					// @todo: if any additional reservation requirements, encode constraint into json
+					ReservationStates.AddRequired(Entry.Key.FormatWithIdentifier(), Entry.Value);
+				}
+			}
+
+			// reserve devices
+			Uri ReservationServerUri;
+			if (Uri.TryCreate(DeviceURL, UriKind.Absolute, out ReservationServerUri))
+			{
+				DeviceReservationAutoRenew DeviceReservation = null;
+
+				string PoolID = Globals.DevicePoolId;
+
+				try
+				{
+					DeviceReservation = new DeviceReservationAutoRenew(DeviceURL, 0, PoolID, ReservationStates.GetRequirements());
+				}
+				catch (Exception Ex)
+				{
+					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to make device registration with constraint {Constraint}: {Exception}", string.Join(", ", ReservationStates.GetRequirements()), Ex);
+					return false;
+				}
+
+				if (DeviceReservation != null)
+				{
+					// Update RequiredContraints list with what the reservation satisfied.
+					foreach (var Device in DeviceReservation.Devices)
+					{
+						ReservationStates.MarkReserved(Device);
+					}
+				}
+
+				if (DeviceReservation == null || DeviceReservation.Devices.Count != ReservationStates.RequiredCount())
+				{
+					return false;
+				}
+
+				if (DeviceReservation.InstallRequired == true)
+				{
+					UnrealAppConfig.ForceSkipInstall = false;
+					UnrealAppConfig.ForceFullClean = true;
+				}
+				else if (DeviceReservation.InstallRequired == false)
+				{
+					UnrealAppConfig.ForceSkipInstall = true;
+					UnrealAppConfig.ForceFullClean = false;
+				}
+				else
+				{
+					UnrealAppConfig.ForceSkipInstall = null;
+					UnrealAppConfig.ForceFullClean = null;
+				}
+
+				// Add target devices from reservation
+				List<ITargetDevice> ReservedDevices = new List<ITargetDevice>();
+				foreach (var Device in DeviceReservation.Devices)
+				{
+					DeviceDefinition Def = new DeviceDefinition();
+					Def.Address = Device.IPOrHostName;
+					Def.Name = Device.Name;
+					Def.Platform = DeviceMap.FirstOrDefault(Entry => Entry.Value == Device.Type.Replace("-DevKit", "", StringComparison.OrdinalIgnoreCase)).Key;
+					Def.DeviceData = Device.DeviceData;
+					Def.Model = Device.Model;
+
+					EPerfSpec Out = EPerfSpec.Unspecified;
+					if (!String.IsNullOrEmpty(Device.PerfSpec) && !Enum.TryParse<EPerfSpec>(Device.PerfSpec, true, out Out))
+					{
+						throw new AutomationException("Unable to convert perfspec '{0}' into an EPerfSpec", Device.PerfSpec);
+					}
+					Def.PerfSpec = Out;
+
+					ITargetDevice TargetDevice = CreateAndRegisterDeviceFromDefinition(Def);
+
+					// If a device from service can't be added, fail reservation and cleanup devices
+					// @todo: device problem reporting, requesting additional devices
+					if (TargetDevice == null)
+					{
+						ReportDeviceError(Device.Name, "CreateDeviceError");
+						ReservationStates.MarkProblem(Device);
+
+						// If some devices from reservation have been created, release them which will also dispose of reservation
+						if (ReservedDevices.Count > 0)
+						{
+							ReleaseDevices(ReservedDevices);
+						}
+						else
+						{
+							// otherwise, no devices have been creation so just cancel this reservation
+							DeviceReservation.Dispose();
+						}
+
+						Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to make device registration: device registration failed for {Platform}:{Name}", Def.Platform, Def.Name);
+						Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, " Device Reservation status from {Pool} pool: {Status}", PoolID, string.Join(", ", ReservationStates.GetStatuses()));
+						return false;
+					}
+					else
+					{
+						ReservedDevices.Add(TargetDevice);
+						UsedPlatforms.Add(TargetDevice.Platform);
+					}
+
+					ServiceDeviceInfo[TargetDevice] = Def;
+					ServiceReservations[TargetDevice] = DeviceReservation;
+				}
+
+				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Successfully reserved service devices");
+				Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, " Device Reservation status from {Pool} pool: {Status}", PoolID, string.Join(", ", ReservationStates.GetStatuses()));
+				return true;
+			}
+
+			Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Unable to reserve service devices:");
+			Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, " Device Reservation status from {Pool} pool: {Status}", Globals.DevicePoolId, string.Join(", ", ReservationStates.GetStatuses()));
+			return false;
+		}
+
+		/// <summary>
+		/// Report on Device reservation state
+		/// </summary>
+		public void ReportDeviceReservationState()
+		{
+			string PoolId = string.IsNullOrEmpty(Globals.DevicePoolId) ? "Local" : Globals.DevicePoolId;
+			string[] DeviceReservationStatus = GetReservationStatuses();
+			if (DeviceReservationStatus != null && DeviceReservationStatus.Length > 0)
+			{
+				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Device Reservation status from {Pool} pool: {Status}", PoolId, string.Join(", ", DeviceReservationStatus));
+			}
+			string[] DeviceProblemStatus = GetDeviceProblems();
+			if (DeviceProblemStatus != null && DeviceProblemStatus.Length > 0)
+			{
+				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Reserved Devices marked with problems from {Pool} pool: {Status}", PoolId, string.Join(", ", DeviceProblemStatus));
+			}
+		}
+
+		/// <summary>
+		/// Report target device issue to service with given error message
+		/// </summary>
+		public void ReportDeviceError(ITargetDevice Device, string ErrorMessage)
+		{
+			DeviceDefinition Def = null;
+			if (!ServiceDeviceInfo.TryGetValue(Device, out Def))
+			{
+				return;
+			}
+
+			ReportDeviceError(Def.Name, ErrorMessage);
+		}
+
+		/// <summary>
+		/// Release all devices in the provided list from our reserved list
+		/// </summary>
+		/// <param name="DeviceList"></param>
+		public void ReleaseDevices(IEnumerable<ITargetDevice> DeviceList)
+		{
+			lock (LockObject)
+			{
+				// remove all these devices from our reserved list
+				ReservedDevices = ReservedDevices.Where(D => DeviceList.Contains(D) == false).ToList();
+
+				// disconnect them
+				List<ITargetDevice> KeepList = new List<ITargetDevice>();
+				foreach (ITargetDevice Device in DeviceList)
+				{
+					DeviceConfigurationCache.Instance.RevertDeviceConfiguration(Device);
+
+					if (Device.IsConnected && InitialConnectState[Device] == false)
+					{
+						Device.Disconnect();
+					}
+
+					// if device is from reservation service, unregister it
+					DeviceReservationAutoRenew Reservation;
+					if (ServiceReservations.TryGetValue(Device, out Reservation))
+					{
+						bool DisposeReservation = ServiceReservations.Count(Entry => Entry.Value == Reservation) == 1;
+
+						// remove and dispose of device
+						// @todo: add support for reservation modification on server (partial device release)
+						ServiceReservations.Remove(Device);
+						ServiceDeviceInfo.Remove(Device);
+						AvailableDevices.Remove(Device);
+
+						InitialConnectState.Remove(Device);
+						Constraints.Remove(Device);
+
+						Device.Dispose();
+
+						// if last device in reservation, dispose the reservation
+						if (DisposeReservation)
+						{
+							Reservation.Dispose();
+						}
+					}
+					else
+					{
+						KeepList.Add(Device);
+					}
+
+				}
+
+				// Put all devices back into the available list at the front - if another device is requested we want to
+				// try and use one we just put a build on
+				KeepList.ForEach(D => { AvailableDevices.Remove(D); AvailableDevices.Insert(0, D); });
+			}
+		}
+
+		/// <summary>
+		///	Checks whether device pool can accommodate requirements, optionally add service devices to meet demand
+		/// </summary>
+		public bool CheckAvailableDevices(Dictionary<UnrealDeviceTargetConstraint, int> RequiredDevices, IReadOnlyCollection<ProblemDevice> ProblemDevices = null, bool UseServiceDevices = true)
+		{
+			Dictionary<UnrealDeviceTargetConstraint, int> AvailableDeviceTypes = new Dictionary<UnrealDeviceTargetConstraint, int>();
+			Dictionary<UnrealDeviceTargetConstraint, int> TotalDeviceTypes = new Dictionary<UnrealDeviceTargetConstraint, int>();
+
+			// Do these "how many available" checks every time because the DevicePool provisions on demand so while it may think it has N machines, 
+			// some of them may fail to be provisioned and we could end up with none!
+
+			// See how many of these types are in device pool (mostly to supply informative info if we can't meet these)
+
+			foreach (var PlatformRequirement in RequiredDevices)
+			{
+				UnrealDeviceTargetConstraint Constraint = PlatformRequirement.Key;
+
+				Func<ITargetDevice, bool> Validate = (ITargetDevice Device) =>
+				{
+
+					if (!Constraint.Check(Device))
+					{
+						return false;
+					}
+
+					if (ProblemDevices == null)
+					{
+						return true;
+					}
+
+					foreach (ProblemDevice PDevice in ProblemDevices)
+					{
+						if (PDevice.Platform == Device.Platform && PDevice.Name == Device.Name)
+						{
+							return false;
+						}
+					}
+
+					return true;
+				};
+
+				AvailableDeviceTypes[Constraint] = DevicePool.Instance.GetAvailableDeviceCount(Constraint, Validate);
+				TotalDeviceTypes[Constraint] = DevicePool.Instance.GetTotalDeviceCount(Constraint, Validate);
+
+
+				Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, "{Constraint}: {Platform} devices required. Total:{Total}, Available:{Available}",
+					Constraint, PlatformRequirement.Value,
+					TotalDeviceTypes[PlatformRequirement.Key], AvailableDeviceTypes[PlatformRequirement.Key]);
+			}
+
+			// get a list of any platforms where we don't have enough
+			var TooFewTotalDevices = RequiredDevices.Where(KP => TotalDeviceTypes[KP.Key] < RequiredDevices[KP.Key]).Select(KP => KP.Key);
+			var TooFewCurrentDevices = RequiredDevices.Where(KP => AvailableDeviceTypes[KP.Key] < RequiredDevices[KP.Key]).Select(KP => KP.Key);
+
+
+			var Devices = TooFewTotalDevices.Concat(TooFewCurrentDevices);
+
+			// Request devices from the service if we need them
+			if (UseServiceDevices && !String.IsNullOrEmpty(DeviceURL) && (TooFewTotalDevices.Count() > 0 || TooFewCurrentDevices.Count() > 0))
+			{
+
+				Dictionary<UnrealDeviceTargetConstraint, int> DeviceCounts = new Dictionary<UnrealDeviceTargetConstraint, int>();
+
+				Devices.ToList().ForEach(Platform => DeviceCounts[Platform] = RequiredDevices[Platform]);
+
+				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Requesting devices from service at {URL}", DeviceURL);
+
+				// Acquire necessary devices from service
+				if (!ReserveDevicesFromService(DeviceURL, DeviceCounts))
+				{
+					return false;
+				}
+			}
+			else
+			{
+				// if we can't ever run then throw an exception
+				if (TooFewTotalDevices.Count() > 0)
+				{
+					var MissingDeviceStrings = TooFewTotalDevices.Select(D => string.Format("Not enough devices of type {0} exist for test. ({1} required, {2} available)", D, RequiredDevices[D], AvailableDeviceTypes[D]));
+					Log.Error(KnownLogEvents.Gauntlet_DeviceEvent, string.Join("\n", MissingDeviceStrings));
+					throw new AutomationException("Not enough devices available");
+				}
+
+				// if we can't  run now then return false
+				if (TooFewCurrentDevices.Count() > 0)
+				{
+					var MissingDeviceStrings = TooFewCurrentDevices.Select(D => string.Format("Not enough devices of type {0} available for test. ({1} required, {2} available)", D, RequiredDevices[D], AvailableDeviceTypes[D]));
+					Log.Verbose(KnownLogEvents.Gauntlet_DeviceEvent, string.Join("\n", MissingDeviceStrings));
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		/// <summary>
+		/// Created and registered a device from the provided definition
+		/// </summary>
+		/// <param name="Def"></param>
+		/// <returns></returns>
+		protected ITargetDevice CreateAndRegisterDeviceFromDefinition(DeviceDefinition Def)
+		{
+			ITargetDevice NewDevice = null;
+
+			IDeviceFactory Factory = InterfaceHelpers.FindImplementations<IDeviceFactory>()
+					.Where(F => F.CanSupportPlatform(Def.Platform))
+					.FirstOrDefault();
+
+			if (Factory == null)
+			{
+				throw new AutomationException("No IDeviceFactory implementation that supports {0}", Def.Platform);
+			}
+
+			try
+			{
+				bool IsDesktop = Def.Platform != null && UnrealBuildTool.Utils.GetPlatformsInClass(UnrealPlatformClass.Desktop).Contains(Def.Platform!.Value);
+
+				string ClientTempDir = GetCleanCachePath(Def);
+
+				if (IsDesktop)
+				{
+					NewDevice = Factory.CreateDevice(Def.Name, ClientTempDir);
+				}
+				else
+				{
+					NewDevice = Factory.CreateDevice(Def.Address, ClientTempDir, Def.DeviceData);
+				}
+
+				if (NewDevice.IsAvailable == false)
+				{
+					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Assigned device {Name} reports unavailable. Requesting a forced disconnect", NewDevice);
+					NewDevice.Disconnect(true);
+
+					if (NewDevice.IsAvailable == false)
+					{
+						Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Assigned device {Name} still  unavailable. Requesting a reboot", NewDevice);
+						NewDevice.Reboot();
+					}
+				}
+
+				// Now validate if the kit meets the necessary requirements
+				if (!TryValidateDeviceRequirements(NewDevice))
+				{
+					Log.Info("\nSkipping device.");
+					return null;
+				}
+
+				lock (LockObject)
+				{
+					if (NewDevice != null)
+					{
+						RegisterDevice(NewDevice, new UnrealDeviceTargetConstraint(NewDevice.Platform, Def.PerfSpec, Def.Model));
+					}
+				}
+			}
+			catch (Exception Ex)
+			{
+				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to create device {Name}. {Message}\n{StackTrace}", Def.ToString(), Ex.Message, Ex.StackTrace);
+			}
+
+			return NewDevice;
+		}
+
+		/// <summary>
+		/// Verifies if the provided TargetDevice meets requirements such as firmware, login status, settings, etc.
+		/// </summary>
+		/// <param name="Device">The device to validate</param>
+		/// <returns>True if the device matches the required specifications</returns>
+		protected bool TryValidateDeviceRequirements(ITargetDevice Device)
+		{
+			IEnumerable<IDeviceValidator> Validators = InterfaceHelpers.FindImplementations<IDeviceValidator>(true).Where(Validator => Validator.bEnabled);
+			if (!Validators.Any())
+			{
+				return true;
+			}
+
+			bool bInitiallyConnected = Device.IsConnected;
+
+			Log.Info("\nValidating requirements for {Device}...", Device);
+			bool bSucceeded = true;
+
+			foreach (IDeviceValidator Validator in Validators)
+			{
+				Log.Info("\nStarting validation for {Validator}", Validator);
+
+				if(!Validator.TryValidateDevice(Device))
+				{
+					Log.Warning("Failure! See above for details");
+					bSucceeded = false;
+				}
+				else
+				{
+					Log.Info("Success!");
+				}
+			}
+
+			if(!bSucceeded)
+			{
+				Log.Warning("\nFailed to validate requirements.");
+			}
+			else
+			{
+				Log.Info("\nAll validators passed, selecting device {Device}\n", Device);
+			}
+
+			// Most validators require establishing a connection to the device.
+			// If we weren't originally connected, disconnect so the initial connection state can be cached during device reservation
+			if(!bInitiallyConnected && Device.IsConnected)
+			{
+				Device.Disconnect();
+			}
+
+			return bSucceeded;
+		}
+
+		/// <summary>
+		/// Reporting device issue using the device name provided by service
+		/// </summary>
+		private void ReportDeviceError(string ServiceDeviceName, string ErrorMessage)
+		{
+			if (MaxDeviceErrorReports == 0)
+			{
+				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Maximum device errors reported to backend, {Name} : {Message} ignored", ServiceDeviceName, ErrorMessage);
+				return;
+			}
+
+			MaxDeviceErrorReports--;
+
+			Reservation.ReportDeviceError(DeviceURL, ServiceDeviceName, ErrorMessage);
+		}
+
+		/// <summary>
+		/// Explicitly release all device reservations
+		/// </summary>
+		private void ReleaseReservations()
+		{
+			ServiceDeviceInfo.Clear();
+
+			foreach (ITargetDevice Device in ServiceReservations.Keys)
+			{
+				AvailableDevices.Remove(Device);
+				ReservedDevices.Remove(Device);
+				Device.Dispose();
+			}
+
+			foreach (DeviceReservationAutoRenew reservation in ServiceReservations.Values.Distinct())
+			{
+				reservation.Dispose();
+			}
+
+			ServiceReservations.Clear();
+		}
+
+		private void CleanupDevices(IEnumerable<UnrealTargetPlatform?> Platforms)
+		{
+			IEnumerable<IDeviceService> DeviceServices = InterfaceHelpers.FindImplementations<IDeviceService>();
+			if (DeviceServices.Any())
+			{
+				foreach (UnrealTargetPlatform? Platform in Platforms)
+				{
+					IDeviceService DeviceService = DeviceServices.Where(D => D.CanSupportPlatform(Platform)).FirstOrDefault();
+					if (DeviceService != null)
+					{
+						DeviceService.CleanupDevices();
+					}
+				}
+			}
+		}
+
+		/// <summary>
+		/// Construct a path to hold cache files and make sure it's properly cleaned
+		/// </summary>
+		private string GetCleanCachePath(DeviceDefinition InDeviceDefiniton)
+		{
+			// Give the desktop platform a temp folder with its name under the device cache
+			string DeviceCache = Path.Combine(LocalTempDir, "DeviceCache");
+			string PlatformCache = Path.Combine(DeviceCache, InDeviceDefiniton.Platform.ToString());
+			string ClientCache = Path.Combine(PlatformCache, InDeviceDefiniton.Name);
+
+			// On Desktops, builds are installed in the device cache.
+			// When using device reservation blocks, we don't want to fully clean the cache and lose previously installed builds.
+			// If bRetainBuilds evaluates to true, it means we are in the second step or beyond in a device reservation block.
+			// In this case we'll just delete the left over UserDir which should already have been emptied by UnrealSession.
+			bool? bForceClean = UnrealAppConfig.ForceFullClean;
+			bool? bSkipInstall = UnrealAppConfig.ForceSkipInstall;
+			bool bUsingReservationBlock = bForceClean.HasValue && bSkipInstall.HasValue;
+			bool bRetainBuilds = bUsingReservationBlock && !bForceClean.Value && bSkipInstall.Value;
+
+			if(bRetainBuilds)
+			{
+				Log.Info("Retaining build cache for device reservation block");
+
+				DirectoryInfo UserDirectory = new(Path.Combine(ClientCache, "UserDir"));
+				if(UserDirectory.Exists)
+				{
+					try
+					{
+						Log.Info("Cleaning stale user directory...");
+						SystemHelpers.Delete(UserDirectory, true, true);
+					}
+					catch(Exception Ex)
+					{
+						throw new AutomationException("Failed to clean user directory {0}. This could result in improper artifact reporting. {1}", UserDirectory, Ex);
+					}
+				}
+			}
+			else
+			{
+				int CleanAttempts = 0;
+
+				while (Directory.Exists(ClientCache))
+				{
+					DirectoryInfo ClientCacheDirectory = new(ClientCache);
+
+					try
+					{
+						Log.Info("Cleaning stale client device cache...");
+						SystemHelpers.Delete(ClientCacheDirectory, true, true);
+					}
+					catch (Exception Ex)
+					{
+						// If we fail to acquire the default client cache while using device reservation blocks,
+						// we can't ensure future tests will have their cache directories mapped to the correct build location
+						if(bUsingReservationBlock)
+						{
+							throw new AutomationException("Failed to clean default client device cache {0}. {1}", ClientCache, Ex);
+						}
+
+						// When not using device reservation blocks, we can just create a newly indexed directory for the client cache
+						else
+						{
+							string Warning = "Failed to clean client device cache {Folder}. A newly indexed directory will be created instead. {Message}";
+							Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, Warning, ClientCache, Ex.Message);
+
+							ClientCache = Path.Combine(PlatformCache, $"{InDeviceDefiniton.Name}_{++CleanAttempts}");
+						}
+					}
+				}
+
+				// create this path
+				Log.Info("Client device cache set to {Directory}", ClientCache);
+				Directory.CreateDirectory(ClientCache);
+			}
+
+			return ClientCache;
+		}
 	}
 }
- 

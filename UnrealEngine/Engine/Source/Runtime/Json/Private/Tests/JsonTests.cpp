@@ -69,6 +69,29 @@ bool FJsonAutomationTest::RunTest(const FString& Parameters)
 		check( InputString == OutputString );
 	}
 
+	// Empty Array with Empty Identifier Case
+	{
+		const FString ExpectedString = TEXT("[]");
+		FString OutputString;
+		TSharedRef<FJsonValueArray> EmptyValuesArray = MakeShared<FJsonValueArray>(TArray<TSharedPtr<FJsonValue>>());
+		TSharedRef<FCondensedJsonStringWriter> JsonWriter = FCondensedJsonStringWriterFactory::Create( &OutputString );
+		verify(FJsonSerializer::Serialize(EmptyValuesArray, FString(), JsonWriter));
+		check(ExpectedString == OutputString);
+	}
+
+	// Serializing Object Value with Empty Identifier Case
+	{
+		const FString ExpectedString = TEXT("{\"\":\"foo\"}");
+		FString OutputString;
+		TSharedRef<FJsonValue> FooValue = MakeShared<FJsonValueString>("foo");
+		TSharedRef<FCondensedJsonStringWriter> JsonWriter = FCondensedJsonStringWriterFactory::Create(&OutputString);
+		JsonWriter->WriteObjectStart();
+		verify(FJsonSerializer::Serialize(FooValue, FString(), JsonWriter, false));
+		JsonWriter->WriteObjectEnd();
+		JsonWriter->Close();
+		check(ExpectedString == OutputString);
+	}
+
 	// Simple Array Case
 	{
 		const FString InputString = 
@@ -234,6 +257,7 @@ bool FJsonAutomationTest::RunTest(const FString& Parameters)
 					"\"Some String1\","
 					"10,"
 					"{"
+						"\"\":\"Empty Key\","
 						"\"Value\":\"Some String3\""
 					"},"
 					"["
@@ -267,6 +291,7 @@ bool FJsonAutomationTest::RunTest(const FString& Parameters)
 		TSharedPtr< FJsonObject > Object = Array[2]->AsObject();
 		check(Object.IsValid());
 		check(Object->GetStringField(TEXT("Value")) == TEXT("Some String3"));
+		check(Object->GetStringField(TEXT("")) == TEXT("Empty Key"));
 
 		const TArray<TSharedPtr< FJsonValue >>& InnerArray = Array[3]->AsArray();
 		check(InnerArray.Num() == 2);

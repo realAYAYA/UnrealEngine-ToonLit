@@ -19,9 +19,10 @@ static void RegisterOpenVDBGrid()
 
 void FSparseVolumeTextureModule::StartupModule()
 {
-#if PLATFORM_WINDOWS
+#if PLATFORM_WINDOWS || PLATFORM_LINUX
 	// Global registration of  the vdb types.
 	openvdb::initialize();
+
 	RegisterOpenVDBGrid<FOpenVDBHalf1Grid>();
 	RegisterOpenVDBGrid<FOpenVDBHalf2Grid>();
 	RegisterOpenVDBGrid<FOpenVDBHalf3Grid>();

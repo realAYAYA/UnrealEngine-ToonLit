@@ -311,15 +311,11 @@ public sealed class BuildPhysX : BuildCommand
 
 		public virtual bool UseMsBuild { get; }
 
-		public MSBuildTargetPlatform(string CompilerName = "VS2019")
+		public MSBuildTargetPlatform(string CompilerName = "VS2022")
 		{
 			this.CompilerName = CompilerName;
 			switch (CompilerName)
 			{
-				case "VS2019":
-					Compiler = WindowsCompiler.VisualStudio2019;
-					VisualStudioName = "Visual Studio 16 2019";
-					break;
 				case "VS2022":
 					Compiler = WindowsCompiler.VisualStudio2022;
 					VisualStudioName = "Visual Studio 17 2022";
@@ -865,7 +861,7 @@ class BuildPhysX_Android : BuildPhysX.MakefileTargetPlatform
 
 			AndroidHomeDirectory = AndroidHomeDirectory.Replace("\"", "");
 
-			return new DirectoryReference(Path.Combine(AndroidHomeDirectory, "cmake", "3.10.2.4988404"));
+			return new DirectoryReference(Path.Combine(AndroidHomeDirectory, "cmake", "3.22.1"));
 		}
 	}
 

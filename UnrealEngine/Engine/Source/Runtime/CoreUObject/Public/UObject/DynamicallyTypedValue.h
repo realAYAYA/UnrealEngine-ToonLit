@@ -8,6 +8,8 @@
 #include "Misc/AssertionMacros.h"
 #include "Serialization/StructuredArchive.h"
 #include "Templates/UnrealTemplate.h"
+#include "UObject/Object.h"
+#include "UObject/UObjectGlobals.h"
 
 class FReferenceCollector;
 
@@ -107,10 +109,40 @@ namespace UE
 			Type = &NewType;
 			AllocateData();
 			Type->InitializeValue(GetDataPointer());
+			MarkTypeReachableIfIncrementalReachabilityPending();			
+		}
+
+		// Returns hash of the underlying FDynamicallyTypedValue's value. Added to allow for FDynamicallyTypedValue to be used as TMap keys.
+		friend uint32 GetTypeHash(const FDynamicallyTypedValue& DynamicallyTypedValue)
+		{
+			return DynamicallyTypedValue.GetType().GetValueHash(DynamicallyTypedValue.GetDataPointer());
 		}
 
 	private:
-
+		void MarkTypeReachableIfIncrementalReachabilityPending()
+		{
+			struct FTypeReferenceCollector final : public FReferenceCollector
+			{
+				bool IsIgnoringArchetypeRef() const override { return false; }
+				bool IsIgnoringTransient() const override { return false; }
+				void HandleObjectReference(UObject*& InObject, const UObject* InReferencingObject, const FProperty* InReferencingProperty) override
+				{
+					if (InObject)
+					{
+						UE::GC::MarkAsReachable(InObject);
+					}
+				}
+			};
+			
+			if (UE::GC::GIsIncrementalReachabilityPending && Type)
+			{
+				// nb: this is done to simulate a write barrier for this type, which
+				//     enables it to behave properly with incremental gc.
+				FTypeReferenceCollector Collector;
+				Type->MarkReachable(Collector);
+			}
+		}
+		
 		FDynamicallyTypedValueType* Type;
 
 		// Store pointer-sized or smaller values inline, heap allocate all others.
@@ -125,6 +157,7 @@ namespace UE
 		{
 			Type = &NullType();
 			HeapData = nullptr;
+			MarkTypeReachableIfIncrementalReachabilityPending();			
 		}
 		// Deinitializes this value back to the primordial state.
 		void Deinit()
@@ -139,6 +172,7 @@ namespace UE
 			Type = Copyee.Type;
 			AllocateData();
 			Type->InitializeValueFromCopy(GetDataPointer(), Copyee.GetDataPointer());
+			MarkTypeReachableIfIncrementalReachabilityPending();			
 		}
 		// Moves the data from another value to this one, which is assumed to be in the primordial state.
 		// The source value is set to the null state.
@@ -148,6 +182,7 @@ namespace UE
 			// This assumes that the data is trivially relocatable.
 			Type = Movee.Type;
 			InlineData = Movee.InlineData;
+			MarkTypeReachableIfIncrementalReachabilityPending();			
 
 			// Reset the source value to null.
 			Movee.InitializeToNull();

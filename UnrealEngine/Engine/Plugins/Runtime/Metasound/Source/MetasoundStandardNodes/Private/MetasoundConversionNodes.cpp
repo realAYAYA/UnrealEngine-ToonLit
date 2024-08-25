@@ -34,12 +34,12 @@ namespace Metasound
 		template<>
 		struct TConversionNodeSpecialization<float, FTime>
 		{
-			static TDataReadReference<float> CreateInputRef(const FVertexInterface& Interface, const FCreateOperatorParams& InParams)
+			static TDataReadReference<float> CreateInputRef(const FVertexInterface& Interface, const FBuildOperatorParams& InParams)
 			{
 				using namespace ConversionNodeVertexNames;
-				const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-				const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
-				return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+				
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
 			}
 
 			static void GetConvertedValue(float InValue, FTime& OutValue)
@@ -51,12 +51,12 @@ namespace Metasound
 		template<>
 		struct TConversionNodeSpecialization<float, FAudioBuffer>
 		{
-			static TDataReadReference<float> CreateInputRef(const FVertexInterface& Interface, const FCreateOperatorParams& InParams)
+			static TDataReadReference<float> CreateInputRef(const FVertexInterface& Interface, const FBuildOperatorParams& InParams)
 			{
 				using namespace ConversionNodeVertexNames;
-				const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-				const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
-				return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+				
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
 			}
 
 			static void GetConvertedValue(float InValue, FAudioBuffer& OutValue)
@@ -73,12 +73,12 @@ namespace Metasound
 		template<>
 		struct TConversionNodeSpecialization<int32, FTime>
 		{
-			static TDataReadReference<int32> CreateInputRef(const FVertexInterface& Interface, const FCreateOperatorParams& InParams)
+			static TDataReadReference<int32> CreateInputRef(const FVertexInterface& Interface, const FBuildOperatorParams& InParams)
 			{
 				using namespace ConversionNodeVertexNames;
-				const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-				const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
-				return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+				
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
 			}
 
 			static void GetConvertedValue(int32 InValue, FTime& OutValue)
@@ -90,12 +90,12 @@ namespace Metasound
 		template<>
 		struct TConversionNodeSpecialization<FTime, float>
 		{
-			static TDataReadReference<FTime> CreateInputRef(const FVertexInterface& Interface, const FCreateOperatorParams& InParams)
+			static TDataReadReference<FTime> CreateInputRef(const FVertexInterface& Interface, const FBuildOperatorParams& InParams)
 			{
 				using namespace ConversionNodeVertexNames;
-				const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-				const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
-				return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+				
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
 			}
 
 			static void GetConvertedValue(const FTime& InValue, float& OutValue)
@@ -107,12 +107,12 @@ namespace Metasound
 		template<>
 		struct TConversionNodeSpecialization<FTime, int32>
 		{
-			static TDataReadReference<FTime> CreateInputRef(const FVertexInterface& Interface, const FCreateOperatorParams& InParams)
+			static TDataReadReference<FTime> CreateInputRef(const FVertexInterface& Interface, const FBuildOperatorParams& InParams)
 			{
 				using namespace ConversionNodeVertexNames;
-				const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-				const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
-				return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+				
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
 			}
 
 			static void GetConvertedValue(const FTime& InValue, int32& OutValue)
@@ -124,11 +124,11 @@ namespace Metasound
 		template<>
 		struct TConversionNodeSpecialization<FAudioBuffer, float>
 		{
-			static TDataReadReference<FAudioBuffer> CreateInputRef(const FVertexInterface& Interface, const FCreateOperatorParams& InParams)
+			static TDataReadReference<FAudioBuffer> CreateInputRef(const FVertexInterface& Interface, const FBuildOperatorParams& InParams)
 			{
 				using namespace ConversionNodeVertexNames;
-				const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-				return InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
 			}
 
 			static void GetConvertedValue(const FAudioBuffer& InValue, float& OutValue)
@@ -206,7 +206,7 @@ namespace Metasound
 			return Info;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace MetasoundConversionNodePrivate;
 			TDataReadReference<FromType> InputValue = TConversionNodeSpecialization<FromType, ToType>::CreateInputRef(GetDefaultInterface(), InParams);

@@ -13,9 +13,6 @@ VirtualShadowMapProjectionSpot.ush:
 #include "VirtualShadowMapProjectionCommon.ush"
 #include "VirtualShadowMapSMRTCommon.ush"
 
-// Possibly parameterize this at some point, but tradeoffs are not always obvious
-#define VIRTUAL_SHADOW_MAP_MAX_SLOPE_BIAS 100.0f
-
 float2 ComputeDepthSlopeLocalUV(
 	int VirtualShadowMapId,
 	float3 ShadowTranslatedWorldPosition,
@@ -363,7 +360,7 @@ FVirtualShadowMapSampleResult TraceLocalLight(
 		// Move from PrimaryView translated world to Shadow translated world
 		// NOTE: Cube map faces all share the same PreViewTranslation and projection depth scale
 		FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(OffsetVirtualShadowMapId);
-		const float3 PrimaryToShadowTranslation = LWCToFloat(LWCSubtract(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation));
+		const float3 PrimaryToShadowTranslation = DFFastLocalSubtractDemote(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation);
 		const float3 ShadowTranslatedWorld = TranslatedWorldPosition + PrimaryToShadowTranslation;
 
 		const float2 DepthSlopeUV = ComputeDepthSlopeLocalUV(OffsetVirtualShadowMapId, ShadowTranslatedWorld, WorldNormal);
@@ -373,7 +370,7 @@ FVirtualShadowMapSampleResult TraceLocalLight(
 		// We use a radially symmetric mapping here instead of the true function to minimize issues crossing cubemap faces.
 		const float ShadowDepthFunctionScale = abs(ProjectionData.ShadowViewToClipMatrix._43 / length2(ToLight));
 
-		const float DitherScale = TexelDitherScale * ShadowResolutionScale;
+		const float DitherScale = (TexelDitherScale * ProjectionData.TexelDitherScale) * ShadowResolutionScale;
 		const float MaxDitherSlope = MaxSlopeBias * DitherScale;
 		const float MaxDepthBias = MaxSlopeBias * ShadowResolutionScale * ShadowDepthFunctionScale;
 
@@ -493,7 +490,7 @@ FVirtualShadowMapSampleResult TraceLocalLight(
 			}
 			
 			// Debug output (DCE'd if not used)
-			Result.ClipmapIndexOrMipLevel = RayState.MipLevel;
+			Result.ClipmapOrMipLevel = RayState.MipLevel;
 			Result.VirtualTexelAddress = RayState.VirtualTexelAddress;
 			Result.PhysicalTexelAddress = RayState.PhysicalTexelAddress;
 

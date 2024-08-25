@@ -2,13 +2,7 @@
 
 #include "RHIDescriptorAllocator.h"
 #include "Misc/ScopeLock.h"
-
-struct FRHIDescriptorAllocatorRange
-{
-	FRHIDescriptorAllocatorRange(uint32 InFirst, uint32 InLast) : First(InFirst), Last(InLast) {}
-	uint32 First;
-	uint32 Last;
-};
+#include "RHIDefinitions.h"
 
 FRHIDescriptorAllocator::FRHIDescriptorAllocator()
 {
@@ -197,6 +191,43 @@ void FRHIDescriptorAllocator::Free(uint32 Offset, uint32 NumDescriptors)
 	}
 }
 
+bool FRHIDescriptorAllocator::GetAllocatedRange(FRHIDescriptorAllocatorRange& OutRange)
+{
+	const uint32 VeryFirstIndex = 0;
+	const uint32 VeryLastIndex = GetCapacity() - 1;
+
+	OutRange.First = VeryFirstIndex;
+	OutRange.Last = VeryLastIndex;
+
+	FScopeLock Lock(&CriticalSection);
+	if (Ranges.Num() > 0)
+	{
+		const FRHIDescriptorAllocatorRange FirstRange = Ranges[0];
+
+		// If the free range matches the entire usable range, that means we have zero allocations.
+		if (FirstRange.First == VeryFirstIndex && FirstRange.Last == VeryLastIndex)
+		{
+			return false;
+		}
+
+		// If the first free range is at the start, then the first allocation is right after this range
+		if (FirstRange.First == VeryFirstIndex)
+		{
+			OutRange.First = FMath::Min(FirstRange.Last + 1, VeryLastIndex);
+		}
+
+		const FRHIDescriptorAllocatorRange LastRange = Ranges[Ranges.Num() - 1];
+
+		// If the last free range is at the end of the usable range, our last allocation is right before this range 
+		if (LastRange.Last == VeryLastIndex)
+		{
+			OutRange.Last = LastRange.First > 0 ? LastRange.First - 1 : 0;
+		}
+	}
+
+	return true;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // FRHIHeapDescriptorAllocator
 
@@ -242,7 +273,11 @@ FRHIOffsetHeapDescriptorAllocator::FRHIOffsetHeapDescriptorAllocator(ERHIDescrip
 FRHIDescriptorHandle FRHIOffsetHeapDescriptorAllocator::Allocate()
 {
 	const FRHIDescriptorHandle AlocatorHandle = FRHIHeapDescriptorAllocator::Allocate();
-	return FRHIDescriptorHandle(AlocatorHandle.GetType(), AlocatorHandle.GetIndex() + HeapOffset);
+	if (AlocatorHandle.IsValid())
+	{
+		return FRHIDescriptorHandle(AlocatorHandle.GetType(), AlocatorHandle.GetIndex() + HeapOffset);
+	}
+	return FRHIDescriptorHandle();
 }
 
 void FRHIOffsetHeapDescriptorAllocator::Free(const FRHIDescriptorHandle InHandle)

@@ -7,7 +7,7 @@
 #include "SceneOutlinerFwd.h"
 #include "ActorDescTreeItem.h"
 #include "WorldPartition/DataLayer/DataLayerInstance.h"
-#include "WorldPartition/ActorDescContainerCollection.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
 #include "WorldPartition/WorldPartition.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "Misc/ArchiveMD5.h"
@@ -22,14 +22,14 @@ class FWorldPartitionActorDesc;
 
 struct FDataLayerActorDescTreeItemData
 {
-	FDataLayerActorDescTreeItemData(const FGuid& InActorGuid, UActorDescContainer* InContainer, UDataLayerInstance* InDataLayer)
+	FDataLayerActorDescTreeItemData(const FGuid& InActorGuid, UActorDescContainerInstance* InContainerInstance, UDataLayerInstance* InDataLayer)
 		: ActorGuid(InActorGuid)
-		, Container(InContainer)
+		, ContainerInstance(InContainerInstance)
 		, DataLayer(InDataLayer)
 	{}
 
 	const FGuid& ActorGuid;
-	UActorDescContainer* const Container;
+	UActorDescContainerInstance* const ContainerInstance;
 	TWeakObjectPtr<UDataLayerInstance> DataLayer;
 };
 
@@ -39,20 +39,20 @@ struct FDataLayerActorDescTreeItemData
 struct FDataLayerActorDescTreeItem : public FActorDescTreeItem
 {
 public:
-	DECLARE_DELEGATE_RetVal_TwoParams(bool, FFilterPredicate, const FWorldPartitionActorDesc* ActorDesc, const UDataLayerInstance* DataLayer);
-	DECLARE_DELEGATE_RetVal_TwoParams(bool, FInteractivePredicate, const FWorldPartitionActorDesc* ActorDesc, const UDataLayerInstance* DataLayer);
+	DECLARE_DELEGATE_RetVal_TwoParams(bool, FFilterPredicate, const FWorldPartitionActorDescInstance* ActorDescInstance, const UDataLayerInstance* DataLayer);
+	DECLARE_DELEGATE_RetVal_TwoParams(bool, FInteractivePredicate, const FWorldPartitionActorDescInstance* ActorDescInstance, const UDataLayerInstance* DataLayer);
 
 	FDataLayerActorDescTreeItem(const FDataLayerActorDescTreeItemData& InData)
-		: FActorDescTreeItem(InData.ActorGuid, InData.Container)
+		: FActorDescTreeItem(InData.ActorGuid, InData.ContainerInstance)
 		, DataLayer(InData.DataLayer)
-		, IDDataLayerActorDesc(FDataLayerActorDescTreeItem::ComputeTreeItemID(InData.ActorGuid, InData.Container, InData.DataLayer.Get()))
+		, IDDataLayerActorDesc(FDataLayerActorDescTreeItem::ComputeTreeItemID(InData.ActorGuid, InData.ContainerInstance, InData.DataLayer.Get()))
 	{
 		if (ActorDescHandle.IsValid())
 		{
-			UActorDescContainer* Container = ActorDescHandle->GetContainer();
-			UWorld* OwningWorld = Container->GetWorldPartition()->GetWorld();
+			UActorDescContainerInstance* ContainerInstance = ActorDescHandle->GetContainerInstance();
+			UWorld* OwningWorld = ContainerInstance->GetOuterWorldPartition()->GetWorld();
 			ULevelInstanceSubsystem* LevelInstanceSubsystem = UWorld::GetSubsystem<ULevelInstanceSubsystem>(OwningWorld);
-			ULevel* Level = Container->GetTypedOuter<UWorld>()->PersistentLevel;
+			ULevel* Level = ContainerInstance->GetTypedOuter<UWorld>()->PersistentLevel;
 			if (LevelInstanceSubsystem && Level && (Level != OwningWorld->GetCurrentLevel()))
 			{
 				DisplayString = LevelInstanceSubsystem->PrefixWithParentLevelInstanceActorLabels(DisplayString, Level);
@@ -62,9 +62,9 @@ public:
 
 	UDataLayerInstance* GetDataLayer() const { return DataLayer.Get(); }
 	
-	static FSceneOutlinerTreeItemID ComputeTreeItemID(FGuid InActorGuid, UActorDescContainer* InContainer, const UDataLayerInstance* InDataLayer)
+		static FSceneOutlinerTreeItemID ComputeTreeItemID(FGuid InActorGuid, UActorDescContainerInstance* InContainerInstance, const UDataLayerInstance* InDataLayer)
 	{
-		FObjectKey ContainerKey(InContainer);
+		FObjectKey ContainerKey(InContainerInstance);
 		FObjectKey DataLayerInstanceKey(InDataLayer);
 
 		FArchiveMD5 Ar;
@@ -73,28 +73,14 @@ public:
 		return FSceneOutlinerTreeItemID(Ar.GetGuidFromHash());
 	}
 
-	static TArray<AActor*> GetParentActors(UActorDescContainer* InContainer)
-	{
-		if (InContainer)
-		{
-			UWorld* OwningWorld = InContainer->GetWorldPartition()->GetWorld();
-			if (ULevelInstanceSubsystem* LevelInstanceSubsystem = UWorld::GetSubsystem<ULevelInstanceSubsystem>(OwningWorld))
-			{
-				ULevel* Level = InContainer->GetTypedOuter<UWorld>()->PersistentLevel;
-				return LevelInstanceSubsystem->GetParentLevelInstanceActors(Level);
-			}
-		}
-		return TArray<AActor*>();
-	}
-
 	bool Filter(FFilterPredicate Pred) const
 	{
-		return Pred.Execute(ActorDescHandle.Get(), DataLayer.Get());
+		return Pred.Execute(*ActorDescHandle, DataLayer.Get());
 	}
 
 	bool GetInteractiveState(FInteractivePredicate Pred) const
 	{
-		return Pred.Execute(ActorDescHandle.Get(), DataLayer.Get());
+		return Pred.Execute(*ActorDescHandle, DataLayer.Get());
 	}
 
 	/* Begin ISceneOutlinerTreeItem Implementation */

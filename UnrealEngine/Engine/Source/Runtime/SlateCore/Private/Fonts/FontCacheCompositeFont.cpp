@@ -246,7 +246,7 @@ void FCachedCompositeFontData::RefreshFontRanges()
 					FInt32Range::BoundsType::Inclusive(ThisRange.Range.GetLowerBoundValue()), 
 					FInt32Range::BoundsType::Inclusive(FMath::Max(ThisRange.Range.GetUpperBoundValue(), NextRange.Range.GetUpperBoundValue()))
 					);
-				InFontRanges.RemoveAt(RangeIndex + 1, 1, /*bAllowShrinking*/false);
+				InFontRanges.RemoveAt(RangeIndex + 1, 1, EAllowShrinking::No);
 			}
 		}
 	};
@@ -448,8 +448,8 @@ TSharedPtr<FFreeTypeFace> FCompositeFontCache::GetFontFace(const FFontData& InFo
 		// Got a valid font?
 		if (FaceAndMemory.IsValid())
 		{
-			FaceAndMemory->OverrideAscend(InFontData.IsAscendOverridden(), InFontData.GetAscendOverriddenValue());
-			FaceAndMemory->OverrideDescend(InFontData.IsDescendOverridden(), InFontData.GetDescendOverriddenValue());
+			FaceAndMemory->OverrideAscent(InFontData.IsAscendOverridden(), InFontData.GetAscendOverriddenValue());
+			FaceAndMemory->OverrideDescent(InFontData.IsDescendOverridden(), InFontData.GetDescendOverriddenValue());
 
 			FontFaceMap.Add(InFontData, FaceAndMemory);
 

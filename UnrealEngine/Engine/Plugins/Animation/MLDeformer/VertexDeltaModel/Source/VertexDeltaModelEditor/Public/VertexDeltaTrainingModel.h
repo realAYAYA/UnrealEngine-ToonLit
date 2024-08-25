@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreTypes.h"
-#include "MLDeformerTrainingModel.h"
+#include "MLDeformerGeomCacheTrainingModel.h"
 #include "VertexDeltaTrainingModel.generated.h"
 
 /**
@@ -12,7 +12,7 @@
  */
 UCLASS(Blueprintable)
 class VERTEXDELTAMODELEDITOR_API UVertexDeltaTrainingModel
-	: public UMLDeformerTrainingModel
+	: public UMLDeformerGeomCacheTrainingModel
 {
 	GENERATED_BODY()
 

@@ -423,7 +423,7 @@ public:
 
 	}
 
-	void GatherElements(TArray<TPayloadBoundsElement<TPayloadType, T>>& OutElements)
+	void GatherElements(TArray<TPayloadBoundsElement<TPayloadType, T>>& OutElements) const
 	{
 		OutElements.Reserve(GetReserveCount());
 		OutElements.Append(MGlobalPayloads);
@@ -1298,7 +1298,7 @@ private:
 		{
 			if (Intersections[i] == Intersections[i - 1])
 			{
-				Intersections.RemoveAtSwap(i, 1, false);
+				Intersections.RemoveAtSwap(i, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -1379,7 +1379,7 @@ extern template class CHAOS_API Chaos::TBoundingVolume<int32, Chaos::FReal, 3>;
 extern template class CHAOS_API Chaos::TBoundingVolume<Chaos::FAccelerationStructureHandle, Chaos::FReal, 3>;
 #else
 extern template class TBoundingVolume<int32, FReal, 3>;
-extern template class TBoundingVolume<FAccelerationStructureHandle, FReal, 3>;
+extern template class TBoundingVolume<class FAccelerationStructureHandle, FReal, 3>;
 #endif
 
 }

@@ -298,9 +298,6 @@ protected:
 	
 	Audio::FAlignedFloatBuffer AudioExternal;
 
-	TArray<float> AudioKeyFrame;
-	TArray<float> AudioInputFrame;
-
 	Audio::FDeviceId DeviceId = INDEX_NONE;
 
 	bool bBypass = false;

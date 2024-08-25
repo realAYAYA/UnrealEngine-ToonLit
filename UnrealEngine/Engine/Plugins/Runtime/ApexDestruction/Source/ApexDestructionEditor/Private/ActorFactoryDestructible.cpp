@@ -66,19 +66,6 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
-void UActorFactoryDestructible::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (Asset != NULL && CDO != NULL)
-	{
-		UDestructibleMesh* DestructibleMesh = CastChecked<UDestructibleMesh>(Asset);
-		ADestructibleActor* DestructibleActor = CastChecked<ADestructibleActor>(CDO);
-
-		DestructibleActor->GetDestructibleComponent()->SetSkeletalMesh(DestructibleMesh);
-	}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-}
-
 FQuat UActorFactoryDestructible::AlignObjectToSurfaceNormal(const FVector& InSurfaceNormal, const FQuat& ActorRotation) const
 {
 	// Meshes align the Z (up) axis with the surface normal

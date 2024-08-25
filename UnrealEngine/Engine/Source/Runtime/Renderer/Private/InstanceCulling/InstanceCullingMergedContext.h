@@ -9,8 +9,8 @@
 class FInstanceCullingMergedContext
 {
 public:
-	FInstanceCullingMergedContext(ERHIFeatureLevel::Type InFeatureLevel, bool bInMustAddAllContexts = false)
-		: FeatureLevel(InFeatureLevel)
+	FInstanceCullingMergedContext(EShaderPlatform InShaderPlatform, bool bInMustAddAllContexts = false)
+		: ShaderPlatform(InShaderPlatform)
 		, bMustAddAllContexts(bInMustAddAllContexts)
 	{}
 
@@ -57,12 +57,12 @@ public:
 	TStaticArray<TArray<uint32, SceneRenderingAllocator>, static_cast<uint32>(EBatchProcessingMode::Num)> BatchInds;
 	TArray<FContextBatchInfo, SceneRenderingAllocator> BatchInfos;
 
-	ERHIFeatureLevel::Type FeatureLevel = ERHIFeatureLevel::Num;
+	EShaderPlatform ShaderPlatform = SP_NumPlatforms;
 	// if true, the contexts that are supplied through calling AddBatch must all have an 1:1 entry in the resulting merged Batches array
 	// this adds a check to prevent empty contexts from being added (!HasCullingCommands()).
 	bool bMustAddAllContexts = false;
 	// Counters to sum up all sizes to facilitate pre-sizing
-	uint32 InstanceIdBufferSize = 0U;
+	uint32 InstanceIdBufferElements = 0U;
 	TStaticArray<int32, uint32(EBatchProcessingMode::Num)> TotalBatches = TStaticArray<int32, uint32(EBatchProcessingMode::Num)>(InPlace, 0);
 	TStaticArray<int32, uint32(EBatchProcessingMode::Num)> TotalItems = TStaticArray<int32, uint32(EBatchProcessingMode::Num)>(InPlace, 0);
 	int32 TotalIndirectArgs = 0;

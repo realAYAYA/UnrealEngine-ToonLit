@@ -54,7 +54,7 @@ public:
 	/**
 	 * Update the generator for a given object.
 	 */
-	void Refresh(UObject* InObject);
+	void Refresh(UObject* InObject, bool bForceRefresh = false);
 
 	/**
 	 * Update the generator for a given struct.

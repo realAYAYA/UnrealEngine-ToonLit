@@ -31,6 +31,7 @@ UVolumetricCloudComponent::UVolumetricCloudComponent(const FObjectInitializer& O
 	, LayerBottomAltitude(5.0f)
 	, LayerHeight(10.0f)
 	, TracingStartMaxDistance(350.0f)
+	, TracingStartDistanceFromCamera(0.0f)
 	, TracingMaxDistanceMode(EVolumetricCloudTracingMaxDistanceMode::DistanceFromCloudLayerEntryPoint)
 	, TracingMaxDistance(50.0f)
 	, PlanetRadius(6360.0f)					// Default to earth-like
@@ -52,6 +53,8 @@ UVolumetricCloudComponent::UVolumetricCloudComponent(const FObjectInitializer& O
 	, AerialPespectiveRayleighScatteringFadeDistance(0.0f)
 	, AerialPespectiveMieScatteringStartDistance(0.0f)
 	, AerialPespectiveMieScatteringFadeDistance(0.0f)
+	, bHoldout(false)
+	, bRenderInMainPass(true)
 	, VolumetricCloudSceneProxy(nullptr)
 {
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> VolumetricCloudDefaultMaterialRef(TEXT("/Engine/EngineSky/VolumetricClouds/m_SimpleVolumetricCloud_Inst.m_SimpleVolumetricCloud_Inst"));
@@ -153,6 +156,7 @@ void UVolumetricCloudComponent::Serialize(FArchive& Ar)
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, LayerBottomAltitude);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, LayerHeight);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, TracingStartMaxDistance);
+CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, TracingStartDistanceFromCamera);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, TracingMaxDistance);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, PlanetRadius);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(FColor, GroundAlbedo);
@@ -163,6 +167,24 @@ CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, ShadowViewSampleCountScale);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, ShadowTracingDistance);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(float, StopTracingTransmittanceThreshold);
 CLOUD_DECLARE_BLUEPRINT_SETFUNCTION(UMaterialInterface*, Material);
+
+void UVolumetricCloudComponent::SetHoldout(bool bNewHoldout)
+{
+	if (bHoldout != bNewHoldout)
+	{
+		bHoldout = bNewHoldout;
+		MarkRenderStateDirty();
+	}
+}
+
+void UVolumetricCloudComponent::SetRenderInMainPass(bool bValue)
+{
+	if (bRenderInMainPass != bValue)
+	{
+		bRenderInMainPass = bValue;
+		MarkRenderStateDirty();
+	}
+}
 
 void UVolumetricCloudComponent::SetReflectionViewSampleCountScale(float NewValue)
 {

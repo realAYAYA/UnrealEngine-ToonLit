@@ -29,10 +29,21 @@ bool FIPv4Address::Parse(const FString& AddressString, FIPv4Address& OutAddress)
 
 	if (AddressString.ParseIntoArray(Tokens, TEXT("."), false) == 4)
 	{
-		OutAddress.A = FCString::Atoi(*Tokens[0]);
-		OutAddress.B = FCString::Atoi(*Tokens[1]);
-		OutAddress.C = FCString::Atoi(*Tokens[2]);
-		OutAddress.D = FCString::Atoi(*Tokens[3]);
+		const int32 A = FCString::Atoi(*Tokens[0]);
+		const int32 B = FCString::Atoi(*Tokens[1]);
+		const int32 C = FCString::Atoi(*Tokens[2]);
+		const int32 D = FCString::Atoi(*Tokens[3]);
+
+		if (A < 0 || A > MAX_uint8 || B < 0 || B > MAX_uint8 ||
+			C < 0 || C > MAX_uint8 || D < 0 || D > MAX_uint8)
+		{
+			return false;
+		}
+
+		OutAddress.A = static_cast<uint8>(A);
+		OutAddress.B = static_cast<uint8>(B);
+		OutAddress.C = static_cast<uint8>(C);
+		OutAddress.D = static_cast<uint8>(D);
 
 		return true;
 	}

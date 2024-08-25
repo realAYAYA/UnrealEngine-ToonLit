@@ -125,6 +125,14 @@ struct FImagePixelData
 	}
 
 	/**
+	* Change the alpha channel to opaque
+	*/
+	void SetAlphaOpaque()
+	{
+		FImageCore::SetAlphaOpaque( GetImageView() );
+	}
+
+	/**
 	 * Check that this data is the size it should be
 	 */
 	bool IsDataWellFormed() const

@@ -202,8 +202,8 @@ void FMemberReference::InitFieldRedirectMap()
 		{
 			TArray<FCoreRedirect> NewRedirects;
 
-			FConfigSection* PackageRedirects = GConfig->GetSectionPrivate( TEXT("/Script/Engine.Engine"), false, true, GEngineIni );
-			for (FConfigSection::TIterator It(*PackageRedirects); It; ++It)
+			const FConfigSection* PackageRedirects = GConfig->GetSection( TEXT("/Script/Engine.Engine"), false, GEngineIni );
+			for (FConfigSection::TConstIterator It(*PackageRedirects); It; ++It)
 			{
 				if (It.Key() == TEXT("K2FieldRedirects"))
 				{
@@ -371,7 +371,14 @@ TFieldType* FMemberReference::ResolveMemberImpl(UClass* SelfScope, TFieldTypeCla
 		UClass* TargetScope = GetScope(SelfScope);
 		if (bCanFollowRedirects && TargetScope)
 		{
-			ReturnField = static_cast<TFieldType*>(FindRemappedField(FieldClass, TargetScope, MemberName, true));
+			// bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect is required to avoid invalid redirects. Usecase
+			// showing why: Consider a BPGC based on Pawn, and it overrides the OnLand event. But FindRemappedField
+			// returns Character::OnLanded because of a redirector on Pawn:
+			//    "+K2FieldRedirects=(OldFieldName="Pawn.OnLanded",NewFieldName="Character.OnLanded")"
+			// Character.OnLanded is not a valid field for the BPGC that inherits from Pawn.
+			constexpr bool bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect = true;
+			ReturnField = static_cast<TFieldType*>(FindRemappedField(FieldClass, TargetScope, MemberName,
+				bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect));
 		}
 
 		if (ReturnField != nullptr)
@@ -490,11 +497,16 @@ TFieldType* FMemberReference::ResolveMemberImpl(UClass* SelfScope, TFieldTypeCla
 			}
 		}
 	}
-
 	// Check to see if the member has been deprecated
 	if (FProperty* Property = FFieldVariant(ReturnField).Get<FProperty>())
 	{
+#if WITH_EDITORONLY_DATA
+		// Initially this originated from python bindings, but this is useful to check for blueprints too, so that they can be upgraded.
+		static const FName NAME_DeprecatedProperty = TEXT("DeprecatedProperty");
+		bWasDeprecated = Property->HasAnyPropertyFlags(CPF_Deprecated) || Property->HasMetaData(NAME_DeprecatedProperty);
+#else
 		bWasDeprecated = Property->HasAnyPropertyFlags(CPF_Deprecated);
+#endif // WITH_EDITORONLY_DATA
 	}
 
 	return ReturnField;
@@ -512,7 +524,8 @@ UFunction* FMemberReference::ResolveMemberFunction(UClass* SelfScope, const bool
 }
 
 template <typename TFieldType>
-TFieldType* FindRemappedFieldImpl(FName FieldClassOutermostName, FName FieldClassName, UClass* InitialScope, FName InitialName, bool bInitialScopeMustBeOwnerOfField)
+TFieldType* FindRemappedFieldImpl(FName FieldClassOutermostName, FName FieldClassName, UClass* InitialScope,
+	FName InitialName, bool bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect)
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("FMemberReference::FindRemappedField"), STAT_LinkerLoad_FindRemappedField, STATGROUP_LoadTimeVerbose);
 
@@ -571,7 +584,8 @@ TFieldType* FindRemappedFieldImpl(FName FieldClassOutermostName, FName FieldClas
 			TFieldType* NewField = FindUFieldOrFProperty<TFieldType>(SearchClass, NewFieldName);
 			if (NewField != nullptr)
 			{
-				if (bInitialScopeMustBeOwnerOfField && !InitialScope->IsChildOf(SearchClass))
+				if (bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect &&
+					TestRemapClass != InitialScope && !InitialScope->IsChildOf(SearchClass))
 				{
 					UE_LOG(LogBlueprint, Log, TEXT("UK2Node:  Unable to update field. Remapped field '%s' in not owned by given scope. Scope: '%s', Owner: '%s'."), *InitialName.ToString(), *InitialScope->GetName(), *NewFieldName.ToString());
 				}
@@ -595,13 +609,16 @@ TFieldType* FindRemappedFieldImpl(FName FieldClassOutermostName, FName FieldClas
 	return nullptr;
 }
 
-UField* FMemberReference::FindRemappedField(UClass* FieldClass, UClass* InitialScope, FName InitialName, bool bInitialScopeMustBeOwnerOfField)
+UField* FMemberReference::FindRemappedField(UClass* FieldClass, UClass* InitialScope, FName InitialName,
+	bool bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect)
 {	
-	return FindRemappedFieldImpl<UField>(FieldClass->GetOutermost()->GetFName(), FieldClass->GetFName(), InitialScope, InitialName, bInitialScopeMustBeOwnerOfField);
+	return FindRemappedFieldImpl<UField>(FieldClass->GetOutermost()->GetFName(), FieldClass->GetFName(), InitialScope,
+		InitialName, bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect);
 }
 
-FField* FMemberReference::FindRemappedField(FFieldClass* FieldClass, UClass* InitialScope, FName InitialName, bool bInitialScopeMustBeOwnerOfField)
+FField* FMemberReference::FindRemappedField(FFieldClass* FieldClass, UClass* InitialScope, FName InitialName,
+	bool bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect)
 {
-	return FindRemappedFieldImpl<FField>(GLongCoreUObjectPackageName, FieldClass->GetFName(), InitialScope, InitialName, bInitialScopeMustBeOwnerOfField);
+	return FindRemappedFieldImpl<FField>(GLongCoreUObjectPackageName, FieldClass->GetFName(), InitialScope, InitialName,
+		bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect);
 }
-

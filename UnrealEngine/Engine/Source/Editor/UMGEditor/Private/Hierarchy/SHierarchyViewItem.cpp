@@ -25,6 +25,7 @@
 #include "DragAndDrop/ClassDragDropOp.h"
 #include "DragDrop/WidgetTemplateDragDropOp.h"
 #include "DragDrop/SelectedWidgetDragDropOp.h"
+#include "Hierarchy/HierarchyWidgetDragDropOp.h"
 
 #include "WidgetTemplate.h"
 
@@ -42,26 +43,15 @@
 /**
 *
 */
-class FHierarchyWidgetDragDropOp : public FDecoratedDragDropOp
+class FHierarchyWidgetDragDropOpImpl : public FHierarchyWidgetDragDropOp
 {
 public:
-	DRAG_DROP_OPERATOR_TYPE(FHierarchyWidgetDragDropOp, FDecoratedDragDropOp)
+	DRAG_DROP_OPERATOR_TYPE(FHierarchyWidgetDragDropOpImpl, FHierarchyWidgetDragDropOp)
 
-	virtual ~FHierarchyWidgetDragDropOp();
+	FHierarchyWidgetDragDropOpImpl(FHierarchyWidgetDragDropOp& HierarchyWidgetDragDropOp);
+	virtual ~FHierarchyWidgetDragDropOpImpl();
 
 	virtual void OnDrop(bool bDropWasHandled, const FPointerEvent& MouseEvent) override;
-
-	bool HasOriginatedFrom(const TSharedPtr<FWidgetBlueprintEditor>& BlueprintEditor)
-	{
-		for (const FItem& Item : DraggedWidgets)
-		{
-			if (Item.Widget.GetWidgetEditor() != BlueprintEditor)
-			{
-				return false;
-			}
-		}
-		return true;
-	}
 
 	struct FItem
 	{
@@ -81,14 +71,20 @@ public:
 	FScopedTransaction* Transaction;
 
 	/** Constructs a new drag/drop operation */
-	static TSharedRef<FHierarchyWidgetDragDropOp> New(UWidgetBlueprint* Blueprint, const TArray<FWidgetReference>& InWidgets);
+	static TSharedRef<FHierarchyWidgetDragDropOpImpl> New(UWidgetBlueprint* Blueprint, const TArray<FWidgetReference>& InWidgets);
 };
 
-TSharedRef<FHierarchyWidgetDragDropOp> FHierarchyWidgetDragDropOp::New(UWidgetBlueprint* Blueprint, const TArray<FWidgetReference>& InWidgets)
+FHierarchyWidgetDragDropOpImpl::FHierarchyWidgetDragDropOpImpl(FHierarchyWidgetDragDropOp& HierarchyWidgetDragDropOp) 
+	: FHierarchyWidgetDragDropOp(HierarchyWidgetDragDropOp)
+{
+}
+
+TSharedRef<FHierarchyWidgetDragDropOpImpl> FHierarchyWidgetDragDropOpImpl::New(UWidgetBlueprint* Blueprint, const TArray<FWidgetReference>& InWidgets)
 {
 	check(InWidgets.Num() > 0);
 
-	TSharedRef<FHierarchyWidgetDragDropOp> Operation = MakeShareable(new FHierarchyWidgetDragDropOp());
+	TSharedRef<FHierarchyWidgetDragDropOp> HierarchyWidgetDragDropOp = FHierarchyWidgetDragDropOp::New(Blueprint, InWidgets);
+	TSharedRef<FHierarchyWidgetDragDropOpImpl> Operation = MakeShareable(new FHierarchyWidgetDragDropOpImpl(*HierarchyWidgetDragDropOp));
 
 	// Set the display text and the transaction name based on whether we're dragging a single or multiple widgets
 	if (InWidgets.Num() == 1)
@@ -131,12 +127,12 @@ TSharedRef<FHierarchyWidgetDragDropOp> FHierarchyWidgetDragDropOp::New(UWidgetBl
 	return Operation;
 }
 
-FHierarchyWidgetDragDropOp::~FHierarchyWidgetDragDropOp()
+FHierarchyWidgetDragDropOpImpl::~FHierarchyWidgetDragDropOpImpl()
 {
 	delete Transaction;
 }
 
-void FHierarchyWidgetDragDropOp::OnDrop(bool bDropWasHandled, const FPointerEvent& MouseEvent)
+void FHierarchyWidgetDragDropOpImpl::OnDrop(bool bDropWasHandled, const FPointerEvent& MouseEvent)
 {
 	if ( !bDropWasHandled )
 	{
@@ -150,7 +146,7 @@ TOptional<EItemDropZone> ProcessHierarchyDragDrop(const FDragDropEvent& DragDrop
 {
 	UWidget* TargetTemplate = TargetItem.GetTemplate();
 
-	if (TSharedPtr<FHierarchyWidgetDragDropOp> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOp>())
+	if (TSharedPtr<FHierarchyWidgetDragDropOpImpl> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOpImpl>())
 	{
 		if (!HierarchyDragDropOp->HasOriginatedFrom(BlueprintEditor))
 		{
@@ -194,7 +190,7 @@ TOptional<EItemDropZone> ProcessHierarchyDragDrop(const FDragDropEvent& DragDrop
 
 	// Is this a drag/drop op to create a new widget in the tree?
 	TSharedPtr<FDragDropOperation> DragDropOp = DragDropEvent.GetOperation();
-	if (DragDropOp.IsValid() && !DragDropOp->IsOfType<FHierarchyWidgetDragDropOp>())
+	if (DragDropOp.IsValid() && !DragDropOp->IsOfType<FHierarchyWidgetDragDropOpImpl>())
 	{
 		TSharedPtr<FDecoratedDragDropOp> DecoratedDragDropOp = nullptr;
 		if (DragDropOp->IsOfType<FDecoratedDragDropOp>())
@@ -203,8 +199,16 @@ TOptional<EItemDropZone> ProcessHierarchyDragDrop(const FDragDropEvent& DragDrop
 			DecoratedDragDropOp->ResetToDefaultToolTip();
 		}
 
+		// Are we adding to a locked widget?
+		if ( TargetItem.IsValid() && TargetItem.GetPreview()->IsLockedInDesigner() )
+		{
+			if (DecoratedDragDropOp.IsValid())
+			{
+				DecoratedDragDropOp->CurrentHoverText = LOCTEXT("LockedWidget", "Widget is locked.");
+			}
+		}
 		// Are we adding to the root?
-		if ( !TargetItem.IsValid() && Blueprint->WidgetTree->RootWidget == nullptr )
+		else if ( !TargetItem.IsValid() && Blueprint->WidgetTree->RootWidget == nullptr )
 		{
 			// TODO UMG Allow showing a preview of this.
 			if ( bIsDrop )
@@ -287,7 +291,7 @@ TOptional<EItemDropZone> ProcessHierarchyDragDrop(const FDragDropEvent& DragDrop
 		return TOptional<EItemDropZone>();
 	}
 
-	TSharedPtr<FHierarchyWidgetDragDropOp> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOp>();
+	TSharedPtr<FHierarchyWidgetDragDropOpImpl> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOpImpl>();
 	if ( HierarchyDragDropOp.IsValid() )
 	{
 		HierarchyDragDropOp->ResetToDefaultToolTip();
@@ -296,7 +300,7 @@ TOptional<EItemDropZone> ProcessHierarchyDragDrop(const FDragDropEvent& DragDrop
 		// the null case and we should be adding it as the root widget.
 		if ( TargetItem.IsValid() )
 		{
-			const bool bIsDraggedObject = HierarchyDragDropOp->DraggedWidgets.ContainsByPredicate([TargetItem](const FHierarchyWidgetDragDropOp::FItem& DraggedItem)
+			const bool bIsDraggedObject = HierarchyDragDropOp->DraggedWidgets.ContainsByPredicate([TargetItem](const FHierarchyWidgetDragDropOpImpl::FItem& DraggedItem)
 			{
 				return DraggedItem.Widget == TargetItem;
 			});
@@ -304,6 +308,13 @@ TOptional<EItemDropZone> ProcessHierarchyDragDrop(const FDragDropEvent& DragDrop
 			if ( bIsDraggedObject )
 			{
 				HierarchyDragDropOp->CurrentIconBrush = FAppStyle::GetBrush(TEXT("Graph.ConnectorFeedback.Error"));
+				return TOptional<EItemDropZone>();
+			}
+
+			if (TargetItem.GetPreview()->IsLockedInDesigner())
+			{
+				HierarchyDragDropOp->CurrentIconBrush = FAppStyle::GetBrush(TEXT("Graph.ConnectorFeedback.Error"));
+				HierarchyDragDropOp->CurrentHoverText = LOCTEXT("LockedWidget", "Widget is locked.");
 				return TOptional<EItemDropZone>();
 			}
 
@@ -491,7 +502,7 @@ TOptional<EItemDropZone> FHierarchyModel::HandleCanAcceptDrop(const FDragDropEve
 
 FReply FHierarchyModel::HandleDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	if (!IsRoot())
+	if (!IsRoot() && !IsLockedInDesigner())
 	{
 		TArray<FWidgetReference> DraggedItems;
 
@@ -519,7 +530,7 @@ FReply FHierarchyModel::HandleDragDetected(const FGeometry& MyGeometry, const FP
 
 		if (DraggedItems.Num() > 0)
 		{
-			return FReply::Handled().BeginDragDrop(FHierarchyWidgetDragDropOp::New(BlueprintEditor.Pin()->GetWidgetBlueprintObj(), DraggedItems));
+			return FReply::Handled().BeginDragDrop(FHierarchyWidgetDragDropOpImpl::New(BlueprintEditor.Pin()->GetWidgetBlueprintObj(), DraggedItems));
 		}
 	}
 
@@ -894,7 +905,7 @@ TOptional<EItemDropZone> FNamedSlotModelBase::HandleCanAcceptDrop(const FDragDro
 	UWidgetBlueprint* Blueprint = BlueprintEditor.Pin()->GetWidgetBlueprintObj();
 
 	TSharedPtr<FDragDropOperation> DragDropOp = DragDropEvent.GetOperation();
-	if (DragDropOp.IsValid() && !DragDropOp->IsOfType<FHierarchyWidgetDragDropOp>())
+	if (DragDropOp.IsValid() && !DragDropOp->IsOfType<FHierarchyWidgetDragDropOpImpl>())
 	{
 		TSharedPtr<FDecoratedDragDropOp> DecoratedDragDropOp = nullptr;
 		if (DragDropOp->IsOfType<FDecoratedDragDropOp>())
@@ -928,7 +939,7 @@ TOptional<EItemDropZone> FNamedSlotModelBase::HandleCanAcceptDrop(const FDragDro
 		}
 	}
 
-	TSharedPtr<FHierarchyWidgetDragDropOp> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOp>();
+	TSharedPtr<FHierarchyWidgetDragDropOpImpl> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOpImpl>();
 	if (HierarchyDragDropOp.IsValid() && HierarchyDragDropOp->DraggedWidgets.Num() == 1)
 	{
 		HierarchyDragDropOp->ResetToDefaultToolTip();
@@ -982,7 +993,7 @@ FReply FNamedSlotModelBase::HandleAcceptDrop(FDragDropEvent const& DragDropEvent
 	}
 
 	TSharedPtr<FDragDropOperation> DragDropOp = DragDropEvent.GetOperation();
-	if (DragDropOp.IsValid() && !DragDropOp->IsOfType<FHierarchyWidgetDragDropOp>())
+	if (DragDropOp.IsValid() && !DragDropOp->IsOfType<FHierarchyWidgetDragDropOpImpl>())
 	{
 		FScopedTransaction Transaction(LOCTEXT("AddWidgetFromTemplate", "Add Widget"));
 
@@ -1001,7 +1012,7 @@ FReply FNamedSlotModelBase::HandleAcceptDrop(FDragDropEvent const& DragDropEvent
 		}
 	}
 
-	TSharedPtr<FHierarchyWidgetDragDropOp> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOp>();
+	TSharedPtr<FHierarchyWidgetDragDropOpImpl> HierarchyDragDropOp = DragDropEvent.GetOperationAs<FHierarchyWidgetDragDropOpImpl>();
 	if (HierarchyDragDropOp.IsValid() && HierarchyDragDropOp->DraggedWidgets.Num() == 1)
 	{
 		UWidgetBlueprint* Blueprint = BlueprintEditor.Pin()->GetWidgetBlueprintObj();
@@ -1399,7 +1410,7 @@ void FHierarchyWidget::UpdateSelection()
 
 bool FHierarchyWidget::CanRename() const
 {
-	return true;
+	return !IsLockedInDesigner();
 }
 
 void FHierarchyWidget::RequestBeginRename()

@@ -36,6 +36,10 @@ class FControlRigEditorStyle final
 public:
 	FControlRigEditorStyle()
 		: FSlateStyleSet("ControlRigEditorStyle")
+		, BoneUserInterfaceColor(0.6f, 0.6f, 0.6f)
+		, NullUserInterfaceColor(0.75f, 0.75f, 0.75f)
+		, ConnectorUserInterfaceColor(0.0, 112.f/255.f, 224.f/255.f)
+		, SocketUserInterfaceColor(0.0, 112.f/255.f, 224.f/255.f)
 	{
 		const FVector2D Icon10x10(10.0f, 10.0f);
 		const FVector2D Icon14x14(14.0f, 14.0f);
@@ -44,6 +48,7 @@ public:
 		const FVector2D Icon24x24(24.0f, 24.0f);
 		const FVector2D Icon32x32(32.0f, 32.0f);
 		const FVector2D Icon40x40(40.0f, 40.0f);
+		const FVector2D Icon128x128(128.0f, 128.0f);
 		const FString ControlRigPluginContentDir = FPaths::EnginePluginsDir() / TEXT("Animation/ControlRig/Content");
 		const FString EngineEditorSlateDir = FPaths::EngineContentDir() / TEXT("Editor/Slate");
 		SetContentRoot(ControlRigPluginContentDir);
@@ -104,6 +109,8 @@ public:
 				Set( "ControlRig.Viewport.Border", new BOX_BRUSH( "Old/Window/ViewportDebugBorder", 0.8f, FLinearColor(1.0f,1.0f,1.0f,1.0f) ) );
 				// similar style to "AnimViewport.Notification.Warning"
 				Set( "ControlRig.Viewport.Notification.ChangeShapeTransform", new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f/16.0f, FLinearColor(FColor(169, 0, 148))));
+				// similar style to "AnimViewport.Notification.Warning"
+				Set( "ControlRig.Viewport.Notification.DirectManipulation", new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f/16.0f, FLinearColor(FColor(0, 112, 224))));
 			}
 		}
 
@@ -115,7 +122,12 @@ public:
 			Set("ControlRig.Tree.ProxyControl", new IMAGE_BRUSH("Slate/ProxyControl1_16x", Icon16x16));
 			Set("ControlRig.Tree.Null", new IMAGE_BRUSH("Slate/Null_16x", Icon16x16));
 			Set("ControlRig.Tree.RigidBody", new IMAGE_BRUSH("Slate/RigidBody_16x", Icon16x16));
-			Set("ControlRig.Tree.Socket", new IMAGE_BRUSH("Slate/Socket_16x", Icon16x16));
+			Set("ControlRig.Tree.Socket_Open", new IMAGE_BRUSH_SVG("Slate/Socket_Open", Icon16x16));
+			Set("ControlRig.Tree.Socket_Closed", new IMAGE_BRUSH_SVG("Slate/Socket_Closed", Icon16x16));
+			{
+				FContentRootBracket Bracket(this, EngineEditorSlateDir);
+				Set("ControlRig.Tree.Connector", new IMAGE_BRUSH_SVG("Starship/Common/SetShowSockets", Icon16x16));
+			}
 		}
 
 		// Font?
@@ -134,6 +146,44 @@ public:
 			Set("ControlRig.TestData.Record", new IMAGE_BRUSH("Slate/RecordingIndicator", Icon32x32));
 		}
 
+		Set("ControlRig.ConnectorPrimary", new IMAGE_BRUSH_SVG("Slate/Connector_Primary", Icon128x128));
+		Set("ControlRig.ConnectorSecondary", new IMAGE_BRUSH_SVG("Slate/Connector_Secondary", Icon128x128));
+		Set("ControlRig.ConnectorOptional", new IMAGE_BRUSH_SVG("Slate/Connector_Optional", Icon128x128));
+		Set("ControlRig.ConnectorWarning", new IMAGE_BRUSH_SVG("Slate/Connector_Warning", Icon128x128));
+
+		// Schematic
+		{
+			Set("ControlRig.Schematic.ConnectorPrimary", new IMAGE_BRUSH_SVG("Slate/Connector_Primary_Schematic", Icon128x128));
+			Set("ControlRig.Schematic.ConnectorSecondary", new IMAGE_BRUSH_SVG("Slate/Connector_Secondary_Schematic", Icon128x128));
+			Set("ControlRig.Schematic.ConnectorOptional", new IMAGE_BRUSH_SVG("Slate/Connector_Optional_Schematic", Icon128x128));
+			Set("ControlRig.Schematic.ConnectorWarning", new IMAGE_BRUSH_SVG("Slate/Connector_Warning_Schematic", Icon128x128));
+			Set("ControlRig.Schematic.Bone", new IMAGE_BRUSH_SVG("Slate/Bone_Schematic", Icon128x128));
+			Set("ControlRig.Schematic.Control", new IMAGE_BRUSH_SVG("Slate/Control_Schematic", Icon128x128));
+			Set("ControlRig.Schematic.Null", new IMAGE_BRUSH_SVG("Slate/Null_Schematic", Icon128x128));
+			Set("ControlRig.Schematic.Link", new IMAGE_BRUSH_SVG("Slate/Link_Schematic", Icon128x128));
+		}
+
+		// Constraint Manager Icons
+		{
+			const FButtonStyle ConstraintOptionButton = FButtonStyle()
+				.SetNormal(FSlateRoundedBoxBrush(FStyleColors::Transparent, 4.f))
+				.SetHovered(FSlateRoundedBoxBrush(FStyleColors::Hover, 4.f))
+				.SetHoveredForeground(FLinearColor::White)
+				.SetPressed(FSlateRoundedBoxBrush(FStyleColors::Hover, 4.f))
+				.SetPressedForeground(FLinearColor::White)
+				.SetPressedPadding(FMargin(0.0, 1.0, 0.0, 0.0));
+
+			const FString EngineSlateDir = FPaths::EngineContentDir() / TEXT("Slate");
+			FContentRootBracket Bracket(this, EngineSlateDir);		
+
+			FComboButtonStyle ConstraintComboButton = FComboButtonStyle()
+				.SetButtonStyle(ConstraintOptionButton)
+				.SetDownArrowImage(IMAGE_BRUSH_SVG("Starship/Common/ellipsis-vertical-narrow", FVector2f(6.f, 15.f)));
+			ConstraintComboButton.ButtonStyle = ConstraintOptionButton;
+			
+			Set("ConstraintManager.ComboButton", ConstraintComboButton);
+		}
+		
 		FSlateStyleRegistry::RegisterSlateStyle(*this);
 	}
 
@@ -149,6 +199,10 @@ public:
 	}
 
 	FSlateColor SpacePickerSelectColor;
+	FLinearColor BoneUserInterfaceColor;
+	FLinearColor NullUserInterfaceColor;
+	FLinearColor ConnectorUserInterfaceColor;
+	FLinearColor SocketUserInterfaceColor;
 };
 
 #undef TTF_FONT

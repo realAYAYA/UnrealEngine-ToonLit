@@ -270,7 +270,7 @@ static bool BuildAdjacencyBuffer(const FSkeletalMeshLODRenderData& LodRenderData
 	const int32 SizePerVertex = MaxAdjacencyCount * sizeof(TriangleIndexType);
 	const int32 BufferSize = VertexCount * SizePerVertex;
 	const int32 PaddedBufferSize = 4 * FMath::DivideAndRoundUp(BufferSize, 4);
-	Buffer.SetNum(PaddedBufferSize, true);
+	Buffer.SetNum(PaddedBufferSize, EAllowShrinking::Yes);
 	FMemory::Memset(Buffer.GetData(), 0xFF, Buffer.Num());
 	TriangleIndexType* AdjacencyBuffer = reinterpret_cast<TriangleIndexType*>(Buffer.GetData());
 

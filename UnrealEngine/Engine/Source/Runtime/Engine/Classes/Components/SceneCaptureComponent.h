@@ -7,6 +7,7 @@
 #include "UObject/ObjectMacros.h"
 #include "Components/SceneComponent.h"
 #include "SceneTypes.h"
+#include "SceneView.h"
 #include "ShowFlags.h"
 #include "Engine/GameViewportClient.h"
 #include "SceneCaptureComponent.generated.h"
@@ -15,15 +16,14 @@ class AActor;
 class FSceneViewStateInterface;
 class UPrimitiveComponent;
 
-/** View state needed to create a scene capture renderer */
-struct FSceneCaptureViewInfo
+/** 
+* View state needed to create a scene capture renderer 
+* Inherits from FSceneViewProjectionData to unify resolving of possible projection correction calculations.
+*/
+struct FSceneCaptureViewInfo : public FSceneViewProjectionData
 {
 	FVector ViewLocation;
 	FRotator ViewRotation;
-	FVector ViewOrigin;
-	FMatrix ViewRotationMatrix;
-	FMatrix ProjectionMatrix;
-	FIntRect ViewRect;
 	EStereoscopicPass StereoPass;
 	int32 StereoViewIndex;
 };

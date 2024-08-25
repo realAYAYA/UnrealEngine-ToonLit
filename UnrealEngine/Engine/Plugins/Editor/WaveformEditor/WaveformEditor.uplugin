@@ -27,7 +27,7 @@
 		},
 		{
 			"Name": "WaveformTransformations",
-			"Type": "UncookedOnly",
+			"Type": "Editor",
 			"LoadingPhase": "PreDefault"
 		},
 		{

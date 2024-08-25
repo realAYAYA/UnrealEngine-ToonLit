@@ -464,7 +464,6 @@ public:
 
 	FString OnItemToStringDebug(TSharedPtr<FNiagaraHierarchyItemViewModelBase> ItemBaseViewModel) const;
 
-	const TArray<TSharedRef<IDetailTreeNode>>& RequestDetailTreeNodesForObject(UObject* Object);
 protected:
 	virtual void InitializeInternal() {}
 	virtual void FinalizeInternal() {}

@@ -113,6 +113,10 @@ struct FSkeletalMeshLODGroupSettings
 	/** The optimization settings to use for the respective LOD level */
 	UPROPERTY(EditAnywhere, Category = Reduction)
 	FSkeletalMeshOptimizationSettings ReductionSettings;
+
+	/** Whether a Mesh Deformer applied to the mesh asset or Skinned Mesh Component should be used on this LOD or not */
+	UPROPERTY(EditAnywhere, Category = LODSetting)
+	bool bAllowMeshDeformer = true;
 };
 
 UCLASS(config = Engine, defaultconfig, BlueprintType, MinimalAPI)
@@ -151,6 +155,7 @@ protected:
 	UPROPERTY(globalconfig, EditAnywhere, Category=LODGroups)
 	TArray<FSkeletalMeshLODGroupSettings> LODGroups;
 
+	friend class FSkeletalMeshReductionSettingsDetails;
 public:
 	/** Retrieves the Skeletal mesh LOD group settings for the given name */
 	ENGINE_API const FSkeletalMeshLODGroupSettings& GetSettingsForLODLevel(const int32 LODIndex) const;

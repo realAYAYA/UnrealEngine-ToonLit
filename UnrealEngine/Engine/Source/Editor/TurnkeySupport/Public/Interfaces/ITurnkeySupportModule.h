@@ -7,6 +7,12 @@
 #include "Modules/ModuleManager.h"
 #include "Modules/ModuleManager.h"
 
+#ifndef UE_WITH_TURNKEY_SUPPORT
+#define UE_WITH_TURNKEY_SUPPORT 1
+#endif
+
+#if UE_WITH_TURNKEY_SUPPORT
+
 class SWidget;
 
 enum class ETurnkeyPlatformSdkStatus : uint8
@@ -72,6 +78,11 @@ public:
 	virtual void MakeQuickLaunchItems(class UToolMenu* Menu, FOnQuickLaunchSelected ExternalOnClickDelegate) const = 0;
 
 	/**
+	 * Make menu items for the Simulator submenu items, so they can be added to the Play menu
+	 */
+	virtual void MakeSimulatorItems(class UToolMenu* Menu, FOnQuickLaunchSelected ExternalOnClickDelegate) const = 0;
+
+	/**
 	 * Runs Turnkey to get the Sdk information for all known platforms
 	 */
 	virtual void RepeatQuickLaunch(FString DeviceId) = 0;
@@ -113,3 +124,5 @@ public:
 	 */
 	virtual ~ITurnkeySupportModule( ) { }
 };
+
+#endif // UE_WITH_TURNKEY_SUPPORT

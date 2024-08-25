@@ -175,4 +175,23 @@ public:
 
 
 
+// UInterface for IInteractiveToolManageGeometrySelectionAPI
+UINTERFACE(MinimalAPI)
+class UInteractiveToolManageGeometrySelectionAPI : public UInterface
+{
+	GENERATED_BODY()
+};
 
+/**
+ * Provides an API to allow a tool to report how it has affected (updated or invalidated) geometry selections on the tool's targets
+ */
+class IInteractiveToolManageGeometrySelectionAPI
+{
+	GENERATED_BODY()
+public:
+
+	/**
+	 * @return true if the tool implementing this API has not updated the geometry selection or modified geometry to invalidate any previous geometry selection, i.e. has not removed/added vertices/edges/triangles
+	 */
+	virtual bool IsInputSelectionValidOnOutput() { return false; }
+};

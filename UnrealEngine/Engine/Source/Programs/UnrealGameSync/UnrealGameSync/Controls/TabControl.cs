@@ -3,9 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
-using System.Drawing.Drawing2D;
 
 namespace UnrealGameSync
 {
@@ -98,9 +98,9 @@ namespace UnrealGameSync
 		public int FindTabIndex(object data)
 		{
 			int result = -1;
-			for(int tabIdx = 0; tabIdx < _tabs.Count - 1; tabIdx++)
+			for (int tabIdx = 0; tabIdx < _tabs.Count - 1; tabIdx++)
 			{
-				if(_tabs[tabIdx]._data == data)
+				if (_tabs[tabIdx]._data == data)
 				{
 					result = tabIdx;
 					break;
@@ -112,9 +112,9 @@ namespace UnrealGameSync
 		public void SetHighlight(int tabIdx, Tuple<Color, float>? highlight)
 		{
 			Tuple<Color, float>? currentHighlight = _tabs[tabIdx]._highlight;
-			if(highlight == null || currentHighlight == null)
+			if (highlight == null || currentHighlight == null)
 			{
-				if(highlight != currentHighlight)
+				if (highlight != currentHighlight)
 				{
 					_tabs[tabIdx]._highlight = highlight;
 					Invalidate();
@@ -122,7 +122,7 @@ namespace UnrealGameSync
 			}
 			else
 			{
-				if(highlight.Item1 != currentHighlight.Item1 || highlight.Item2 != currentHighlight.Item2)
+				if (highlight.Item1 != currentHighlight.Item1 || highlight.Item2 != currentHighlight.Item2)
 				{
 					_tabs[tabIdx]._highlight = highlight;
 					Invalidate();
@@ -132,7 +132,7 @@ namespace UnrealGameSync
 
 		public void SetTint(int tabIdx, Color? tintColor)
 		{
-			if(_tabs[tabIdx]._tintColor != tintColor)
+			if (_tabs[tabIdx]._tintColor != tintColor)
 			{
 				_tabs[tabIdx]._tintColor = tintColor;
 				Invalidate();
@@ -142,16 +142,16 @@ namespace UnrealGameSync
 		public int InsertTab(int insertIdx, string name, object data, Color? tintColor)
 		{
 			int idx = _tabs.Count - 1;
-			if(insertIdx >= 0 && insertIdx < _tabs.Count - 1)
+			if (insertIdx >= 0 && insertIdx < _tabs.Count - 1)
 			{
 				idx = insertIdx;
 			}
-			if(_selectedTabIdx >= idx)
+			if (_selectedTabIdx >= idx)
 			{
 				_selectedTabIdx++;
 			}
 
-			_tabs.Insert(idx, new TabData(name, data){ _tintColor = tintColor });
+			_tabs.Insert(idx, new TabData(name, data) { _tintColor = tintColor });
 			LayoutTabs();
 			Invalidate();
 			return idx;
@@ -191,7 +191,7 @@ namespace UnrealGameSync
 
 		public void SelectTab(int tabIdx)
 		{
-			if(tabIdx != _selectedTabIdx)
+			if (tabIdx != _selectedTabIdx)
 			{
 				ForceSelectTab(tabIdx);
 			}
@@ -203,9 +203,9 @@ namespace UnrealGameSync
 			LayoutTabs();
 			Invalidate();
 
-			if(OnTabChanged != null)
+			if (OnTabChanged != null)
 			{
-				if(_selectedTabIdx == -1)
+				if (_selectedTabIdx == -1)
 				{
 					OnTabChanged(null);
 				}
@@ -219,23 +219,23 @@ namespace UnrealGameSync
 		public void RemoveTab(int tabIdx)
 		{
 			object tabData = _tabs[tabIdx]._data;
-			if(OnTabClosing == null || OnTabClosing(tabData))
+			if (OnTabClosing == null || OnTabClosing(tabData))
 			{
 				_tabs.RemoveAt(tabIdx);
 
-				if(_hoverTabIdx == tabIdx)
+				if (_hoverTabIdx == tabIdx)
 				{
 					_hoverTabIdx = -1;
 				}
 
-				if(_highlightTabIdx == tabIdx)
+				if (_highlightTabIdx == tabIdx)
 				{
 					_highlightTabIdx = -1;
 				}
 
-				if(_selectedTabIdx == tabIdx)
+				if (_selectedTabIdx == tabIdx)
 				{
-					if(_selectedTabIdx < _tabs.Count - 1)
+					if (_selectedTabIdx < _tabs.Count - 1)
 					{
 						ForceSelectTab(_selectedTabIdx);
 					}
@@ -246,7 +246,7 @@ namespace UnrealGameSync
 				}
 				else
 				{
-					if(_selectedTabIdx > tabIdx)
+					if (_selectedTabIdx > tabIdx)
 					{
 						_selectedTabIdx--;
 					}
@@ -261,17 +261,17 @@ namespace UnrealGameSync
 
 		void LayoutTabs()
 		{
-			using(Graphics graphics = CreateGraphics())
+			using (Graphics graphics = CreateGraphics())
 			{
 				float dpiScaleX = graphics.DpiX / 96.0f;
 				float dpiScaleY = graphics.DpiY / 96.0f;
 
-				for(int idx = 0; idx < _tabs.Count; idx++)
+				for (int idx = 0; idx < _tabs.Count; idx++)
 				{
 					TabData tab = _tabs[idx];
 					tab._textSize = TextRenderer.MeasureText(graphics, tab._name, Font, new Size(Int32.MaxValue, Int32.MaxValue), TextFormatFlags.NoPadding);
 					tab._width = (int)(TabPadding * dpiScaleX) + tab._textSize.Width + (int)(TabPadding * dpiScaleX);
-					if(idx == _selectedTabIdx)
+					if (idx == _selectedTabIdx)
 					{
 						tab._closeButtonWidth = (int)(TabCloseButtonWidth * dpiScaleX);
 						tab._width += tab._closeButtonWidth;
@@ -279,7 +279,7 @@ namespace UnrealGameSync
 				}
 
 				int leftX = 0;
-				for(int idx = 0; idx < _tabs.Count; idx++)
+				for (int idx = 0; idx < _tabs.Count; idx++)
 				{
 					TabData tab = _tabs[idx];
 					tab._minX = leftX;
@@ -287,22 +287,22 @@ namespace UnrealGameSync
 				}
 
 				int rightX = Width - 1;
-				if(leftX > rightX)
+				if (leftX > rightX)
 				{
 					int usedWidth = _tabs.Take(_tabs.Count - 1).Sum(x => x._width);
 					int remainingWidth = rightX + 1 - _tabs[^1]._width;
-					if(_selectedTabIdx != -1)
+					if (_selectedTabIdx != -1)
 					{
 						usedWidth -= _tabs[_selectedTabIdx]._width;
 						remainingWidth -= _tabs[_selectedTabIdx]._width;
 					}
 
 					int newX = 0;
-					for(int idx = 0; idx < _tabs.Count; idx++)
+					for (int idx = 0; idx < _tabs.Count; idx++)
 					{
 						_tabs[idx]._minX = newX;
 						int prevWidth = _tabs[idx]._width;
-						if(idx != _selectedTabIdx && idx != _tabs.Count - 1)
+						if (idx != _selectedTabIdx && idx != _tabs.Count - 1)
 						{
 							_tabs[idx]._width = Math.Max((_tabs[idx]._width * remainingWidth) / usedWidth, TabPadding * 3);
 						}
@@ -311,7 +311,7 @@ namespace UnrealGameSync
 					}
 				}
 
-				if(_dragState != null)
+				if (_dragState != null)
 				{
 					int minOffset = -_dragState._tab._minX;
 					int maxOffset = _tabs[^1]._minX - _dragState._tab._width - _dragState._tab._minX;
@@ -339,13 +339,13 @@ namespace UnrealGameSync
 
 			OnMouseMove(e);
 
-			if(_hoverTabIdx != -1)
+			if (_hoverTabIdx != -1)
 			{
-				if(e.Button == MouseButtons.Left)
+				if (e.Button == MouseButtons.Left)
 				{
-					if(_hoverTabIdx == _selectedTabIdx)
+					if (_hoverTabIdx == _selectedTabIdx)
 					{
-						if(e.Location.X > _tabs[_hoverTabIdx]._minX + _tabs[_hoverTabIdx]._width - _tabs[_hoverTabIdx]._closeButtonWidth)
+						if (e.Location.X > _tabs[_hoverTabIdx]._minX + _tabs[_hoverTabIdx]._width - _tabs[_hoverTabIdx]._closeButtonWidth)
 						{
 							RemoveTab(_hoverTabIdx);
 						}
@@ -356,11 +356,11 @@ namespace UnrealGameSync
 					}
 					else
 					{
-						if(_hoverTabIdx > _tabs.Count - 1)
+						if (_hoverTabIdx > _tabs.Count - 1)
 						{
 							OnButtonClick?.Invoke(_hoverTabIdx - _tabs.Count, e.Location, e.Button);
 						}
-						else if(_hoverTabIdx == _tabs.Count - 1)
+						else if (_hoverTabIdx == _tabs.Count - 1)
 						{
 							OnNewTabClick?.Invoke(e.Location, e.Button);
 						}
@@ -370,18 +370,18 @@ namespace UnrealGameSync
 						}
 					}
 				}
-				else if(e.Button == MouseButtons.Middle)
+				else if (e.Button == MouseButtons.Middle)
 				{
-					if(_hoverTabIdx < _tabs.Count - 1)
+					if (_hoverTabIdx < _tabs.Count - 1)
 					{
 						RemoveTab(_hoverTabIdx);
 					}
 				}
 			}
 
-			if(OnTabClicked != null)
+			if (OnTabClicked != null)
 			{
-				object? tabData = (_hoverTabIdx == -1)? null : _tabs[_hoverTabIdx]._data;
+				object? tabData = (_hoverTabIdx == -1) ? null : _tabs[_hoverTabIdx]._data;
 				OnTabClicked(tabData, e.Location, e.Button);
 			}
 		}
@@ -390,9 +390,9 @@ namespace UnrealGameSync
 		{
 			base.OnMouseUp(e);
 
-			if(_dragState != null)
+			if (_dragState != null)
 			{
-				if(OnTabReorder != null)
+				if (OnTabReorder != null)
 				{
 					OnTabReorder();
 				}
@@ -408,16 +408,16 @@ namespace UnrealGameSync
 		{
 			base.OnMouseMove(e);
 
-			if(_dragState != null)
+			if (_dragState != null)
 			{
 				_dragState._mouseX = e.Location.X;
 
 				_tabs.Remove(_dragState._tab);
 
 				int totalWidth = 0;
-				for(int insertIdx = 0;;insertIdx++)
+				for (int insertIdx = 0; ; insertIdx++)
 				{
-					if(insertIdx == _tabs.Count - 1 || _dragState._mouseX - _dragState._relativeMouseX < totalWidth + _tabs[insertIdx]._width / 2)
+					if (insertIdx == _tabs.Count - 1 || _dragState._mouseX - _dragState._relativeMouseX < totalWidth + _tabs[insertIdx]._width / 2)
 					{
 						_hoverTabIdx = _selectedTabIdx = insertIdx;
 						_tabs.Insert(insertIdx, _dragState._tab);
@@ -432,11 +432,11 @@ namespace UnrealGameSync
 			else
 			{
 				int newHoverTabIdx = -1;
-				if(ClientRectangle.Contains(e.Location))
+				if (ClientRectangle.Contains(e.Location))
 				{
-					for(int idx = 0; idx < _tabs.Count; idx++)
+					for (int idx = 0; idx < _tabs.Count; idx++)
 					{
-						if(e.Location.X > _tabs[idx]._minX && e.Location.X < _tabs[idx]._minX + _tabs[idx]._width)
+						if (e.Location.X > _tabs[idx]._minX && e.Location.X < _tabs[idx]._minX + _tabs[idx]._width)
 						{
 							newHoverTabIdx = idx;
 							break;
@@ -444,13 +444,13 @@ namespace UnrealGameSync
 					}
 				}
 
-				if(_hoverTabIdx != newHoverTabIdx)
+				if (_hoverTabIdx != newHoverTabIdx)
 				{
 					_hoverTabIdx = newHoverTabIdx;
 					LayoutTabs();
 					Invalidate();
 
-					if(_hoverTabIdx != -1)
+					if (_hoverTabIdx != -1)
 					{
 						Capture = true;
 					}
@@ -466,7 +466,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseCaptureChanged(e);
 
-			if(_hoverTabIdx != -1)
+			if (_hoverTabIdx != -1)
 			{
 				_hoverTabIdx = -1;
 				Invalidate();
@@ -479,12 +479,12 @@ namespace UnrealGameSync
 
 			LayoutTabs();
 
-			using(SolidBrush hoverBrush = new SolidBrush(Color.FromArgb(192, 192, 192)))
+			using (SolidBrush hoverBrush = new SolidBrush(Color.FromArgb(192, 192, 192)))
 			{
-				for(int idx = 0; idx < _tabs.Count; idx++)
+				for (int idx = 0; idx < _tabs.Count; idx++)
 				{
 					TabData tab = _tabs[idx];
-					if(idx == _hoverTabIdx || idx == _highlightTabIdx)
+					if (idx == _hoverTabIdx || idx == _highlightTabIdx)
 					{
 						DrawBackground(e.Graphics, tab, SystemBrushes.Window, hoverBrush, tab._highlight);
 					}
@@ -495,45 +495,45 @@ namespace UnrealGameSync
 				}
 			}
 
-			using(Pen separatorPen = new Pen(Color.FromArgb(192, SystemColors.ControlDarkDark)))
+			using (Pen separatorPen = new Pen(Color.FromArgb(192, SystemColors.ControlDarkDark)))
 			{
-				for(int idx = 0; idx < _tabs.Count; idx++)
+				for (int idx = 0; idx < _tabs.Count; idx++)
 				{
 					TabData tab = _tabs[idx];
-					if((idx > 0 && idx < _tabs.Count - 1) || idx >= _tabs.Count || idx == _selectedTabIdx || idx == _hoverTabIdx || idx == _highlightTabIdx || _tabs.Count == 1)
+					if ((idx > 0 && idx < _tabs.Count - 1) || idx >= _tabs.Count || idx == _selectedTabIdx || idx == _hoverTabIdx || idx == _highlightTabIdx || _tabs.Count == 1)
 					{
 						e.Graphics.DrawLine(separatorPen, tab._minX, 0, tab._minX, ClientSize.Height - 2);
 					}
-					if(idx < _tabs.Count - 1 || idx >= _tabs.Count || idx == _hoverTabIdx || idx == _highlightTabIdx || _tabs.Count == 1)
+					if (idx < _tabs.Count - 1 || idx >= _tabs.Count || idx == _hoverTabIdx || idx == _highlightTabIdx || _tabs.Count == 1)
 					{
 						e.Graphics.DrawLine(separatorPen, tab._minX + tab._width, 0, tab._minX + tab._width, ClientSize.Height - 2);
 					}
-					if(idx == _hoverTabIdx || idx == _highlightTabIdx || idx >= _tabs.Count)
+					if (idx == _hoverTabIdx || idx == _highlightTabIdx || idx >= _tabs.Count)
 					{
 						e.Graphics.DrawLine(separatorPen, tab._minX, 0, tab._minX + tab._width, 0);
 					}
 				}
 			}
 
-			for(int idx = 0; idx < _tabs.Count; idx++)
+			for (int idx = 0; idx < _tabs.Count; idx++)
 			{
-				if(idx != _selectedTabIdx)
+				if (idx != _selectedTabIdx)
 				{
 					DrawText(e.Graphics, _tabs[idx]);
 				}
 			}
 
-			if(_selectedTabIdx != -1)
+			if (_selectedTabIdx != -1)
 			{
 				TabData selectedTab = _tabs[_selectedTabIdx];
 
-				using(SolidBrush selectedBrush = new SolidBrush(Color.FromArgb(0, 136, 204)))
+				using (SolidBrush selectedBrush = new SolidBrush(Color.FromArgb(0, 136, 204)))
 				{
 					DrawBackground(e.Graphics, selectedTab, SystemBrushes.Window, selectedBrush, selectedTab._highlight);
 				}
 
 				DrawText(e.Graphics, selectedTab);
-	
+
 				// Draw the close button
 				SmoothingMode prevSmoothingMode = e.Graphics.SmoothingMode;
 				e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -547,7 +547,7 @@ namespace UnrealGameSync
 				Rectangle closeButton = new Rectangle(closeMidX - (int)((13 / 2) * dpiScaleX), closeMidY - (int)((13 / 2) * dpiScaleY), (int)(13 * dpiScaleX), (int)(13 * dpiScaleY));
 				e.Graphics.FillEllipse(SystemBrushes.ControlDark, closeButton);
 
-				using(Pen crossPen = new Pen(SystemBrushes.Window, 2.0f * dpiScaleX))
+				using (Pen crossPen = new Pen(SystemBrushes.Window, 2.0f * dpiScaleX))
 				{
 					float indentX = 3.5f * dpiScaleX;
 					float indentY = 3.5f * dpiScaleY;
@@ -562,7 +562,7 @@ namespace UnrealGameSync
 				e.Graphics.DrawLine(SystemPens.ControlDark, selectedTab._minX + selectedTab._width, 0, selectedTab._minX + selectedTab._width, ClientSize.Height - 2);
 			}
 
-			e.Graphics.DrawLine(SystemPens.ControlDarkDark, 0, ClientSize.Height - 2,  ClientSize.Width, ClientSize.Height - 2);
+			e.Graphics.DrawLine(SystemPens.ControlDarkDark, 0, ClientSize.Height - 2, ClientSize.Width, ClientSize.Height - 2);
 			e.Graphics.DrawLine(SystemPens.ControlLightLight, 0, ClientSize.Height - 1, ClientSize.Width, ClientSize.Height - 1);
 		}
 
@@ -586,7 +586,7 @@ namespace UnrealGameSync
 
 			if (highlight != null && highlight.Item2 > 0.0f)
 			{
-				using(SolidBrush brush = new SolidBrush(highlight.Item1))
+				using (SolidBrush brush = new SolidBrush(highlight.Item1))
 				{
 					graphics.FillRectangle(brush, tab._minX + 1, ClientSize.Height - (int)(5 * dpiScaleY), (int)((tab._width - 2) * highlight.Item2), (int)(5 * dpiScaleY) - 2);
 				}

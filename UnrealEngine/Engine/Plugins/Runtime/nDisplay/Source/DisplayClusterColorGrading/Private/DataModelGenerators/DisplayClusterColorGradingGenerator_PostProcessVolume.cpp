@@ -64,6 +64,12 @@ public:
 					GroupCategory.AddProperty(ChildHandle);
 				}
 			}
+			else if (ChildHandle->GetProperty()->GetNameCPP() == GET_MEMBER_NAME_STRING_CHECKED(FPostProcessSettings, AutoExposureBias))
+			{
+				// UE-192122: Also add Exposure compensation property to details view, to match DCRA properties
+				IDetailCategoryBuilder& GroupCategory = DetailBuilder.EditCategory(FName("DetailView_" + GroupName), FText::FromString(GroupName), ECategoryPriority::Important);
+				GroupCategory.AddProperty(ChildHandle);
+			}
 		}
 	}
 };

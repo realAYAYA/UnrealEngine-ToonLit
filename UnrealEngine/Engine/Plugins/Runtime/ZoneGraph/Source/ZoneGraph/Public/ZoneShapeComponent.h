@@ -101,6 +101,9 @@ public:
 	/** @return Lane template for each point in the polygon shape. */
 	void GetPolygonLaneProfiles(TArray<FZoneLaneProfile>& OutLaneProfiles) const;
 
+	/** @return Lane profile which is used for spline lanes, and polygon points which are set to Inherit. */
+	const FZoneLaneProfileRef& GetCommonLaneProfile() { return LaneProfile; }
+
 	/** Sets lane profile which is used for spline lanes, and polygon points which are set to Inherit.
 	 * @param LaneProfileRef New lane profile.
 	 */
@@ -126,6 +129,9 @@ public:
 
 	/** @return View to connected shapes. */
 	TConstArrayView<FZoneShapeConnection> GetConnectedShapes() const { return ConnectedShapes; }
+
+	/** @return Connector at the given point. */
+	const FZoneShapeConnector* GetShapeConnectorByPointIndex(int32 PointIndex) const;
 
 	/** @return Shape type. */
 	UFUNCTION(Category = Zone, BlueprintPure)
@@ -184,7 +190,7 @@ private:
 	bool bReverseLaneProfile = false;
 
 	/** Array of lane templates indexed by the points when the shape is polygon. */
-	UPROPERTY(meta = (IncludeInHash))
+	UPROPERTY(Category = Zone, VisibleAnywhere, meta = (IncludeInHash, EditCondition = "false", EditConditionHides))
 	TArray<FZoneLaneProfileRef> PerPointLaneProfiles;
 
 	/** Shape points */

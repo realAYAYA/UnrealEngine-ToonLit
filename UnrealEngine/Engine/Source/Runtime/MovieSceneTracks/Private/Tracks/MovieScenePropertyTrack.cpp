@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Tracks/MovieScenePropertyTrack.h"
+
+#include "IMovieScenePlayer.h"
 #include "Channels/MovieSceneSectionChannelOverrideRegistry.h"
 #include "Algo/Sort.h"
 #include "MovieScene.h"
@@ -79,9 +81,57 @@ FText UMovieScenePropertyTrack::GetDefaultDisplayName() const
 	return FText::FromName(PropertyBinding.PropertyName);
 }
 
-FText UMovieScenePropertyTrack::GetDisplayNameToolTipText() const
+FText UMovieScenePropertyTrack::GetDisplayNameToolTipText(const FMovieSceneLabelParams& LabelParams) const
 {
+	if (!LabelParams.BindingID.IsValid() || !LabelParams.Player)
+	{
+		return FText();
+	}
+	const TArrayView<TWeakObjectPtr<>> FoundBoundObjects = LabelParams.Player->FindBoundObjects(LabelParams.BindingID, LabelParams.SequenceID);
+	for (const TWeakObjectPtr<> BoundObject : FoundBoundObjects)
+	{
+		FTrackInstancePropertyBindings InstancePropertyBinding(GetPropertyName(), GetPropertyPath().ToString());
+		if (FProperty* BoundProperty = InstancePropertyBinding.GetProperty(*BoundObject))
+		{
+			FString PropertyName = BoundProperty->GetMetaData(TEXT("DisplayName"));
+			if (PropertyName.IsEmpty())
+			{
+				PropertyName = BoundProperty->GetName();
+			}
+
+			FString CategoryName = BoundProperty->GetMetaData(TEXT("Category")).Replace(TEXT("|"), TEXT(" \u00BB "));
+			if (!CategoryName.IsEmpty())
+			{
+				CategoryName.Append(TEXT(" \u00BB "));
+			}
+
+			return FText::FromString(FString::Printf(TEXT("%s%s\n(Path: %s)"), *CategoryName, *PropertyName, *InstancePropertyBinding.GetPropertyPath()));
+		}
+	}
+	
 	return FText::FromName(PropertyBinding.PropertyPath);
+}
+
+FSlateColor UMovieScenePropertyTrack::GetLabelColor(const FMovieSceneLabelParams& LabelParams) const
+{
+	// If there is no object binding extension, don't tint it
+	if (!LabelParams.BindingID.IsValid() || !LabelParams.Player)
+	{
+		return LabelParams.bIsDimmed ? FSlateColor::UseSubduedForeground() : FSlateColor::UseForeground();
+	}
+
+	// Return a normal colour if we have at least one bound object for which the property binding resolves
+	// correctly. Otherwise, return a red colour indicating a binding issue.
+	const TArrayView<TWeakObjectPtr<>> FoundBoundObjects = LabelParams.Player->FindBoundObjects(LabelParams.BindingID, LabelParams.SequenceID);
+	for (const TWeakObjectPtr<> BoundObject : FoundBoundObjects)
+	{
+		FTrackInstancePropertyBindings InstancePropertyBinding(GetPropertyName(), GetPropertyPath().ToString());
+		if (InstancePropertyBinding.GetProperty(*BoundObject))
+		{
+			return LabelParams.bIsDimmed ? FSlateColor::UseSubduedForeground() : FSlateColor::UseForeground();
+		}
+	}
+	return LabelParams.bIsDimmed ? FSlateColor(FLinearColor::Red.Desaturate(0.6f)) : FLinearColor::Red;
 }
 
 FName UMovieScenePropertyTrack::GetTrackName() const

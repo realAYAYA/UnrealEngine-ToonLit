@@ -5,7 +5,10 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "GameFramework/Actor.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "AI/Navigation/NavigationTypes.h"
+#endif //UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "AI/Navigation/NavDataGatheringMode.h"
 #include "StaticMeshActor.generated.h"
 
 /**

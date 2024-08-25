@@ -315,6 +315,35 @@ public:
 
 
 	/**
+	 * Find any overlap between a caller-defined query and any object ID. Returns the first overlap it finds.
+	 * @param ShapeBounds Overall bounds of the custom query shape
+	 * @param ObjectOverlapFn Custom function that indicates if the given ObjectID overlaps the query shape
+	 * @param BoundsOverlapFn Optional custom function that indicates if the given bounding box overlaps the query shape, used to filter the octree search.
+	 *                        Note the bounds overlap with ShapeBounds will already be called before calling this; only provide this if a more accurate overlap can be quickly checked.
+	 * @return index of overlapping ObjectID or INDEX_NONE if no overlaps are found
+	 */
+	GEOMETRYCORE_API int ParallelOverlapAnyQuery(const FAxisAlignedBox3d& ShapeBounds,
+		TFunctionRef<bool(int32)> ObjectOverlapFn, 
+		TFunctionRef<bool(const FAxisAlignedBox3d&)> BoundsOverlapFn) const;
+
+	/**
+	 * Find any overlap between a caller-defined query and any object ID. Returns the first overlap it finds.
+	 * @param ShapeBounds Overall bounds of the custom query shape
+	 * @param ObjectOverlapFn Custom function that indicates if the given ObjectID overlaps the query shape
+	 * @return index of overlapping ObjectID or INDEX_NONE if no overlaps are found
+	 */
+	GEOMETRYCORE_API int ParallelOverlapAnyQuery(const FAxisAlignedBox3d& ShapeBounds,
+		TFunctionRef<bool(int32)> ObjectOverlapFn) const
+	{
+		return ParallelOverlapAnyQuery(ShapeBounds, ObjectOverlapFn, 
+			// Note a bounds vs ShapeBounds test will always be performed automatically;
+			// the optional bounds overlap fn here can just return true to indicate no additional filtering is performed
+			[](const FAxisAlignedBox3d&) {return true;}
+		);
+	}
+
+
+	/**
 	 * Check that the octree is internally valid
 	 * @param IsValidObjectIDFunc function that returns true if given ObjectID is valid
 	 * @param GetObjectBoundSFunc function that returns bounding box of object identified by ObjectID
@@ -360,6 +389,7 @@ protected:
 	// list of cells. Note that some cells may be unused, depending on CellRefCounts
 	TDynamicVector<FSparseOctreeCell> Cells;
 
+	// TODO: Consider switching FSmallListSet to TSparseListSet<int32> for more reliable performance in cases where we have more than 8 objects in many cells
 	FSmallListSet CellObjectLists;			// per-cell object ID lists
 	TSet<int32> SpillObjectSet;				// list of object IDs for objects that didn't fit in a root cell
 
@@ -461,6 +491,10 @@ protected:
 		TArray<int>& ObjectIDs) const;
 
 private:
+	int BranchCustomOverlapAnyQuery(const FSparseOctreeCell* ParentCell,
+		const FAxisAlignedBox3d& Bounds,
+		TFunctionRef<bool(int32)> ObjectOverlapFn, TFunctionRef<bool(const FAxisAlignedBox3d&)> BoundsOverlapFn) const;
+
 	// helper to find the root-level cells that could intersect with a given query object, specialized for point containment queries
 	TArray<const FSparseOctreeCell*, TInlineAllocator<32>> InitializeQueryQueue(const FVector3d& Point) const
 	{

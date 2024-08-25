@@ -3,7 +3,12 @@
 #pragma once
 
 #include "CoreTypes.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Math/Color.h"
+#endif
+#if ENABLE_STATNAMEDEVENTS
+#include "Math/Color.h"
+#endif
 #include "UObject/NameTypes.h"
 #include "Delegates/Delegate.h"
 #include "HAL/PlatformTime.h"
@@ -395,9 +400,9 @@ struct FDynamicStats
 	{
 #if	STATS
 		return CreateStatIdInternal<TStatGroup>( FName( *StatNameOrDescription ), EStatDataType::ST_int64, true);
-#endif // STATS
-
+#else
 		return TStatId();
+#endif // STATS
 	}
 
 	template< typename TStatGroup >
@@ -405,9 +410,9 @@ struct FDynamicStats
 	{
 #if	STATS
 		return CreateStatIdInternal<TStatGroup>(FName(*StatNameOrDescription), EStatDataType::ST_int64, false, !bIsAccumulator);
-#endif // STATS
-
+#else
 		return TStatId();
+#endif // STATS
 	}
 
 	template< typename TStatGroup >
@@ -415,8 +420,9 @@ struct FDynamicStats
 	{
 #if	STATS
 		return CreateStatIdInternal<TStatGroup>(FName(*StatNameOrDescription), EStatDataType::ST_double, false, !bIsAccumulator);
-#endif // STATS
+#else
 		return TStatId();
+#endif // STATS
 	}
 
 	template< typename TStatGroup >
@@ -424,8 +430,9 @@ struct FDynamicStats
 	{
 #if	STATS
 		return CreateStatIdInternal<TStatGroup>(StatNameOrDescription, EStatDataType::ST_int64, IsTimer);
-#endif // STATS
+#else
 		return TStatId();
+#endif // STATS
 	}
 
 	template< typename TStatGroup >
@@ -433,9 +440,9 @@ struct FDynamicStats
 	{
 #if	STATS
 		return CreateMemoryStatId<TStatGroup>(FName(*StatNameOrDescription), MemRegion);
-#endif // STATS
-
+#else
 		return TStatId();
+#endif // STATS
 	}
 
 	template< typename TStatGroup >
@@ -455,9 +462,9 @@ struct FDynamicStats
 			false, EStatDataType::ST_int64, *StatNameOrDescription.ToString(), false, false, MemRegion);
 
 		return StatID;
-#endif // STATS
-
+#else
 		return TStatId();
+#endif // STATS
 	}
 
 #if	STATS

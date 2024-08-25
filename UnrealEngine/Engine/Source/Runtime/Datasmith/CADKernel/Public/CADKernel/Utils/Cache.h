@@ -1,6 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
+#include "CADKernel/Core/Types.h"
+#include "HAL/Platform.h"
+#include "Serialization/Archive.h"
+
 namespace UE::CADKernel
 {
 template<class ObjectType>

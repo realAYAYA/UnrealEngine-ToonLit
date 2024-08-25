@@ -46,9 +46,6 @@ FD3D11DynamicRHI::FD3D11DynamicRHI(IDXGIFactory1* InDXGIFactory1, D3D_FEATURE_LE
 #if NV_AFTERMATH
 	NVAftermathIMContextHandle(nullptr),
 #endif
-#if INTEL_METRICSDISCOVERY
-	IntelMetricsDiscoveryHandle(nullptr),
-#endif
 	FeatureLevel(InFeatureLevel),
 	AmdAgsContext(NULL),
 #if INTEL_EXTENSIONS
@@ -212,6 +209,8 @@ FD3D11DynamicRHI::FD3D11DynamicRHI(IDXGIFactory1* InDXGIFactory1, D3D_FEATURE_LE
 	GRHIMaxDispatchThreadGroupsPerDimension.X = D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
 	GRHIMaxDispatchThreadGroupsPerDimension.Y = D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
 	GRHIMaxDispatchThreadGroupsPerDimension.Z = D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
+
+	GRHIGlobals.NeedsShaderUnbinds = true;
 
 	GRHITransitionPrivateData_SizeInBytes = sizeof(FD3D11TransitionData);
 	GRHITransitionPrivateData_AlignInBytes = alignof(FD3D11TransitionData);
@@ -622,13 +621,6 @@ void FD3D11DynamicRHI::CleanupD3DDevice()
 			StopIntelExtensions();
 		}
 #endif // INTEL_EXTENSIONS
-
-#if INTEL_METRICSDISCOVERY
-		if (GDX11IntelMetricsDiscoveryEnabled && bAllowVendorDevice)
-		{
-			StopIntelMetricsDiscovery();
-		}
-#endif // INTEL_METRICSDISCOVERY
 
 		// When running with D3D debug, clear state and flush the device to get rid of spurious live objects in D3D11's report.
 		if (GRHIGlobals.IsDebugLayerEnabled)

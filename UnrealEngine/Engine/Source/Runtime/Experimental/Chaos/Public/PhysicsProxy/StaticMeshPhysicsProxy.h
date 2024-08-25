@@ -6,13 +6,21 @@
 #include "GeometryCollection/GeometryCollectionSimulationTypes.h"
 #include "Chaos/Framework/BufferedData.h"
 
+// @todo(chaos): remove this file
+
+namespace Chaos
+{
+	class FParticleData;
+}
+
 struct FPhysicsProxyKinematicUpdate
 {
 	FTransform NewTransform;
 	FVector NewVelocity;
 };
 
-struct FStubSkeletalMeshData : public Chaos::FParticleData {
+struct FStubSkeletalMeshData //: public Chaos::FParticleData 
+{
 	void Reset() { };
 };
 
@@ -100,32 +108,8 @@ public:
 	CHAOS_API bool PullFromPhysicsState(const int32 SolverSyncTimestamp);
 	bool IsDirty() { return false; }
 	FStubSkeletalMeshData* NewData() { return nullptr; }
-	EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::StaticMeshType; }
+	static constexpr EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::StaticMeshType; }
 	/** ----------------------- */
 
 private:
-
-	Params Parameters;
-
-	bool bInitializedState;
-	int32 RigidBodyId;
-	FVector CenterOfMass;
-	FVector Scale;
-
-	// Transform that the callback object will write into during simulation.
-	// During sync this will be pushed back to the component
-	FTransform SimTransform;
-
-	// Double buffered result data
-	Chaos::TBufferedData<FTransform> Results;
-
-	/**
-	 *	External functions for setup and sync, called on the game thread during callback creation and syncing
-	 */
-	FCallbackInitFunc InitialiseCallbackParamsFunc;
-	FSyncDynamicFunc SyncDynamicTransformFunc;
-	//////////////////////////////////////////////////////////////////////////
-
-	bool bPendingKinematicUpdate;
-	FPhysicsProxyKinematicUpdate BufferedKinematicUpdate;
 };

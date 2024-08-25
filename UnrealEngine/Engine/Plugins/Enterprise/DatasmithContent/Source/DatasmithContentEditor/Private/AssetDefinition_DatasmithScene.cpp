@@ -26,7 +26,7 @@ EAssetCommandResult UAssetDefinition_DatasmithScene::OpenAssets(const FAssetOpen
 {
 	FOnCreateDatasmithSceneEditor DatasmithSceneEditorHandler = IDatasmithContentEditorModule::Get().GetDatasmithSceneEditorHandler();
 
-	if (!DatasmithSceneEditorHandler.IsBound() == false)
+	if (DatasmithSceneEditorHandler.IsBound() == false)
 	{
 		FSimpleAssetEditor::CreateEditor(EToolkitMode::Standalone, OpenArgs.ToolkitHost, OpenArgs.LoadObjects<UObject>());
 		return EAssetCommandResult::Handled;

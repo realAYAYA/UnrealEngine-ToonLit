@@ -177,7 +177,9 @@ void UPixelStreamingBlueprints::KickPlayer(FString PlayerId)
 	{
 		return;
 	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	Streamer->KickPlayer(ToPlayerId(PlayerId));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void UPixelStreamingBlueprints::StreamerKickPlayer(FString StreamerId, FString PlayerId)
@@ -192,7 +194,9 @@ void UPixelStreamingBlueprints::StreamerKickPlayer(FString StreamerId, FString P
 	{
 		return;
 	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	Streamer->KickPlayer(ToPlayerId(PlayerId));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void UPixelStreamingBlueprints::SetPlayerLayerPreference(FString PlayerId, int SpatialLayerId, int TemporalLayerId)

@@ -45,6 +45,7 @@ void FStateTreeStateDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 	const TSharedPtr<IPropertyHandle> TransitionsProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UStateTreeState, Transitions));
 	const TSharedPtr<IPropertyHandle> TypeProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UStateTreeState, Type));
 	const TSharedPtr<IPropertyHandle> LinkedSubtreeProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UStateTreeState, LinkedSubtree));
+	const TSharedPtr<IPropertyHandle> LinkedAssetProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UStateTreeState, LinkedAsset));
 	const TSharedPtr<IPropertyHandle> ParametersProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UStateTreeState, Parameters));
 	const TSharedPtr<IPropertyHandle> SelectionBehaviorProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UStateTreeState, SelectionBehavior));
 
@@ -67,13 +68,12 @@ void FStateTreeStateDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 	{
 		LinkedSubtreeProperty->MarkHiddenByCustomization();
 	}
-	
-	if (!(StateType == EStateTreeStateType::Subtree || StateType == EStateTreeStateType::Linked))
+	if (StateType != EStateTreeStateType::LinkedAsset)
 	{
-		ParametersProperty->MarkHiddenByCustomization();
+		LinkedAssetProperty->MarkHiddenByCustomization();
 	}
-
-	if (StateType == EStateTreeStateType::Linked)
+	
+	if (StateType == EStateTreeStateType::Linked || StateType == EStateTreeStateType::LinkedAsset)
 	{
 		SelectionBehaviorProperty->MarkHiddenByCustomization();
 	}
@@ -132,7 +132,9 @@ void FStateTreeStateDetails::MakeArrayCategory(IDetailLayoutBuilder& DetailBuild
 	IDetailCategoryBuilder& Category = DetailBuilder.EditCategory(CategoryName, DisplayName);
 	Category.SetSortOrder(SortOrder);
 
-	const TSharedRef<SHorizontalBox> HeaderContentWidget = SNew(SHorizontalBox);
+	const TSharedRef<SHorizontalBox> HeaderContentWidget = SNew(SHorizontalBox)
+		.IsEnabled(DetailBuilder.GetPropertyUtilities(), &IPropertyUtilities::IsPropertyEditingEnabled);
+
 	HeaderContentWidget->AddSlot()
 	.HAlign(HAlign_Right)
 	.VAlign(VAlign_Center)

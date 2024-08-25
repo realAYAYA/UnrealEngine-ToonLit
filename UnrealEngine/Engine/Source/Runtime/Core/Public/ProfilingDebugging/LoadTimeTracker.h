@@ -280,8 +280,10 @@ struct FScopedLoadTimeAccumulatorTimer : public FScopedDurationTimer
 #define SCOPED_ACCUM_LOADTIME(TimerName, InstanceName)
 #endif
 
+// Uses raw timers to store cumulative load times, does not support specific strings
 #if ENABLE_LOADTIME_RAW_TIMINGS
 #define SCOPED_LOADTIMER_TEXT(TimerName)
+#define SCOPED_LOADTIMER_ASSET_TEXT(TimerName)
 #define SCOPED_LOADTIMER(TimerName) FScopedDurationTimer DurationTimer_##TimerName(FLoadTimeTracker::Get().TimerName);
 #define SCOPED_CUSTOM_LOADTIMER(TimerName)
 #define SCOPED_LOADTIMER_CNT(TimerName) FScopedDurationTimer DurationTimer_##TimerName(FLoadTimeTracker::Get().TimerName); FLoadTimeTracker::Get().TimerName##Cnt++;
@@ -290,14 +292,29 @@ struct FScopedLoadTimeAccumulatorTimer : public FScopedDurationTimer
 
 #define CUSTOM_LOADTIMER_LOG Cpu
 
+// Uses trace system that can be read by Insights
 #if LOADTIMEPROFILERTRACE_ENABLED
+
+// Writes any string to the LoadTime channel, normally used for class names 
 #define SCOPED_LOADTIMER_TEXT(TimerName) TRACE_CPUPROFILER_EVENT_SCOPE_TEXT_ON_CHANNEL(TimerName, LoadTimeChannel)
+
+// Writes any string to the AssetLoadTime channel, for full asset paths
+#define SCOPED_LOADTIMER_ASSET_TEXT(TimerName) TRACE_CPUPROFILER_EVENT_SCOPE_TEXT_ON_CHANNEL(TimerName, AssetLoadTimeChannel)
+
+// Writes raw scope name to LoadTime channel
 #define SCOPED_LOADTIMER(TimerName) TRACE_CPUPROFILER_EVENT_SCOPE_ON_CHANNEL(TimerName, LoadTimeChannel)
+
+// Used to create a custom trace event and add metadata
 #define SCOPED_CUSTOM_LOADTIMER(TimerName) UE_TRACE_LOG_SCOPED_T(CUSTOM_LOADTIMER_LOG, TimerName, LoadTimeChannel)
 #define ADD_CUSTOM_LOADTIMER_META(TimerName, Key, Value) << TimerName.Key(Value)
+
+// Increment cumulative event count, disabled in this mode
 #define SCOPED_LOADTIMER_CNT(TimerName)
+
+// All load time tracking is disabled
 #else
 #define SCOPED_LOADTIMER_TEXT(TimerName)
+#define SCOPED_LOADTIMER_ASSET_TEXT(TimerName)
 #define SCOPED_LOADTIMER(TimerName)
 #define SCOPED_CUSTOM_LOADTIMER(TimerName)
 #define ADD_CUSTOM_LOADTIMER_META(TimerName, Key, Value)

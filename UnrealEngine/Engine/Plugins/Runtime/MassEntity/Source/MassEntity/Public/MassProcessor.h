@@ -47,7 +47,8 @@ public:
 	UMassProcessor();
 	UMassProcessor(const FObjectInitializer& ObjectInitializer);
 
-	virtual void Initialize(UObject& Owner) {}
+	bool IsInitialized() const { return bInitialized; }
+	virtual void Initialize(UObject& Owner) { bInitialized = true; }
 	virtual FGraphEventRef DispatchProcessorTasks(const TSharedPtr<FMassEntityManager>& EntityManager, FMassExecutionContext& ExecutionContext, const FGraphEventArray& Prerequisites = FGraphEventArray());
 
 	EProcessorExecutionFlags GetExecutionFlags() const { return (EProcessorExecutionFlags)ExecutionFlags; }
@@ -166,6 +167,9 @@ private:
 	 *  @note that it's safe to store pointers here since RegisterQuery does verify that a given registered query is 
 	 *  a member variable of a given processor */
 	TArray<FMassEntityQuery*> OwnedQueries;
+
+	/** Used to track whether Initialized has been called. */
+	bool bInitialized = false;
 };
 
 
@@ -206,9 +210,13 @@ public:
 	virtual void BuildFlatProcessingGraph(TConstArrayView<FMassProcessorOrderInfo> SortedProcessors);
 
 	/**
-	 *  Adds processors in OrderedProcessors to ChildPipeline
+	 * Adds processors in InOutOrderedProcessors to ChildPipeline. 
+	 * Note that this operation is non-destructive for the existing processors - the ones of classes found in InOutOrderedProcessors 
+	 * will be retained and used instead of the instances provided via InOutOrderedProcessors. Respective entries in InOutOrderedProcessors
+	 * will be updated to reflect the reuse.
+	 * The described behavior however is available only for processors with bAllowMultipleInstances == false.
 	 */
-	void Populate(TConstArrayView<FMassProcessorOrderInfo> OrderedProcessors);
+	void UpdateProcessorsCollection(TArrayView<FMassProcessorOrderInfo> InOutOrderedProcessors, EProcessorExecutionFlags InWorldExecutionFlags = EProcessorExecutionFlags::None);
 
 	/** adds SubProcessor to an appropriately named group. If RequestedGroupName == None then SubProcessor
 	 *  will be added directly to ChildPipeline. If not then the indicated group will be searched for in ChildPipeline 
@@ -262,4 +270,11 @@ protected:
 		}
 	};
 	TArray<FProcessorCompletion> CompletionStatus;
+
+	//-----------------------------------------------------------------------------
+	// DEPRECATED
+	//-----------------------------------------------------------------------------
+public:
+	UE_DEPRECATED(5.3, "Populate is deprecated. Please use UpdateProcessorsCollection instead.")
+	void Populate(TConstArrayView<FMassProcessorOrderInfo> OrderedProcessors);
 };

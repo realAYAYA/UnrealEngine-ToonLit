@@ -5,9 +5,9 @@
 
 #include "Video/VideoEncoder.h"
 #include "Video/Encoders/Configs/VideoEncoderConfigH264.h"
-#include "Video/Encoders/Configs/VideoEncoderConfigH265.h"
+#include "Video/Encoders/Configs/VideoEncoderConfigAV1.h"
 #include "Video/Resources/VideoResourceRHI.h"
-
+#include "ThreadSafeMap.h"
 #include "PixelStreamingPrivate.h"
 
 namespace UE::PixelStreaming
@@ -77,7 +77,7 @@ namespace UE::PixelStreaming
 		void FreeUnusedEncoders();
 		bool CheckEncoderSessionAvailable() const;
 
-		TMap<uint32, TSharedPtr<FVideoEncoderHardware>> HardwareEncoders;
+		TThreadSafeMap<uint32, TSharedPtr<FVideoEncoderHardware>> HardwareEncoders;
 
 		uint8 bForceNextKeyframe : 1;
 
@@ -88,9 +88,5 @@ namespace UE::PixelStreaming
 
 		// Init encoder guard
 		FCriticalSection InitEncoderGuard;
-
-		// A map of GPU device names and their respective Max # of Concurrent Sessions as defined here: https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new
-		// If a device is not in this map, it has an unrestriced number of sessions
-		static TMap<FString, uint8> MaxConcurrentNvEncSessionsMap;
 	};
 } // namespace UE::PixelStreaming

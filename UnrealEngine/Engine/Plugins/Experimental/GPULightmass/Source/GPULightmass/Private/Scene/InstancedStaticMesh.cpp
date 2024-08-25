@@ -185,7 +185,7 @@ TArray<FMeshBatch> FInstanceGroupRenderState::GetMeshBatchesForGBufferRendering(
 			{
 				// No culling, should be for ray tracing scene
 				MeshBatchElement.UserIndex = INDEX_NONE;
-				MeshBatchElement.NumInstances = InstancedRenderData->PerInstanceRenderData->InstanceBuffer.GetNumInstances();
+				MeshBatchElement.NumInstances = NumInstances;
 
 				MeshBatches.Add(MeshBatch);
 			}
@@ -201,17 +201,17 @@ TArray<FMeshBatch> FInstanceGroupRenderState::GetMeshBatchesForGBufferRendering(
 						FIntPoint MinInInstanceTile(FMath::DivideAndRoundDown(Min.X, LODPerInstanceLightmapSize[LODIndex].X >> CoordsForCulling.MipLevel), FMath::DivideAndRoundDown(Min.Y, LODPerInstanceLightmapSize[LODIndex].Y >> CoordsForCulling.MipLevel));
 						FIntPoint MaxInInstanceTile(FMath::DivideAndRoundUp(Max.X, LODPerInstanceLightmapSize[LODIndex].X >> CoordsForCulling.MipLevel), FMath::DivideAndRoundUp(Max.Y, LODPerInstanceLightmapSize[LODIndex].Y >> CoordsForCulling.MipLevel));
 
-						int32 InstancesPerRow = FMath::CeilToInt(FMath::Sqrt(static_cast<float>(InstancedRenderData->PerInstanceRenderData->InstanceBuffer.GetNumInstances())));
+						int32 InstancesPerRow = FMath::CeilToInt(FMath::Sqrt(static_cast<float>(NumInstances)));
 
 						for (int32 Y = MinInInstanceTile.Y; Y < MaxInInstanceTile.Y; Y++)
 						{
 							int32 MinInstanceIndex = Y * InstancesPerRow + MinInInstanceTile.X;
 							int32 MaxInstanceIndex = Y * InstancesPerRow + MaxInInstanceTile.X;
 
-							MinInstanceIndex = FMath::Min(MinInstanceIndex, (int32)InstancedRenderData->PerInstanceRenderData->InstanceBuffer.GetNumInstances() - 1);
+							MinInstanceIndex = FMath::Min(MinInstanceIndex, (int32)NumInstances - 1);
 							
 							MeshBatchElement.UserIndex = MinInstanceIndex;							
-							MeshBatchElement.NumInstances = FMath::Min(MaxInstanceIndex - MinInstanceIndex, (int32)InstancedRenderData->PerInstanceRenderData->InstanceBuffer.GetNumInstances() - MinInstanceIndex);
+							MeshBatchElement.NumInstances = FMath::Min(MaxInstanceIndex - MinInstanceIndex, NumInstances - MinInstanceIndex);
 
 							MeshBatches.Add(MeshBatch);
 						}

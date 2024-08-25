@@ -472,45 +472,6 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	Global functions
 -----------------------------------------------------------------------------*/
 
-void ResetLinkerExports(UPackage* InPackage)
-{
-	FLinkerManager::Get().ResetLinkerExports(InPackage);
-}
-
-void ResetLoaders(UObject* InPkg)
-{
-	if (IsAsyncLoading())
-	{
-		UE_LOG(LogLinker, Log, TEXT("ResetLoaders(%s) is flushing async loading"), *GetPathNameSafe(InPkg));
-	}
-
-	// Make sure we're not in the middle of loading something in the background.
-	FlushAsyncLoading();
-	FLinkerManager::Get().ResetLoaders(InPkg);
-}
-
-void ResetLoaders(TArrayView<UObject*> InOuters)
-{
-	if (IsAsyncLoading())
-	{
-		UE_LOG(LogLinker, Log, TEXT("ResetLoaders is flushing async loading"));
-	}
-
-	// Make sure we're not in the middle of loading something in the background.
-	FlushAsyncLoading();
-	FLinkerManager::Get().ResetLoaders(InOuters);
-}
-
-void DeleteLoaders()
-{
-	FLinkerManager::Get().DeleteLinkers();
-}
-
-void DeleteLoader(FLinkerLoad* Loader)
-{
-	FLinkerManager::Get().RemoveLinker(Loader);
-}
-
 static void LogGetPackageLinkerError(FUObjectSerializeContext* LoadContext, const FPackagePath& PackagePath, const FText& InErrorMessage, UObject* InOuter, uint32 LoadFlags)
 {
 	static FName NAME_LoadErrors("LoadErrors");
@@ -884,50 +845,110 @@ FLinkerLoad* GetPackageLinker
 
 FLinkerLoad* LoadPackageLinker(UPackage* InOuter, const FPackagePath& PackagePath, uint32 LoadFlags, UPackageMap* Sandbox, FArchive* InReaderOverride, TFunctionRef<void(FLinkerLoad* LoadedLinker)> LinkerLoadedCallback)
 {
-	FLinkerLoad* Linker = nullptr;
-	TRefCountPtr<FUObjectSerializeContext> LoadContext(FUObjectThreadContext::Get().GetSerializeContext());
-	BeginLoad(LoadContext);
-	{
-		FUObjectSerializeContext* InOutLoadContext = LoadContext;
-		Linker = GetPackageLinker(InOuter, PackagePath, LoadFlags, Sandbox, InReaderOverride, &InOutLoadContext);
-		if (InOutLoadContext != LoadContext)
-		{
-			// The linker already existed and was associated with another context
-			LoadContext->DecrementBeginLoadCount();
-			LoadContext = InOutLoadContext;
-			LoadContext->IncrementBeginLoadCount();
-		}
-	}
-	// Allow external code to work with the linker before EndLoad()
+	FLinkerLoad* Linker = GetPackageLinker(InOuter, PackagePath, LoadFlags, Sandbox, InReaderOverride);
 	LinkerLoadedCallback(Linker);
-	EndLoad(Linker ? Linker->GetSerializeContext() : LoadContext.GetReference());
 	return Linker;
 }
 
 FLinkerLoad* LoadPackageLinker(UPackage* InOuter, const FPackagePath& PackagePath, uint32 LoadFlags, UPackageMap* Sandbox, FArchive* InReaderOverride)
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	return LoadPackageLinker(InOuter, PackagePath, LoadFlags, Sandbox, InReaderOverride, [](FLinkerLoad* InLinker) {});
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 FLinkerLoad* LoadPackageLinker(UPackage* InOuter, const TCHAR* InLongPackageName, uint32 LoadFlags, UPackageMap* Sandbox, FGuid* CompatibleGuid, FArchive* InReaderOverride, TFunctionRef<void(FLinkerLoad* LoadedLinker)> LinkerLoadedCallback)
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	return LoadPackageLinker(InOuter, GetPackagePath(InOuter, InLongPackageName), LoadFlags, Sandbox, InReaderOverride, LinkerLoadedCallback);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 FLinkerLoad* LoadPackageLinker(UPackage* InOuter, const TCHAR* InLongPackageName, uint32 LoadFlags, UPackageMap* Sandbox, FGuid* CompatibleGuid, FArchive* InReaderOverride)
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	return LoadPackageLinker(InOuter, GetPackagePath(InOuter, InLongPackageName), LoadFlags, Sandbox, InReaderOverride, [](FLinkerLoad* InLinker) {});
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
+
+void ResetLinkerExports(UPackage* InPackage)
+{
+	FLinkerManager::Get().ResetLinkerExports(InPackage);
+}
+
+void ConditionalFlushAsyncLoadingForLinkers(TConstArrayView<FLinkerLoad*> InLinkers)
+{
+	// If there are currently pending async requests for any package, 
+	// it's possible that some of those pending requests are for the given Linkers that our caller wants to flush.
+	// Our caller wants to flush the Linkers because we must purge references to a linker from the async loader before the linker can be reset.
+	// But we don't have a way to inspect the pending async requests and see which linker they are for. 
+	// Flushing the new requests will also flush any other pending async requests for the same linkers.
+	if (InLinkers.Num() > 0 && IsAsyncLoading())
+	{
+		UE_LOG(LogLinker, Log, TEXT("Conditionally flushing loading for linker(s) (%s)"), *GetPathNameSafe(InLinkers[0]->LinkerRoot));
+
+		TArray<int32, TInlineAllocator<4>> RequestIds;
+		for (FLinkerLoad* Linker : InLinkers)
+		{
+			int32 Request = LoadPackageAsync(Linker->GetPackagePath(), FLoadPackageAsyncOptionalParams{ .PackagePriority = MAX_int32 });
+			RequestIds.Add(Request);
+		}
+		FlushAsyncLoading(RequestIds);
+	}
+}
+
+void ResetLoaders(UObject* InPkg)
+{
+	if (FLinkerLoad* Loader = FLinkerLoad::FindExistingLinkerForPackage(InPkg->GetPackage()))
+	{
+		// Make sure we're not in the middle of loading something in the background.
+		ConditionalFlushAsyncLoadingForLinkers(MakeArrayView({ Loader }));
+		// Detach all exports from the linker and dissociate the linker.
+		FLinkerManager::Get().ResetLoaders(MakeArrayView({ Loader }));
+	}
+}
+
+void ResetLoaders(TArrayView<UObject*> InOuters)
+{
+	TSet<FLinkerLoad*> LinkersToReset;
+	for (UObject* Object : InOuters)
+	{
+		if (UPackage* TopLevelPackage = Object->GetPackage())
+		{
+			if (FLinkerLoad* LinkerToReset = FLinkerLoad::FindExistingLinkerForPackage(TopLevelPackage))
+			{
+				LinkersToReset.Add(LinkerToReset);
+			}
+		}
+	}
+
+	if (LinkersToReset.Num())
+	{
+		// Make sure we're not in the middle of loading something in the background.
+		ConditionalFlushAsyncLoadingForLinkers(LinkersToReset.Array());
+		FLinkerManager::Get().ResetLoaders(LinkersToReset);
+	}
+}
+
+void ConditionalFlushAsyncLoadingForSave(UPackage* InPackage)
+{
+	if (FLinkerLoad* Loader = FLinkerLoad::FindExistingLinkerForPackage(InPackage->GetPackage()))
+	{
+		ConditionalFlushAsyncLoadingForLinkers(MakeArrayView({ Loader }));
+	}
 }
 
 void ResetLoadersForSave(UPackage* Package, const TCHAR* Filename)
 {
 	FLinkerLoad* Loader = FLinkerLoad::FindExistingLinkerForPackage(Package);
-	if( Loader )
+	if (Loader)
 	{
-		if ( FPackagePath::FromLocalPath(Filename) == Loader->GetPackagePath())
+		if (FPackagePath::FromLocalPath(Filename) == Loader->GetPackagePath())
 		{
 			// Detach all exports from the linker and dissociate the linker.
-			ResetLoaders( Package );
+			ConditionalFlushAsyncLoadingForLinkers(MakeArrayView({ Loader }));
+			FLinkerManager::Get().ResetLoaders(MakeArrayView({ Loader }));
 		}
 	}
 }
@@ -945,8 +966,22 @@ void ResetLoadersForSave(TArrayView<FPackageSaveInfo> InPackages)
 		{
 			return FLinkerLoad::FindExistingLinkerForPackage(InPackageSaveInfo.Package);
 		});
-	FlushAsyncLoading();
-	FLinkerManager::Get().ResetLoaders(LinkersToReset);
+
+	if (LinkersToReset.Num())
+	{
+		ConditionalFlushAsyncLoadingForLinkers(LinkersToReset.Array());
+		FLinkerManager::Get().ResetLoaders(LinkersToReset);
+	}
+}
+
+void DeleteLoaders()
+{
+	FLinkerManager::Get().DeleteLinkers();
+}
+
+void DeleteLoader(FLinkerLoad* Loader)
+{
+	FLinkerManager::Get().RemoveLinker(Loader);
 }
 
 void EnsureLoadingComplete(UPackage* Package)

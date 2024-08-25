@@ -1,10 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NNERuntimeRDGCast.h"
+
+#include "Helper/NNERuntimeRDGLogHelper.h"
 #include "NNERuntimeRDGHelperCast.h"
 #include "NNETensor.h"
 #include "NNETypes.h"
-#include "NNEUtilsLogHelper.h"
 
 namespace UE::NNERuntimeRDG::Private::Hlsl
 {
@@ -18,7 +19,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 		FCast() {}
 		virtual ~FCast() = default;
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 1);
 			check(OutputTensors.Num() == 1);
@@ -64,8 +65,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
-		//This match version 13 of the Cast operator
-		//https://github.com/onnx/onnx/blob/main/docs/Operators.md#Cast
 		FAttributeValidator AttributeValidator;
 		AttributeValidator.AddRequired(TEXT("to"), ENNEAttributeDataType::Int32);
 		bIsValid &= AttributeValidator.Validate(AttributeMap);
@@ -82,7 +81,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 				case ENNETensorDataType::Int64:
 					break;
 				default:
-					FString TargetType = NNEUtils::Internal::GetTensorDataTypeName(To);
+					FString TargetType = LogHelper::GetTensorDataTypeName(To);
 					UE_LOG(LogNNE, Warning, TEXT("Cast: Target tensor data type %s not supported."), *TargetType);
 					bIsValid = false;
 			}
@@ -105,7 +104,11 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterCastOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Cast"), CreateCastOperator, ValidateCastOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Cast"), TEXT("Onnx")}, 6}, CreateCastOperator, ValidateCastOperator);
+		Registry.OpAdd({{TEXT("Cast"), TEXT("Onnx")}, 9}, CreateCastOperator, ValidateCastOperator);
+		Registry.OpAdd({{TEXT("Cast"), TEXT("Onnx")}, 13}, CreateCastOperator, ValidateCastOperator);
+		// Next version: 19
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

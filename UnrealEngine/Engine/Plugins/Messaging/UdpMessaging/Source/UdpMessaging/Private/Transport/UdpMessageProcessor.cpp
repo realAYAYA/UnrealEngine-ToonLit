@@ -7,6 +7,7 @@
 #include "Serialization/ArrayReader.h"
 #include "Serialization/ArrayWriter.h"
 
+#include "Transport/UdpDeserializedMessage.h"
 #include "UdpCircularQueue.h"
 #include "UdpMessagingTracing.h"
 #include "Shared/UdpMessagingSettings.h"
@@ -40,6 +41,13 @@ TAutoConsoleVariable<FString> CVarConnectionsToError(
 	TEXT("Connections to error out on when MessageBus.UDP.InduceSocketError is enabled.\n")
 	TEXT("This can be a comma separated list in the form IPAddr2:port,IPAddr3:port"),
 	ECVF_Default);
+
+TAutoConsoleVariable<int32> CVarCheckForExpiredWithFullQueue(
+	TEXT("MessageBus.UDP.CheckForExpiredWithFullQueue"),
+	0,
+	TEXT("Attempts to release pressure on the work queue by checking if inflight segments have expired with no acknowledgement.\n"),
+	ECVF_Default);
+
 
 namespace UE::Private::MessageProcessor
 {
@@ -854,6 +862,13 @@ void FUdpMessageProcessor::ProcessPongSegment(FInboundSegment& Segment, FNodeInf
 void FUdpMessageProcessor::ProcessRetransmitSegment(FInboundSegment& Segment, FNodeInfo& NodeInfo)
 {
 	FUdpMessageSegment::FRetransmitChunk RetransmitChunk;
+	int32 TargetMessageId = RetransmitChunk.GetMessageId(*Segment.Data);
+	if (NodeInfo.Segmenters.IsEmpty() || !NodeInfo.Segmenters.Contains(TargetMessageId))
+	{
+		// Ignore this message because we have no segmenters to retransmit.
+		return;
+	}
+
 	RetransmitChunk.Serialize(*Segment.Data, NodeInfo.ProtocolVersion);
 
 	TSharedPtr<FUdpMessageSegmenter> Segmenter = NodeInfo.Segmenters.FindRef(RetransmitChunk.MessageId);
@@ -873,6 +888,11 @@ void FUdpMessageProcessor::ProcessRetransmitSegment(FInboundSegment& Segment, FN
 
 void FUdpMessageProcessor::ProcessTimeoutSegment(FInboundSegment& Segment, FNodeInfo& NodeInfo)
 {
+	if (NodeInfo.Segmenters.IsEmpty())
+	{
+		// Ignore this message because we have no segmenters to retransmit.
+		return;
+	}
 	FUdpMessageSegment::FTimeoutChunk TimeoutChunk;
 	TimeoutChunk.Serialize(*Segment.Data, NodeInfo.ProtocolVersion);
 
@@ -889,10 +909,36 @@ void FUdpMessageProcessor::ProcessUnknownSegment(FInboundSegment& Segment, FNode
 	UE_LOG(LogUdpMessaging, Verbose, TEXT("Received unknown segment type '%i' from %s"), SegmentType, *Segment.Sender.ToText().ToString());
 }
 
+void FUdpMessageProcessor::LookupAndCacheMessageType(TSharedPtr<FUdpReassembledMessage, ESPMode::ThreadSafe>& ReassembledMessage)
+{
+	if (!ReassembledMessage->HasFirstSegment())
+	{
+		return;
+	}
+	if (ReassembledMessage->GetMessageTypeInfo() == nullptr)
+	{
+		FNameOrFTopLevel AssetPath = FUdpDeserializedMessage::PeekMessageTypeInfoName(*ReassembledMessage);
+		FString PathAsString = Visit([](auto&& Path) -> FString { return Path.ToString(); }, AssetPath);
+
+		if (TWeakObjectPtr<UScriptStruct>* TypeInfo = CachedTypeInfoMap.Find(PathAsString))
+		{
+			ReassembledMessage->SetMessageTypeInfo(*TypeInfo);
+		}
+		else if (!GIsSavingPackage && !IsGarbageCollecting())
+		{
+			// Otherwise we have to look up the object by calling FindObjectSafe.  This can fail in GC and package save.
+			// Thus we only do this in not saving / GC cases.
+			TWeakObjectPtr<UScriptStruct> Obj = FUdpDeserializedMessage::ResolvePath(AssetPath);
+			CachedTypeInfoMap.Add(PathAsString, Obj);
+			ReassembledMessage->SetMessageTypeInfo(MoveTemp(Obj));
+		}
+	}
+}
+
 void FUdpMessageProcessor::DeliverMessage(const TSharedPtr<FUdpReassembledMessage, ESPMode::ThreadSafe>& ReassembledMessage, FNodeInfo& NodeInfo)
 {
 	// Do not deliver message while saving or garbage collecting since those deliveries will fail anyway...
-	if (GIsSavingPackage || IsGarbageCollecting())
+	if (ReassembledMessage->GetMessageTypeInfo() == nullptr && (GIsSavingPackage || IsGarbageCollecting()))
 	{
 		UE_LOG(LogUdpMessaging, Verbose, TEXT("Skipping delivery of %s"), *ReassembledMessage->Describe());
 		return;
@@ -994,15 +1040,15 @@ void FUdpMessageProcessor::SendKnownNodesToKnownNodes()
 	const int32 NumEndpointsCanSend = (UDP_MESSAGING_SEGMENT_SIZE - sizeof(FUdpMessageSegment::FHeader)) / (sizeof(FIPv4Endpoint) + sizeof(FGuid)) - 1;
 	if (KnownEndpointsView.Num() > NumEndpointsCanSend)
 	{
-		UE_LOG(LogUdpMessaging, Warning, TEXT("FUdpMessageProcessor::SendKnownNodesToKnownNodes large number of endpoints to share for meshing udp transport."));
+		UE_LOG(LogUdpMessaging, Warning, TEXT("FUdpMessageProcessor::SendKnownNodesToKnownNodes large number of endpoints (%d) to share for meshing udp transport."), KnownEndpointsView.Num());
 	}
 
 	int32 Index = 0;
 	while (Index < KnownEndpointsView.Num())
 	{
-		const uint32 NextBlockIndex = FMath::Min<uint32>(Index + NumEndpointsCanSend, KnownEndpointsView.Num());
-		TArrayView<FIPv4Endpoint> SlicedEndpointView = KnownEndpointsView.Slice(Index, NextBlockIndex);
-		TArrayView<FGuid>	      SlicedIdView = KnownIdView.Slice(Index, NextBlockIndex);
+		const uint32 NextBlockItemCount = FMath::Min<uint32>(Index + NumEndpointsCanSend, KnownEndpointsView.Num() - Index);
+		TArrayView<FIPv4Endpoint> SlicedEndpointView = KnownEndpointsView.Slice(Index, NextBlockItemCount);
+		TArrayView<FGuid>	      SlicedIdView = KnownIdView.Slice(Index, NextBlockItemCount);
 
 		OutEndpoints = SlicedEndpointView;
 		OutIds = SlicedIdView;
@@ -1239,7 +1285,6 @@ int32 FUdpMessageProcessor::UpdateSegmenters(FNodeInfo& NodeInfo)
 			return -1;
 		}
 	}
-	NodeInfo.OverflowForPendingAck.Reset();
 
 	// Process messages in the work queue.
 	while (NodeInfo.CanSendSegments() && NodeInfo.WorkQueue.Dequeue(MessageId))
@@ -1264,6 +1309,14 @@ int32 FUdpMessageProcessor::UpdateSegmenters(FNodeInfo& NodeInfo)
 		}
 
 		BytesSent += Info.BytesSent;
+	}
+
+	if (CVarCheckForExpiredWithFullQueue.GetValueOnAnyThread() > 0 && !NodeInfo.CanSendSegments() && NodeInfo.WorkQueue.IsFull())
+	{
+		UE_LOG(LogUdpMessaging, Warning, TEXT("Work queue is full sending to node at address %s. We cannot send new data. Attempting to expire old inflight segments."), *NodeInfo.Endpoint.ToString());
+		// RemoveLostSegments will clean-up the tracking map that we use to determine what is "inflight". Old data will be expired and scheduled
+		// for resend.
+		NodeInfo.RemoveLostSegments(CurrentTime);
 	}
 
 	NodeInfo.Statistics.PacketsInFlight = NodeInfo.InflightSegments.Num();
@@ -1323,6 +1376,8 @@ bool FUdpMessageProcessor::UpdateReassemblers(FNodeInfo& NodeInfo)
 				It.Key(),
 				*NodeInfo.NodeId.ToString());
 		}
+
+		LookupAndCacheMessageType(ReassembledMessage);
 
 		// Try to deliver completed message that couldn't be delivered the first time around
 		if (ReassembledMessage->IsComplete() && !ReassembledMessage->IsDelivered())

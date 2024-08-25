@@ -505,15 +505,12 @@ FCreateActorResult UEditorModelingObjectsCreationAPI::CreateNewActor(FCreateActo
 	// create new Actor
 	AActor* NewActor = nullptr;
 	
-	if (GEditor && CreateActorParams.TemplateActor)
+	if (GEditor && CreateActorParams.TemplateAsset)
 	{
-		if (UClass* ActorClass = CreateActorParams.TemplateActor->GetClass())
+		if (UActorFactory* const ActorFactory =  FActorFactoryAssetProxy::GetFactoryForAssetObject(CreateActorParams.TemplateAsset))
 		{
-			if (UActorFactory* const ActorFactory = GEditor->FindActorFactoryForActorClass(ActorClass))
-			{
-				NewActor = ActorFactory->CreateActor(ActorClass, CreateActorParams.TargetWorld->GetCurrentLevel(), CreateActorParams.Transform);
-				FActorLabelUtilities::SetActorLabelUnique(NewActor, CreateActorParams.BaseName);
-			}
+			NewActor = ActorFactory->CreateActor(CreateActorParams.TemplateAsset, CreateActorParams.TargetWorld->GetCurrentLevel(), CreateActorParams.Transform);
+			FActorLabelUtilities::SetActorLabelUnique(NewActor, CreateActorParams.BaseName);
 		}
 	}
 

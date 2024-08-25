@@ -985,12 +985,9 @@ void FConcertClientDefaultPresenceModeFactory::QueryVRDeviceType()
 
 #else
 
-namespace FConcertClientPresenceManager
+double FConcertClientPresenceManager::GetLocationUpdateFrequency()
 {
-	double GetLocationUpdateFrequency()
-	{
-		return ConcertClientPresenceManagerUtil::LocationUpdateFrequencySeconds;
-	}
+	return ConcertClientPresenceManagerUtil::LocationUpdateFrequencySeconds;
 }
 
 #endif // WITH_EDITOR

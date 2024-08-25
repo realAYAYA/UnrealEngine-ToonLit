@@ -141,8 +141,15 @@
 #define COMPILER_ALLOW_CS_DERIVATIVES
 #endif
 
+#ifndef PLATFORM_REQUIRES_UNWRAPPED_MESH_SHADER_ARGS
+#define PLATFORM_REQUIRES_UNWRAPPED_MESH_SHADER_ARGS 0
+#endif
+
 #ifndef PLATFORM_SUPPORTS_ROV
 #define PLATFORM_SUPPORTS_ROV 0
+#endif
+
+#if !PLATFORM_SUPPORTS_ROV
 #define RasterizerOrderedTexture2D RWTexture2D
 #endif
 
@@ -246,19 +253,17 @@
 #define COMPILER_SUPPORTS_HLSL2021 0
 #endif
 
-#ifndef PLATFORM_SUPPORTS_UB_STRUCT
-#define PLATFORM_SUPPORTS_UB_STRUCT 0
+#ifndef PLATFORM_SUPPORTS_CONSTANTBUFFER_OBJECT
+#define PLATFORM_SUPPORTS_CONSTANTBUFFER_OBJECT 0
+#endif
+
+#ifndef PLATFORM_SUPPORTS_UNIFORM_BUFFER_OBJECTS
+#define PLATFORM_SUPPORTS_UNIFORM_BUFFER_OBJECTS 0
 #endif
 
 #ifndef PLATFORM_GPU_ARCH
 #define PLATFORM_GPU_ARCH PLATFORM_GPU_ARCH_UNKNOWN
 #endif 
-
-#if PLATFORM_SUPPORTS_UB_STRUCT
-	#define UB_CB_NAME(X) UniformBufferConstants_##X
-#else
-	#define UB_CB_NAME(X) X
-#endif
 
 #ifndef PLATFORM_NEEDS_DEPTH_TEXTURE_READS
 #define PLATFORM_NEEDS_DEPTH_TEXTURE_READS 0
@@ -272,8 +277,8 @@
 #define PLATFORM_NEEDS_SEPARATE_SHADOW_DEPTH_CUBE_TEXTURE 0
 #endif
 
-#ifndef PLATFORM_SUPPORTS_STRATA_UINT1
-#define PLATFORM_SUPPORTS_STRATA_UINT1 1
+#ifndef PLATFORM_SUPPORTS_SUBSTRATE_UINT1
+#define PLATFORM_SUPPORTS_SUBSTRATE_UINT1 1
 #endif
 
 #ifndef COMPILER_NEEDS_DETERMINANT
@@ -449,6 +454,36 @@
 	#define UB_FIXED_FLOAT(Dim) float##Dim
 #endif
 
+// 16KB by default. Must match Platform.h
+#ifndef PLATFORM_MAX_UNIFORM_BUFFER_RANGE
+	#define PLATFORM_MAX_UNIFORM_BUFFER_RANGE (16u*1024u)
+#endif
+#define PLATFORM_MAX_UNIFORM_BUFFER_RANGE_FLOAT4 (PLATFORM_MAX_UNIFORM_BUFFER_RANGE/16u)
+
+#if PLATFORM_SUPPORTS_CONSTANTBUFFER_OBJECT
+	#define UB_CB_DEFINITION_START(      UBName                    ) struct F##UBName##Constants {
+	#define UB_CB_MEMBER_NAME(           UBName,         MemberName) MemberName
+	#define UB_CB_PREFIXED_MEMBER_NAME(  UBName, Prefix, MemberName) Prefix##MemberName
+	#define UB_CB_DEFINITION_END(        UBName                    ) }; ConstantBuffer<F##UBName##Constants> UBName;
+	#define UB_CB_MEMBER_ACCESS(         UBName,         MemberName) UBName##.##MemberName
+	#define UB_CB_PREFIXED_MEMBER_ACCESS(UBName, Prefix, MemberName) UBName##.##Prefix##MemberName
+
+	#define UB_DECL_PARAMETER(UBName, StructName, GlobalName) UBName##.##StructName = UBName##.##GlobalName
+	#define UB_DECL_RESOURCE(UBName, StructName, GlobalName)  UBName##.##StructName = UBName##_##GlobalName
+#else
+	#define UB_CB_DEFINITION_START(      UBName                    ) cbuffer UBName {
+	#define UB_CB_MEMBER_NAME(           UBName,         MemberName) UBName##_##MemberName
+	#define UB_CB_PREFIXED_MEMBER_NAME(  UBName, Prefix, MemberName) Prefix##UBName##_##MemberName
+	#define UB_CB_DEFINITION_END(        UBName                    ) }
+	#define UB_CB_MEMBER_ACCESS(         UBName,         MemberName) UBName##_##MemberName
+	#define UB_CB_PREFIXED_MEMBER_ACCESS(UBName, Prefix, MemberName) Prefix##UBName##_##MemberName
+
+	#define UB_DECL_PARAMETER(UBName, StructName, GlobalName) UBName##.##StructName = UBName##_##GlobalName
+	#define UB_DECL_RESOURCE(UBName, StructName, GlobalName)  UBName##.##StructName = UBName##_##GlobalName
+#endif
+
+#define UB_CB_UNIFORM_BLOCK(UBName, MemberName) UB_FLOAT(4) UB_CB_MEMBER_NAME(UBName,MemberName)[PLATFORM_MAX_UNIFORM_BUFFER_RANGE_FLOAT4]
+
 // Use interpolator for platforms that do not support ClipDistance
 #if !PLATFORM_SUPPORTS_CLIP_DISTANCE
 #define SV_ClipDistance OUTCLIPDIST
@@ -480,6 +515,12 @@
 #define PLATFORM_SUPPORTS_4COMPONENT_UAV_READ_WRITE (XBOXONE_PROFILE || COMPILER_METAL)
 #endif
 
+// Whether the platform supports binding SRVs to the vertex shader stage.
+// This is generally available on high-end platforms and not available on mobile outside of some exceptions.
+// The real value is expected to be set based on DataDrivenShaderPlatformInfo in GlobalBeginCompileShader().
+#ifndef PLATFORM_SUPPORTS_VERTEX_SHADER_SRVS
+#define PLATFORM_SUPPORTS_VERTEX_SHADER_SRVS 1
+#endif
 
 // ---------------------------------------------------- Compiler specific defaults and fallbacks
 
@@ -672,7 +713,40 @@ void ShaderYield()
 #endif
 
 #ifndef INVARIANT
-#define INVARIANT(X) (X)
+precise float MakePrecise(in precise float v) { precise float pv = v; return pv; }
+precise float2 MakePrecise(in precise float2 v) { precise float2 pv = v; return pv; }
+precise float3 MakePrecise(in precise float3 v) { precise float3 pv = v; return pv; }
+precise float4 MakePrecise(in precise float4 v) { precise float4 pv = v; return pv; }
+#define INVARIANT(X) MakePrecise(X)
+#endif
+
+#ifndef INVARIANT_ADD
+#define INVARIANT_ADD(Lhs, Rhs) INVARIANT((Lhs) + (Rhs))
+#endif
+
+#ifndef INVARIANT_SUB
+#define INVARIANT_SUB(Lhs, Rhs) INVARIANT((Lhs) - (Rhs))
+#endif
+
+#ifndef INVARIANT_MUL
+#define INVARIANT_MUL(Lhs, Rhs) INVARIANT((Lhs) * (Rhs))
+#endif
+
+#ifndef INVARIANT_DIV
+#define INVARIANT_DIV(Lhs, Rhs) INVARIANT((Lhs) / (Rhs))
+#endif
+
+#ifndef INVARIANT_FMA
+#define INVARIANT_FMA(A, B, C) INVARIANT(FMA((A), (B), (C)))
+#endif
+
+#ifndef INVARIANT_OUTPUT
+#define INVARIANT_OUTPUT
+#endif
+
+#ifndef PLATFORM_SUPPORTS_FMA
+#define PLATFORM_SUPPORTS_FMA 1
+#define FMA(a, b, c) mad(a, b, c)
 #endif
 
 #ifndef ENABLE_RE_Z
@@ -755,6 +829,10 @@ void ShaderYield()
 
 #ifndef MAX_OCCUPANCY
 #define MAX_OCCUPANCY
+#endif
+
+#ifndef DISABLE_TARGET_OCCUPANCY_WARNING
+#define DISABLE_TARGET_OCCUPANCY_WARNING
 #endif
 
 #ifndef ALLOW_NO_PS_EXPORT
@@ -1230,6 +1308,11 @@ uint WaveGetActiveLaneIndexLast()
 
 #endif // PLATFORM_SUPPORTS_SM6_0_WAVE_OPERATIONS
 
+#if !defined(COMPILER_SUPPORTS_WAVE_INCLUSIVE_PREFIX_SUM)
+#define COMPILER_SUPPORTS_WAVE_INCLUSIVE_PREFIX_SUM 0
+#define WaveInclusivePrefixSum(x) (WavePrefixSum(x) + x)
+#endif
+
 // Give hint to compiler to move one value to scalar unit.
 #if !defined(ToScalarMemory) && !defined(COMPILER_SUPPORTS_TO_SCALAR_MEMORY)
 	#define ToScalarMemory(x) (x)
@@ -1276,3 +1359,4 @@ uint WaveGetActiveLaneIndexLast()
 #ifndef GET_SCALAR_ARRAY_ELEMENT
 #define GET_SCALAR_ARRAY_ELEMENT(PackedArray, ElementIndex) PackedArray[(uint)ElementIndex>>2u][(uint)ElementIndex&3u]
 #endif
+

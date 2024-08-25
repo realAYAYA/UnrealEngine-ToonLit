@@ -13,7 +13,7 @@ namespace mu
 	struct FProgram;
 
 	//---------------------------------------------------------------------------------------------
-	class ASTOpMeshOptimizeSkinning : public ASTOp
+	class ASTOpMeshOptimizeSkinning final : public ASTOp
 	{
 	public:
 

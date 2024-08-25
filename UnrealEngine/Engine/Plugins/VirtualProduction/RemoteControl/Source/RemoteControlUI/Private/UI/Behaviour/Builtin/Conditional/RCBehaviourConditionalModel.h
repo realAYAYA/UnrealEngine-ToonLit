@@ -30,6 +30,9 @@ public:
 	/** Add a Logic Action using a remote control field as input */
 	virtual URCAction* AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField);
 
+	/** Returns true if this behaviour have a details widget or false if not*/
+	virtual bool HasBehaviourDetailsWidget() override;
+
 	/** Builds a Behaviour specific details widget enabling the user to define Conditions*/
 	virtual TSharedRef<SWidget> GetBehaviourDetailsWidget() override;
 

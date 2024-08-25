@@ -105,6 +105,14 @@ void UEditorProjectAppearanceSettings::PostEditChangeProperty( struct FPropertyC
 	{
 		Settings.SetDisplayUnits(EUnitType::Speed, SpeedUnits);
 	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UEditorProjectAppearanceSettings, AngularSpeedUnits))
+	{
+		Settings.SetDisplayUnits(EUnitType::AngularSpeed, AngularSpeedUnits);
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UEditorProjectAppearanceSettings, AccelerationUnits))
+	{
+		Settings.SetDisplayUnits(EUnitType::Acceleration, AccelerationUnits);
+	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UEditorProjectAppearanceSettings, TemperatureUnits))
 	{
 		Settings.SetDisplayUnits(EUnitType::Temperature, TemperatureUnits);
@@ -116,6 +124,14 @@ void UEditorProjectAppearanceSettings::PostEditChangeProperty( struct FPropertyC
 	else if (Name == GET_MEMBER_NAME_CHECKED(UEditorProjectAppearanceSettings, TorqueUnits))
 	{
 		Settings.SetDisplayUnits(EUnitType::Torque, TorqueUnits);
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UEditorProjectAppearanceSettings, ImpulseUnits))
+	{
+		Settings.SetDisplayUnits(EUnitType::Impulse, ImpulseUnits);
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UEditorProjectAppearanceSettings, PositionalImpulseUnits))
+	{
+		Settings.SetDisplayUnits(EUnitType::PositionalImpulse, PositionalImpulseUnits);
 	}
 	else if (Name == GET_MEMBER_NAME_CHECKED(UEditorProjectAppearanceSettings, bDisplayUnits))
 	{

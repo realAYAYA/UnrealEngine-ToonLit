@@ -235,8 +235,16 @@ void UCommonButtonGroupBase::OnWidgetRemoved( UWidget* OldWidget )
 
 		Buttons.RemoveAll( [Button]( TWeakObjectPtr<UCommonButtonBase> Entry ) { return Entry == Button || !Entry.IsValid(); } );
 
+		if (Button->GetSelected())
+		{
+			constexpr bool bAllowSound = false;
+			Button->SetSelectedInternal(false, bAllowSound);
+		}
+
 		if (ButtonIndex == SelectedButtonIndex)
 		{
+			SelectedButtonIndex = INDEX_NONE;
+			
 			if (bSelectionRequired && Buttons.Num() > 0)
 			{
 				for (int32 NewButtonIndex = 0; NewButtonIndex < Buttons.Num(); NewButtonIndex++)
@@ -248,13 +256,10 @@ void UCommonButtonGroupBase::OnWidgetRemoved( UWidget* OldWidget )
 						return; // Early out to only select one button
 					}
 				}
-
-				SelectedButtonIndex = INDEX_NONE;
 				ensureMsgf(false, TEXT("Button group requires selection, but no button is selectable"));
 			}
 			else
 			{
-				SelectedButtonIndex = INDEX_NONE;
 				OnSelectionCleared.Broadcast();
 			}
 		}

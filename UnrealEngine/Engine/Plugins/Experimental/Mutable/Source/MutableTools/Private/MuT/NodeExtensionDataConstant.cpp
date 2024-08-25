@@ -14,8 +14,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeExtensionDataConstant::Private::s_type =
-			NODE_TYPE("ExtensionDataConstant", NodeExtensionData::GetStaticType());
+	FNodeType NodeExtensionDataConstant::Private::s_type =
+			FNodeType("ExtensionDataConstant", NodeExtensionData::GetStaticType());
 
 
 	//---------------------------------------------------------------------------------------------
@@ -23,30 +23,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE(NodeExtensionDataConstant, EType::Constant, Node, Node::EType::ExtensionData);
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeExtensionDataConstant::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeExtensionDataConstant::GetInputNode(int i) const
-	{
-		check(false);
-		return nullptr;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeExtensionDataConstant::SetInputNode(int i, NodePtr pNode)
-	{
-		check(false);
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -58,7 +34,6 @@ namespace mu
 	}
 
 
-	//---------------------------------------------------------------------------------------------
 	void NodeExtensionDataConstant::SetValue(ExtensionDataPtrConst Value)
 	{
 		m_pD->Value = Value;

@@ -69,6 +69,10 @@ namespace Chaos
 			Gravity = G;
 		}
 
+		void SetRewindVelocities(bool InRewindVelocities)
+		{
+			bRewindVelocities = InRewindVelocities;
+		}
 
 		void SetSimulationSpace(const FSimulationSpace& InSimulationSpace)
 		{
@@ -127,5 +131,6 @@ namespace Chaos
 		FVec3 Gravity;
 		FSimulationSpaceSettings SimulationSpaceSettings;
 		FSimulationSpace SimulationSpace;
+		bool bRewindVelocities;
 	};
 }

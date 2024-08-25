@@ -19,10 +19,11 @@
 #include "RigVMCore/RigVMFunction.h"
 #include "RigVMCore/RigVMMemoryCommon.h"
 #include "RigVMCore/RigVMPropertyPath.h"
+#include "RigVMCore/RigVMMemoryStorage.h"
+#include "RigVMCore/RigVMMemoryStorageStruct.h"
 #include "RigVMExecuteContext.h"
 #include "RigVMMemory.h"
 #include "RigVMMemoryDeprecated.h"
-#include "RigVMMemoryStorage.h"
 #include "RigVMRegistry.h"
 #include "RigVMStatistics.h"
 #include "Templates/Function.h"
@@ -42,6 +43,7 @@
 #include "RigVM.generated.h"
 
 class FArchive;
+class URigVMHost;
 struct FFrame;
 struct FRigVMDispatchFactory;
 
@@ -79,6 +81,7 @@ public:
 	void Serialize(FArchive& Ar);
 	void Save(FArchive& Ar);
 	void Load(FArchive& Ar);
+
 	friend FArchive& operator<<(FArchive& Ar, FRigVMParameter& P)
 	{
 		P.Serialize(Ar);
@@ -166,7 +169,10 @@ public:
 	virtual void Serialize(FArchive& Ar);
 	virtual void Save(FArchive& Ar);
 	virtual void Load(FArchive& Ar);
+	void CopyDataForSerialization(URigVM* InVM);
+
 	virtual void PostLoad() override;
+
 #if WITH_EDITORONLY_DATA
 	static void DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConstructClasses, const UClass* SpecificSubclass);
 #endif
@@ -191,8 +197,11 @@ public:
 	// returns the VM's matching nativized class if it exists
 	UClass* GetNativizedClass(const TArray<FRigVMExternalVariableDef>& InExternalVariables = TArray<FRigVMExternalVariableDef>());
 	
+	UE_DEPRECATED(5.4, "Please, use Reset with Context param")
+	virtual void Reset(bool IsIgnoringArchetypeRef = false) {}
+
 	// resets the container and maintains all memory
-	virtual void Reset(bool IsIgnoringArchetypeRef = false);
+	virtual void Reset(FRigVMExtendedExecuteContext& Context);
 
 	UE_DEPRECATED(5.3, "Please, use Empty with Context param")
 	virtual void Empty() {}
@@ -200,9 +209,9 @@ public:
 	// resets the container and removes all memory
 	virtual void Empty(FRigVMExtendedExecuteContext& Context);
 
-	// resets the container and clones the input VM
-	virtual void CopyFrom(URigVM* InVM, bool bDeferCopy = false, bool bReferenceLiteralMemory = false, bool bReferenceByteCode = false, bool bCopyExternalVariables = false, bool bCopyDynamicRegisters = false);
-
+	UE_DEPRECATED(5.4, "CopyFrom has been deprecated")
+	virtual void CopyFrom(URigVM* InVM, bool bDeferCopy = false, bool bReferenceLiteralMemory = false, bool bReferenceByteCode = false, bool bCopyExternalVariables = false, bool bCopyDynamicRegisters = false) {}
+	
 	// sets the max array size allowed by this VM
 	UE_DEPRECATED(5.3, "Please, use Context.SetRuntimeSettings")
 	void SetRuntimeSettings(FRigVMRuntimeSettings InRuntimeSettings) {}
@@ -210,25 +219,31 @@ public:
 	UE_DEPRECATED(5.3, "Please, use Initialize with Context param")
 	virtual bool Initialize(TArrayView<URigVMMemoryStorage*> Memory) { return false; }
 
-	// Initializes all execute ops and their memory.
-	virtual bool Initialize(FRigVMExtendedExecuteContext& Context, TArrayView<URigVMMemoryStorage*> Memory);
+	UE_DEPRECATED(5.4, "Please, use Initialize with just Context param")
+	virtual bool Initialize(FRigVMExtendedExecuteContext& Context, TArrayView<URigVMMemoryStorage*> Memory) { return false; }
+
+	// Prepares caches and memory for execution
+	virtual bool Initialize(FRigVMExtendedExecuteContext& Context);
+
+	// Initializes cached memory handles and optionally copies work memory from the CDO to the Context
+	virtual bool InitializeInstance(FRigVMExtendedExecuteContext& Context, bool bCopyMemory = true);
 
 	UE_DEPRECATED(5.3, "Please, use Execute with Context param")
 	virtual ERigVMExecuteResult Execute(TArrayView<URigVMMemoryStorage*> Memory, const FName& InEntryName = NAME_None) { return ERigVMExecuteResult::Failed; }
 
-	// Executes the VM.
-	// You can optionally provide external memory to the execution
-	// and provide optional additional operands.
-	virtual ERigVMExecuteResult Execute(FRigVMExtendedExecuteContext& Context, TArrayView<URigVMMemoryStorage*> Memory, const FName& InEntryName = NAME_None);
+	UE_DEPRECATED(5.4, "Please, use ExecuteVM with Context param")
+	virtual ERigVMExecuteResult Execute(FRigVMExtendedExecuteContext& Context, TArrayView<URigVMMemoryStorage*> Memory, const FName& InEntryName = NAME_None) { return ERigVMExecuteResult::Failed; }
 
 	UE_DEPRECATED(5.3, "Please, use Execute with Context param")
 	virtual bool Execute(const FName& InEntryName = NAME_None) { return false; }
 
 	// Executes the VM.
-	// You can optionally provide external memory to the execution
-	// and provide optional additional operands.
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	virtual bool Execute(FRigVMExtendedExecuteContext& Context, const FName& InEntryName = NAME_None);
+	// You can optionally provide optional additional operands.
+	virtual ERigVMExecuteResult ExecuteVM(FRigVMExtendedExecuteContext& Context, const FName& InEntryName = NAME_None);
+
+	UE_DEPRECATED(5.4, "Please, use ExecuteVM with Context param")
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported."))
+	virtual bool Execute(FRigVMExtendedExecuteContext& Context, const FName& InEntryName = NAME_None) { return false; }
 
 	UE_DEPRECATED(5.3, "Please, use ExecuteLazyBranch with Context param")
 	ERigVMExecuteResult ExecuteLazyBranch(const FRigVMBranchInfo& InBranchToRun) { return ERigVMExecuteResult::Failed; }
@@ -251,38 +266,139 @@ public:
 	UFUNCTION()
 	virtual FString GetRigVMFunctionName(int32 InFunctionIndex) const;
 
+	UE_DEPRECATED(5.4, "GetMemoryByType has been deprecated from the VM. Please, use GetWorkMemory from VMHost or the version with a Context param")
+	virtual URigVMMemoryStorage* GetMemoryByType(ERigVMMemoryType InMemoryType, bool bCreateIfNeeded = true) { return nullptr; }
+
 	// Returns a memory storage by type
-	virtual URigVMMemoryStorage* GetMemoryByType(ERigVMMemoryType InMemoryType, bool bCreateIfNeeded = true);
-	
-	// The default mutable work memory
-	URigVMMemoryStorage* GetWorkMemory(bool bCreateIfNeeded = true) { return GetMemoryByType(ERigVMMemoryType::Work, bCreateIfNeeded); }
+	virtual FRigVMMemoryStorageStruct* GetMemoryByType(FRigVMExtendedExecuteContext& Context, ERigVMMemoryType InMemoryType);
+	virtual const FRigVMMemoryStorageStruct* GetMemoryByType(const FRigVMExtendedExecuteContext& Context, ERigVMMemoryType InMemoryType) const;
+
+	UE_DEPRECATED(5.4, "This version of GetLiteralMemory has been deprecated from the VM. Please, use GetLiteralMemory from Host or version with no parameter.")
+	URigVMMemoryStorage* GetLiteralMemory(bool bCreateIfNeeded) { return nullptr; }
 
 	// The default const literal memory
-	URigVMMemoryStorage* GetLiteralMemory(bool bCreateIfNeeded = true) { return GetMemoryByType(ERigVMMemoryType::Literal, bCreateIfNeeded); }
-
-	// The default debug watch memory
-	URigVMMemoryStorage* GetDebugMemory(bool bCreateIfNeeded = true) { return GetMemoryByType(ERigVMMemoryType::Debug, bCreateIfNeeded); }
-
-	// returns all memory storages as an array
-	TArray<URigVMMemoryStorage*> GetLocalMemoryArray()
+	FRigVMMemoryStorageStruct* GetLiteralMemory()
 	{
-		TArray<URigVMMemoryStorage*> LocalMemory;
-		LocalMemory.Add(GetWorkMemory(true));
-		LocalMemory.Add(GetLiteralMemory(true));
-		LocalMemory.Add(GetDebugMemory(true));
+		return &LiteralMemoryStorage;
+	}
+	const FRigVMMemoryStorageStruct* GetLiteralMemory() const
+	{
+		return &LiteralMemoryStorage;
+	}
+
+	UE_DEPRECATED(5.4, "GetWorkMemory has been deprecated from the VM. Please, use GetWorkMemory from VMHost or the version with a Context param")
+	URigVMMemoryStorage* GetWorkMemory(bool bCreateIfNeeded = true) { return nullptr; }
+
+	// The instance mutable work memory the VM will use to execute
+	FRigVMMemoryStorageStruct* GetWorkMemory(FRigVMExtendedExecuteContext& Context)
+	{
+		return GetMemoryByType(Context, ERigVMMemoryType::Work);
+	}
+	const FRigVMMemoryStorageStruct* GetWorkMemory(const FRigVMExtendedExecuteContext& Context) const
+	{
+		return GetMemoryByType(Context, ERigVMMemoryType::Work);
+	}
+
+	UE_DEPRECATED(5.4, "GetDebugMemory has been deprecated from the VM. Please, use GetDebugMemory from VMHost or the version with a Context param")
+	URigVMMemoryStorage* GetDebugMemory(bool bCreateIfNeeded = true) { return nullptr; }
+
+	// The instance debug watch memory
+	FRigVMMemoryStorageStruct* GetDebugMemory(FRigVMExtendedExecuteContext& Context)
+	{
+		return GetMemoryByType(Context, ERigVMMemoryType::Debug);
+	}
+	const FRigVMMemoryStorageStruct* GetDebugMemory(const FRigVMExtendedExecuteContext& Context) const
+	{
+		return GetMemoryByType(Context, ERigVMMemoryType::Debug);
+	}
+
+	UE_DEPRECATED(5.4, "Please, use GetInstanceMemoryArray with a Context param")
+	TArray<URigVMMemoryStorage*> GetLocalMemoryArray() { return TArray<URigVMMemoryStorage*>(); }
+
+	// Returns the VM Literal memory and context instanced memory.
+	TArray<FRigVMMemoryStorageStruct*> GetInstanceMemory(FRigVMExtendedExecuteContext& Context)
+	{
+		TArray<FRigVMMemoryStorageStruct*> LocalMemory;
+		LocalMemory.Add(GetWorkMemory(Context));
+		LocalMemory.Add(GetLiteralMemory());
+		LocalMemory.Add(GetDebugMemory(Context));
 		return LocalMemory;
 	}
 
-	virtual void ClearMemory();
+	// The default non mutable reference literal memory (generated by the compiler and copied to the instances as initial state)
+	const FRigVMMemoryStorageStruct& GetDefaultLiteralMemory() const
+	{
+		return LiteralMemoryStorage;
+	}
+	FRigVMMemoryStorageStruct& GetDefaultLiteralMemory()
+	{
+		return LiteralMemoryStorage;
+	}
+
+	// The default non mutable reference work memory (generated by the compiler and copied to the instances as initial state)
+	const FRigVMMemoryStorageStruct& GetDefaultWorkMemory() const
+	{
+		return DefaultWorkMemoryStorage;
+	}
+	FRigVMMemoryStorageStruct& GetDefaultWorkMemory()
+	{
+		return DefaultWorkMemoryStorage;
+	}
+
+	// The default non mutable reference debug memory (generated by the compiler and copied to the instances as initial state)
+	const FRigVMMemoryStorageStruct& GetDefaultDebugMemory() const
+	{
+		return DefaultDebugMemoryStorage;
+	}
+	FRigVMMemoryStorageStruct& GetDefaultDebugMemory()
+	{
+		return DefaultDebugMemoryStorage;
+	}
+
+	// Generates the Default memory and copy it to the Context if required by the type of memory
+	virtual void GenerateMemoryType(FRigVMExtendedExecuteContext& Context, ERigVMMemoryType InMemoryType, const TArray<FRigVMPropertyDescription>* InProperties);
+
+	// Used by the compiler and EngineTests to generate the default VM memory storages
+	virtual void GenerateDefaultMemoryType(ERigVMMemoryType InMemoryType, const TArray<FRigVMPropertyDescription>* InProperties);
+
+	// Returns a default memory storage by type
+	virtual const FRigVMMemoryStorageStruct* GetDefaultMemoryByType(ERigVMMemoryType InMemoryType) const;
+	virtual FRigVMMemoryStorageStruct* GetDefaultMemoryByType(ERigVMMemoryType InMemoryType);
+
+
+public:
+
+	UE_DEPRECATED(5.4, "Please, use GetLocalMemoryArray with a Context param")
+	virtual void ClearMemory() {}
+
+	virtual void ClearMemory(FRigVMExtendedExecuteContext& Context);
 
 	UPROPERTY()
-	TObjectPtr<URigVMMemoryStorage> WorkMemoryStorageObject;
+	FRigVMMemoryStorageStruct LiteralMemoryStorage;
 
 	UPROPERTY()
-	TObjectPtr<URigVMMemoryStorage> LiteralMemoryStorageObject;
+	FRigVMMemoryStorageStruct DefaultWorkMemoryStorage;
 
 	UPROPERTY()
-	TObjectPtr<URigVMMemoryStorage> DebugMemoryStorageObject;
+	FRigVMMemoryStorageStruct DefaultDebugMemoryStorage;
+
+#if WITH_EDITORONLY_DATA
+	// Deprecated 5.4
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Please, use DefaultWorkMemoryStorage for compiling and WorkMemoryStorage in the ExtendedExecuteContext for intance execution"))
+	TObjectPtr<URigVMMemoryStorage> WorkMemoryStorageObject_DEPRECATED;
+#endif
+
+#if WITH_EDITORONLY_DATA
+	// Deprecated 5.4
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Please, use LiteralMemoryStorage"))
+	TObjectPtr<URigVMMemoryStorage> LiteralMemoryStorageObject_DEPRECATED;
+#endif
+
+#if WITH_EDITORONLY_DATA
+	// Deprecated 5.4, 
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Please use DefaultDebugMemoryStorage for compiling and DebugMemoryStorage in the ExtendedExecuteContext for intance execution"))
+	TObjectPtr<URigVMMemoryStorage> DebugMemoryStorageObject_DEPRECATED;
+#endif
 
 	TArray<FRigVMPropertyPathDescription> ExternalPropertyPathDescriptions;
 	TArray<FRigVMPropertyPath> ExternalPropertyPaths;
@@ -329,9 +445,9 @@ public:
 	// Returns the number of times an instruction has been hit
 	int32 GetInstructionVisitedCount(const FRigVMExtendedExecuteContext& Context, int32 InIndex) const
 	{
-		if (Context.InstructionVisitedDuringLastRun.IsValidIndex(InIndex))
+		if (const FRigVMInstructionVisitInfo* InstructionVisitInfo = Context.GetRigVMInstructionVisitInfo())
 		{
-			return Context.InstructionVisitedDuringLastRun[InIndex];
+			return InstructionVisitInfo->GetInstructionVisitedCountDuringLastRun(InIndex);
 		}
 		return 0;
 	}
@@ -344,9 +460,9 @@ public:
 	// If there is no information available this function returns UINT64_MAX.
 	uint64 GetInstructionCycles(const FRigVMExtendedExecuteContext& Context, int32 InIndex) const
 	{
-		if (Context.InstructionCyclesDuringLastRun.IsValidIndex(InIndex))
+		if (const FRigVMProfilingInfo* RigVMProfilingInfo = Context.GetRigVMProfilingInfo())
 		{
-			return Context.InstructionCyclesDuringLastRun[InIndex];
+			return RigVMProfilingInfo->GetInstructionCyclesDuringLastRun(InIndex);
 		}
 		return UINT64_MAX;
 	}
@@ -371,21 +487,28 @@ public:
 	const TArray<int32> GetInstructionVisitOrder() const { return TArray<int32>(); }
 
 	// Returns the order of all instructions during the last run
-	const TArray<int32> GetInstructionVisitOrder(const FRigVMExtendedExecuteContext& Context) const { return Context.InstructionVisitOrder; }
+	const TArray<int32> GetInstructionVisitOrder(const FRigVMExtendedExecuteContext& Context) const
+	{
+		if (const FRigVMInstructionVisitInfo* InstructionVisitInfo = Context.GetRigVMInstructionVisitInfo())
+		{
+			return InstructionVisitInfo->GetInstructionVisitOrder();
+		}
 
-	UE_DEPRECATED(5.3, "Please, use SetFirstEntryEventInEventQueue with Context param")
-	const void SetFirstEntryEventInEventQueue(const FName& InFirstEventName) {}
+		return TArray<int32>();
+	}
 
-	const void SetFirstEntryEventInEventQueue(FRigVMExtendedExecuteContext& Context, const FName& InFirstEventName) { Context.SetFirstEntryEventInEventQueue(InFirstEventName); }
+	bool ResumeExecution(FRigVMExtendedExecuteContext& Context, const FName& InEntryName = NAME_None);
 
 	UE_DEPRECATED(5.3, "Please, use ResumeExecution with Context param")
 	bool ResumeExecution() { return false; }
 	UE_DEPRECATED(5.3, "Please, use ResumeExecution with Context param")
 	bool ResumeExecution(TArrayView<URigVMMemoryStorage*> Memory, const FName& InEntryName = NAME_None) { return false; }
+	UE_DEPRECATED(5.4, "Please, use ResumeExecution with Context param and entry name")
+	bool ResumeExecution(FRigVMExtendedExecuteContext& Context, TArrayView<URigVMMemoryStorage*> Memory, const FName& InEntryName = NAME_None) { return false; }
+	UE_DEPRECATED(5.4, "Please, use ResumeExecution in the Host RigVMDebugInfo")
+	bool ResumeExecution(FRigVMExtendedExecuteContext& Context) { return false; }
 
-	bool ResumeExecution(FRigVMExtendedExecuteContext& Context);
-	bool ResumeExecution(FRigVMExtendedExecuteContext& Context, TArrayView<URigVMMemoryStorage*> Memory, const FName& InEntryName = NAME_None);
-#endif
+#endif // WITH_EDITOR
 
 	// Returns the parameters of the VM
 	const TArray<FRigVMParameter>& GetParameters() const;
@@ -393,17 +516,20 @@ public:
 	// Returns a parameter given it's name
 	FRigVMParameter GetParameterByName(const FName& InParameterName);
 
-	FRigVMParameter AddParameter(ERigVMParameterType InType, const FName& InParameterName, const FName& InWorkMemoryPropertyName)
+	UE_DEPRECATED(5.4, "Please, use AddParameter with WorkMemory param")
+	FRigVMParameter AddParameter(ERigVMParameterType InType, const FName& InParameterName, const FName& InWorkMemoryPropertyName) { return FRigVMParameter(); }
+
+	FRigVMParameter AddParameter(FRigVMExtendedExecuteContext& Context, ERigVMParameterType InType, const FName& InParameterName, const FName& InWorkMemoryPropertyName)
 	{
-		check(GetWorkMemory());
+		check(GetWorkMemory(Context));
 
 		if(ParametersNameMap.Contains(InParameterName))
 		{
 			return FRigVMParameter();
 		}
 
-		const FProperty* Property = GetWorkMemory()->FindPropertyByName(InWorkMemoryPropertyName);
-		const int32 PropertyIndex = GetWorkMemory()->GetPropertyIndex(Property);
+		const FProperty* Property = GetWorkMemory(Context)->FindPropertyByName(InWorkMemoryPropertyName);
+		const int32 PropertyIndex = GetWorkMemory(Context)->GetPropertyIndex(Property);
 
 		UScriptStruct* Struct = nullptr;
 		if(const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
@@ -416,42 +542,54 @@ public:
 		return Parameter;
 	}
 
+	UE_DEPRECATED(5.4, "Please, use GetParameterArraySize with WorkMemory param")
+	int32 GetParameterArraySize(const FRigVMParameter& InParameter) { return 0; }
+
 	// Retrieve the array size of the parameter
-	int32 GetParameterArraySize(const FRigVMParameter& InParameter)
+	int32 GetParameterArraySize(FRigVMExtendedExecuteContext& Context, const FRigVMParameter& InParameter)
 	{
 		const int32 PropertyIndex = InParameter.GetRegisterIndex();
-		const FProperty* Property = GetWorkMemory()->GetProperties()[PropertyIndex];
+		const FProperty* Property = GetWorkMemory(Context)->GetProperties()[PropertyIndex];
 		const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property);
 		if(ArrayProperty)
 		{
-			FScriptArrayHelper ArrayHelper(ArrayProperty, GetWorkMemory()->GetData<uint8>(PropertyIndex));
+			FScriptArrayHelper ArrayHelper(ArrayProperty, GetWorkMemory(Context)->GetData<uint8>(PropertyIndex));
 			return ArrayHelper.Num();
 		}
 		return 1;
 	}
 
-	// Retrieve the array size of the parameter
-	int32 GetParameterArraySize(int32 InParameterIndex)
-	{
-		return GetParameterArraySize(Parameters[InParameterIndex]);
-	}
+	UE_DEPRECATED(5.4, "Please, use GetParameterArraySize with WorkMemory param")
+	int32 GetParameterArraySize(int32 InParameterIndex) { return 0; }
 
 	// Retrieve the array size of the parameter
-	int32 GetParameterArraySize(const FName& InParameterName)
+	int32 GetParameterArraySize(FRigVMExtendedExecuteContext& Context, int32 InParameterIndex)
 	{
-		int32 ParameterIndex = ParametersNameMap.FindChecked(InParameterName);
-		return GetParameterArraySize(ParameterIndex);
+		return GetParameterArraySize(Context, Parameters[InParameterIndex]);
 	}
-	
+
+	UE_DEPRECATED(5.4, "Please, use GetParameterArraySize with WorkMemory param")
+	int32 GetParameterArraySize(const FName& InParameterName) { return 0; }
+
+	// Retrieve the array size of the parameter
+	int32 GetParameterArraySize(FRigVMExtendedExecuteContext& Context, const FName& InParameterName)
+	{
+		const int32 ParameterIndex = ParametersNameMap.FindChecked(InParameterName);
+		return GetParameterArraySize(Context, ParameterIndex);
+	}
+
+	//UE_DEPRECATED(5.4, "Please, use GetParameterValue with WorkMemory param")
+	//template<class T> T GetParameterValue(const FRigVMParameter& InParameter, int32 InArrayIndex = 0, T DefaultValue = T{}) { return DefaultValue; }
+
 	// Retrieve the value of a parameter
 	template<class T>
-	T GetParameterValue(const FRigVMParameter& InParameter, int32 InArrayIndex = 0, T DefaultValue = T{})
+	T GetParameterValue(FRigVMExtendedExecuteContext& Context, const FRigVMParameter& InParameter, int32 InArrayIndex = 0, T DefaultValue = T{})
 	{
 		if (InParameter.GetRegisterIndex() != INDEX_NONE)
 		{
-			if(GetWorkMemory()->IsArray(InParameter.GetRegisterIndex()))
+			if(GetWorkMemory(Context)->IsArray(InParameter.GetRegisterIndex()))
 			{
-				TArray<T>& Storage = *GetWorkMemory()->GetData<TArray<T>>(InParameter.GetRegisterIndex());
+				TArray<T>& Storage = *GetWorkMemory(Context)->GetData<TArray<T>>(InParameter.GetRegisterIndex());
 				if(Storage.IsValidIndex(InArrayIndex))
 				{
 					return Storage[InArrayIndex];
@@ -459,38 +597,47 @@ public:
 			}
 			else
 			{
-				return *GetWorkMemory()->GetData<T>(InParameter.GetRegisterIndex());
+				return *GetWorkMemory(Context)->GetData<T>(InParameter.GetRegisterIndex());
 			}
 			
-			return *GetWorkMemory()->GetData<T>(InParameter.GetRegisterIndex());
+			return *GetWorkMemory(Context)->GetData<T>(InParameter.GetRegisterIndex());
 		}
 		return DefaultValue;
 	}
 
+	//UE_DEPRECATED(5.4, "Please, use GetParameterValue with WorkMemory param")
+	//template<class T> T GetParameterValue(int32 InParameterIndex, int32 InArrayIndex = 0, T DefaultValue = T{}) { return DefaultValue; }
+
 	// Retrieve the value of a parameter given its index
 	template<class T>
-	T GetParameterValue(int32 InParameterIndex, int32 InArrayIndex = 0, T DefaultValue = T{})
+	T GetParameterValue(FRigVMExtendedExecuteContext& Context, int32 InParameterIndex, int32 InArrayIndex = 0, T DefaultValue = T{})
 	{
-		return GetParameterValue<T>(Parameters[InParameterIndex], InArrayIndex, DefaultValue);
+		return GetParameterValue<T>(Context, Parameters[InParameterIndex], InArrayIndex, DefaultValue);
 	}
+
+	//UE_DEPRECATED(5.4, "Please, use GetParameterValue with WorkMemory param")
+	//template<class T> T GetParameterValue(const FName& InParameterName, int32 InArrayIndex = 0, T DefaultValue = T{}) { return DefaultValue; }
 
 	// Retrieve the value of a parameter given its name
 	template<class T>
-	T GetParameterValue(const FName& InParameterName, int32 InArrayIndex = 0, T DefaultValue = T{})
+	T GetParameterValue(FRigVMExtendedExecuteContext& Context, const FName& InParameterName, int32 InArrayIndex = 0, T DefaultValue = T{})
 	{
 		int32 ParameterIndex = ParametersNameMap.FindChecked(InParameterName);
-		return GetParameterValue<T>(ParameterIndex, InArrayIndex, DefaultValue);
+		return GetParameterValue<T>(Context, ParameterIndex, InArrayIndex, DefaultValue);
 	}
+
+	//UE_DEPRECATED(5.4, "Please, use SetParameterValue with WorkMemory param")
+	//template<class T> void SetParameterValue(const FRigVMParameter& InParameter, const T& InNewValue, int32 InArrayIndex = 0) {}
 
 	// Set the value of a parameter
 	template<class T>
-	void SetParameterValue(const FRigVMParameter& InParameter, const T& InNewValue, int32 InArrayIndex = 0)
+	void SetParameterValue(FRigVMExtendedExecuteContext& Context, const FRigVMParameter& InParameter, const T& InNewValue, int32 InArrayIndex = 0)
 	{
 		if (InParameter.GetRegisterIndex() != INDEX_NONE)
 		{
-			if(GetWorkMemory()->IsArray(InParameter.GetRegisterIndex()))
+			if(GetWorkMemory(Context)->IsArray(InParameter.GetRegisterIndex()))
 			{
-				TArray<T>& Storage = *GetWorkMemory()->GetData<TArray<T>>(InParameter.GetRegisterIndex());
+				TArray<T>& Storage = *GetWorkMemory(Context)->GetData<TArray<T>>(InParameter.GetRegisterIndex());
 				if(Storage.IsValidIndex(InArrayIndex))
 				{
 					Storage[InArrayIndex] = InNewValue;
@@ -498,146 +645,92 @@ public:
 			}
 			else
 			{
-				T& Storage = *GetWorkMemory()->GetData<T>(InParameter.GetRegisterIndex());
+				T& Storage = *GetWorkMemory(Context)->GetData<T>(InParameter.GetRegisterIndex());
 				Storage = InNewValue;
 			}
 		}
 	}
 
+	//UE_DEPRECATED(5.4, "Please, use SetParameterValue with WorkMemory param")
+	//template<class T> void SetParameterValue(int32 ParameterIndex, const T& InNewValue, int32 InArrayIndex = 0) {}
+
 	// Set the value of a parameter given its index
 	template<class T>
-	void SetParameterValue(int32 ParameterIndex, const T& InNewValue, int32 InArrayIndex = 0)
+	void SetParameterValue(FRigVMExtendedExecuteContext& Context, int32 ParameterIndex, const T& InNewValue, int32 InArrayIndex = 0)
 	{
-		return SetParameterValue<T>(Parameters[ParameterIndex], InNewValue, InArrayIndex);
+		return SetParameterValue<T>(Context, Parameters[ParameterIndex], InNewValue, InArrayIndex);
 	}
+
+	//UE_DEPRECATED(5.4, "Please, use SetParameterValue with WorkMemory param")
+	//template<class T> void SetParameterValue(const FName& InParameterName, const T& InNewValue, int32 InArrayIndex = 0) {}
 
 	// Set the value of a parameter given its name
 	template<class T>
-	void SetParameterValue(const FName& InParameterName, const T& InNewValue, int32 InArrayIndex = 0)
+	void SetParameterValue(FRigVMExtendedExecuteContext& Context, const FName& InParameterName, const T& InNewValue, int32 InArrayIndex = 0)
 	{
 		int32 ParameterIndex = ParametersNameMap.FindChecked(InParameterName);
-		return SetParameterValue<T>(ParameterIndex, InNewValue, InArrayIndex);
+		return SetParameterValue<T>(Context, ParameterIndex, InNewValue, InArrayIndex);
 	}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	bool GetParameterValueBool(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<bool>(InParameterName, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	bool GetParameterValueBool(const FName& InParameterName, int32 InArrayIndex = 0) { return false; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	float GetParameterValueFloat(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<float>(InParameterName, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	float GetParameterValueFloat(const FName& InParameterName, int32 InArrayIndex = 0) { return 0.f; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	double GetParameterValueDouble(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<double>(InParameterName, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	double GetParameterValueDouble(const FName& InParameterName, int32 InArrayIndex = 0) { return 0.0; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	int32 GetParameterValueInt(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<int32>(InParameterName, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	int32 GetParameterValueInt(const FName& InParameterName, int32 InArrayIndex = 0) { return 0; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	FName GetParameterValueName(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<FName>(InParameterName, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	FName GetParameterValueName(const FName& InParameterName, int32 InArrayIndex = 0) { return NAME_None; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	FString GetParameterValueString(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<FString>(InParameterName, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	FString GetParameterValueString(const FName& InParameterName, int32 InArrayIndex = 0) { return FString(); }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	FVector2D GetParameterValueVector2D(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<FVector2D>(InParameterName, InArrayIndex, FVector2D::ZeroVector);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	FVector2D GetParameterValueVector2D(const FName& InParameterName, int32 InArrayIndex = 0) { return FVector2D::ZeroVector; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	FVector GetParameterValueVector(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<FVector>(InParameterName, InArrayIndex, FVector::ZeroVector);	// LWC_TODO: Store double FVector
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	FVector GetParameterValueVector(const FName& InParameterName, int32 InArrayIndex = 0) { return FVector::ZeroVector; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	FQuat GetParameterValueQuat(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<FQuat>(InParameterName, InArrayIndex, FQuat::Identity);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	FQuat GetParameterValueQuat(const FName& InParameterName, int32 InArrayIndex = 0) { return FQuat::Identity; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	FTransform GetParameterValueTransform(const FName& InParameterName, int32 InArrayIndex = 0)
-	{
-		return GetParameterValue<FTransform>(InParameterName, InArrayIndex, FTransform::Identity);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	FTransform GetParameterValueTransform(const FName& InParameterName, int32 InArrayIndex = 0) { return FTransform::Identity; }
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueBool(const FName& InParameterName, bool InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<bool>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueBool(const FName& InParameterName, bool InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueFloat(const FName& InParameterName, float InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<float>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueFloat(const FName& InParameterName, float InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueDouble(const FName& InParameterName, double InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<double>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueDouble(const FName& InParameterName, double InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueInt(const FName& InParameterName, int32 InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<int32>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueInt(const FName& InParameterName, int32 InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueName(const FName& InParameterName, const FName& InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<FName>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueName(const FName& InParameterName, const FName& InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueString(const FName& InParameterName, const FString& InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<FString>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueString(const FName& InParameterName, const FString& InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueVector2D(const FName& InParameterName, const FVector2D& InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<FVector2D>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueVector2D(const FName& InParameterName, const FVector2D& InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueVector(const FName& InParameterName, const FVector& InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<FVector>(InParameterName, InValue, InArrayIndex);	// LWC_TODO: Store double FVector
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueVector(const FName& InParameterName, const FVector& InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueQuat(const FName& InParameterName, const FQuat& InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<FQuat>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueQuat(const FName& InParameterName, const FQuat& InValue, int32 InArrayIndex = 0) {}
 
-	UFUNCTION(BlueprintCallable, Category = RigVM)
-	void SetParameterValueTransform(const FName& InParameterName, const FTransform& InValue, int32 InArrayIndex = 0)
-	{
-		SetParameterValue<FTransform>(InParameterName, InValue, InArrayIndex);
-	}
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported, please, update your code."))
+	void SetParameterValueTransform(const FName& InParameterName, const FTransform& InValue, int32 InArrayIndex = 0) {}
 
 	UE_DEPRECATED(5.3, "Please, use ClearExternalVariables with Context param")
 	void ClearExternalVariables() {}
@@ -687,6 +780,40 @@ public:
 	UE_DEPRECATED(5.3, "Please use AddExternalVariable with ExtendedExecuteContext parameter.")
 	FRigVMOperand AddExternalVariable(const FRigVMExternalVariable& InExternalVariable) { return FRigVMOperand(); }
 
+	// Sets the external variables without the instance data
+	void SetExternalVariableDefs(const TArray<FRigVMExternalVariable>& InExternalVariables)
+	{
+		ExternalVariables.Reset(InExternalVariables.Num());
+		for (const FRigVMExternalVariableDef& ExternalVariable : InExternalVariables)
+		{
+			ExternalVariables.Add(ExternalVariable);
+		}
+
+		RefreshExternalPropertyPaths();
+	}
+
+	// Sets the external variables instance data required for execution
+	void SetExternalVariablesInstanceData(FRigVMExtendedExecuteContext& Context, const TArray<FRigVMExternalVariable>& InExternalVariables, bool bAllowNullMemory = false)
+	{
+		const int32 NumExternalVariables = InExternalVariables.Num();
+		check(ExternalVariables.Num() == NumExternalVariables);
+		
+		Context.ExternalVariableRuntimeData.Reset(NumExternalVariables);
+		
+		for (int32 i = 0; i < NumExternalVariables; i++)
+		{
+			const FRigVMExternalVariable& InExternalVariable = InExternalVariables[i];
+			FRigVMExternalVariableDef& ExternalVariableDef = ExternalVariables[i];
+
+			// Only check name and property, to allow the case where an UUserStruct is deleted while used inside a Rig
+			check(ExternalVariableDef.Name == InExternalVariable.Name);
+			check(ExternalVariableDef.Property == InExternalVariable.Property);
+			check(bAllowNullMemory || InExternalVariable.Memory != nullptr);
+			
+			Context.ExternalVariableRuntimeData.Add(FRigVMExternalVariableRuntimeData(InExternalVariable.Memory));
+		}
+	}
+
 	// Adds a new external / unowned variable to the VM
 	FRigVMOperand AddExternalVariable(FRigVMExtendedExecuteContext& Context, const FRigVMExternalVariable& InExternalVariable, bool bAllowNullMemory = false)
 	{
@@ -698,21 +825,24 @@ public:
 		return FRigVMOperand(ERigVMMemoryType::External, VariableIndex);
 	}
 
-	void SetPropertyValueFromString(const FRigVMOperand& InOperand, const FString& InDefaultValue);
+	UE_DEPRECATED(5.4, "Please use SetPropertyValueFromString with ExtendedExecuteContext parameter.")
+	void SetPropertyValueFromString(const FRigVMOperand& InOperand, const FString& InDefaultValue) {}
+
+	void SetPropertyValueFromString(FRigVMExtendedExecuteContext& Context, const FRigVMOperand& InOperand, const FString& InDefaultValue);
 
 	// returns the statistics information
 	UFUNCTION(BlueprintPure, Category = "RigVM", meta=(DeprecatedFunction))
 	FRigVMStatistics GetStatistics() const
 	{
 		FRigVMStatistics Statistics;
-		if(LiteralMemoryStorageObject)
+		if(GetLiteralMemory())
 		{
-			Statistics.LiteralMemory = LiteralMemoryStorageObject->GetStatistics();
+			//Statistics.LiteralMemory = GetLiteralMemory()->GetStatistics();
 		}
-		if(WorkMemoryStorageObject)
-		{
-			Statistics.WorkMemory = WorkMemoryStorageObject->GetStatistics();
-		}
+		//if(GetWorkMemory(Context))
+		//{
+		//	Statistics.WorkMemory = GetWorkMemory(Context)->GetStatistics();
+		//}
 
 		Statistics.ByteCode = ByteCodePtr->GetStatistics();
 		Statistics.BytesForCaching = FirstHandleForInstruction.GetAllocatedSize(); // +Context.CachedMemoryHandles.GetAllocatedSize(); // Requires context, but fn deprecated already
@@ -731,14 +861,24 @@ public:
 
 
 #if WITH_EDITOR
+	UE_DEPRECATED(5.4, "Please use DumpByteCodeAsTextArray with ExtendedExecuteContext parameter.")
+	TArray<FString> DumpByteCodeAsTextArray(const TArray<int32>& InInstructionOrder = TArray<int32>(), bool bIncludeLineNumbers = true, TFunction<FString(const FString& RegisterName, const FString& RegisterOffsetName)> OperandFormatFunction = nullptr) { return TArray<FString>(); }
+
 	// returns the instructions as text, OperandFormatFunction is an optional argument that allows you to override how operands are displayed, for example, see SRigVMExecutionStackView::PopulateStackView 
-	TArray<FString> DumpByteCodeAsTextArray(const TArray<int32> & InInstructionOrder = TArray<int32>(), bool bIncludeLineNumbers = true, TFunction<FString(const FString& RegisterName, const FString& RegisterOffsetName)> OperandFormatFunction = nullptr);
-	FString DumpByteCodeAsText(const TArray<int32>& InInstructionOrder = TArray<int32>(), bool bIncludeLineNumbers = true);
+	TArray<FString> DumpByteCodeAsTextArray(FRigVMExtendedExecuteContext& Context, const TArray<int32> & InInstructionOrder = TArray<int32>(), bool bIncludeLineNumbers = true, TFunction<FString(const FString& RegisterName, const FString& RegisterOffsetName)> OperandFormatFunction = nullptr);
+
+	UE_DEPRECATED(5.4, "Please use DumpByteCodeAsText with ExtendedExecuteContext parameter.")
+	FString DumpByteCodeAsText(const TArray<int32>& InInstructionOrder = TArray<int32>(), bool bIncludeLineNumbers = true) { return FString(); }
+
+	FString DumpByteCodeAsText(FRigVMExtendedExecuteContext& Context, const TArray<int32>& InInstructionOrder = TArray<int32>(), bool bIncludeLineNumbers = true);
 #endif
 
 #if WITH_EDITOR
+	UE_DEPRECATED(5.4, "Please use GetOperandLabel with ExtendedExecuteContext parameter.")
+	FString GetOperandLabel(const FRigVMOperand& InOperand, TFunction<FString(const FString& RegisterName, const FString& RegisterOffsetName)> FormatFunction = nullptr) { return FString(); }
+
 	// FormatFunction is an optional argument that allows you to override how operands are displayed, for example, see SRigVMExecutionStackView::PopulateStackView
-	FString GetOperandLabel(const FRigVMOperand & InOperand, TFunction<FString(const FString& RegisterName, const FString& RegisterOffsetName)> FormatFunction = nullptr);
+	FString GetOperandLabel(FRigVMExtendedExecuteContext& Context, const FRigVMOperand & InOperand, TFunction<FString(const FString& RegisterName, const FString& RegisterOffsetName)> FormatFunction = nullptr);
 #endif
 
 	UE_DEPRECATED(5.3, "Please use ExecutionReachedExit in the ExtendedExecuteContext.")
@@ -811,11 +951,14 @@ private:
 	void RefreshInstructionsIfRequired();
 
 public:
-	void InvalidateCachedMemory();
+	UE_DEPRECATED(5.4, "Please use InvalidateCachedMemory with ExtendedExecuteContext parameter.")
+	void InvalidateCachedMemory() {}
 	void InvalidateCachedMemory(FRigVMExtendedExecuteContext& Context);
-	
+
 private:
-	void CacheMemoryHandlesIfRequired(FRigVMExtendedExecuteContext& Context, TArrayView<URigVMMemoryStorage*> InMemory);
+	void InstructionOpEval(FRigVMExtendedExecuteContext& Context, int32 InstructionIndex, int32 InHandleBaseIndex, const TFunctionRef<void(FRigVMExtendedExecuteContext& Context, int32 InHandleIndex, const FRigVMBranchInfoKey& InBranchInfoKey, const FRigVMOperand& InArg)>& InOpFunc);
+	void PrepareMemoryForExecution(FRigVMExtendedExecuteContext& Context);
+	void CacheMemoryHandlesIfRequired(FRigVMExtendedExecuteContext& Context);
 	void RebuildByteCodeOnLoad();
 
 	UPROPERTY(transient)
@@ -832,6 +975,15 @@ protected:
 
 	std::atomic<int32> ActiveExecutions;
 
+public:
+	int32 GetActiveExecutions() const
+	{
+		return ActiveExecutions.load();
+	}
+
+	bool ValidateBytecode();
+	void RefreshArgumentNameCaches();
+
 private:
 
 #if WITH_EDITOR
@@ -846,9 +998,11 @@ private:
 
 	TArray<const FRigVMFunction*> FunctionsStorage;
 	TArray<const FRigVMFunction*>* FunctionsPtr;
+public:
 	TArray<const FRigVMFunction*>& GetFunctions() { return *FunctionsPtr; }
 	const TArray<const FRigVMFunction*>& GetFunctions() const { return *FunctionsPtr; }
 
+private:
 	TArray<const FRigVMDispatchFactory*> FactoriesStorage;
 	TArray<const FRigVMDispatchFactory*>* FactoriesPtr;
 	TArray<const FRigVMDispatchFactory*>& GetFactories() { return *FactoriesPtr; }
@@ -857,14 +1011,15 @@ private:
 	UPROPERTY()
 	TArray<FRigVMParameter> Parameters;
 
-	UPROPERTY()
 	TMap<FName, int32> ParametersNameMap;
 
 	TArray<uint32> FirstHandleForInstruction;
 
+	int32 MemoryHandleCount = 0;
+
 	TArray<FRigVMExternalVariableDef> ExternalVariables;
 	TArray<FRigVMLazyBranch> LazyBranches;
-
+	
 	// this function should be kept in sync with FRigVMOperand::GetContainerIndex()
 	static int32 GetContainerIndex(ERigVMMemoryType InType)
 	{
@@ -881,8 +1036,8 @@ private:
 	}
 	
 	// debug watch register memory needs to be cleared for each execution
-	void ClearDebugMemory();
-	
+	void ClearDebugMemory(FRigVMExtendedExecuteContext& Context);
+
 	void CacheSingleMemoryHandle(FRigVMExtendedExecuteContext& Context, int32 InHandleIndex, const FRigVMBranchInfoKey& InBranchInfoKey, const FRigVMOperand& InArg, bool bForExecute = false);
 
 	void CopyOperandForDebuggingIfNeeded(FRigVMExtendedExecuteContext& Context, const FRigVMOperand& InArg, const FRigVMMemoryHandle& InHandle)
@@ -899,8 +1054,6 @@ private:
 		}
 #endif
 	}
-
-	bool ValidateAllOperandsDuringLoad();
 
 	void CopyOperandForDebuggingImpl(FRigVMExtendedExecuteContext& Context, const FRigVMOperand& InArg, const FRigVMMemoryHandle& InHandle, const FRigVMOperand& InDebugOperand);
 
@@ -928,17 +1081,43 @@ protected:
 
 		TArray<int32>& Stack;
 	};
-	
+
+#if WITH_EDITOR
+	struct FInstructionBracketGuard
+	{
+	public:
+		FInstructionBracketGuard(FRigVMExtendedExecuteContext& InOutContext, int32 InFirstInstruction, int32 InLastInstruction)
+		: Context(InOutContext)
+		{
+			const TTuple<int32, int32> Tuple(InFirstInstruction, InLastInstruction);
+			if(Context.InstructionBrackets.Contains(Tuple))
+			{
+				static constexpr TCHAR Format[] = TEXT("Re-Entry of Instructions %d - %d.");
+				ErrorMessage = FString::Printf(Format, Tuple.Get<0>(), Tuple.Get<1>());
+			}
+			Context.InstructionBrackets.Add(Tuple);
+		}
+
+		~FInstructionBracketGuard()
+		{
+			Context.InstructionBrackets.Pop();
+		}
+		
+	private:
+
+		FRigVMExtendedExecuteContext& Context;
+		FString ErrorMessage;
+
+		friend class URigVM;
+	};
+#endif
+
 private:
 
+	UPROPERTY()
 	uint32 CachedVMHash = 0;
 
 	mutable TArray<FName> EntryNames;
-
-	UPROPERTY(transient)
-	TObjectPtr<URigVM> DeferredVMToCopy;
-
-	void CopyDeferredVMIfRequired();
 
 	UE_DEPRECATED(5.3, "Please use OnExecutionReachedExit in the ExtendedExecuteContext.")
 	FExecutionReachedExitEvent OnExecutionReachedExit;
@@ -949,6 +1128,11 @@ private:
 #endif
 
 protected:
+	const URigVMHost* GetHostCDO() const;
+
+	void Reset_Internal();
+	void ClearMemory_Internal();
+	void InvalidateCachedMemory_Internal();
 
 	void SetupInstructionTracking(FRigVMExtendedExecuteContext& Context, int32 InInstructionCount);
 	void StartProfiling(FRigVMExtendedExecuteContext& Context);
@@ -960,3 +1144,4 @@ protected:
 	friend struct FRigVMCompilerWorkData;
 	friend struct FRigVMCodeGenerator;
 };
+

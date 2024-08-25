@@ -25,6 +25,8 @@ private:
 		StyleInstance.Set("ClassIcon.PixelStreamingStreamerVideoInputBackBuffer", new IMAGE_BRUSH_SVG(StyleInstance, "PixelStreaming_20", Icon20x20));
 		StyleInstance.Set("ClassThumbnail.PixelStreamingStreamerVideoInputRenderTarget",new IMAGE_BRUSH_SVG(StyleInstance, "PixelStreaming_64", Icon64x64));
 		StyleInstance.Set("ClassIcon.PixelStreamingStreamerVideoInputRenderTarget", new IMAGE_BRUSH_SVG(StyleInstance, "PixelStreaming_20", Icon20x20));
+		StyleInstance.Set("ClassThumbnail.PixelStreamingStreamerVideoInputMediaCapture",new IMAGE_BRUSH_SVG(StyleInstance, "PixelStreaming_64", Icon64x64));
+		StyleInstance.Set("ClassIcon.PixelStreamingStreamerVideoInputMediaCapture", new IMAGE_BRUSH_SVG(StyleInstance, "PixelStreaming_20", Icon20x20));
 	}
 
 	void ShutdownModule() override {}

@@ -11,14 +11,18 @@
 #include "SHCommon.ush"
 #include "VolumetricLightmapShared.ush"
 #include "ReflectionEnvironmentShared.ush"
-#include "Strata/Strata.ush"
+#include "Substrate/Substrate.ush"
+
+#ifdef UPSAMPLE_PASS
+#	include "ShadowFactorsUpsampleCommon.ush"
+#endif
 
 #ifndef THREADGROUP_SIZEX
-#define THREADGROUP_SIZEX 1
+#	define THREADGROUP_SIZEX 1
 #endif
 
 #ifndef THREADGROUP_SIZEY
-#define THREADGROUP_SIZEY 1
+#	define THREADGROUP_SIZEY 1
 #endif
 
 #ifndef LIGHT_SOURCE_MODE
@@ -710,8 +714,9 @@ bool TileBoundsIntersectDistanceFieldCaster(
 	float TileConeAngleSin,
 	float MaxOcclusionDistance)
 {
+	const float3 TranslatedBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PrimaryView.PreViewTranslation);
 	BRANCH
-	if (SphereIntersectSphere(float4(LWCToFloat(LWCAdd(DFObjectBounds.Center, PrimaryView.PreViewTranslation)), DFObjectBounds.SphereRadius + MaxOcclusionDistance), TileTranslatedBoundingSphere)
+	if (SphereIntersectSphere(float4(TranslatedBoundsCenter, DFObjectBounds.SphereRadius + MaxOcclusionDistance), TileTranslatedBoundingSphere)
 #if LIGHT_SOURCE_MODE != LIGHT_SOURCE_FROM_RECEIVER
 		// This 'can object cast on tile bounds' test has to be disabled because the weight used to combine occlusion from multiple objects is computed based on distance to occluder only
 		//&& SphereIntersectConeWithMaxDistance(float4(SphereCenterAndRadius.xyz, SphereCenterAndRadius.w + TileBoundingSphere.w), TileBoundingSphere.xyz, TileConeAxis, TileConeAngleCos, TileConeAngleSin, MaxOcclusionDistance)
@@ -720,7 +725,7 @@ bool TileBoundsIntersectDistanceFieldCaster(
 	{
 #if USE_DISTANCE_FIELD_FOR_TILE_CULLING
 		FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
-		float4x4 TranslatedWorldToVolume = LWCMultiplyTranslation(LWCNegate(PrimaryView.PreViewTranslation), DFObjectData.WorldToVolume);
+		float4x4 TranslatedWorldToVolume = DFFastToTranslatedWorld(DFObjectData.WorldToVolume, PrimaryView.PreViewTranslation);
 		float3 VolumeSamplePosition = mul(float4(TileTranslatedBoundingSphere.xyz, 1), TranslatedWorldToVolume).xyz;
 		float3 ClampedSamplePosition = clamp(VolumeSamplePosition, -DFObjectData.VolumePositionExtent, DFObjectData.VolumePositionExtent);
 		float DistanceToClamped = length(ClampedSamplePosition - VolumeSamplePosition);
@@ -850,7 +855,7 @@ float ShadowConeTraceAgainstCulledDistanceFieldCasters(
 
 		FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
 		FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
-		float4x4 TranslatedWorldToVolume = LWCMultiplyTranslation(LWCNegate(PrimaryView.PreViewTranslation), DFObjectData.WorldToVolume);
+		float4x4 TranslatedWorldToVolume = DFFastToTranslatedWorld(DFObjectData.WorldToVolume, PrimaryView.PreViewTranslation);
 
 		// Increase max occlusion distance based on object size for distance field casters
 		// This improves the solidness of the shadows, since the fadeout distance causes internal structure of objects to become visible
@@ -965,11 +970,11 @@ void ApplySelfShadowingIntensityForDeferred(float2 ScreenUV, inout float Visibil
 	BRANCH
 	if (View.IndirectCapsuleSelfShadowingIntensity < 1)
 	{
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 		uint2 PixelPos = View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy * ScreenUV.xy;
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-		FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-		const bool bHasDynamicIndirectShadowCasterRepresentation = StrataPixelHeader.HasDynamicIndirectShadowCasterRepresentation();
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+		const bool bHasDynamicIndirectShadowCasterRepresentation = SubstratePixelHeader.HasDynamicIndirectShadowCasterRepresentation();
 #else
 		FGBufferData GBufferData = GetGBufferData(ScreenUV);
 		const bool bHasDynamicIndirectShadowCasterRepresentation = HasDynamicIndirectShadowCasterRepresentation(GBufferData);
@@ -1182,6 +1187,8 @@ void CapsuleShadowingUpsampleVS(
 	}
 }
 
+#ifdef UPSAMPLE_PASS
+
 Texture2D ShadowFactorsTexture;
 SamplerState ShadowFactorsSampler;
 
@@ -1195,47 +1202,11 @@ void CapsuleShadowingUpsamplePS(
 #endif
 	)
 {
-	// Distance field shadowing was computed at 0,0 regardless of viewrect min
-	float2 DistanceFieldUVs = SvPositionToBufferUV(SVPos) - ScissorRectMinAndSize.xy * View.BufferSizeAndInvSize.zw;
-	float2 ScreenUV = SvPositionToBufferUV(SVPos);
-	float SceneDepth = CalcSceneDepth(ScreenUV);
+	const float2 ScreenUV = SvPositionToBufferUV(SVPos);
 
-#define BILATERAL_UPSAMPLE 1
-#if BILATERAL_UPSAMPLE && UPSAMPLE_REQUIRED
-	float2 LowResBufferSize = floor(View.BufferSizeAndInvSize.xy / DOWNSAMPLE_FACTOR);
-	float2 LowResTexelSize = 1.0f / LowResBufferSize;
-	float2 Corner00UV = floor(DistanceFieldUVs * LowResBufferSize - .5f) / LowResBufferSize + .5f * LowResTexelSize;
-	float2 BilinearWeights = (DistanceFieldUVs - Corner00UV) * LowResBufferSize;
-
-	float2 TextureValues00 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00UV, 0).xy;
-	float2 TextureValues10 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00UV + float2(LowResTexelSize.x, 0), 0).xy;
-	float2 TextureValues01 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00UV + float2(0, LowResTexelSize.y), 0).xy;
-	float2 TextureValues11 = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, Corner00UV + LowResTexelSize, 0).xy;
-
-	float4 CornerWeights = float4(
-		(1 - BilinearWeights.y) * (1 - BilinearWeights.x), 
-		(1 - BilinearWeights.y) * BilinearWeights.x,
-		BilinearWeights.y * (1 - BilinearWeights.x),
-		BilinearWeights.y * BilinearWeights.x);
-
-	float Epsilon = .0001f;
-
-	float4 CornerDepths = abs(float4(TextureValues00.y, TextureValues10.y, TextureValues01.y, TextureValues11.y));
-	float4 DepthWeights = 1.0f / (abs(CornerDepths - SceneDepth.xxxx) + Epsilon);
-	float4 FinalWeights = CornerWeights * DepthWeights;
-
-	float InterpolatedResult = 
-		(FinalWeights.x * TextureValues00.x 
-		+ FinalWeights.y * TextureValues10.x
-		+ FinalWeights.z * TextureValues01.x 
-		+ FinalWeights.w * TextureValues11.x)
-		/ dot(FinalWeights, 1);
-
-	float Output = InterpolatedResult;
-
-#else
-	float Output = Texture2DSampleLevel(ShadowFactorsTexture, ShadowFactorsSampler, DistanceFieldUVs, 0).x;
-#endif
+	float Output;
+	float SceneDepth;
+	UpsampleShadowFactors(SVPos, ScissorRectMinAndSize, 1.0f / DOWNSAMPLE_FACTOR, ShadowFactorsTexture, ShadowFactorsSampler, Output, SceneDepth);
 
 	if (OutputtingToLightAttenuation > 0)
 	{
@@ -1255,3 +1226,5 @@ void CapsuleShadowingUpsamplePS(
 	OutAmbientOcclusion = Output;
 #endif
 }
+
+#endif // UPSAMPLE_PASS

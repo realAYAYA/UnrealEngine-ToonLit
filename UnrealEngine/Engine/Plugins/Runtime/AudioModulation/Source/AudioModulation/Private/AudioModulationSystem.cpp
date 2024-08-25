@@ -91,6 +91,8 @@ namespace AudioModulation
 
 	void FAudioModulationSystem::ActivateBusMix(FModulatorBusMixSettings&& InSettings)
 	{
+		ActiveBusMixIds.Add(InSettings.GetId());
+
 		RunCommandOnProcessingThread([this, Settings = MoveTemp(InSettings)]() mutable
 		{
 			FBusMixHandle BusMixHandle = FBusMixHandle::Get(Settings.GetId(), RefProxies.BusMixes);
@@ -129,6 +131,18 @@ namespace AudioModulation
 		});
 	}
 
+	void FAudioModulationSystem::AddReferencedObjects(FReferenceCollector& Collector)
+	{
+		TArray<TObjectPtr<USoundControlBusMix>> GlobalBusMixes;
+		ActiveGlobalBusValueMixes.GenerateValueArray(GlobalBusMixes);
+		Collector.AddReferencedObjects(GlobalBusMixes);
+	}
+
+	FString FAudioModulationSystem::GetReferencerName() const
+	{
+		return TEXT("FAudioModulationSystem");
+	}
+
 	bool FAudioModulationSystem::CalculateModulationValue(FModulationPatchProxy& OutProxy, float& OutValue) const
 	{
 		check(IsInProcessingThread());
@@ -159,6 +173,9 @@ namespace AudioModulation
 
 	void FAudioModulationSystem::DeactivateBusMix(const USoundControlBusMix& InBusMix)
 	{
+		FBusMixHandle MixHandle = FBusMixHandle::Get(InBusMix.GetUniqueID(), RefProxies.BusMixes);
+		ActiveBusMixIds.Remove(MixHandle.GetId());
+		
 		RunCommandOnProcessingThread([this, BusMixId = static_cast<FBusMixId>(InBusMix.GetUniqueID())]()
 		{
 			FBusMixHandle MixHandle = FBusMixHandle::Get(BusMixId, RefProxies.BusMixes);
@@ -173,6 +190,8 @@ namespace AudioModulation
 	void FAudioModulationSystem::DeactivateAllBusMixes()
 	{
 		ClearAllGlobalBusMixValues();
+
+		ActiveBusMixIds.Empty();
 
 		RunCommandOnProcessingThread([this]()
 		{
@@ -229,8 +248,10 @@ namespace AudioModulation
 
 	void FAudioModulationSystem::SetGlobalBusMixValue(USoundControlBus& InBus, float InValue, float InFadeTime)
 	{
-		if (TObjectPtr<USoundControlBusMix> GlobalMix = ActiveGlobalBusValueMixes.FindRef(InBus.GetUniqueID()))
+		if (ActiveGlobalBusValueMixes.Contains(InBus.GetUniqueID()))
 		{
+			TObjectPtr<USoundControlBusMix> GlobalMix = ActiveGlobalBusValueMixes.FindRef(InBus.GetUniqueID());
+
 			if (ensure(!GlobalMix->MixStages.IsEmpty()))
 			{
 				GlobalMix->MixStages[0].Value.TargetValue = InValue;
@@ -241,29 +262,17 @@ namespace AudioModulation
 		}
 		else
 		{
-			const FString MixName = InBus.GetName() + TEXT("_GlobalMix");
-			TObjectPtr<USoundControlBusMix> NewGlobalMix = NewObject<USoundControlBusMix>(GetTransientPackage(), FName(*MixName));
-
+			const FName MixName(*FString::Printf(TEXT("%s_GlobalMix"), *InBus.GetName()));
+			if (TObjectPtr<USoundControlBusMix> NewGlobalMix = CreateBusMixFromValue(MixName, { &InBus }, InValue, InFadeTime))
 			{
-				FSoundModulationMixValue MixValue;
-				MixValue.TargetValue = InValue;
-
-				if (InFadeTime >= 0.0f)
-				{
-					MixValue.AttackTime = InFadeTime;
-				}
-
-				FSoundControlBusMixStage MixStage;
-				MixStage.Bus = &InBus;
-				MixStage.Value = MixValue;
-
-				NewGlobalMix->MixStages.Emplace(MoveTemp(MixStage));
+				ActiveGlobalBusValueMixes.Add(InBus.GetUniqueID(), NewGlobalMix);
+				UE_LOG(LogAudioModulation, VeryVerbose, TEXT("GlobalBusMix for ControlBus '%s' activated, target set to '%0.4f'."), *InBus.GetName(), InValue);
+				ActivateBusMix(*NewGlobalMix);
 			}
-
-			ActiveGlobalBusValueMixes.Add(InBus.GetUniqueID(), NewGlobalMix);
-			UE_LOG(LogAudioModulation, VeryVerbose, TEXT("GlobalBusMix for ControlBus '%s' activated, target set to '%0.4f'."), *InBus.GetName(), InValue);
-			ActivateBusMix(*NewGlobalMix);
-			NewGlobalMix->AddToRoot();
+			else
+			{
+				UE_LOG(LogAudioModulation, Warning, TEXT("Could not set Global Bus Mix value: failed to allocate new Global Bus Mix for bus %s."), *InBus.GetName());
+			}
 		}
 
 	}
@@ -278,7 +287,6 @@ namespace AudioModulation
 				GlobalMix->MixStages[0].Value.ReleaseTime = InFadeTime;
 				DeactivateBusMix(*GlobalMix);
 				ActiveGlobalBusValueMixes.Remove(BusID);
-				GlobalMix->RemoveFromRoot();
 				UE_LOG(LogAudioModulation, VeryVerbose, TEXT("GlobalBusMix for ControlBus '%s' cleared."), *InBus.GetName());
 			}
 		}
@@ -301,6 +309,40 @@ namespace AudioModulation
 		}
 
 		ActiveGlobalBusValueMixes.Reset();
+	}
+
+	USoundControlBusMix* FAudioModulationSystem::CreateBusMixFromValue(FName Name, const TArray<USoundControlBus*>& Buses, float Value, float AttackTime, float ReleaseTime)
+	{
+		if (TObjectPtr<USoundControlBusMix> NewGlobalMix = NewObject<USoundControlBusMix>(GetTransientPackage(), Name))
+		{
+			for (USoundControlBus* Bus : Buses)
+			{
+				if (Bus)
+				{
+					FSoundModulationMixValue MixValue;
+					MixValue.TargetValue = Value;
+
+					if (AttackTime >= 0.0f)
+					{
+						MixValue.AttackTime = AttackTime;
+					}
+
+					if (ReleaseTime >= 0.0f)
+					{
+						MixValue.ReleaseTime = ReleaseTime;
+					}
+
+					FSoundControlBusMixStage MixStage;
+					MixStage.Bus = Bus;
+					MixStage.Value = MixValue;
+
+					NewGlobalMix->MixStages.Emplace(MoveTemp(MixStage));
+				}
+			}
+			return NewGlobalMix;
+		}
+
+		return nullptr;
 	}
 
 	bool FAudioModulationSystem::GetModulatorValue(const Audio::FModulatorHandle& InModulatorHandle, float& OutValue) const
@@ -448,7 +490,7 @@ namespace AudioModulation
 				{
 					if (LastStatus != CurrentStatus)
 					{
-						UE_LOG(LogAudioModulation, Verbose, TEXT("Audio modulation mix '%s' stopped."), *Pair.Value.GetName());
+						UE_LOG(LogAudioModulation, Verbose, TEXT("Audio modulation mix '%s' stopped."), *Pair.Value.GetName().ToString());
 					}
 					StoppedMixIds.Add(Pair.Key);
 				}
@@ -509,6 +551,12 @@ namespace AudioModulation
 #if !UE_BUILD_SHIPPING
  		Debugger->UpdateDebugData(InElapsed, RefProxies);
 #endif // !UE_BUILD_SHIPPING
+	}
+
+	bool FAudioModulationSystem::IsControlBusMixActive(const USoundControlBusMix& InBusMix)
+	{
+		FBusMixId BusMixId = static_cast<FBusMixId>(InBusMix.GetUniqueID());		
+		return ActiveBusMixIds.Contains(BusMixId);
 	}
 
 	void FAudioModulationSystem::SaveMixToProfile(const USoundControlBusMix& InBusMix, const int32 InProfileIndex)
@@ -766,10 +814,6 @@ namespace AudioModulation
 			{
 				BusMixes->SetMix(StageSettings, InFadeTime, BusMixName);
 			}
-			else
-			{
-				UE_LOG(LogAudioModulation, Warning, TEXT("Updating Control Bus Mix failed: Bus Mix '%s' not currently active. Buses without any valid Mix Stages will not activate."), *BusMixName);
-			}
 		});
 	}
 
@@ -858,7 +902,7 @@ namespace AudioModulation
 #if !UE_BUILD_SHIPPING
 			else
 			{
-				UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Control Bus Mix is inactive."), *MixSettings.GetName());
+				UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Control Bus Mix is inactive."), *MixSettings.GetName().ToString());
 			}
 #endif // !UE_BUILD_SHIPPING
 		});
@@ -878,7 +922,7 @@ namespace AudioModulation
 #if !UE_BUILD_SHIPPING
 				else
 				{
-					UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Generator is inactive."), *GeneratorSettings.GetName());
+					UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Generator is inactive."), *GeneratorSettings.GetName().ToString());
 				}
 #endif // !UE_BUILD_SHIPPING
 			});
@@ -897,26 +941,7 @@ namespace AudioModulation
 #if !UE_BUILD_SHIPPING
 				else
 				{
-					UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Control Bus is inactive."), *BusSettings.GetName());
-				}
-#endif // !UE_BUILD_SHIPPING
-			});
-		}
-
-		if (const USoundControlBusMix* InMix = Cast<USoundControlBusMix>(&InModulator))
-		{
-			RunCommandOnProcessingThread([this, BusMixSettings = FModulatorBusMixSettings(*InMix)]() mutable
-			{
-				FBusMixHandle BusMixHandle = FBusMixHandle::Get(BusMixSettings.GetId(), RefProxies.BusMixes);
-				if (BusMixHandle.IsValid())
-				{
-					FModulatorBusMixProxy& BusMixProxy = BusMixHandle.FindProxy();
-					BusMixProxy = MoveTemp(BusMixSettings);
-				}
-#if !UE_BUILD_SHIPPING
-				else
-				{
-					UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Control Bus Mix is inactive."), *BusMixSettings.GetName());
+					UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Control Bus is inactive."), *BusSettings.GetName().ToString());
 				}
 #endif // !UE_BUILD_SHIPPING
 			});
@@ -935,7 +960,7 @@ namespace AudioModulation
 #if !UE_BUILD_SHIPPING
 				else
 				{
-					UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Patch is inactive."), *PatchSettings.GetName());
+					UE_LOG(LogAudioModulation, Verbose, TEXT("Update to '%s' Ignored: Patch is inactive."), *PatchSettings.GetName().ToString());
 				}
 #endif // !UE_BUILD_SHIPPING
 			});

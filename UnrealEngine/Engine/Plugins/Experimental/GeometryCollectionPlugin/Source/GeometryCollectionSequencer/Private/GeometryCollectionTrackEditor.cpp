@@ -15,9 +15,8 @@
 #include "UnrealEdGlobals.h"
 #include "MovieSceneGeometryCollectionTrack.h"
 #include "MovieSceneGeometryCollectionSection.h"
-#include "CommonMovieSceneTools.h"
 #include "ContentBrowserModule.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "ISectionLayoutBuilder.h"
 #include "Styling/AppStyle.h"
 #include "MovieSceneTimeHelpers.h"
@@ -34,7 +33,7 @@
 namespace GeometryCollectionEditorConstants
 {
 	// @todo Sequencer Allow this to be customizable
-	const uint32 AnimationTrackHeight = 20;
+	const uint32 AnimationTrackHeight = 28;
 }
 
 #define LOCTEXT_NAMESPACE "FGeometryCollectionTrackEditor"
@@ -390,13 +389,7 @@ TSharedPtr<SWidget> FGeometryCollectionTrackEditor::BuildOutlinerEditWidget(cons
 			return MenuBuilder.MakeWidget();
 		};
 
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				FSequencerUtilities::MakeAddButton(LOCTEXT("GeomCollectionText", "Geometry Collection"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-			];
+		return UE::Sequencer::MakeAddButton(LOCTEXT("GeomCollectionText", "Geometry Collection"), FOnGetContent::CreateLambda(SubMenuCallback), Params.ViewModel);
 	}
 	else
 	{

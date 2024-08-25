@@ -32,6 +32,12 @@ void UNiagaraNodeOp::AllocateDefaultPins()
 		const FNiagaraOpInOutInfo& InOutInfo = OpInfo->Inputs[SrcIndex];
 		UEdGraphPin* Pin = CreatePin(EGPD_Input, Schema->TypeDefinitionToPinType(InOutInfo.DataType), *InOutInfo.Name.ToString());
 		check(Pin);
+
+		if(InOutInfo.FriendlyName.IsEmpty() == false)
+		{
+			Pin->PinFriendlyName = InOutInfo.FriendlyName;
+		}
+		
 		Pin->bDefaultValueIsIgnored = false;
 		Pin->bDefaultValueIsReadOnly = false;
 		Pin->bNotConnectable = false;

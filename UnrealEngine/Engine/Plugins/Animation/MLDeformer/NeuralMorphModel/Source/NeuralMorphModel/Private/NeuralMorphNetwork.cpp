@@ -5,14 +5,20 @@
 #include "UObject/SoftObjectPath.h"
 #include "HAL/FileManagerGeneric.h"
 #include "Math/UnrealMathUtility.h"
+#include "Misc/FileHelper.h"
 
-#if NEURALMORPHMODEL_USE_ISPC
-	#include "NeuralMorphNetwork.ispc.generated.h"
-#endif
+#include "NNE.h"
+#include "NNERuntime.h"
+#include "NNERuntimeCPU.h"
+#include "NNEModelData.h"
+#include "NNERuntimeBasicCpuBuilder.h"
 
 //--------------------------------------------------------------------------
 // UNeuralMorphMLP
 //--------------------------------------------------------------------------
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
 void UNeuralMorphMLP::Empty()
 {
 	Layers.Empty();
@@ -161,7 +167,7 @@ bool UNeuralMorphMLP::Load(FArchive& FileReader)
 		UE_LOG(LogNeuralMorphModel, Verbose, TEXT("MLP Layer %d --> NumWeights=%d (%dx%dx%d)   NumBiases=%d"), LayerIndex, Layer->Weights.Num(), Layer->NumInputs, Layer->NumOutputs, Layer->Depth, Layer->Biases.Num());
 	}
 
-	UE_LOG(LogNeuralMorphModel, Display, TEXT("Successfullly loaded neural morph MLP from file '%s'"), *FileReader.GetArchiveName());
+	UE_LOG(LogNeuralMorphModel, Display, TEXT("Successfully loaded neural morph MLP from file '%s'"), *FileReader.GetArchiveName());
 	return true;
 }
 
@@ -175,27 +181,246 @@ UNeuralMorphMLPLayer& UNeuralMorphMLP::GetLayer(int32 Index) const
 	return *Layers[Index].Get();
 }
 
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 //--------------------------------------------------------------------------
 // UNeuralMorphNetwork
 //--------------------------------------------------------------------------
+
+namespace UE::NeuralMorphModel::Private
+{
+	// Magic and version number used to identify this file data transfered between
+	// python and the NeuralMorphModel. This should match what is in "nmm_shared.py"
+	static constexpr uint32 MagicNumber = 0x234A1304;
+	static constexpr uint32 VersionNumber = 1;
+
+	namespace Serialization
+	{
+		//--------------------------------------------------------------------------
+
+		static inline void Align(uint64& InOutOffset, uint32 Alignment)
+		{
+			InOutOffset = ((InOutOffset + Alignment - 1) / Alignment) * Alignment;
+		}
+
+		//--------------------------------------------------------------------------
+
+		static inline void Size(uint64& InOutOffset, const uint32& In)
+		{
+			Align(InOutOffset, sizeof(uint32));
+			InOutOffset += sizeof(uint32);
+		}
+
+		static inline void Size(uint64& InOutOffset, const float& In)
+		{
+			Align(InOutOffset, alignof(float));
+			InOutOffset += sizeof(float);
+		}
+
+		static inline void Size(uint64& InOutOffset, const TConstArrayView<float> In)
+		{
+			Align(InOutOffset, 64);
+			InOutOffset += In.Num() * sizeof(float);
+		}
+
+		static inline void Size(uint64& InOutOffset, const TConstArrayView<uint16> In)
+		{
+			Align(InOutOffset, 64);
+			InOutOffset += In.Num() * sizeof(uint16);
+		}
+
+		//--------------------------------------------------------------------------
+
+		static inline void Load(uint64& InOutOffset, uint32& Out, TConstArrayView<uint8> Data)
+		{
+			Align(InOutOffset, sizeof(uint32));
+			Out = *((uint32*)&Data[InOutOffset]);
+			InOutOffset += sizeof(uint32);
+		}
+
+		static inline void Load(uint64& InOutOffset, int32& Out, TConstArrayView<uint8> Data)
+		{
+			Align(InOutOffset, sizeof(int32));
+			Out = *((int32*)&Data[InOutOffset]);
+			InOutOffset += sizeof(int32);
+		}
+
+		static inline void Load(uint64& InOutOffset, float& Out, TConstArrayView<uint8> Data)
+		{
+			Align(InOutOffset, sizeof(float));
+			Out = *((float*)&Data[InOutOffset]);
+			InOutOffset += sizeof(float);
+		}
+
+		static inline void Load(uint64& InOutOffset, TArrayView<float> Out, TConstArrayView<uint8> Data)
+		{
+			Align(InOutOffset, 64);
+			FMemory::Memcpy(Out.GetData(), &Data[InOutOffset], Out.Num() * sizeof(float));
+			Out = MakeArrayView<float>((float*)&Data[InOutOffset], Out.Num());
+			InOutOffset += Out.Num() * sizeof(float);
+		}
+
+		static inline void Load(uint64& InOutOffset, FString& Out, TConstArrayView<uint8> Data)
+		{
+			uint32 Num;
+			Load(InOutOffset, Num, Data);
+			Out = UTF8_TO_TCHAR(&Data[InOutOffset]);
+			InOutOffset += Num;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+	static inline void ConvertMLPToFileData(TArray<uint8>& OutBytes, TObjectPtr<UNeuralMorphMLP>& MLP)
+	{
+		UE::NNE::RuntimeBasic::FModelBuilder Builder;
+
+		const uint32 LayerNum = MLP->GetNumLayers();
+
+		TArray<UE::NNE::RuntimeBasic::FModelBuilderElement, TInlineAllocator<32>> LayerElements;
+		LayerElements.Reserve(2 * LayerNum);
+
+		for (uint32 LayerIdx = 0; LayerIdx < LayerNum; LayerIdx++)
+		{
+			const uint32 InputSize = MLP->GetLayer(LayerIdx).NumInputs;
+			const uint32 OutputSize = MLP->GetLayer(LayerIdx).NumOutputs;
+			const uint32 BlockNum = MLP->GetLayer(LayerIdx).Depth;
+			const TConstArrayView<float> Weights = MLP->GetLayer(LayerIdx).Weights;
+			const TConstArrayView<float> Biases = MLP->GetLayer(LayerIdx).Biases;
+
+			if (BlockNum == 1)
+			{
+				LayerElements.Add(Builder.MakeLinear(InputSize, OutputSize, Weights, Biases));
+			}
+			else
+			{
+				LayerElements.Add(Builder.MakeMultiLinear(InputSize, OutputSize, BlockNum, Weights, Biases));
+			}
+
+			LayerElements.Add(Builder.MakeELU(OutputSize * BlockNum));
+		}
+
+		uint32 InputSize, OutputSize;
+		Builder.WriteFileDataAndReset(OutBytes, InputSize, OutputSize, Builder.MakeSequence(LayerElements));
+
+		MLP = nullptr;
+	}
+
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
+UNeuralMorphNetwork::UNeuralMorphNetwork() : Super() {}
+UNeuralMorphNetwork::UNeuralMorphNetwork(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer) {}
+UNeuralMorphNetwork::UNeuralMorphNetwork(FVTableHelper& Helper) : Super(Helper) {}
+UNeuralMorphNetwork::~UNeuralMorphNetwork() {}
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+void UNeuralMorphNetwork::PostLoad()
+{
+	Super::PostLoad();
+
+	if (MainMLP_DEPRECATED)
+	{
+		MainMLP_DEPRECATED->ConditionalPostLoad();
+
+		// If we are in Global mode and loading the legacy network format we need to Load NumMorphs 
+		// from old network data output size since it was not stored directly in the object before.
+		if (Mode == ENeuralMorphMode::Global)
+		{
+			NumMorphs = MainMLP_DEPRECATED->GetNumOutputs();
+		}
+
+		TArray<uint8> FileData;
+		UE::NeuralMorphModel::Private::ConvertMLPToFileData(FileData, MainMLP_DEPRECATED);
+
+		if (!MainModelData)
+		{
+			MainModelData = NewObject<UNNEModelData>(this);
+		}
+
+		MainModelData->Init(TEXT("ubnne"), FileData);
+
+		FileData.Empty();
+	}
+
+	if (GroupMLP_DEPRECATED)
+	{
+		GroupMLP_DEPRECATED->ConditionalPostLoad();
+
+		TArray<uint8> FileData;
+		UE::NeuralMorphModel::Private::ConvertMLPToFileData(FileData, GroupMLP_DEPRECATED);
+
+		if (!GroupModelData)
+		{
+			GroupModelData = NewObject<UNNEModelData>(this);
+		}
+
+		GroupModelData->Init(TEXT("ubnne"), FileData);
+
+		FileData.Empty();
+	}
+
+	// Create models
+
+	ensureMsgf(FModuleManager::Get().LoadModule(TEXT("NNERuntimeBasicCpu")), TEXT("Unable to load module for NNE runtime NNERuntimeBasicCpu."));
+	
+	TWeakInterfacePtr<INNERuntimeCPU> RuntimeCPU = UE::NNE::GetRuntime<INNERuntimeCPU>(TEXT("NNERuntimeBasicCpu"));
+
+	if (ensureMsgf(RuntimeCPU.IsValid(), TEXT("Could not find requested NNE Runtime")))
+	{
+		if (MainModelData)
+		{
+			MainModel = RuntimeCPU->CreateModelCPU(MainModelData);
+		}
+
+		if (GroupModelData)
+		{
+			GroupModel = RuntimeCPU->CreateModelCPU(GroupModelData);
+		}
+	}
+
+	// If we are not in the editor then we clear the FileData and FileType since these will be
+	// using additional memory if we are loading from the legacy format.
+
+#if !WITH_EDITOR
+	if (MainModelData)
+	{
+		MainModelData->ClearFileDataAndFileType();
+	}
+
+	if (GroupModelData)
+	{
+		GroupModelData->ClearFileDataAndFileType();
+	}
+#endif
+}
+
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 void UNeuralMorphNetwork::Empty()
 {
 	InputMeans.Empty();
 	InputStd.Empty();
 
-	if (MainMLP)
+	if (MainModelData)
 	{
-		MainMLP->ConditionalBeginDestroy();
-		MainMLP = nullptr;
+		MainModelData->ConditionalBeginDestroy();
+		MainModelData = nullptr;
+		MainModel.Reset();
 	}
 
-	if (GroupMLP)
+	if (GroupModelData)
 	{
-		GroupMLP->ConditionalBeginDestroy();
-		GroupMLP = nullptr;
+		GroupModelData->ConditionalBeginDestroy();
+		GroupModelData = nullptr;
+		GroupModel.Reset();
 	}
 
 	Mode = ENeuralMorphMode::Global;
+	NumMorphs = 0;
 	NumMorphsPerBone = 0;
 	NumBones = 0;
 	NumCurves = 0;
@@ -206,163 +431,133 @@ void UNeuralMorphNetwork::Empty()
 
 bool UNeuralMorphNetwork::IsEmpty() const
 {
-	return !MainMLP;
-}
-
-UNeuralMorphMLP* UNeuralMorphNetwork::LoadMLP(FArchive& FileReader)
-{
-	UNeuralMorphMLP* MLP = NewObject<UNeuralMorphMLP>(this);
-	if (!MLP->Load(FileReader))
-	{
-		MLP->ConditionalBeginDestroy();
-		MLP = nullptr;		
-	}
-	return MLP;
+	return !MainModel;
 }
 
 bool UNeuralMorphNetwork::Load(const FString& Filename)
 {
 	UE_LOG(LogNeuralMorphModel, Display, TEXT("Loading Neural Morph Network from file '%s'"), *Filename);
+	
 	Empty();
 
-	// Create the file reader.
-	TUniquePtr<FArchive> FileReader(IFileManager::Get().CreateFileReader(*Filename));
-	if (!FileReader.IsValid())
-	{
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to create file reader to read file '%s'!"), *Filename);
-		Empty();
-		return false;
-	}
+	TArray<uint8> FileData;
 
-	// Read the FOURCC, to identify the file type.
-	char FOURCC[4] {' ', ' ', ' ', ' '};
-	FileReader->Serialize(FOURCC, 4);
-	if (FileReader->IsError())
+	if (FFileHelper::LoadFileToArray(FileData, *Filename))
 	{
-		FileReader->Close();
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to read the FOURCC!"));
-		Empty();
-		return false;
-	}
+		uint64 Offset = 0;
 
-	if (FOURCC[0] != 'N' || FOURCC[1] != 'M' || FOURCC[2] != 'M' || FOURCC[3] != 'N')	// NMMN (Neural Morph Model Network)
-	{
-		FileReader->Close();
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("The file is not a valid valid neural morph network file type!"));
-		Empty();
-		return false;
-	}
-
-	// Load the version number.
-	int32 Version = -1;
-	FileReader->Serialize(&Version, sizeof(int32));
-	if (FileReader->IsError())
-	{
-		FileReader->Close();
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to load version"));
-		Empty();
-		return false;
-	}
-
-	if (Version != 3)
-	{
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("The Neural Morph Network file '%s' is of an unknown version (Version=%d)!"), *Filename, Version);
-		FileReader->Close();
-		Empty();
-		return false;
-	}
-
-	// Load the header with info.
-	struct FInfoHeader
-	{
-		int32 Mode;						// 0=Local, 1=Global
-		int32 NumInputs;				// How many float inputs in the input layer?
-		int32 NumHiddenLayers;			// How many hidden layers in the network (layers excluding input and output layer)?
-		int32 NumUnitsPerHiddenLayer;	// How many neurons for each hidden layer?
-		int32 NumOutputs;				// The number of units in the output layer.
-		int32 NumMorphsPerBone;			// The number of morph targets per bone, if set Mode == 0. Otherwise ignored.
-		int32 NumBones;					// The number of bones used as input.
-		int32 NumCurves;				// The number of curves used as input.
-		int32 NumFloatsPerCurve;		// The number of floats per curve.
-		int32 NumGroups;				// How many groups are there?
-		int32 NumItemsPerGroup;			// How many items (bones/curves) per group?
-	};
-
-	FInfoHeader Info;
-	FileReader->Serialize(&Info, sizeof(FInfoHeader));
-	if (FileReader->IsError())
-	{
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to load info header!"));
-		FileReader->Close();
-		Empty();
-		return false;
-	}
-
-	Mode = (Info.Mode == 0) ? ENeuralMorphMode::Local : ENeuralMorphMode::Global;
-	NumMorphsPerBone = Info.NumMorphsPerBone;
-	NumBones = Info.NumBones;
-	NumCurves = Info.NumCurves;
-	NumFloatsPerCurve = Info.NumFloatsPerCurve;
-	NumGroups = Info.NumGroups;
-	NumItemsPerGroup = Info.NumItemsPerGroup;
-
-	// Read the input standard deviation and means.
-	InputMeans.SetNumZeroed(Info.NumInputs);
-	InputStd.SetNumZeroed(Info.NumInputs);
-	FileReader->Serialize(InputStd.GetData(), Info.NumInputs * sizeof(float));
-	if (FileReader->IsError())
-	{
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to load input standard deviations!"));
-		FileReader->Close();
-		Empty();
-		return false;
-	}
-
-	FileReader->Serialize(InputMeans.GetData(), Info.NumInputs * sizeof(float));
-	if (FileReader->IsError())
-	{
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to load input means!"));
-		FileReader->Close();
-		Empty();
-		return false;
-	}
-
-	// Load the main network.
-	MainMLP = LoadMLP(*FileReader);
-	if (!MainMLP)
-	{
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to load main MLP!"));
-		FileReader->Close();
-		Empty();
-		return false;
-	}
-
-	// If we're in local mode and we have groups, load the network for that.
-	if (NumGroups > 0 && Mode == ENeuralMorphMode::Local)
-	{
-		GroupMLP = LoadMLP(*FileReader);
-		if (!GroupMLP)
+		if (FileData.Num() < sizeof(uint32) * 2)
 		{
-			UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to load group MLP!"));
-			FileReader->Close();
-			Empty();
+			UE_LOG(LogNeuralMorphModel, Error, TEXT("The file is not a valid neural morph network file!"));
 			return false;
 		}
-	}
 
-	// Clean up and return the result.
-	const bool bSuccess = FileReader->Close();
-	if (bSuccess)
-	{
-		UE_LOG(LogNeuralMorphModel, Display, TEXT("Successfullly loaded neural morph network from file '%s'"), *FileReader->GetArchiveName());
+		uint32 Magic;
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, Magic, FileData);
+		if (Magic != UE::NeuralMorphModel::Private::MagicNumber)
+		{
+			UE_LOG(LogNeuralMorphModel, Error, TEXT("The file is not a valid neural morph network file!"));
+			return false;
+		}
+
+		uint32 Version;
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, Version, FileData);
+		if (Version != UE::NeuralMorphModel::Private::VersionNumber)
+		{
+			UE_LOG(LogNeuralMorphModel, Error, TEXT("The file is not a supported version of neural morph network file!"));
+			return false;
+		}
+
+		// Load General Info
+
+		uint32 ModeValue;
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, ModeValue, FileData);
+		Mode = (ModeValue == 0) ? ENeuralMorphMode::Local : ENeuralMorphMode::Global;
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, NumMorphs, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, NumMorphsPerBone, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, NumBones, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, NumCurves, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, NumGroups, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, NumItemsPerGroup, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, NumFloatsPerCurve, FileData);
+
+		// Load Mean / Std
+
+		InputMeans.SetNumUninitialized(GetNumInputs());
+		InputStd.SetNumUninitialized(GetNumInputs());
+
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, InputMeans, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, InputStd, FileData);
+
+		// Load NNE Runtime Name
+
+		FString RuntimeName;
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, RuntimeName, FileData);
+
+		ensureMsgf(RuntimeName == TEXT("NNERuntimeBasicCpu"), TEXT("Currently only NNERuntimeBasicCpu runtime is supported"));
+
+		// Load Main Network
+
+		if (!MainModelData)
+		{
+			MainModelData = NewObject<UNNEModelData>(this);
+		}
+		
+		uint32 MainModelSize;
+		UE::NeuralMorphModel::Private::Serialization::Load(Offset, MainModelSize, FileData);
+		UE::NeuralMorphModel::Private::Serialization::Align(Offset, 64);
+		MainModelData->Init(TEXT("ubnne"), TConstArrayView<uint8>(FileData).Slice(Offset, MainModelSize));
+
+		Offset += MainModelSize;
+
+		// If we're in local mode and we have groups, load Group Network
+
+		if (NumGroups > 0 && Mode == ENeuralMorphMode::Local)
+		{
+			if (!GroupModelData)
+			{
+				GroupModelData = NewObject<UNNEModelData>(this);
+			}
+			
+			uint32 GroupModelSize;
+			UE::NeuralMorphModel::Private::Serialization::Load(Offset, GroupModelSize, FileData);
+			UE::NeuralMorphModel::Private::Serialization::Align(Offset, 64);
+			GroupModelData->Init(TEXT("ubnne"), TConstArrayView<uint8>(FileData).Slice(Offset, GroupModelSize));
+
+			Offset += GroupModelSize;
+		}
+
+		// Create models
+
+		ensureMsgf(FModuleManager::Get().LoadModule(TEXT("NNERuntimeBasicCpu")), TEXT("Unable to load module for NNE runtime NNERuntimeBasicCpu."));
+
+		TWeakInterfacePtr<INNERuntimeCPU> RuntimeCPU = UE::NNE::GetRuntime<INNERuntimeCPU>(TEXT("NNERuntimeBasicCpu"));
+
+		if (ensureMsgf(RuntimeCPU.IsValid(), TEXT("Could not find requested NNE Runtime")))
+		{
+			if (MainModelData)
+			{
+				MainModel = RuntimeCPU->CreateModelCPU(MainModelData);
+			}
+
+			if (GroupModelData)
+			{
+				GroupModel = RuntimeCPU->CreateModelCPU(GroupModelData);
+			}
+		}
+
+		// Done!
+
+		checkf(Offset == FileData.Num(), TEXT("Did not fully parse file contents"));
+
+		UE_LOG(LogNeuralMorphModel, Display, TEXT("Successfully loaded neural morph network from file '%s'"), *Filename);
+		return true;
 	}
 	else
 	{
-		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to close file reader."));
-		Empty();
+		UE_LOG(LogNeuralMorphModel, Error, TEXT("Failed to read file '%s'!"), *Filename);
+		return false;
 	}
-
-	return bSuccess;
 }
 
 UNeuralMorphNetworkInstance* UNeuralMorphNetwork::CreateInstance()
@@ -417,32 +612,76 @@ int32 UNeuralMorphNetwork::GetNumItemsPerGroup() const
 	return NumItemsPerGroup;
 }
 
+int32 UNeuralMorphNetwork::GetNumMainInputs() const
+{
+	return Mode == ENeuralMorphMode::Local ?
+		(NumBones * 6) + (NumCurves * 6) :
+		(NumBones * 6) + NumCurves;
+}
+
+int32 UNeuralMorphNetwork::GetNumMainOutputs() const
+{
+	return Mode == ENeuralMorphMode::Local ?
+		NumMorphsPerBone * (NumBones + NumCurves) :
+		NumMorphs;
+}
+
+int32 UNeuralMorphNetwork::GetNumGroupInputs() const
+{
+	return Mode == ENeuralMorphMode::Local ?
+		NumGroups * 6 * NumItemsPerGroup :
+		0;
+}
+
+int32 UNeuralMorphNetwork::GetNumGroupOutputs() const
+{
+	return Mode == ENeuralMorphMode::Local ?
+		NumMorphsPerBone * NumGroups :
+		0;
+}
+
 int32 UNeuralMorphNetwork::GetNumInputs() const
 {
-	return MainMLP ? MainMLP->GetNumInputs() : 0;
+	return GetNumMainInputs();
 }
 
 int32 UNeuralMorphNetwork::GetNumOutputs() const
 {
-	int32 NumOutputs = MainMLP ? MainMLP->GetNumOutputs() : 0;
-	NumOutputs += GroupMLP ? GroupMLP->GetNumOutputs() : 0; 
-	return NumOutputs;
+	return GetNumMainOutputs() + GetNumGroupOutputs();
 }
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
 UNeuralMorphMLP* UNeuralMorphNetwork::GetMainMLP() const
 {
-	return MainMLP.Get();
+	return nullptr;
 }
 
 UNeuralMorphMLP* UNeuralMorphNetwork::GetGroupMLP() const
 {
-	return GroupMLP.Get();
+	return nullptr;
 }
 
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+UE::NNE::IModelCPU* UNeuralMorphNetwork::GetMainModel() const
+{
+	return MainModel.Get();
+}
+
+UE::NNE::IModelCPU* UNeuralMorphNetwork::GetGroupModel() const
+{
+	return GroupModel.Get();
+}
 
 //--------------------------------------------------------------------------
 // UNeuralMorphNetworkInstance
 //--------------------------------------------------------------------------
+
+UNeuralMorphNetworkInstance::UNeuralMorphNetworkInstance() : Super() {}
+UNeuralMorphNetworkInstance::UNeuralMorphNetworkInstance(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer) {}
+UNeuralMorphNetworkInstance::UNeuralMorphNetworkInstance(FVTableHelper& Helper) : Super(Helper) {}
+UNeuralMorphNetworkInstance::~UNeuralMorphNetworkInstance() {}
 
 TArrayView<float> UNeuralMorphNetworkInstance::GetInputs()
 { 
@@ -482,215 +721,64 @@ const UNeuralMorphNetwork& UNeuralMorphNetworkInstance::GetNeuralNetwork() const
 void UNeuralMorphNetworkInstance::Init(UNeuralMorphNetwork* InNeuralNetwork)
 {
 	Network = InNeuralNetwork;
-	const UNeuralMorphMLP* MainMLP = Network->GetMainMLP();
-	const UNeuralMorphMLP* GroupMLP = Network->GetGroupMLP();
 
-	Inputs.SetNumZeroed(Network->GetNumInputs());
-	Outputs.SetNumZeroed(Network->GetNumOutputs());	// This contains concatenated outputs of both main and group MLP's.
+	UE::NNE::IModelCPU* MainNeuralNetwork = Network->GetMainModel();
+	UE::NNE::IModelCPU* GroupNeuralNetwork = Network->GetGroupModel();
 
-	if (GroupMLP)
+	if (ensureMsgf(MainNeuralNetwork, TEXT("Main Neural Network must be valid to create instance")))
 	{
-		GroupInputs.SetNumZeroed(GroupMLP->GetNumInputs());
+		Inputs.SetNumZeroed(Network->GetNumInputs());   // This is just the number of inputs for the main network.
+		Outputs.SetNumZeroed(Network->GetNumOutputs()); // This contains concatenated outputs of both main and group networks.
+		MainInstance = MainNeuralNetwork->CreateModelInstanceCPU();
+		MainInstance->SetInputTensorShapes({ UE::NNE::FTensorShape::Make({ 1, (uint32)Inputs.Num() }) });
 	}
 
-	// Find the largest layer unit size and pre-allocate a buffer of that size.
-	const int32 MainMaxNumInputs = MainMLP ? MainMLP->GetMaxNumLayerInputs() : 0;
-	const int32 MainMaxNumOutputs = MainMLP ? MainMLP->GetMaxNumLayerOutputs() : 0;
-	const int32 GroupMaxNumInputs = GroupMLP ? GroupMLP->GetMaxNumLayerInputs() : 0;
-	const int32 GroupMaxNumOutputs = GroupMLP ? GroupMLP->GetMaxNumLayerOutputs() : 0;
-
-	// Find the maximum of the inputs and outputs of both main and group mlp's.
-	int32 MaxNumUnits = FMath::Max<int32>(MainMaxNumInputs, GroupMaxNumInputs);
-	MaxNumUnits = FMath::Max3<int32>(MaxNumUnits, MainMaxNumOutputs, GroupMaxNumOutputs);
-
-	TempInputArray.SetNumZeroed(MaxNumUnits);
-	TempOutputArray.SetNumZeroed(MaxNumUnits);
-}
-
-void UNeuralMorphNetworkInstance::RunGlobalModel(const FRunSettings& RunSettings)
-{
-	float* RESTRICT TempInputBuffer = RunSettings.TempInputBuffer;
-	float* RESTRICT TempOutputBuffer = RunSettings.TempOutputBuffer;
-
-	checkfSlow(Network->GetNumFloatsPerCurve() == 1, TEXT("Expecting the number of floats per curve to be 1 in global mode."));
-
-	const UNeuralMorphMLP& MainMLP = *Network->GetMainMLP();
-
-	const int32 NumLayers = MainMLP.GetNumLayers();
-	for (int32 LayerIndex = 0; LayerIndex < NumLayers; ++LayerIndex)
+	if (GroupNeuralNetwork)
 	{
-		const UNeuralMorphMLPLayer& CurLayer = MainMLP.GetLayer(LayerIndex);
-		const int32 NumLayerInputs = CurLayer.NumInputs;
-		const int32 NumLayerOutputs = CurLayer.NumOutputs;
-
-		// Copy the inputs to the temp input buffer for the first layer.
-		if (LayerIndex == 0)
-		{
-			const float* const RESTRICT NetworkInputs = RunSettings.InputBuffer;
-			for (int32 Index = 0; Index < NumLayerInputs; ++Index)
-			{
-				TempInputBuffer[Index] = NetworkInputs[Index];
-			}
-		}
-
-		// If we reached the last layer, output to the final buffer.
-		if (LayerIndex == NumLayers - 1)
-		{
-			TempOutputBuffer = RunSettings.OutputBuffer;
-		}
-
-		#if NEURALMORPHMODEL_USE_ISPC
-			const float* const RESTRICT LayerWeights = CurLayer.Weights.GetData();
-			const float* const RESTRICT LayerBiases = CurLayer.Biases.GetData();
-			ispc::MorphNeuralNetwork_LayerForward(TempOutputBuffer, TempInputBuffer, LayerWeights, LayerBiases, NumLayerInputs, NumLayerOutputs);
-		#else
-			// Init the outputs to the bias.
-			const float* const RESTRICT LayerBiases = CurLayer.Biases.GetData();
-			for (int32 Index = 0; Index < NumLayerOutputs; ++Index)
-			{
-				TempOutputBuffer[Index] = LayerBiases[Index];
-			}
-
-			// Multiply layer inputs with the weights.
-			const float* const RESTRICT LayerWeights = CurLayer.Weights.GetData();
-			for (int32 InputIndex = 0; InputIndex < NumLayerInputs; ++InputIndex)
-			{
-				const float InputValue = TempInputBuffer[InputIndex];
-				const int32 Offset = InputIndex * NumLayerOutputs;
-				for (int32 OutputIndex = 0; OutputIndex < NumLayerOutputs; ++OutputIndex)
-				{
-					TempOutputBuffer[OutputIndex] += InputValue * LayerWeights[Offset + OutputIndex];
-				}
-			}
-
-			// Apply ELU activation.
-			for (int32 Index = 0; Index < NumLayerOutputs; ++Index)
-			{
-				const float X = TempOutputBuffer[Index];
-				TempOutputBuffer[Index] = (X > 0.0f) ? X : FMath::InvExpApprox(-X) - 1.0f;
-			}
-		#endif
-
-		// The outputs are now input to the next layer.
-		if (LayerIndex < NumLayers - 1)
-		{
-			// Swap the inputs and outputs, as the outputs are the input to the next layer.
-			float* const SwapTemp = TempInputBuffer;
-			TempInputBuffer = TempOutputBuffer;
-			TempOutputBuffer = SwapTemp;
-		}
+		GroupInputs.SetNumZeroed(Network->GetNumGroupInputs());
+		GroupInstance = GroupNeuralNetwork->CreateModelInstanceCPU();
+		GroupInstance->SetInputTensorShapes({ UE::NNE::FTensorShape::Make({ 1, (uint32)GroupInputs.Num() }) });
 	}
-}
-
-void UNeuralMorphNetworkInstance::RunLocalMLP(UNeuralMorphMLP& MLP, const FRunSettings& RunSettings)
-{
-	float* RESTRICT TempInputBuffer = RunSettings.TempInputBuffer;
-	float* RESTRICT TempOutputBuffer = RunSettings.TempOutputBuffer;
-
-	checkfSlow(Network->GetNumFloatsPerCurve() == 6, TEXT("Expecting num floats per curve to be 6 in local mode."));
-
-	const int32 NumLayers = MLP.GetNumLayers();
-	for (int32 LayerIndex = 0; LayerIndex < NumLayers; ++LayerIndex)
-	{
-		const UNeuralMorphMLPLayer& CurLayer = MLP.GetLayer(LayerIndex);
-		const int32 NumInputsPerBlock = CurLayer.NumInputs;
-		const int32 NumBlocks = CurLayer.Depth;
-
-		// Copy the inputs to the temp buffer.
-		if (LayerIndex == 0)
-		{
-			const float* const RESTRICT NetworkInputs = RunSettings.InputBuffer;
-			const int32 NumInputs = CurLayer.NumInputs * CurLayer.Depth;
-			for (int32 Index = 0; Index < NumInputs; ++Index)
-			{
-				TempInputBuffer[Index] = NetworkInputs[Index];
-			}
-		}
-
-		// If we reached the last layer, output to the final buffer.
-		if (LayerIndex == NumLayers - 1)
-		{
-			TempOutputBuffer = RunSettings.OutputBuffer;
-		}
-
-		// Init the output buffer to the bias values.
-		const float* const RESTRICT LayerBiases = CurLayer.Biases.GetData();
-		const int32 NumOutputsPerBlock = CurLayer.NumOutputs;
-		const int32 NumOutputs = CurLayer.NumOutputs * CurLayer.Depth;
-		for (int32 Index = 0; Index < NumOutputs; ++Index)
-		{
-			TempOutputBuffer[Index] = LayerBiases[Index];
-		}
-
-		const float* const RESTRICT LayerWeights = CurLayer.Weights.GetData();
-		for (int32 BlockIndex = 0; BlockIndex < NumBlocks; ++BlockIndex)
-		{
-			const int32 BlockOutputOffset = BlockIndex * NumOutputsPerBlock;
-			const int32 BlockInputOffset = BlockIndex * NumInputsPerBlock;
-
-			// Multiply layer inputs with the weights.
-			const int32 WeightOffset = BlockIndex * (NumInputsPerBlock * NumOutputsPerBlock);
-			for (int32 InputIndex = 0; InputIndex < NumInputsPerBlock; ++InputIndex)
-			{
-				const float InputValue = TempInputBuffer[BlockInputOffset + InputIndex];
-				const int32 InputOffset = InputIndex * NumOutputsPerBlock;
-				for (int32 OutputIndex = 0; OutputIndex < NumOutputsPerBlock; ++OutputIndex)
-				{
-					TempOutputBuffer[BlockOutputOffset + OutputIndex] += InputValue * LayerWeights[WeightOffset + InputOffset + OutputIndex];
-				}
-			}
-		} // For all blocks.
-
-		// Apply ELU activation.
-		#if NEURALMORPHMODEL_USE_ISPC
-			ispc::MorphNeuralNetwork_Activation_ELU(TempOutputBuffer, NumOutputs);
-		#else
-			for (int32 OutputIndex = 0; OutputIndex < NumOutputs; ++OutputIndex)
-			{
-				const float X = TempOutputBuffer[OutputIndex];
-				TempOutputBuffer[OutputIndex] = (X > 0.0f) ? X : FMath::InvExpApprox(-X) - 1.0f;
-			}
-		#endif
-
-		// The outputs are now input to the next layer.
-		if (LayerIndex < NumLayers - 1)
-		{
-			// Swap the inputs and outputs, as the outputs are the input to the next layer.
-			float* const SwapTemp = TempInputBuffer;
-			TempInputBuffer = TempOutputBuffer;
-			TempOutputBuffer = SwapTemp;
-		}
-	} // For all layers.
 }
 
 void UNeuralMorphNetworkInstance::Run()
-{	
-	TRACE_CPUPROFILER_EVENT_SCOPE(UNeuralMorphNetwork::Run)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(UNeuralMorphNetwork::Run);
 
-	// Setup the buffer pointers.
-	FRunSettings RunSettings;
-	RunSettings.TempInputBuffer  = TempInputArray.GetData();
-	RunSettings.TempOutputBuffer = TempOutputArray.GetData();
-	RunSettings.InputBuffer		 = Inputs.GetData();
-	RunSettings.OutputBuffer	 = Outputs.GetData();
+	UE::NNE::IModelCPU* MainNeuralNetwork = Network->GetMainModel();
+	UE::NNE::IModelCPU* GroupNeuralNetwork = Network->GetGroupModel();
 
-	// Run the network.
+	TArrayView<float> MainOutputs = TArrayView<float>(Outputs.GetData(), Network->GetNumMainOutputs());
+
 	if (Network->GetMode() == ENeuralMorphMode::Global)
 	{
-		RunGlobalModel(RunSettings);
+		checkfSlow(Network->GetNumFloatsPerCurve() == 1, TEXT("Expecting the number of floats per curve to be 1 in global mode."));
+
+		MainInstance->RunSync(
+			{ { (void*)Inputs.GetData(), Inputs.Num() * sizeof(float) } },
+			{ { (void*)MainOutputs.GetData(), MainOutputs.Num() * sizeof(float) } });
+	}
+	else if (Network->GetMode() == ENeuralMorphMode::Local)
+	{
+		checkfSlow(Network->GetNumFloatsPerCurve() == 6, TEXT("Expecting num floats per curve to be 6 in local mode."));
+
+		MainInstance->RunSync(
+			{ { (void*)Inputs.GetData(), Inputs.Num() * sizeof(float) } },
+			{ { (void*)MainOutputs.GetData(), MainOutputs.Num() * sizeof(float) } });
+
+		if (GroupNeuralNetwork)
+		{
+			TArrayView<float> GroupOutputs = TArrayView<float>(
+				Outputs.GetData() + Network->GetNumMainOutputs(),
+				Network->GetNumGroupOutputs());
+
+			GroupInstance->RunSync(
+				{ { (void*)GroupInputs.GetData(), GroupInputs.Num() * sizeof(float) } },
+				{ { (void*)GroupOutputs.GetData(), GroupOutputs.Num() * sizeof(float) } });
+		}
 	}
 	else
 	{
-		checkSlow(Network->GetMode() == ENeuralMorphMode::Local)
-		RunLocalMLP(*Network->GetMainMLP(), RunSettings);
-		if (Network->GetGroupMLP())
-		{
-			FRunSettings GroupRunSettings;
-			GroupRunSettings.TempInputBuffer	= TempInputArray.GetData();
-			GroupRunSettings.TempOutputBuffer	= TempOutputArray.GetData();
-			GroupRunSettings.InputBuffer		= GroupInputs.GetData();
-			GroupRunSettings.OutputBuffer		= Outputs.GetData() + Network->GetMainMLP()->GetNumOutputs();	// Output values after the main network's outputs.
-			RunLocalMLP(*Network->GetGroupMLP(), GroupRunSettings);
-		}
+		checkf(false, TEXT("Unknown Mode"));
 	}
 }

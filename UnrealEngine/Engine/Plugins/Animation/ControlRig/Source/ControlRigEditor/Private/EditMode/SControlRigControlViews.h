@@ -20,6 +20,7 @@
 class FAssetThumbnail;
 class IDetailsView;
 class UControlRig;
+class SControlRigBaseListWidget;
 
 //Class to Hold Statics that are shared and externally callable
 class FControlRigView
@@ -32,6 +33,7 @@ class SControlRigPoseView : public SCompoundWidget, public FNotifyHook
 {
 	SLATE_BEGIN_ARGS(SControlRigPoseView) {}
 	SLATE_ARGUMENT(UControlRigPoseAsset*, PoseAsset)
+	SLATE_ARGUMENT(TSharedPtr<SControlRigBaseListWidget>, OwningWidget)
 
 	SLATE_END_ARGS()
 
@@ -79,6 +81,7 @@ private:
 	TSharedPtr<STextBlock> TextStatusBlock1;
 	TSharedPtr<STextBlock> TextStatusBlock2;
 
+	TSharedPtr<SControlRigBaseListWidget> OwningWidget;
 
 	/* Mirroring*/
 	TSharedPtr<IDetailsView> MirrorDetailsView;

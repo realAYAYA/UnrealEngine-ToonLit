@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "WorldPartition/DataLayer/DataLayerAsset.h"
+
+#include "Math/Color.h"
 #include "WorldPartition/DataLayer/DataLayerInstance.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Level.h"
@@ -10,6 +12,7 @@
 UDataLayerAsset::UDataLayerAsset(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, DataLayerType(EDataLayerType::Editor)
+	, bSupportsActorFilters(false)
 	, DebugColor(FColor::Black)
 {}
 
@@ -56,11 +59,40 @@ bool UDataLayerAsset::CanEditChange(const FProperty* InProperty) const
 	{
 		if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(UDataLayerAsset, DataLayerType))
 		{
-			// UDataLayerAsset outered to a UDataLayerInstance do not support Runtime type
-			return !IsPrivate();
+			return CanEditDataLayerType();
+		}
+		else if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(UDataLayerAsset, LoadFilter))
+		{
+			// Only runtime data layer assets can be set to client only
+			return IsRuntime();
 		}
 	}
 
 	return true;
 }
+
+void UDataLayerAsset::OnCreated()
+{
+	SetDebugColor(FColor::MakeRandomSeededColor(GetTypeHash(GetFullName())));
+	if (!IsPrivate())
+	{
+		SetType(EDataLayerType::Runtime);
+	}
+}
+
+bool UDataLayerAsset::CanEditDataLayerType() const
+{
+    // UDataLayerAsset outered to a UDataLayerInstance do not support Runtime type
+	return !IsPrivate();
+}
+
+void UDataLayerAsset::SetType(EDataLayerType InDataLayerType)
+{
+	check(DataLayerType == EDataLayerType::Editor || !IsPrivate());
+	if (CanEditDataLayerType())
+	{
+		DataLayerType = InDataLayerType;
+	}
+}
+
 #endif

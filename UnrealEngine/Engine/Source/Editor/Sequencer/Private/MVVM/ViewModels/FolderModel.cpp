@@ -15,6 +15,7 @@
 #include "MVVM/ObjectBindingModelStorageExtension.h"
 #include "MVVM/FolderModelStorageExtension.h"
 #include "MVVM/SharedViewModelData.h"
+#include "MVVM/ViewModels/OutlinerColumns/OutlinerColumnTypes.h"
 
 #include "Sequencer.h"
 #include "SequencerNodeTree.h"
@@ -29,21 +30,20 @@
 #include "MovieSceneBinding.h"
 #include "MovieSceneFolder.h"
 
+#include "DragAndDrop/ActorDragDropOp.h"
 #include "ScopedTransaction.h"
 #include "Internationalization/Internationalization.h"
 
 #define LOCTEXT_NAMESPACE "SequencerFolderModel"
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
 TMap<TWeakObjectPtr<UMovieSceneFolder>, FColor> FFolderModel::InitialFolderColors;
 bool FFolderModel::bFolderPickerWasCancelled = false;
 
 FFolderModel::FFolderModel(UMovieSceneFolder* Folder)
-	: FOutlinerItemModel()
+	: FMuteSoloOutlinerItemModel()
 	, TrackAreaList(EViewModelListType::TrackArea)
 	, WeakFolder(Folder)
 	, OwnerModel(nullptr)
@@ -228,7 +228,9 @@ void FFolderModel::OnChildFolderRemoved(UMovieSceneFolder* Folder)
 
 FOutlinerSizing FFolderModel::GetOutlinerSizing() const
 {
-	return FOutlinerSizing(20.f, 4.f);
+	const float CompactHeight = 28.f;
+	FViewDensityInfo Density = GetEditor()->GetViewDensity();
+	return FOutlinerSizing(Density.UniformHeight.Get(CompactHeight));
 }
 
 void FFolderModel::GetIdentifierForGrouping(TStringBuilder<128>& OutString) const
@@ -320,7 +322,8 @@ void FFolderModel::BuildContextMenu(FMenuBuilder& MenuBuilder)
 	MenuBuilder.EndSection();
 }
 
-TSharedRef<SWidget> FFolderModel::CreateOutlinerView(const FCreateOutlinerViewParams& InParams)
+
+TSharedPtr<SWidget> FFolderModel::CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName)
 {
 	class SOutlinerFolderView
 		: public SOutlinerItemViewBase
@@ -343,7 +346,12 @@ TSharedRef<SWidget> FFolderModel::CreateOutlinerView(const FCreateOutlinerViewPa
 		TAttribute<bool> IsExpandedAttribute;
 	};
 
-	return SNew(SOutlinerFolderView, SharedThis(this), InParams.Editor, InParams.TreeViewRow);
+	if (InColumnName == FCommonOutlinerNames::Label)
+	{
+		return SNew(SOutlinerFolderView, SharedThis(this), InParams.Editor, InParams.TreeViewRow);
+	}
+
+	return nullptr;
 }
 
 void FFolderModel::SetFolderColor()
@@ -501,6 +509,12 @@ void FFolderModel::SetCustomOrder(int32 InCustomOrder)
 
 TOptional<EItemDropZone> FFolderModel::CanAcceptDrop(const FViewModelPtr& TargetModel, const FDragDropEvent& DragDropEvent, EItemDropZone ItemDropZone)
 {
+	TSharedPtr<FActorDragDropOp> ActorDragDropOp = DragDropEvent.GetOperationAs<FActorDragDropOp>();
+	if (ActorDragDropOp)
+	{
+		return ItemDropZone;
+	}
+
 	TSharedPtr<FSequencerOutlinerDragDropOp> DragDropOp = DragDropEvent.GetOperationAs<FSequencerOutlinerDragDropOp>();
 	if (!DragDropOp)
 	{
@@ -564,6 +578,135 @@ TOptional<EItemDropZone> FFolderModel::CanAcceptDrop(const FViewModelPtr& Target
 	return ItemDropZone;
 }
 
+void FFolderModel::PerformDropActors(const FViewModelPtr& TargetModel, TSharedPtr<FActorDragDropOp> ActorDragDropEvent, TSharedPtr<FViewModel> AttachAfter)
+{
+	UMovieSceneFolder* Folder = WeakFolder.Get();
+	if (!Folder)
+	{
+		return;
+	}
+	
+	TSharedPtr<FSequencer> Sequencer = StaticCastSharedPtr<FSequencer>(GetEditor()->GetSequencer());
+	if (!Sequencer)
+	{
+		return;
+	}
+
+	TArray<FGuid> PossessableGuids = FSequencerUtilities::AddActors(Sequencer.ToSharedRef(), ActorDragDropEvent->Actors);
+
+	for (FGuid PossessableGuid : PossessableGuids)
+	{
+		Folder->AddChildObjectBinding(PossessableGuid);
+	}
+}
+
+void FFolderModel::PerformDropOutliner(const FViewModelPtr& TargetModel, TSharedPtr<FSequencerOutlinerDragDropOp> OutlinerDragDropEvent, TSharedPtr<FViewModel> AttachAfter)
+{
+	UMovieSceneFolder* Folder = WeakFolder.Get();
+	if (!Folder)
+	{
+		return;
+	}
+
+	// Drop handing for outliner drag/drop operations.
+	// Warning: this handler may be dragging nodes from a *different* sequence
+	FViewModelChildren OutlinerChildren = GetChildList(EViewModelListType::Outliner);
+
+	UMovieScene* MovieScene = Folder->GetTypedOuter<UMovieScene>();
+	if (MovieScene)
+	{
+		MovieScene->SetFlags(RF_Transactional);
+		MovieScene->Modify();
+	}
+
+	for (const TWeakViewModelPtr<IOutlinerExtension>& WeakModel : OutlinerDragDropEvent->GetDraggedViewModels())
+	{
+		FViewModelPtr DraggedModel = WeakModel.Pin();
+		if (!DraggedModel || DraggedModel == AttachAfter)
+		{
+			continue;
+		}
+
+		TViewModelPtr<FFolderModel> ExistingParentFolder = DraggedModel->CastParent<FFolderModel>();
+		UMovieSceneFolder* OldFolder = ExistingParentFolder ? ExistingParentFolder->GetFolder() : nullptr;
+
+		bool bSuccess = false;
+
+		// Handle dropoping a folder into another folder
+		// @todo: if we ever support folders within object bindings this will need to have better validation
+		if (TSharedPtr<FFolderModel> DraggedFolderModel = DraggedModel.ImplicitCast())
+		{
+			if (UMovieSceneFolder* DraggedFolder = DraggedFolderModel->GetFolder())
+			{
+				if (OldFolder)
+				{
+					OldFolder->SetFlags(RF_Transactional);
+					OldFolder->Modify();
+					OldFolder->RemoveChildFolder(DraggedFolder);
+				}
+				else if (MovieScene)
+				{
+					MovieScene->RemoveRootFolder(DraggedFolder);
+				}
+
+				// Give this folder a unique name inside its new parent if necessary
+				FName FolderName = Folder->MakeUniqueChildFolderName(DraggedFolder->GetFolderName());
+
+				if (FolderName != DraggedFolder->GetFolderName())
+				{
+					DraggedFolder->SetFlags(RF_Transactional);
+					DraggedFolder->Modify();
+					DraggedFolder->SetFolderName(FolderName);
+				}
+
+				Folder->AddChildFolder(DraggedFolder);
+				bSuccess = true;
+			}
+		}
+		else if (TSharedPtr<IObjectBindingExtension> ObjectBinding = DraggedModel.ImplicitCast())
+		{
+			TViewModelPtr<IObjectBindingExtension> ParentObject = DraggedModel->CastParent<IObjectBindingExtension>();
+			// Don't allow dropping an object binding if it has an object parent
+			if (ParentObject == nullptr)
+			{
+				if (OldFolder)
+				{
+					OldFolder->SetFlags(RF_Transactional);
+					OldFolder->Modify();
+					OldFolder->RemoveChildObjectBinding(ObjectBinding->GetObjectGuid());
+				}
+
+				Folder->AddChildObjectBinding(ObjectBinding->GetObjectGuid());
+				bSuccess = true;
+			}
+		}
+		else if (TSharedPtr<FTrackModel> TrackModel = DraggedModel.ImplicitCast())
+		{
+			UMovieSceneTrack* Track = TrackModel->GetTrack();
+			TViewModelPtr<IObjectBindingExtension> ParentObject = DraggedModel->CastParent<IObjectBindingExtension>();
+			// Don't allow dropping a track if it has an object parent
+			if (ParentObject == nullptr && Track != nullptr)
+			{
+				if (OldFolder)
+				{
+					OldFolder->SetFlags(RF_Transactional);
+					OldFolder->Modify();
+					OldFolder->RemoveChildTrack(Track);
+				}
+
+				Folder->AddChildTrack(Track);
+				bSuccess = true;
+			}
+		}
+
+		if (bSuccess)
+		{
+			// Attach it to the right node, possibly setting its parent too
+			OutlinerChildren.InsertChild(DraggedModel, AttachAfter);
+		}
+	}
+}
+
 void FFolderModel::PerformDrop(const FViewModelPtr& TargetModel, const FDragDropEvent& DragDropEvent, EItemDropZone InItemDropZone)
 {
 	FViewModelHierarchyOperation ScopedOperation(GetSharedData());
@@ -598,107 +741,16 @@ void FFolderModel::PerformDrop(const FViewModelPtr& TargetModel, const FDragDrop
 		SetExpansion(true);
 	}
 
-	TSharedPtr<FSequencerOutlinerDragDropOp> DragDropOp = DragDropEvent.GetOperationAs<FSequencerOutlinerDragDropOp>();
-
-	// Drop handing for outliner drag/drop operations.
-	// Warning: this handler may be dragging nodes from a *different* sequence
-	if (DragDropOp)
+	TSharedPtr<FActorDragDropOp> ActorDragDropOp = DragDropEvent.GetOperationAs<FActorDragDropOp>();
+	if (ActorDragDropOp)
 	{
-		FViewModelChildren OutlinerChildren = GetChildList(EViewModelListType::Outliner);
+		PerformDropActors(TargetModel, ActorDragDropOp, AttachAfter);
+	}
 
-		UMovieScene* MovieScene = Folder->GetTypedOuter<UMovieScene>();
-		if (MovieScene)
-		{
-			MovieScene->SetFlags(RF_Transactional);
-			MovieScene->Modify();
-		}
-
-		for (const TWeakViewModelPtr<IOutlinerExtension>& WeakModel : DragDropOp->GetDraggedViewModels())
-		{
-			FViewModelPtr DraggedModel = WeakModel.Pin();
-			if (!DraggedModel || DraggedModel == AttachAfter)
-			{
-				continue;
-			}
-
-			TViewModelPtr<FFolderModel> ExistingParentFolder = DraggedModel->CastParent<FFolderModel>();
-			UMovieSceneFolder* OldFolder = ExistingParentFolder ? ExistingParentFolder->GetFolder() : nullptr;
-
-			bool bSuccess = false;
-
-			// Handle dropoping a folder into another folder
-			// @todo: if we ever support folders within object bindings this will need to have better validation
-			if (TSharedPtr<FFolderModel> DraggedFolderModel = DraggedModel.ImplicitCast())
-			{
-				if (UMovieSceneFolder* DraggedFolder = DraggedFolderModel->GetFolder())
-				{
-					if (OldFolder)
-					{
-						OldFolder->SetFlags(RF_Transactional);
-						OldFolder->Modify();
-						OldFolder->RemoveChildFolder(DraggedFolder);
-					}
-					else if (MovieScene)
-					{
-						MovieScene->RemoveRootFolder(DraggedFolder);
-					}
-
-					// Give this folder a unique name inside its new parent if necessary
-					FName FolderName = Folder->MakeUniqueChildFolderName(DraggedFolder->GetFolderName());
-
-					if (FolderName != DraggedFolder->GetFolderName())
-					{
-						DraggedFolder->SetFlags(RF_Transactional);
-						DraggedFolder->Modify();
-						DraggedFolder->SetFolderName(FolderName);
-					}
-
-					Folder->AddChildFolder(DraggedFolder);
-					bSuccess = true;
-				}
-			}
-			else if (TSharedPtr<IObjectBindingExtension> ObjectBinding = DraggedModel.ImplicitCast())
-			{
-				TViewModelPtr<IObjectBindingExtension> ParentObject = DraggedModel->CastParent<IObjectBindingExtension>();
-				// Don't allow dropping an object binding if it has an object parent
-				if (ParentObject == nullptr)
-				{
-					if (OldFolder)
-					{
-						OldFolder->SetFlags(RF_Transactional);
-						OldFolder->Modify();
-						OldFolder->RemoveChildObjectBinding(ObjectBinding->GetObjectGuid());
-					}
-
-					Folder->AddChildObjectBinding(ObjectBinding->GetObjectGuid());
-					bSuccess = true;
-				}
-			}
-			else if (TSharedPtr<FTrackModel> TrackModel = DraggedModel.ImplicitCast())
-			{
-				UMovieSceneTrack* Track = TrackModel->GetTrack();
-				TViewModelPtr<IObjectBindingExtension> ParentObject = DraggedModel->CastParent<IObjectBindingExtension>();
-				// Don't allow dropping a track if it has an object parent
-				if (ParentObject == nullptr && Track != nullptr)
-				{
-					if (OldFolder)
-					{
-						OldFolder->SetFlags(RF_Transactional);
-						OldFolder->Modify();
-						OldFolder->RemoveChildTrack(Track);
-					}
-
-					Folder->AddChildTrack(Track);
-					bSuccess = true;
-				}
-			}
-
-			if (bSuccess)
-			{
-				// Attach it to the right node, possibly setting its parent too
-				OutlinerChildren.InsertChild(DraggedModel, AttachAfter);
-			}
-		}
+	TSharedPtr<FSequencerOutlinerDragDropOp> OutlinerDragDropOp = DragDropEvent.GetOperationAs<FSequencerOutlinerDragDropOp>();
+	if (OutlinerDragDropOp)
+	{
+		PerformDropOutliner(TargetModel, OutlinerDragDropOp, AttachAfter);
 	}
 
 	// Forcibly update sorting
@@ -755,7 +807,6 @@ void FFolderModel::Delete()
 }
 
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 
 #undef LOCTEXT_NAMESPACE

@@ -166,7 +166,7 @@ public:
 	 * Initialize a new recording with the specified parameters. Fails if another recording is currently in progress.
 	 *
 	 */
-	bool Initialize(ULevelSequence* LevelSequence, const TArray<IMovieSceneCachedTrack*>& CacheTracks, const FString& Slate, const FCacheRecorderParameters& InParameters, FText* OutError = nullptr);
+	bool Initialize(ULevelSequence* RootLevelSequence, const TArray<IMovieSceneCachedTrack*>& CacheTracks, const FString& Slate, const FCacheRecorderParameters& InParameters, FText* OutError = nullptr);
 
 	/**
 	 * Called to stop the recording

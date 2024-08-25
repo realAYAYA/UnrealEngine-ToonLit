@@ -373,6 +373,14 @@ namespace CQTestTests
 				Assert.Fail("Unexpected Error");
 			});
 		}
+
+		TEST_METHOD(Timeout_InLatentActions_ProvidesTimeoutInErrorMessage)
+		{
+			Assert.ExpectErrorRegex(TEXT("\\d{2,} milliseconds"));
+			TestCommandBuilder.StartWhen([]() {
+				return false;
+				}, FTimespan::FromMilliseconds(50));
+		}
 	};
 
 	// --------------------------------------------------------
@@ -482,6 +490,55 @@ namespace CQTestTests
 			TestRunner->SetSuppressLogErrors(ECQTestSuppressLogBehavior::False);
 			bExpectError = true;
 			UE_LOG(TestSuppressLog, Error, TEXT("%s"), *ExpectedError);
+		}
+	};
+
+	TEST_CLASS(AutomationEvents, "TestFramework.CQTest.Core")
+	{
+		bool bIsExpectingError{ false };
+		bool bIsExpectingWarning{ false };
+		FString ExpectedMessage = TEXT("ExpectedMessage");
+
+		AFTER_EACH()
+		{
+			if (bIsExpectingError)
+			{
+				ClearExpectedErrors(*this->TestRunner, { TEXT("will be marked as failing due to errors"), ExpectedMessage });
+			}
+			if (bIsExpectingWarning)
+			{
+				ClearExpectedWarning(*this->TestRunner, ExpectedMessage);
+			}
+		}
+
+		TEST_METHOD(InfoEvent)
+		{
+			AddInfo(ExpectedMessage);
+			ASSERT_THAT(IsTrue(DoesEventExist(*this->TestRunner, FAutomationEvent(EAutomationEventType::Info, ExpectedMessage))));
+		}
+
+		TEST_METHOD(WarningEvent)
+		{
+			bIsExpectingWarning = true;
+			AddWarning(ExpectedMessage);
+			ASSERT_THAT(IsTrue(DoesEventExist(*this->TestRunner, FAutomationEvent(EAutomationEventType::Warning, ExpectedMessage))));
+		}
+
+		TEST_METHOD(ConditionalEvent)
+		{
+			FString InvalidErrorMessage = TEXT("This should not be an error");
+			AddErrorIfFalse(true, InvalidErrorMessage);
+			ASSERT_THAT(IsFalse(DoesEventExist(*this->TestRunner, FAutomationEvent(EAutomationEventType::Error, InvalidErrorMessage))));
+			AddErrorIfFalse(false, ExpectedMessage);
+			bIsExpectingError = true;
+			ASSERT_THAT(IsTrue(DoesEventExist(*this->TestRunner, FAutomationEvent(EAutomationEventType::Error, ExpectedMessage))));
+		}
+
+		TEST_METHOD(ErrorEvent)
+		{
+			bIsExpectingError = true;
+			AddError(ExpectedMessage);
+			ASSERT_THAT(IsTrue(DoesEventExist(*this->TestRunner, FAutomationEvent(EAutomationEventType::Error, ExpectedMessage))));
 		}
 	};
 } // namespace CQTestTests

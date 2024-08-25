@@ -52,14 +52,14 @@ public:
 	/**
 	 * Retrieve a scoped object that will suppress selection events for the duration of its lifetime on the stack
 	 */
-	UE_NODISCARD SEQUENCERCORE_API FSelectionEventSuppressor SuppressEvents();
+	[[nodiscard]] SEQUENCERCORE_API FSelectionEventSuppressor SuppressEvents();
 
 	/**
 	 * Retrieve a scoped object that will suppress selection events for the duration of its lifetime.
 	 * This function should only be used for longer running suppression such as those as part of a mouse-down operation.
 	 * The suppressor can be destroyed by resetting the unique pointer
 	 */
-	UE_NODISCARD SEQUENCERCORE_API TUniquePtr<FSelectionEventSuppressor> SuppressEventsLongRunning();
+	[[nodiscard]] SEQUENCERCORE_API TUniquePtr<FSelectionEventSuppressor> SuppressEventsLongRunning();
 
 	/**
 	 * Empty all the selection states within this selection class

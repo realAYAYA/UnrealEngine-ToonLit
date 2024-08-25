@@ -12,16 +12,22 @@
 #include "RHIContext.h"
 #include "RHIUtilities.h"
 #include "RenderingThread.h"
+#include "RenderCaptureInterface.h"
 #include "Engine/Engine.h"
 #include "Engine/Canvas.h"
 #include "TextureResource.h"
 #include "Logging/MessageLog.h"
 #include "Engine/GameViewportClient.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Engine/TextureRenderTarget2DArray.h"
+#include "Engine/TextureRenderTargetCube.h"
 #include "Engine/TextureRenderTargetVolume.h"
 #include "ImageUtils.h"
 #include "ClearQuad.h"
 #include "Engine/Texture2D.h"
+#include "Engine/Texture2DArray.h"
+#include "Engine/TextureCube.h"
+#include "Engine/VolumeTexture.h"
 #include "UObject/Package.h"
 #include "EngineModule.h"
 #include "SceneInterface.h"
@@ -535,42 +541,65 @@ ENGINE_API TArray<FLinearColor> UKismetRenderingLibrary::ReadRenderTargetRawUVAr
 	return ReadRenderTargetRawPixelArea(WorldContextObject, TextureRenderTarget, MinX, MinY, MaxX, MaxY, bNormalize);
 }
 
-/*
-
-void UKismetRenderingLibrary::CreateTexture2DFromRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, const FString &TextureAssetName)
+namespace UE::Kismet::RenderingLibrary
 {
-	if (RenderTarget && Texture)
-	{
-
-		//FImageUtils::CreateTexture2D
-
-		UTexture2D* NewTexture = RenderTarget->ConstructTexture2D(Texture->GetOuter(), Texture->GetName(), RenderTarget->GetMaskedFlags(), CTF_Default, nullptr);
-
-		check(NewTexture == Texture);
-		NewTexture->UpdateResource();
-	}
-	else if (!RenderTarget)
-	{
-		FMessageLog("Blueprint").Warning(LOCTEXT("ConvertRenderTargetToTexture2D_InvalidRenderTarget", "ExportRenderTarget: RenderTarget must be non-null."));
-	}
-	else if (!Texture)
-	{
-		FMessageLog("Blueprint").Warning(LOCTEXT("ConvertRenderTargetToTexture2D_InvalidTexture", "ExportRenderTarget: Texture must be non-null."));
-	}
-
-}*/
-
-UTexture2D* UKismetRenderingLibrary::RenderTargetCreateStaticTexture2DEditorOnly(UTextureRenderTarget2D* RenderTarget, FString InName, enum TextureCompressionSettings CompressionSettings, enum TextureMipGenSettings MipSettings)
+void ConvertRenderTargetToTextureEditorOnly(UObject* WorldContextObject, UTextureRenderTarget* InRenderTarget, UTexture* InTexture)
 {
 #if WITH_EDITOR
-	if (!RenderTarget)
+	if (InRenderTarget == nullptr)
 	{
-		FMessageLog("Blueprint").Warning(LOCTEXT("RenderTargetCreateStaticTexture2D_InvalidRenderTarget", "RenderTargetCreateStaticTexture2DEditorOnly: RenderTarget must be non-null."));
+		FMessageLog("Blueprint").Warning(FText::Format(LOCTEXT("ConvertRenderTargetToTexture_InvalidRenderTarget", "ConvertRenderTargetToTextureEditorOnly[{0}]: RenderTarget must be non-null."), FText::FromString(GetPathNameSafe(WorldContextObject))));
+		return;
+	}
+	
+	if (InRenderTarget->GetResource() == nullptr)
+	{
+		FMessageLog("Blueprint").Warning(FText::Format(LOCTEXT("ConvertRenderTargetToTexture_ReleasedTextureRenderTarget", "ConvertRenderTargetToTextureEditorOnly[{0}]: render target has been released."), FText::FromString(GetPathNameSafe(WorldContextObject))));
+		return;
+	}
+	
+	if (InTexture == nullptr)
+	{
+		FMessageLog("Blueprint").Warning(FText::Format(LOCTEXT("ConvertRenderTargetToTexture_InvalidTexture", "ConvertRenderTargetToTextureEditorOnly[{0}]: Texture must be non-null."), FText::FromString(GetPathNameSafe(WorldContextObject))));
+		return;
+	}
+
+	// We don't want to create a new texture here, we already have one.  We want to preserve any configuration
+	// by a developer and just update the minimal pixel data and format data.
+	FText ErrorMessage;
+	if (!InRenderTarget->CanConvertToTexture(&ErrorMessage))
+	{
+		FMessageLog("Blueprint").Warning(ErrorMessage);
+		return;
+	}
+
+	if (!InRenderTarget->UpdateTexture(InTexture, /*InFlags = */CTF_Default, /*InAlphaOverride = */nullptr, /*InOnTextureChangingDelegate = */[](UTexture*){}, &ErrorMessage))
+	{
+		FMessageLog("Blueprint").Warning(ErrorMessage);
+		return;
+	}
+
+	InTexture->Modify();
+	InTexture->MarkPackageDirty();
+	InTexture->PostEditChange();
+	InTexture->UpdateResource();
+
+#else // WITH_EDITOR
+	FMessageLog("Blueprint").Error(LOCTEXT("ConvertRenderTargetToTexture_CannotCallAtRuntime", "ConvertRenderTarget: Can't convert render target to texture at run time. "));
+#endif // !WITH_EDITOR
+}
+
+UTexture* RenderTargetCreateStaticTextureEditorOnly(UTextureRenderTarget* InRenderTarget, FString InName, TextureCompressionSettings InCompressionSettings, TextureMipGenSettings InMipSettings)
+{
+#if WITH_EDITOR
+	if (InRenderTarget == nullptr)
+	{
+		FMessageLog("Blueprint").Warning(LOCTEXT("RenderTargetCreateStaticTexture_InvalidRenderTarget", "RenderTargetCreateStaticTextureEditorOnly: RenderTarget must be non-null."));
 		return nullptr;
 	}
-	else if (!RenderTarget->GetResource())
+	else if (InRenderTarget->GetResource() == nullptr)
 	{
-		FMessageLog("Blueprint").Warning(LOCTEXT("RenderTargetCreateStaticTexture2D_ReleasedRenderTarget", "RenderTargetCreateStaticTexture2DEditorOnly: RenderTarget has been released."));
+		FMessageLog("Blueprint").Warning(LOCTEXT("RenderTargetCreateStaticTexture_ReleasedRenderTarget", "RenderTargetCreateStaticTextureEditorOnly: RenderTarget has been released."));
 		return nullptr;
 	}
 	else
@@ -580,82 +609,90 @@ UTexture2D* UKismetRenderingLibrary::RenderTargetCreateStaticTexture2DEditorOnly
 		IAssetTools& AssetTools = FModuleManager::Get().LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
 
 		//Use asset name only if directories are specified, otherwise full path
-		if (!InName.Contains(TEXT("/")))
+		if (!InName.StartsWith(TEXT("/")))
 		{
-			FString AssetName = RenderTarget->GetOutermost()->GetName();
+			FString AssetName = InRenderTarget->GetOutermost()->GetName();
 			const FString SanitizedBasePackageName = UPackageTools::SanitizePackageName(AssetName);
 			const FString PackagePath = FPackageName::GetLongPackagePath(SanitizedBasePackageName) + TEXT("/");
 			AssetTools.CreateUniqueAssetName(PackagePath, InName, PackageName, Name);
 		}
 		else
 		{
-			InName.RemoveFromStart(TEXT("/"));
-			InName.RemoveFromStart(TEXT("Content/"));
-			InName.StartsWith(TEXT("Game/")) == true ? InName.InsertAt(0, TEXT("/")) : InName.InsertAt(0, TEXT("/Game/"));
 			AssetTools.CreateUniqueAssetName(InName, TEXT(""), PackageName, Name);
 		}
 
 		UObject* NewObj = nullptr;
 
-		// create a static 2d texture
-		NewObj = RenderTarget->ConstructTexture2D(CreatePackage( *PackageName), Name, RenderTarget->GetMaskedFlags() | RF_Public | RF_Standalone, CTF_Default | CTF_AllowMips | CTF_SkipPostEdit, nullptr);
-		UTexture2D* NewTex = Cast<UTexture2D>(NewObj);
+		// create a static texture
+		FText ErrorMessage;
+		NewObj = InRenderTarget->ConstructTexture(CreatePackage(*PackageName), Name, InRenderTarget->GetMaskedFlags() | RF_Public | RF_Standalone, 
+			static_cast<EConstructTextureFlags>(CTF_Default | CTF_AllowMips | CTF_SkipPostEdit), /*InAlphaOverride = */nullptr, &ErrorMessage);
 
-		if (NewTex != nullptr)
+		UTexture* NewTex = Cast<UTexture>(NewObj);
+		if (NewTex == nullptr)
 		{
-			// package needs saving
-			NewObj->MarkPackageDirty();
-
-			// Update Compression and Mip settings
-			NewTex->CompressionSettings = CompressionSettings;
-			NewTex->MipGenSettings = MipSettings;
-			NewTex->PostEditChange();
-
-			// Notify the asset registry
-			FAssetRegistryModule::AssetCreated(NewObj);
-
-			return NewTex;
+			FMessageLog("Blueprint").Warning(ErrorMessage);
+			return nullptr;
 		}
-		FMessageLog("Blueprint").Warning(LOCTEXT("RenderTargetCreateStaticTexture2D_FailedToCreateTexture", "RenderTargetCreateStaticTexture2DEditorOnly: Failed to create a new texture."));
+
+		// package needs saving
+		NewObj->MarkPackageDirty();
+
+		// Update Compression and Mip settings
+		NewTex->CompressionSettings = InCompressionSettings;
+		NewTex->MipGenSettings = InMipSettings;
+		NewTex->PostEditChange();
+
+		// Notify the asset registry
+		FAssetRegistryModule::AssetCreated(NewObj);
+
+		return NewTex;
 	}
-#else
-	FMessageLog("Blueprint").Error(LOCTEXT("Texture2D's cannot be created at runtime.", "RenderTargetCreateStaticTexture2DEditorOnly: Can't create Texture2D at run time. "));
-#endif
+#else // WITH_EDITOR
+	FMessageLog("Blueprint").Error(LOCTEXT("RenderTargetCreateStaticTexture_CannotCallAtRuntime", "RenderTargetCreateStaticTextureEditorOnly: Can't create texture at run time. "));
+#endif // !WITH_EDITOR
 	return nullptr;
 }
+} // namespace UE::Kismet::RenderingLibrary
 
-
-void UKismetRenderingLibrary::ConvertRenderTargetToTexture2DEditorOnly( UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, UTexture2D* Texture )
+UTexture2D* UKismetRenderingLibrary::RenderTargetCreateStaticTexture2DEditorOnly(UTextureRenderTarget2D* RenderTarget, FString InName, enum TextureCompressionSettings CompressionSettings, enum TextureMipGenSettings MipSettings)
 {
-#if WITH_EDITOR
-	if (!RenderTarget)
-	{
-		FMessageLog("Blueprint").Warning(FText::Format(LOCTEXT("ConvertRenderTargetToTexture2D_InvalidRenderTarget", "ConvertRenderTargetToTexture2DEditorOnly[{0}]: RenderTarget must be non-null."), FText::FromString(GetPathNameSafe(WorldContextObject))));
-	}
-	else if (!RenderTarget->GetResource())
-	{
-		FMessageLog("Blueprint").Warning(FText::Format(LOCTEXT("ConvertRenderTargetToTexture2D_ReleasedTextureRenderTarget", "ConvertRenderTargetToTexture2DEditorOnly[{0}]: render target has been released."), FText::FromString(GetPathNameSafe(WorldContextObject))));
-	}
-	else if (!Texture)
-	{
-		FMessageLog("Blueprint").Warning(FText::Format(LOCTEXT("ConvertRenderTargetToTexture2D_InvalidTexture", "ConvertRenderTargetToTexture2DEditorOnly[{0}]: Texture must be non-null."), FText::FromString(GetPathNameSafe(WorldContextObject))));
-	}
-	else
-	{
-		// We don't want to create a new texture here, we already have one.  We want to preserve any configuration
-		// by a developer and just update the minimal pixel data and format data.
-		const ETextureSourceFormat TextureFormat = RenderTarget->GetTextureFormatForConversionToTexture2D();
-		RenderTarget->UpdateTexture2D(Texture, TextureFormat);
+	return Cast<UTexture2D>(UE::Kismet::RenderingLibrary::RenderTargetCreateStaticTextureEditorOnly(RenderTarget, InName, CompressionSettings, MipSettings));
+}
 
-		Texture->Modify();
-		Texture->MarkPackageDirty();
-		Texture->PostEditChange();
-		Texture->UpdateResource();
-	}
-#else
-	FMessageLog("Blueprint").Error(LOCTEXT("Convert to render target can't be used at run time.", "ConvertRenderTarget: Can't convert render target to texture2d at run time. "));
-#endif
+UTexture2DArray* UKismetRenderingLibrary::RenderTargetCreateStaticTexture2DArrayEditorOnly(UTextureRenderTarget2DArray* RenderTarget, FString InName, enum TextureCompressionSettings CompressionSettings, enum TextureMipGenSettings MipSettings)
+{
+	return Cast<UTexture2DArray>(UE::Kismet::RenderingLibrary::RenderTargetCreateStaticTextureEditorOnly(RenderTarget, InName, CompressionSettings, MipSettings));
+}
 
+UTextureCube* UKismetRenderingLibrary::RenderTargetCreateStaticTextureCubeEditorOnly(UTextureRenderTargetCube* RenderTarget, FString InName, enum TextureCompressionSettings CompressionSettings, enum TextureMipGenSettings MipSettings)
+{
+	return Cast<UTextureCube>(UE::Kismet::RenderingLibrary::RenderTargetCreateStaticTextureEditorOnly(RenderTarget, InName, CompressionSettings, MipSettings));
+}
+
+UVolumeTexture* UKismetRenderingLibrary::RenderTargetCreateStaticVolumeTextureEditorOnly(UTextureRenderTargetVolume* RenderTarget, FString InName, enum TextureCompressionSettings CompressionSettings, enum TextureMipGenSettings MipSettings)
+{
+	return Cast<UVolumeTexture>(UE::Kismet::RenderingLibrary::RenderTargetCreateStaticTextureEditorOnly(RenderTarget, InName, CompressionSettings, MipSettings));
+}
+
+void UKismetRenderingLibrary::ConvertRenderTargetToTexture2DEditorOnly(UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, UTexture2D* Texture)
+{
+	UE::Kismet::RenderingLibrary::ConvertRenderTargetToTextureEditorOnly(WorldContextObject, RenderTarget, Texture);
+}
+
+void UKismetRenderingLibrary::ConvertRenderTargetToTexture2DArrayEditorOnly(UObject* WorldContextObject, UTextureRenderTarget2DArray* RenderTarget, UTexture2DArray* Texture)
+{
+	UE::Kismet::RenderingLibrary::ConvertRenderTargetToTextureEditorOnly(WorldContextObject, RenderTarget, Texture);
+}
+
+void UKismetRenderingLibrary::ConvertRenderTargetToTextureCubeEditorOnly(UObject* WorldContextObject, UTextureRenderTargetCube* RenderTarget, UTextureCube* Texture)
+{
+	UE::Kismet::RenderingLibrary::ConvertRenderTargetToTextureEditorOnly(WorldContextObject, RenderTarget, Texture);
+}
+
+void UKismetRenderingLibrary::ConvertRenderTargetToTextureVolumeEditorOnly(UObject* WorldContextObject, UTextureRenderTargetVolume* RenderTarget, UVolumeTexture* Texture)
+{
+	UE::Kismet::RenderingLibrary::ConvertRenderTargetToTextureEditorOnly(WorldContextObject, RenderTarget, Texture);
 }
 
 void UKismetRenderingLibrary::ExportTexture2D(UObject* WorldContextObject, UTexture2D* Texture, const FString& FilePath, const FString& FileName)
@@ -797,7 +834,11 @@ void UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(UObject* WorldContextO
 			ENQUEUE_RENDER_COMMAND(CanvasRenderTargetResolveCommand)(
 				[RenderTargetResource](FRHICommandListImmediate& RHICmdList)
 				{
-					TransitionAndCopyTexture(RHICmdList, RenderTargetResource->GetRenderTargetTexture(), RenderTargetResource->TextureRHI, {});
+					// Note: If multisampled, it should have already been resolved by ~FCanvasRenderThreadScope()
+					if (!RenderTargetResource->GetRenderTargetTexture()->GetDesc().IsMultisample())
+					{
+						TransitionAndCopyTexture(RHICmdList, RenderTargetResource->GetRenderTargetTexture(), RenderTargetResource->TextureRHI, {});
+					}
 				}
 			);
 
@@ -866,7 +907,7 @@ void UKismetRenderingLibrary::SetCastInsetShadowForAllAttachments(UPrimitiveComp
 		// Walk down the tree updating
 		while (ProcessStack.Num() > 0)
 		{
-			USceneComponent* Current = ProcessStack.Pop(/*bAllowShrinking=*/ false);
+			USceneComponent* Current = ProcessStack.Pop(EAllowShrinking::No);
 			UPrimitiveComponent* CurrentPrimitive = Cast<UPrimitiveComponent>(Current);
 
 			if (CurrentPrimitive && CurrentPrimitive->ShouldComponentAddToScene())

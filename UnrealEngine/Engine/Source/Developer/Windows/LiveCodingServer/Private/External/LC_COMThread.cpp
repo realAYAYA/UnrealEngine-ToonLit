@@ -8,7 +8,7 @@
 // BEGIN EPIC MOD
 #include "LC_Logging.h"
 #include "LC_Platform.h"
-#include LC_PLATFORM_INCLUDE(LC_Foundation)
+#include "LC_Foundation_Windows.h"
 #include "Windows/MinimalWindowsAPI.h"
 #include <objidl.h>
 

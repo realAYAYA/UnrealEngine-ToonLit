@@ -6,7 +6,7 @@
 #define INTERCHANGEDISPATCHER_MODULE_NAME TEXT("InterchangeDispatcher")
 
 /**
- * This module allow out of process interchange translator in case a third party SDK is not thread safe.
+ * This module allows out-of-process Interchange translators in case a third-party SDK is not thread-safe.
  */
 class FInterchangeDispatcherModule : public IModuleInterface
 {

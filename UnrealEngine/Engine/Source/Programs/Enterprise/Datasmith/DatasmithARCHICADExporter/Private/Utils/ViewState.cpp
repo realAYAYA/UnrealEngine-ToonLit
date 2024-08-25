@@ -114,18 +114,28 @@ bool FViewState::operator==(const FViewState& InOther) const
 void FViewState::CollectVisibleLayers()
 {
 	API_Attribute LayerAttribute;
-	Zap(&LayerAttribute);
+	BNZeroMemory(&LayerAttribute, sizeof(LayerAttribute));
 	LayerAttribute.header.typeID = API_LayerID;
 
-	API_AttributeIndex LayerCount = 0;
-	GSErrCode		   GSErr = ACAPI_Attribute_GetNum(API_LayerID, &LayerCount);
+	GS::Int32 LayerCount = 0;
+#if AC_VERSION > 26
+	GS::UInt32 LocalCount = 0;
+	GSErrCode GSErr = ACAPI_Attribute_GetNum(API_LayerID, LocalCount);
+	LayerCount = GS::Int32(LocalCount);
+#else
+	GSErrCode GSErr = ACAPI_Attribute_GetNum(API_LayerID, &LayerCount);
+#endif
 	if (GSErr == NoError)
 	{
 		VisibleLayers.Reserve(LayerCount);
 
-		for (API_AttributeIndex Index = 1; Index <= LayerCount && GSErr == NoError; Index++)
+		for (GS::Int32 Index = 1; Index <= LayerCount && GSErr == NoError; Index++)
 		{
+#if AC_VERSION > 26
+			LayerAttribute.header.index = ACAPI_CreateAttributeIndex(Index);
+#else
 			LayerAttribute.header.index = Index;
+#endif
 			GSErr = ACAPI_Attribute_Get(&LayerAttribute);
 			if (GSErr == NoError)
 			{
@@ -134,7 +144,7 @@ void FViewState::CollectVisibleLayers()
 					VisibleLayers.Add(Index);
 				}
 			}
-			else if (GSErr == APIERR_DELETED)
+			else if (GSErr == APIERR_DELETED || GSErr == APIERR_BADINDEX)
 			{
 				GSErr = NoError;
 			}

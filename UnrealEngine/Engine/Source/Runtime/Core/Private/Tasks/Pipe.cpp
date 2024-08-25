@@ -55,7 +55,8 @@ namespace UE::Tasks
 				Init(
 					TEXT("Pipe::WaitUntilEmpty() placeholder"),
 					ETaskPriority::Normal, // doesn't matter
-					EExtendedTaskPriority::TaskEvent // no need for scheduling or execution for this dummy task
+					EExtendedTaskPriority::TaskEvent, // no need for scheduling or execution for this dummy task
+					ETaskFlags::None
 				);
 			}
 
@@ -99,7 +100,7 @@ namespace UE::Tasks
 		static void Pop(const FPipe& Pipe)
 		{
 			check(CallStack.Last() == &Pipe);
-			CallStack.Pop(/*bAllowShrinking=*/ false);
+			CallStack.Pop(EAllowShrinking::No);
 		}
 
 		// returns true if a task from the given pipe is being being executed on the top of the stack.

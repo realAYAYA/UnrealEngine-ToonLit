@@ -6,8 +6,8 @@
 #include "IDisplayClusterProjection.h"
 
 #include "HAL/PlatformProcess.h"
-#include "Misc/Paths.h"
-#include "Interfaces/IPluginManager.h"
+#include "Misc/DisplayClusterHelpers.h"
+#include "PDisplayClusterProjectionStrings.h"
 
 
 void* DisplayClusterProjectionDomeprojectionLibraryDX11::DllHandle = nullptr;
@@ -67,15 +67,13 @@ bool DisplayClusterProjectionDomeprojectionLibraryDX11::Initialize()
 		{
 			bInitializeOnce = true;
 
-			const FString PluginDir = IPluginManager::Get().FindPlugin(TEXT("nDisplay"))->GetBaseDir();
-			const FString DllPath = FPaths::Combine(PluginDir, TEXT("ThirdParty/Domeprojection/DLL"));
-
-			const FString LibName   = TEXT("dpLib.dll");
-			
 			// Try to load DLL
-			FPlatformProcess::PushDllDirectory(*DllPath);
-			DllHandle = FPlatformProcess::GetDllHandle(*LibName);
-			FPlatformProcess::PopDllDirectory(*DllPath);
+			const FString DllPath = DisplayClusterHelpers::filesystem::GetFullPathForThirdPartyDLL(DisplayClusterProjectionStrings::ThirdParty::DLL::DomeprojectionDX11);
+			const FString DllDirectory = FPaths::GetPath(DllPath);
+
+			FPlatformProcess::PushDllDirectory(*DllDirectory);
+			DllHandle = FPlatformProcess::GetDllHandle(*DllPath);
+			FPlatformProcess::PopDllDirectory(*DllDirectory);
 
 			if (DllHandle)
 			{
@@ -144,7 +142,7 @@ bool DisplayClusterProjectionDomeprojectionLibraryDX11::Initialize()
 			}
 			else
 			{
-				UE_LOG(LogDisplayClusterProjectionDomeprojection, Error, TEXT("Couldn't initialize Domeprojection API. No <%s> library found."), *LibName);
+				UE_LOG(LogDisplayClusterProjectionDomeprojection, Error, TEXT("Couldn't initialize Domeprojection API. No <%s> library found."), *DllPath);
 				return false;
 			}
 		}

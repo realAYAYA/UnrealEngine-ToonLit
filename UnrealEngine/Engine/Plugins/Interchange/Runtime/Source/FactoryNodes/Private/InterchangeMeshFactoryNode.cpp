@@ -84,6 +84,8 @@ UInterchangeMeshFactoryNode::UInterchangeMeshFactoryNode()
 	SlotMaterialDependencies.Initialize(Attributes.ToSharedRef(), UE::Interchange::FMeshFactoryNodeStaticData::GetSlotMaterialDependencyBaseKey().ToString());
 }
 
+#if WITH_EDITOR
+
 FString UInterchangeMeshFactoryNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
 	FString KeyDisplayName = NodeAttributeKey.ToString();
@@ -104,8 +106,64 @@ FString UInterchangeMeshFactoryNode::GetKeyDisplayName(const UE::Interchange::FA
 		}
 		return KeyDisplayName;
 	}
+	else if (NodeAttributeKey == UE::Interchange::FMeshFactoryNodeStaticData::GetSlotMaterialDependencyBaseKey())
+	{
+		KeyDisplayName = TEXT("Material Dependencies Count");
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FMeshFactoryNodeStaticData::GetSlotMaterialDependencyBaseKey().ToString()))
+	{
+		FString MapKeyIndex = UE::Interchange::FMeshFactoryNodeStaticData::GetSlotMaterialDependencyBaseKey().ToString() + TEXT("_KeyIndex_");
+		FString MapKey = UE::Interchange::FMeshFactoryNodeStaticData::GetSlotMaterialDependencyBaseKey().ToString() + TEXT("_Key_");
+
+		int32 IndexPosition = 0;
+		if (NodeAttributeKeyString.StartsWith(MapKeyIndex))
+		{
+			KeyDisplayName = TEXT("Material Dependencies Key ");
+			IndexPosition = NodeAttributeKeyString.Find(MapKeyIndex) + MapKeyIndex.Len();
+		}
+		else if (NodeAttributeKeyString.StartsWith(MapKey))
+		{
+			KeyDisplayName = TEXT("Material Dependencies Value ");
+			IndexPosition = NodeAttributeKeyString.Find(MapKey) + MapKey.Len();
+		}
+		
+		if (IndexPosition < NodeAttributeKeyString.Len())
+		{
+			KeyDisplayName += NodeAttributeKeyString.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
 	return Super::GetKeyDisplayName(NodeAttributeKey);
 }
+
+FString UInterchangeMeshFactoryNode::GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
+{
+	if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FMeshFactoryNodeStaticData::GetLodDependenciesBaseKey().ToString()))
+	{
+		return TEXT("LOD Dependencies");
+	}
+	else if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FMeshFactoryNodeStaticData::GetSlotMaterialDependencyBaseKey().ToString()))
+	{
+		return TEXT("Materials Dependencies");
+	}
+	else
+	{
+		return Super::GetAttributeCategory(NodeAttributeKey);
+	}
+}
+
+bool UInterchangeMeshFactoryNode::ShouldHideAttribute(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
+{
+	const FString NodeAttributeString = NodeAttributeKey.ToString();
+	if (NodeAttributeString.StartsWith(UE::Interchange::FMeshFactoryNodeStaticData::GetLodDependenciesBaseKey().ToString()))
+	{
+		return true;
+	}
+	return Super::ShouldHideAttribute(NodeAttributeKey);
+}
+
+#endif //WITH_EDITOR
 
 int32 UInterchangeMeshFactoryNode::GetLodDataCount() const
 {
@@ -157,9 +215,39 @@ bool UInterchangeMeshFactoryNode::SetCustomVertexColorOverride(const FColor& Att
 	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(VertexColorOverride, FColor)
 }
 
+bool UInterchangeMeshFactoryNode::GetCustomKeepSectionsSeparate(bool& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(KeepSectionsSeparate, bool)
+}
+
+bool UInterchangeMeshFactoryNode::SetCustomKeepSectionsSeparate(const bool& AttributeValue)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(KeepSectionsSeparate, bool)
+}
+
 void UInterchangeMeshFactoryNode::GetSlotMaterialDependencies(TMap<FString, FString>& OutMaterialDependencies) const
 {
-	OutMaterialDependencies = SlotMaterialDependencies.ToMap();
+	bool bKeepSectionsSeparate = false;
+	GetCustomKeepSectionsSeparate(bKeepSectionsSeparate);
+	if (bKeepSectionsSeparate)
+	{
+		OutMaterialDependencies = SlotMaterialDependencies.ToMap();
+	}
+	else
+	{
+		TMap<FString, FString> MaterialDependencies = SlotMaterialDependencies.ToMap();
+		TArray<FString> MaterialUids;
+		MaterialUids.Reserve(MaterialDependencies.Num());
+		OutMaterialDependencies.Empty(MaterialDependencies.Num());
+		for (TPair<FString, FString>& MaterialDependency : MaterialDependencies)
+		{
+			if (MaterialUids.Find(MaterialDependency.Value) == INDEX_NONE)
+			{
+				OutMaterialDependencies.Add(MaterialDependency);
+				MaterialUids.Add(MaterialDependency.Value);
+			}
+		}
+	}
 }
 
 bool UInterchangeMeshFactoryNode::GetSlotMaterialDependencyUid(const FString& SlotName, FString& OutMaterialDependency) const
@@ -180,6 +268,13 @@ bool UInterchangeMeshFactoryNode::RemoveSlotMaterialDependencyUid(const FString&
 		return true;
 	}
 	return false;
+}
+
+bool UInterchangeMeshFactoryNode::ResetSlotMaterialDependencies()
+{
+	SlotMaterialDependencies.Empty();
+	SlotMaterialDependencies.RebuildCache();
+	return true;
 }
 
 bool UInterchangeMeshFactoryNode::GetCustomLODGroup(FName& AttributeValue) const

@@ -203,7 +203,7 @@ void UNiagaraNodeAssignment::PostLoad()
 				check(Script);
 				if (Script->HasAnyFlags(RF_NeedPostLoad))
 				{
-					Script->RapidIterationParameters.PostLoad();
+					Script->RapidIterationParameters.PostLoad(Script);
 				}
 				if (Script->HandleVariableRenames(Converted, Emitter ? Emitter->GetUniqueEmitterName() : FString()))
 				{
@@ -333,7 +333,7 @@ void UNiagaraNodeAssignment::BuildParameterMapHistory(FNiagaraParameterMapHistor
 	Super::BuildParameterMapHistory(OutHistory, bRecursive, bFilterForCompilation);
 }
 
-void UNiagaraNodeAssignment::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const
+void UNiagaraNodeAssignment::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const
 {
 	// Assignment nodes own their function graphs and therefore have no external dependencies so we override the default function behavior here to avoid 
 	// adding additional non-deterministic guids to the compile id generation which can invalid the DDC for compiled scripts, especially during emitter merging.

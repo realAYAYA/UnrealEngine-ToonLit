@@ -2,35 +2,33 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "IDetailCustomization.h"
+#include "UObject/WeakObjectPtr.h"
 
 enum class EDMXFixtureSignalFormat : uint8;
 class IPropertyUtilities;
+class UDMXControlConsoleEditorModel;
 class UDMXControlConsoleFaderBase;
 
 
-namespace UE::DMXControlConsole
+namespace UE::DMX::Private
 {
-	/** Details Customization for DMX Control Console */
+	/** Details Customization for DMX Control Console faders */
 	class FDMXControlConsoleFaderDetails
 		: public IDetailCustomization
 	{
 	public:
+		/** Constructor */
+		FDMXControlConsoleFaderDetails(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel);
+
 		/** Makes an instance of this Details Customization */
-		static TSharedRef<IDetailCustomization> MakeInstance()
-		{
-			return MakeShared<FDMXControlConsoleFaderDetails>();
-		}
+		static TSharedRef<IDetailCustomization> MakeInstance(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel);
 
 		//~ Begin of IDetailCustomization interface
 		virtual void CustomizeDetails(IDetailLayoutBuilder& InDetailLayout) override;
 		//~ End of IDetailCustomization interface
 
 	private:
-		/** Forces refresh of the entire Details View */
-		void ForceRefresh() const;
-
 		/** True if all selected Faders are Raw Faders */
 		bool HasOnlyRawFadersSelected() const;
 
@@ -63,6 +61,8 @@ namespace UE::DMXControlConsole
 
 		/** Property Utilities for this Details Customization layout */
 		TSharedPtr<IPropertyUtilities> PropertyUtilities;
-	};
 
+		/** Weak reference to the Control Console editor model */
+		TWeakObjectPtr<UDMXControlConsoleEditorModel> WeakEditorModel;
+	};
 }

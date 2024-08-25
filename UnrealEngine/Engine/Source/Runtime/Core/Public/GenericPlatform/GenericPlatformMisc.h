@@ -1055,14 +1055,6 @@ public:
 	 */
 	static CORE_API const TCHAR* GetSystemErrorMessage(TCHAR* OutBuffer, int32 BufferCount, int32 Error);
 
-	/** Copies text to the operating system clipboard. */
-	UE_DEPRECATED(4.18, "FPlatformMisc::ClipboardCopy() has been superseded by FPlatformApplicationMisc::ClipboardCopy()")
-	static CORE_API void ClipboardCopy(const TCHAR* Str);
-
-	/** Pastes in text from the operating system clipboard. */
-	UE_DEPRECATED(4.18, "FPlatformMisc::ClipboardPaste() has been superseded by FPlatformApplicationMisc::ClipboardPaste()")
-	static CORE_API void ClipboardPaste(class FString& Dest);
-
 	/** Create a new globally unique identifier. **/
 	static CORE_API void CreateGuid(struct FGuid& Result);
 
@@ -1682,6 +1674,15 @@ public:
 	static CORE_API FString GetEpicAccountId();
 
 	/**
+	 * Get Device Tag of the device running the session.
+	 *
+	 * Note: Gets from DeviceTag command line argument 
+	 *
+	 * @return empty string or the value from DeviceTag argument.
+	 */
+	static CORE_API FString GetDeviceTag();
+
+	/**
 	 * Gets a globally unique ID the represents a particular operating system install.
 	 * @returns an opaque string representing the ID, or an empty string if the platform doesn't support one.
 	 */
@@ -1840,7 +1841,7 @@ public:
 		return PakchunkIndex;
 	}
 
-	static CORE_API int32 GetPakchunkIndexFromPakFile(const FString& InFilename);
+	static CORE_API int32 GetPakchunkIndexFromPakFile(FStringView InFilename);
 
 	FORCEINLINE static bool Expand16BitIndicesTo32BitOnLoad()
 	{

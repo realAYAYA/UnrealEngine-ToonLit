@@ -9,6 +9,7 @@
 #include "RemoteControlField.h"
 #include "RemoteControlModels.h"
 #include "RemoteControlPreset.h"
+#include "RemoteControlRequest.h"
 #include "RemoteControlResponse.h"
 
 
@@ -111,6 +112,9 @@ private:
 
 	/** Handles ending a manual editor transaction. */
 	void HandleWebSocketEndEditorTransaction(const FRemoteControlWebSocketMessage& WebSocketMessage);
+
+	/** Handles changing the compression mode of WebSocket data */
+	void HandleWebSocketCompressionChange(const FRemoteControlWebSocketMessage& WebSocketMessage);
 
 	//Preset callbacks
 	void OnPresetExposedPropertiesModified(URemoteControlPreset* Owner, const TSet<FGuid>& ModifiedPropertyIds);
@@ -379,6 +383,9 @@ private:
 
 	/** Properties that were exposed for a frame, per preset */
 	TMap<FGuid, TArray<FGuid>> PerFrameAddedProperties;
+
+	/** Cache used during Undo/Redo for the Remove to get correctly the Label */
+	TMap<FGuid, TTuple<TArray<FGuid>, TArray<FName>>> CacheUndoRedoAddedRemovedProperties;
 
 	/** Properties that were unexposed for a frame, per preset */
 	TMap<FGuid, TTuple<TArray<FGuid>, TArray<FName>>> PerFrameRemovedProperties;

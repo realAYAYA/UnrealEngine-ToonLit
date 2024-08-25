@@ -40,15 +40,18 @@ void FAnimNode_LinkedInputPose::Evaluate_AnyThread(FPoseContext& Output)
 {
 	if(InputProxy)
 	{
+		// Stash current proxy for restoration after recursion
+		FAnimInstanceProxy& OldProxy = *Output.AnimInstanceProxy;
+
+		Output.AnimInstanceProxy = InputProxy;
 		Output.Pose.SetBoneContainer(&InputProxy->GetRequiredBones());
+		Output.SetNodeId(INDEX_NONE);
+		Output.SetNodeId(OuterGraphNodeIndex);
+		InputPose.Evaluate(Output);
 
-		FPoseContext InputContext(InputProxy, Output.ExpectsAdditivePose());
-		InputContext.SetNodeId(OuterGraphNodeIndex);
-		InputPose.Evaluate(InputContext);
-
-		Output.Pose.MoveBonesFrom(InputContext.Pose);
-		Output.Curve.MoveFrom(InputContext.Curve);
-		Output.CustomAttributes.MoveFrom(InputContext.CustomAttributes);
+		// Restore proxy & required bones after evaluation
+		Output.AnimInstanceProxy = &OldProxy;
+		Output.Pose.SetBoneContainer(&OldProxy.GetRequiredBones());
 	}
 	else if(CachedInputPose.IsValid() && ensure(Output.Pose.GetNumBones() == CachedInputPose.GetNumBones()) && bIsCachedInputPoseInitialized)
 	{

@@ -15,54 +15,50 @@
 #include "MuT/NodeBool.h"
 #include "MuT/NodeBoolPrivate.h"
 #include "MuT/NodeRange.h"
-#include "map"
-
-#include <memory>
-#include <utility>
 
 
 namespace mu
 {
 
-
-	//-------------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateBool(FBoolGenerationResult& result, const NodeBoolPtrConst& untyped)
+	void CodeGenerator::GenerateBool(FBoolGenerationResult& Result, const FGenericGenerationOptions& Options, const Ptr<const NodeBool>& Untyped)
 	{
-		if (!untyped)
+		if (!Untyped)
 		{
-			result = FBoolGenerationResult();
+			Result = FBoolGenerationResult();
 			return;
 		}
 
 		// See if it was already generated
-		FVisitedKeyMap key = GetCurrentCacheKey(untyped);
-		GeneratedBoolsMap::ValueType* it = m_generatedBools.Find(key);
+		FGeneratedCacheKey Key;
+		Key.Node = Untyped;
+		Key.Options = Options;
+		FGeneratedBoolsMap::ValueType* it = GeneratedBools.Find(Key);
 		if (it)
 		{
-			result = *it;
+			Result = *it;
 			return;
 		}
 
 		// Generate for each different type of node
-		if (auto Constant = dynamic_cast<const NodeBoolConstant*>(untyped.get()))
+		if (Untyped->GetType()==NodeBoolConstant::GetStaticType())
 		{
-			GenerateBool_Constant(result, Constant);
+			const NodeBoolConstant* Constant = static_cast<const NodeBoolConstant*>(Untyped.get());
+			GenerateBool_Constant(Result, Options, Constant);
 		}
-		else if (auto Param = dynamic_cast<const NodeBoolParameter*>(untyped.get()))
+		else if (Untyped->GetType() == NodeBoolParameter::GetStaticType())
 		{
-			GenerateBool_Parameter(result, Param);
+			const NodeBoolParameter* Param = static_cast<const NodeBoolParameter*>(Untyped.get());
+			GenerateBool_Parameter(Result, Options, Param);
 		}
-		else if (auto Switch = dynamic_cast<const NodeBoolIsNull*>(untyped.get()))
+		else if (Untyped->GetType() == NodeBoolNot::GetStaticType())
 		{
-			GenerateBool_IsNull(result, Switch);
+			const NodeBoolNot* Sample = static_cast<const NodeBoolNot*>(Untyped.get());
+			GenerateBool_Not(Result, Options, Sample);
 		}
-		else if (auto Sample = dynamic_cast<const NodeBoolNot*>(untyped.get()))
+		else if (Untyped->GetType() == NodeBoolAnd::GetStaticType())
 		{
-			GenerateBool_Not(result, Sample);
-		}
-		else if (auto From = dynamic_cast<const NodeBoolAnd*>(untyped.get()))
-		{
-			GenerateBool_And(result, From);
+			const NodeBoolAnd* From = static_cast<const NodeBoolAnd*>(Untyped.get());
+			GenerateBool_And(Result, Options, From);
 		}
 		else
 		{
@@ -70,12 +66,11 @@ namespace mu
 		}
 
 		// Cache the result
-		m_generatedBools.Add(key, result);
+		GeneratedBools.Add(Key, Result);
 	}
 
 
-	//-------------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateBool_Constant(FBoolGenerationResult& result, const Ptr<const NodeBoolConstant>& Typed)
+	void CodeGenerator::GenerateBool_Constant(FBoolGenerationResult& result, const FGenericGenerationOptions& Options, const Ptr<const NodeBoolConstant>& Typed)
 	{
 		const NodeBoolConstant::Private& node = *Typed->GetPrivate();
 
@@ -86,19 +81,19 @@ namespace mu
 	}
 
 
-	//-------------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateBool_Parameter(FBoolGenerationResult& result, const Ptr<const NodeBoolParameter>& Typed)
+	void CodeGenerator::GenerateBool_Parameter(FBoolGenerationResult& result, const FGenericGenerationOptions& Options, const Ptr<const NodeBoolParameter>& Typed)
 	{
 		const NodeBoolParameter::Private& node = *Typed->GetPrivate();
 
 		Ptr<ASTOpParameter> op;
 
-		auto it = m_nodeVariables.find(node.m_pNode);
-		if (it == m_nodeVariables.end())
+		Ptr<ASTOpParameter>* it = m_firstPass.ParameterNodes.Find(node.m_pNode);
+		if (!it)
 		{
 			FParameterDesc param;
 			param.m_name = node.m_name;
-			param.m_uid = node.m_uid;
+			const TCHAR* CStr = ToCStr(node.m_uid);
+			param.m_uid.ImportTextItem(CStr, 0, nullptr, nullptr);
 			param.m_type = PARAMETER_TYPE::T_BOOL;
 			param.m_defaultValue.Set<ParamBoolType>(node.m_defaultValue);
 
@@ -110,56 +105,49 @@ namespace mu
 			for (int32 a = 0; a < node.m_ranges.Num(); ++a)
 			{
 				FRangeGenerationResult rangeResult;
-				GenerateRange(rangeResult, node.m_ranges[a]);
+				GenerateRange(rangeResult, Options, node.m_ranges[a]);
 				op->ranges.Emplace(op.get(), rangeResult.sizeOp, rangeResult.rangeName, rangeResult.rangeUID);
 			}
 
-			m_nodeVariables[node.m_pNode] = op;
+			m_firstPass.ParameterNodes.Add(node.m_pNode,op);
 		}
 		else
 		{
-			op = it->second;
+			op = *it;
 		}
 
 		result.op = op;
 	}
 
 
-	//-------------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateBool_IsNull(FBoolGenerationResult& result, const Ptr<const NodeBoolIsNull>& Typed)
-	{
-		const NodeBoolIsNull::Private& node = *Typed->GetPrivate();
-
-		Ptr<ASTOpConstantBool> op = new ASTOpConstantBool();
-		Ptr<ASTOp> source = Generate(node.m_pSource);
-		op->value = !source;
-
-		result.op = op;
-	}
-
-
-	//-------------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateBool_Not(FBoolGenerationResult& result, const Ptr<const NodeBoolNot>& Typed)
+	void CodeGenerator::GenerateBool_Not(FBoolGenerationResult& result, const FGenericGenerationOptions& Options, const Ptr<const NodeBoolNot>& Typed)
 	{
 		const NodeBoolNot::Private& node = *Typed->GetPrivate();
 
 		Ptr<ASTOpFixed> op = new ASTOpFixed();
 		op->op.type = OP_TYPE::BO_NOT;
-		op->SetChild(op->op.args.BoolNot.source, Generate(node.m_pSource));
+
+		FBoolGenerationResult ChildResult;
+		GenerateBool(ChildResult, Options, node.m_pSource);
+		op->SetChild(op->op.args.BoolNot.source, ChildResult.op);
 
 		result.op = op;
 	}
 
 
-	//-------------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateBool_And(FBoolGenerationResult& result, const Ptr<const NodeBoolAnd>& Typed)
+	void CodeGenerator::GenerateBool_And(FBoolGenerationResult& result, const FGenericGenerationOptions& Options, const Ptr<const NodeBoolAnd>& Typed)
 	{
 		const NodeBoolAnd::Private& node = *Typed->GetPrivate();
 
 		Ptr<ASTOpFixed> op = new ASTOpFixed();
 		op->op.type = OP_TYPE::BO_AND;
-		op->SetChild(op->op.args.BoolBinary.a, Generate(node.m_pA));
-		op->SetChild(op->op.args.BoolBinary.b, Generate(node.m_pB));
+
+		FBoolGenerationResult ChildResult;
+		GenerateBool(ChildResult, Options, node.m_pA);
+		op->SetChild(op->op.args.BoolBinary.a, ChildResult.op);
+
+		GenerateBool(ChildResult, Options, node.m_pB);
+		op->SetChild(op->op.args.BoolBinary.b, ChildResult.op);
 
 		result.op = op;
 	}

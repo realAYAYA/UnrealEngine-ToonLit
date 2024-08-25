@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "RigUnit_ApplyFK.h"
+#include "Units/Deprecated/RigUnit_ApplyFK.h"
 #include "Units/RigUnitContext.h"
 #include "HelperUtil.h"
 

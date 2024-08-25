@@ -58,13 +58,26 @@ public:
 	/** Add a dirty area to the queue based on the provided bounds and flags.
 	 * Bounds must be valid and non empty otherwise the request will be ignored and a warning reported.
 	 * Accumulation must be allowed and flags valid otherwise the add is ignored.
-	 *	@param NewArea Bounding box of the affected area
-	 *	@param Flags Indicates the type of modification applied to the area
-	 *	@param ObjectProviderFunc Optional function to retrieve source object that can be use for error reporting and navmesh exclusion
-	 *	@param DirtyElement Optional dirty element
-	 *	@param DebugReason Source of the new area
+	 * @param NewArea Bounding box of the affected area
+	 * @param Flags Indicates the type of modification applied to the area
+	 * @param ObjectProviderFunc Optional function to retrieve source object that can be use for error reporting and navmesh exclusion
+	 * @param DirtyElement Optional dirty element
+	 * @param DebugReason Source of the new area
 	 */
 	NAVIGATIONSYSTEM_API void AddArea(const FBox& NewArea, const int32 Flags, const TFunction<UObject*()>& ObjectProviderFunc = nullptr,
+		const FNavigationDirtyElement* DirtyElement = nullptr, const FName& DebugReason = NAME_None);
+
+	/** Add non empty list of dirty areas to the queue based on the provided bounds and flags.
+	 * Bounds must be valid and non empty otherwise the request will be ignored and a warning reported.
+	 * Accumulation must be allowed and flags valid otherwise the add is ignored.
+	 * A check will be triggered if an empty array is provided.
+	 * @param NewAreas Array of bounding boxes of the affected areas
+	 * @param Flags Indicates the type of modification applied to the area
+	 * @param ObjectProviderFunc Optional function to retrieve source object that can be use for error reporting and navmesh exclusion
+	 * @param DirtyElement Optional dirty element
+	 * @param DebugReason Source of the new area
+	 */
+	NAVIGATIONSYSTEM_API void AddAreas(const TConstArrayView<FBox> NewAreas, const int32 Flags, const TFunction<UObject*()>& ObjectProviderFunc = nullptr,
 		const FNavigationDirtyElement* DirtyElement = nullptr, const FName& DebugReason = NAME_None);
 	
 	bool IsDirty() const { return GetNumDirtyAreas() > 0; }
@@ -80,4 +93,7 @@ public:
 #if !UE_BUILD_SHIPPING
 	bool HadDirtyAreasReportedWhileAccumulationLocked() const { return bCanAccumulateDirtyAreas == false && bDirtyAreasReportedWhileAccumulationLocked; }
 #endif // UE_BUILD_SHIPPING
+
+	DECLARE_DELEGATE_RetVal_OneParam(bool, FSkipObjectSignature, UObject& /*Object*/);
+	FSkipObjectSignature ShouldSkipObjectPredicate;  
 };

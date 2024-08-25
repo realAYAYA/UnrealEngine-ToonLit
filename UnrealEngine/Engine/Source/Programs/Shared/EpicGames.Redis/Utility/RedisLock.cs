@@ -1,11 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using StackExchange.Redis;
 using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using StackExchange.Redis;
 
 namespace EpicGames.Redis.Utility
 {

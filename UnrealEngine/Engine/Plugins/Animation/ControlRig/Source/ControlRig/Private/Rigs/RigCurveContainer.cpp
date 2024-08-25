@@ -2,7 +2,6 @@
 
 #include "Rigs/RigCurveContainer.h"
 #include "Rigs/RigHierarchyContainer.h"
-#include "ControlRig.h"
 #include "HelperUtil.h"
 #include "Animation/Skeleton.h"
 

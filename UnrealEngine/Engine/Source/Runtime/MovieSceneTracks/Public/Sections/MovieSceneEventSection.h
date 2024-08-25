@@ -23,11 +23,16 @@ struct FMovieSceneEventParameters
 {
 	GENERATED_BODY()
 
-	FMovieSceneEventParameters() {}
+	FMovieSceneEventParameters()
+		: PackageFileVersion(GPackageFileUEVersion)
+		, LicenseePackageFileVersion(GPackageFileLicenseeUEVersion )
+	{}
 
 	/** Construction from a struct type */
 	FMovieSceneEventParameters(UScriptStruct& InStruct)
 		: StructType(&InStruct)
+		, PackageFileVersion(GPackageFileUEVersion)
+		, LicenseePackageFileVersion(GPackageFileLicenseeUEVersion )
 	{
 	}
 
@@ -86,6 +91,10 @@ private:
 
 	/** Soft object path to the type of this parameter payload */
 	FSoftObjectPath StructType;
+
+	/** Used while loading to pass along to the FEventParameterReader */
+	FPackageFileVersion PackageFileVersion;
+	int32 LicenseePackageFileVersion;
 
 	/** Serialized bytes that represent the payload. Serialized internally with FEventParameterArchive */
 	TArray<uint8> StructBytes;
@@ -184,6 +193,8 @@ public:
 	MOVIESCENETRACKS_API virtual int32 GetNumKeys() const override;
 	MOVIESCENETRACKS_API virtual void Reset() override;
 	MOVIESCENETRACKS_API virtual void Offset(FFrameNumber DeltaPosition) override;
+	MOVIESCENETRACKS_API virtual FKeyHandle GetHandle(int32 Index) override;
+	MOVIESCENETRACKS_API virtual int32 GetIndex(FKeyHandle Handle) override;
 	virtual void Optimize(const FKeyDataOptimizationParams& InParameters) override {}
 	virtual void ClearDefault() override {}
 

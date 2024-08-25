@@ -71,7 +71,7 @@ void WriteInstancePrimitiveId(uint InstanceId, uint NewPrimitiveId)
  * Store the contents of InstanceData.LocalToWorld to the GPUScene buffers. Optionally, also calculates the determinant
  * of the transform's rotation to set or unset the determinant sign flag on the instance flags.
  *
- * NOTE: With Large World Coordinates, the transform provided is expected to be relative to the primitive's tile position.
+ * NOTE: With Large World Coordinates, the transform provided is expected to be relative to the primitive's PositionHigh.
  * Use the WriteInstanceLocalToWorld helper if you don't already have a relative transform.
  **/
 void WriteInstanceLocalToRelativeWorld(uint InstanceId, float4x4 LocalToRelativeWorld, bool StoreDeterminantSign)
@@ -100,11 +100,11 @@ void WriteInstanceLocalToRelativeWorld(uint InstanceId, float4x4 LocalToRelative
 	}
 }
 
-void WriteInstanceLocalToWorld(uint InstanceId, uint PrimitiveId, FLWCMatrix LocalToWorld, bool StoreDeterminantSign)
+void WriteInstanceLocalToWorld(uint InstanceId, uint PrimitiveId, FDFMatrix LocalToWorld, bool StoreDeterminantSign)
 {
 	// Ensure the LocalToWorld matrix is relative to the primitive tile position
-	LocalToWorld = LWCMakeRelativeToTile(LocalToWorld, GetPrimitiveData(PrimitiveId).TilePosition);
-	WriteInstanceLocalToRelativeWorld(InstanceId, LocalToWorld.M, StoreDeterminantSign);
+	float4x4 LocalToRelativeWorld = DFMultiplyTranslationDemote(LocalToWorld, -GetPrimitiveData(PrimitiveId).PositionHigh);
+	WriteInstanceLocalToRelativeWorld(InstanceId, LocalToRelativeWorld, StoreDeterminantSign);
 }
 
 /**
@@ -143,11 +143,10 @@ void InitializeInstanceSceneDataWS(
  	uint PayloadDataFlags,
  	uint CustomDataCount,
  	float RandomId,
- 	FLWCMatrix LocalToWorld)
+ 	FDFMatrix LocalToWorld)
  {
- 	// Ensure the WS matrix is relative to the primitive's render tile, then the internal matrix is LocalToRelativeWorld
- 	LocalToWorld = LWCMakeRelativeToTile(LocalToWorld, GetPrimitiveData(PrimitiveId).TilePosition);
- 	InitializeInstanceSceneData(InstanceId, PrimitiveId, InstanceRelativeId, PayloadDataFlags, CustomDataCount, RandomId, LocalToWorld.M);
+	 float4x4 LocalToRelativeWorld = DFMultiplyTranslationDemote(LocalToWorld, -GetPrimitiveData(PrimitiveId).PositionHigh);
+	 InitializeInstanceSceneData(InstanceId, PrimitiveId, InstanceRelativeId, PayloadDataFlags, CustomDataCount, RandomId, LocalToRelativeWorld);
  }
 
 /** This version initializes the instance with a transform that is relative to its primitive's local space */
@@ -161,8 +160,10 @@ void InitializeInstanceSceneDataLS(
  	float4x4 LocalToPrimitive)
 {
 	// Multiply the LS by the primitive's LocalToWorld, then the internal matrix is guaranteed to be LocalToRelativeWorld
-	FLWCMatrix LocalToWorld = LWCMultiply(LocalToPrimitive, GetPrimitiveData(PrimitiveId).LocalToWorld);
-	InitializeInstanceSceneData(InstanceId, PrimitiveId, InstanceRelativeId, PayloadDataFlags, CustomDataCount, RandomId, LocalToWorld.M);
+	// because PositionHigh is copied from the primitive LocalToWorld
+	
+	float4x4 LocalToWorld = DFMultiply(LocalToPrimitive, GetPrimitiveData(PrimitiveId).LocalToWorld).M;
+	InitializeInstanceSceneData(InstanceId, PrimitiveId, InstanceRelativeId, PayloadDataFlags, CustomDataCount, RandomId, LocalToWorld);
 }
 
 /**
@@ -230,13 +231,13 @@ void WriteInstanceDynamicData(uint InstanceId, float4x4 PrevLocalToRelativeWorld
 }
 
 /** This version computes the relative transform from the specified world transform */
-void WriteInstanceDynamicDataWS(FInstancePayloadDataOffsets PayloadOffsets, uint PrimitiveId, FLWCMatrix PrevLocalToWorld)
+void WriteInstanceDynamicDataWS(FInstancePayloadDataOffsets PayloadOffsets, uint PrimitiveId, FDFMatrix PrevLocalToWorld)
 {
-	PrevLocalToWorld = LWCMakeRelativeToTile(PrevLocalToWorld, GetPrimitiveData(PrimitiveId).TilePosition);
-	WriteInstanceDynamicData(PayloadOffsets, PrevLocalToWorld.M);
+	float4x4 PrevLocalToRelativeWorld = DFMultiplyTranslationDemote(PrevLocalToWorld, -GetPrimitiveData(PrimitiveId).PositionHigh);
+	WriteInstanceDynamicData(PayloadOffsets, PrevLocalToRelativeWorld);
 }
 
-void WriteInstanceDynamicDataWS(uint InstanceId, uint PrimitiveId, FLWCMatrix PrevLocalToWorld)
+void WriteInstanceDynamicDataWS(uint InstanceId, uint PrimitiveId, FDFMatrix PrevLocalToWorld)
 {
 	WriteInstanceDynamicDataWS(GetInstancePayloadDataOffsets(InstanceId), PrimitiveId, PrevLocalToWorld);
 }
@@ -244,8 +245,8 @@ void WriteInstanceDynamicDataWS(uint InstanceId, uint PrimitiveId, FLWCMatrix Pr
 /** This version computes the relative transform from the specified local-space transform */
 void WriteInstanceDynamicDataLS(FInstancePayloadDataOffsets PayloadOffsets, uint PrimitiveId, float4x4 PrevLocalToPrimitive)
 {
-	FLWCMatrix PrevLocalToWorld = LWCMultiply(PrevLocalToPrimitive, GetPrimitiveData(PrimitiveId).PreviousLocalToWorld);
-	WriteInstanceDynamicData(PayloadOffsets, PrevLocalToWorld.M);
+	FDFMatrix PrevLocalToWorld = DFMultiply(PrevLocalToPrimitive, GetPrimitiveData(PrimitiveId).PreviousLocalToWorld);
+	return WriteInstanceDynamicDataWS(PayloadOffsets, PrimitiveId, PrevLocalToWorld);
 }
 
 void WriteInstanceDynamicDataLS(uint InstanceId, uint PrimitiveId, float4x4 PrevLocalToPrimitive)

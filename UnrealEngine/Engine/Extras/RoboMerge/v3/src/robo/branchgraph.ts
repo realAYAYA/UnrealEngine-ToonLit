@@ -387,12 +387,6 @@ if (botname === '__TEST__') {
 		return null
 	}
 
-	// computeImplicitTargets(errors: string[], source: Branch, targets: Branch[]) {
-
-	// 	return computeImplicitTargets(source, source.parent, errors, new Set(targets), new Set()) /* not supporting skipping yet - should check can divert route this way */
-
-	// }
-
 	private _fixFlow(list: string[], branchName: string) {
 		const output = []
 		for (const ref of list) {

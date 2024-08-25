@@ -24,34 +24,40 @@ public:
 		{
 			Promise->SetValue(false);
 		}
+
+		// As we use guards to access to the Steps array we have to clear it explicitly to sync access to it
+		FScopeLock StateLock(&StepsCS);
+		Steps.Empty();
 	}
 
-	virtual void Add(const FExecuteStepDelegate& Step) override
+	virtual void Add(const TSharedRef<FExecuteStepDelegate>& Step) override
 	{
 		check(!Promise.IsValid());
 		FScopeLock StateLock(&StepsCS);
 		Steps.Add(Step);
 	}
 
-	virtual void Add(const TFunction<FStepResult(const FTimespan&)>& Step) override
+	virtual void Add(const TFunction<FStepResult(const FTimespan&)>& StepFunction) override
 	{
-		check(!Promise.IsValid());
-		FScopeLock StateLock(&StepsCS);
-		Steps.Add(FExecuteStepDelegate::CreateLambda(Step));
+		check(StepFunction);
+		TSharedRef<FExecuteStepDelegate> Step = MakeShared<FExecuteStepDelegate>(
+			FExecuteStepDelegate::CreateLambda(StepFunction));
+		Add(Step);
 	}
 
-	virtual void InsertNext(const FExecuteStepDelegate& Step) override
+	virtual void InsertNext(const TSharedRef<FExecuteStepDelegate>& Step) override
 	{
 		check(Promise.IsValid());
 		FScopeLock StateLock(&StepsCS);
 		Steps.Insert(Step, CurrentStepIndex + 1);
 	}
 
-	virtual void InsertNext(const TFunction<FStepResult(const FTimespan&)>& Step) override
+	virtual void InsertNext(const TFunction<FStepResult(const FTimespan&)>& StepFunction) override
 	{
-		check(Promise.IsValid());
-		FScopeLock StateLock(&StepsCS);
-		Steps.Insert(FExecuteStepDelegate::CreateLambda(Step), CurrentStepIndex + 1);
+		check(StepFunction);
+		TSharedRef<FExecuteStepDelegate> Step = MakeShared<FExecuteStepDelegate>(
+			FExecuteStepDelegate::CreateLambda(StepFunction));
+		InsertNext(Step);
 	}
 
 	virtual TAsyncResult<bool> Execute() override
@@ -108,10 +114,16 @@ private:
 		{
 			FScopeLock StateLock(&StepsCS);
 
+			if (0 == StepIndex)
+			{
+				Application->SetOverrideRealCursorCoordinates(true);
+			}
+
 			// If we've encountered an invalid step that's greater then zero then we were just waiting
 			// a little bit after the last step completed before signaling completion.
 			if ((StepIndex > 0 && !Steps.IsValidIndex(StepIndex)) || !Application->IsHandlingMessages())
 			{
+				Application->SetOverrideRealCursorCoordinates(false); 
 				Promise->SetValue(true);
 				Promise.Reset();
 				StepTotalProcessTime = FTimespan::Zero();
@@ -120,11 +132,12 @@ private:
 
 			check(Steps.IsValidIndex(StepIndex));
 
-			Result = Steps[StepIndex].Execute(StepTotalProcessTime);
+			Result = Steps[StepIndex]->Execute(StepTotalProcessTime);
 		}
 
 		if (Result.State == FStepResult::EState::FAILED)
 		{
+			Application->SetOverrideRealCursorCoordinates(false);
 			Promise->SetValue(false);
 			Promise.Reset();
 			StepTotalProcessTime = FTimespan::Zero();
@@ -158,7 +171,7 @@ private:
 	const TSharedRef<FDriverConfiguration, ESPMode::ThreadSafe> Configuration;
 	const TSharedRef<FAutomatedApplication, ESPMode::ThreadSafe>& Application;
 
-	TArray<FExecuteStepDelegate> Steps;
+	TArray<TSharedRef<FExecuteStepDelegate>> Steps;
 	int32 CurrentStepIndex;
 	TSharedPtr<TPromise<bool>> Promise;
 	FTimespan StepTotalProcessTime;

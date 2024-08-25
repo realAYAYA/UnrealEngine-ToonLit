@@ -42,29 +42,28 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		
-
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-		int GetInputCount() const override;
-		Node* GetInputNode( int i ) const override;
-		void SetInputNode( int i, NodePtr pNode ) override;
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
 		//-----------------------------------------------------------------------------------------
 
 		//! Set the name of the implicit table parameter.
-		void SetParameterName( const char* strName );
+		void SetParameterName( const FString& strName );
 
 		//!
 		TablePtr GetTable() const;
 		void SetTable( TablePtr );
 
 		//!
-		const char* GetColumn() const;
-		void SetColumn( const char* strName );
+		void SetColumn( const FString& strName );
+
+		//! Adds the "None" option to the parameter that represents this table column
+		void SetNoneOption(bool bAddOption);
+
+		//! Set the row name to be used as default value
+		void SetDefaultRowName(const FString& RowName);
 
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern

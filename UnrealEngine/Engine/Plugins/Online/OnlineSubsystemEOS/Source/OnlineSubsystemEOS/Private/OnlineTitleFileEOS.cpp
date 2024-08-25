@@ -426,7 +426,7 @@ bool FOnlineTitleFileEOS::HandleTitleFileExec(UWorld* InWorld, const TCHAR* Cmd,
 		// Note: These delegates will trigger for all files being read, if multiple requests are inflight
 		OnReadFileProgressDelegateHandle = AddOnReadFileProgressDelegate_Handle(FOnReadFileProgressDelegate::CreateLambda([this](const FString& FileName, uint64 NumBytes)
 		{
-			UE_LOG_ONLINE(Log, TEXT("ReadFile: Progress (%s) %d bytes read"), *FileName, NumBytes);
+			UE_LOG_ONLINE(Log, TEXT("ReadFile: Progress (%s) %llu bytes read"), *FileName, NumBytes);
 		}));
 
 		OnReadFileCompleteDelegateHandle = AddOnReadFileCompleteDelegate_Handle(FOnReadFileCompleteDelegate::CreateLambda([this](bool bWasSuccessful, const FString& Error)

@@ -1,8 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace EpicGames.BuildGraph.Expressions
 {
@@ -287,23 +285,23 @@ namespace EpicGames.BuildGraph.Expressions
 		{
 			BgObject<BgIntOptionDef> option = BgObject<BgIntOptionDef>.Empty;
 			option = option.Set(x => x.Name, Name);
-			if (!(Label is null))
+			if (Label is not null)
 			{
 				option = option.Set(x => x.Label, Label);
 			}
-			if (!(Description is null))
+			if (Description is not null)
 			{
 				option = option.Set(x => x.Description, Description);
 			}
-			if (!(DefaultValue is null))
+			if (DefaultValue is not null)
 			{
 				option = option.Set(x => x.DefaultValue, DefaultValue);
 			}
-			if (!(MinValue is null))
+			if (MinValue is not null)
 			{
 				option = option.Set(x => x.MinValue, MinValue);
 			}
-			if (!(MaxValue is null))
+			if (MaxValue is not null)
 			{
 				option = option.Set(x => x.MaxValue, MaxValue);
 			}

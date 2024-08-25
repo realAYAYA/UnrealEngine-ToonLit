@@ -7,6 +7,7 @@
 #include "UObject/ObjectMacros.h"
 #include "GroomSettings.h"
 #include "HairStrandsInterface.h"
+#include "GroomAssetCards.h"
 
 class UTexture2D;
 class UGroomAsset;
@@ -33,6 +34,7 @@ struct FFollicleInfo
 
 struct FStrandsTexturesInfo
 {
+	EHairTextureLayout Layout = EHairTextureLayout::Layout1;
 	UGroomAsset* GroomAsset = nullptr;
 	USkeletalMesh* SkeletalMesh = nullptr;
 	UStaticMesh* StaticMesh = nullptr;
@@ -47,12 +49,8 @@ struct FStrandsTexturesInfo
 
 struct FStrandsTexturesOutput
 {
-	class UTexture2D* Depth = nullptr;
-	class UTexture2D* Tangent = nullptr;
-	class UTexture2D* Coverage = nullptr;
-	class UTexture2D* Attribute = nullptr;
-	class UTexture2D* Material = nullptr;
-	bool IsValid() const { return Depth && Tangent && Coverage && Attribute && Material; }
+	TArray<UTexture2D*> Textures;
+	bool IsValid() const { return Textures.Num() > 0; }
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -69,7 +67,7 @@ struct HAIRSTRANDSCORE_API FGroomTextureBuilder
 
 	// Strands textures
 #if WITH_EDITOR
-	static FStrandsTexturesOutput CreateGroomStrandsTexturesTexture(const UGroomAsset* GroomAsset, uint32 Resolution);
+	static FStrandsTexturesOutput CreateGroomStrandsTexturesTexture(const UGroomAsset* GroomAsset, uint32 Resolution, EHairTextureLayout InLayout);
 	static void BuildStrandsTextures(const FStrandsTexturesInfo& InInfo, const FStrandsTexturesOutput& Output);
 #endif
 };

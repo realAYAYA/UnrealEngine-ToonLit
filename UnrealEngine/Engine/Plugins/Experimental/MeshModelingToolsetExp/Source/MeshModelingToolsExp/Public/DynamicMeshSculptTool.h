@@ -18,6 +18,7 @@
 #include "Properties/MeshMaterialProperties.h"
 #include "Properties/RemeshProperties.h"
 #include "TransformTypes.h"
+#include "TransactionUtil.h"
 #include "Sculpting/MeshSculptToolBase.h"
 #include "Async/Async.h"
 #include "Util/UniqueIndexSet.h"
@@ -108,6 +109,8 @@ public:
 	}
 
 	virtual UMeshSurfacePointTool* CreateNewTool(const FToolBuilderState& SceneState) const override;
+protected:
+	virtual const FToolTargetTypeRequirements& GetTargetRequirements() const override;
 };
 
 
@@ -280,6 +283,7 @@ public:
 	virtual void OnBeginDrag(const FRay& Ray) override;
 	virtual void OnUpdateDrag(const FRay& Ray) override;
 	virtual void OnEndDrag(const FRay& Ray) override;
+	virtual void OnCancelDrag() override;
 
 	virtual FInputRayHit BeginHoverSequenceHitTest(const FInputDeviceRay& PressPos) override;
 	virtual bool OnUpdateHover(const FInputDeviceRay& DevicePos) override;
@@ -496,8 +500,11 @@ private:
 
 	FMeshVertexChangeBuilder* ActiveVertexChange = nullptr;
 	UE::Geometry::FDynamicMeshChangeTracker* ActiveMeshChange = nullptr;
+	UE::TransactionUtil::FLongTransactionTracker LongTransactions;
+	
 	void BeginChange(bool bIsVertexChange);
 	void EndChange();
+	void CancelChange();
 	void SaveActiveROI();
 
 	double EstimateIntialSafeTargetLength(const FDynamicMesh3& Mesh, int MinTargetTriCount);

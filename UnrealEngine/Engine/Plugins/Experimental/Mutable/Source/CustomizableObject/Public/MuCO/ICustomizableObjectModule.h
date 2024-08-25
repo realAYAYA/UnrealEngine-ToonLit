@@ -7,7 +7,7 @@
 #include "MuCO/CustomizableObjectExtension.h"
 #include "MuCO/CustomizableObject.h"
 
-class UCustomizableSkeletalComponent;
+class UCustomizableObjectInstanceUsage;
 
 struct FRegisteredCustomizableObjectPinType
 {
@@ -82,4 +82,4 @@ public:
 
 /* Utility function for commands*/
 CUSTOMIZABLEOBJECT_API
-UCustomizableSkeletalComponent* GetPlayerCustomizableSkeletalComponent(const int32 SlotID, const UWorld* CurrentWorld, const int32 PlayerIndex = 0);
+UCustomizableObjectInstanceUsage* GetPlayerCustomizableObjectInstanceUsage(const int32 SlotID, const UWorld* CurrentWorld, const int32 PlayerIndex = 0);

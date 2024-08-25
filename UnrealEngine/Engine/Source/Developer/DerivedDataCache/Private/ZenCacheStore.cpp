@@ -2,9 +2,11 @@
 
 #include "DerivedDataLegacyCacheStore.h"
 #include "Experimental/ZenServerInterface.h"
+#include "Experimental/ZenStatistics.h"
 
 #if UE_WITH_ZEN
 
+#include "Async/ManualResetEvent.h"
 #include "Async/UniqueLock.h"
 #include "BatchView.h"
 #include "DerivedDataBackendInterface.h"
@@ -16,6 +18,7 @@
 #include "DerivedDataRequestOwner.h"
 #include "Experimental/ZenStatistics.h"
 #include "HAL/FileManager.h"
+#include "HAL/Thread.h"
 #include "Http/HttpClient.h"
 #include "Math/UnrealMathUtility.h"
 #include "Misc/App.h"
@@ -32,14 +35,14 @@
 #include "ZenBackendUtils.h"
 #include "ZenSerialization.h"
 
-TRACE_DECLARE_INT_COUNTER(ZenDDC_Get, TEXT("ZenDDC Get"));
-TRACE_DECLARE_INT_COUNTER(ZenDDC_GetHit, TEXT("ZenDDC Get Hit"));
-TRACE_DECLARE_INT_COUNTER(ZenDDC_Put, TEXT("ZenDDC Put"));
-TRACE_DECLARE_INT_COUNTER(ZenDDC_PutHit, TEXT("ZenDDC Put Hit"));
-TRACE_DECLARE_INT_COUNTER(ZenDDC_BytesReceived, TEXT("ZenDDC Bytes Received"));
-TRACE_DECLARE_INT_COUNTER(ZenDDC_BytesSent, TEXT("ZenDDC Bytes Sent"));
-TRACE_DECLARE_INT_COUNTER(ZenDDC_CacheRecordRequestCountInFlight, TEXT("ZenDDC CacheRecord Request Count"));
-TRACE_DECLARE_INT_COUNTER(ZenDDC_ChunkRequestCountInFlight, TEXT("ZenDDC Chunk Request Count"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_Get, TEXT("ZenDDC Get"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_GetHit, TEXT("ZenDDC Get Hit"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_Put, TEXT("ZenDDC Put"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_PutHit, TEXT("ZenDDC Put Hit"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_BytesReceived, TEXT("ZenDDC Bytes Received"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_BytesSent, TEXT("ZenDDC Bytes Sent"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_CacheRecordRequestCountInFlight, TEXT("ZenDDC CacheRecord Request Count"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(ZenDDC_ChunkRequestCountInFlight, TEXT("ZenDDC Chunk Request Count"));
 
 namespace UE::DerivedData
 {
@@ -64,6 +67,25 @@ void ForEachBatch(const int32 BatchSize, const int32 TotalCount, T&& Fn)
 	}
 }
 
+struct FZenCacheStoreParams
+{
+	FString Name;
+	FString Host;
+	FString Namespace;
+	FString Sandbox;
+	int32 MaxBatchPutKB = 1024;
+	int32 RecordBatchSize = 8;
+	int32 ChunksBatchSize = 8;
+	float DeactivateAtMs = -1.0f;
+	TOptional<bool> bLocal;
+	TOptional<bool> bRemote;
+	bool bFlush = false;
+	bool bReadOnly = false;
+	bool bBypassProxy = true;
+
+	void Parse(const TCHAR* NodeName, const TCHAR* Config);
+};
+
 /**
  * Backend for a HTTP based caching service (Zen)
  */
@@ -78,28 +100,29 @@ public:
 	 * @param Namespace		Namespace to use.
 	 */
 	FZenCacheStore(
-		const TCHAR* ServiceUrl,
-		const TCHAR* Namespace,
-		const TCHAR* Name,
-		const TCHAR* Config,
+		const FZenCacheStoreParams& InParams,
 		ICacheStoreOwner* Owner);
 
 	FZenCacheStore(
 		UE::Zen::FServiceSettings&& Settings,
-		const TCHAR* Namespace,
-		const TCHAR* Name,
-		const TCHAR* Config,
+		const FZenCacheStoreParams& InParams,
 		ICacheStoreOwner* Owner);
 
 	~FZenCacheStore() final;
 
-	inline FString GetName() const { return ZenService.GetInstance().GetURL(); }
+	inline const FString& GetName() const { return NodeName; }
 
 	/**
 	 * Checks if cache service is usable (reachable and accessible).
 	 * @return true if usable
 	 */
 	inline bool IsUsable() const { return bIsUsable; }
+
+	/**
+	 * Checks if cache service is on the local machine.
+	 * @return true if it is local
+	 */
+	inline bool IsLocalConnection() const { return bIsLocalConnection; }
 
 	// ICacheStore
 
@@ -136,7 +159,7 @@ public:
 	const Zen::FZenServiceInstance& GetServiceInstance() const { return ZenService.GetInstance(); }
 
 private:
-	void Initialize(const TCHAR* Namespace, const TCHAR* Name, const TCHAR* Config);
+	void Initialize(const FZenCacheStoreParams& Params);
 
 	bool IsServiceReady();
 
@@ -145,6 +168,11 @@ private:
 	using FOnRpcComplete = TUniqueFunction<void(THttpUniquePtr<IHttpResponse>& HttpResponse, FCbPackage& Response)>;
 	void EnqueueAsyncRpc(IRequestOwner& Owner, FCbObject RequestObject, FOnRpcComplete&& OnComplete);
 	void EnqueueAsyncRpc(IRequestOwner& Owner, const FCbPackage& RequestPackage, FOnRpcComplete&& OnComplete);
+
+	void ActivatePerformanceEvaluationThread();
+	void ConditionalEvaluatePerformance();
+	void ConditionalUpdateStorageSize();
+	void UpdateStatus();
 
 	template <typename T, typename... ArgTypes>
 	static TRefCountPtr<T> MakeAsyncOp(ArgTypes&&... Args)
@@ -171,9 +199,21 @@ private:
 	class FGetValueOp;
 	class FGetChunksOp;
 
+	enum class EHealth
+	{
+		Unknown,
+		Ok,
+		Error,
+	};
+
+	using FOnHealthComplete = TUniqueFunction<void(THttpUniquePtr<IHttpResponse>& HttpResponse, EHealth Health)>;
+	class FHealthReceiver;
+	class FAsyncHealthReceiver;
+
 	class FCbPackageReceiver;
 	class FAsyncCbPackageReceiver;
 
+	FString NodeName;
 	FString Namespace;
 	UE::Zen::FScopeZenService ZenService;
 	ICacheStoreOwner* StoreOwner = nullptr;
@@ -182,11 +222,20 @@ private:
 	FHttpRequestQueue RequestQueue;
 	bool bIsUsable = false;
 	bool bIsLocalConnection = false;
-	int32 BatchPutMaxBytes = 1024*1024;
+	bool bTryEvaluatePerformance = false;
+	std::atomic<bool> bDeactivatedForPerformance = false;
+	int32 MaxBatchPutKB = 1024;
 	int32 CacheRecordBatchSize = 8;
 	int32 CacheChunksBatchSize = 8;
 	FBackendDebugOptions DebugOptions;
 	TAnsiStringBuilder<256> RpcUri;
+	std::atomic<int64> LastPerformanceEvaluationTicks;
+	TOptional<FThread> PerformanceEvaluationThread;
+	FManualResetEvent PerformanceEvaluationThreadShutdownEvent;
+	std::atomic<int64> LastStorageSizeUpdateTicks;
+	float DeactivateAtMs = -1.0f;
+	ECacheStoreFlags OperationalFlags;
+	FRequestOwner PerformanceEvaluationRequestOwner;
 };
 
 template <typename RequestType>
@@ -253,8 +302,26 @@ public:
 		TRACE_COUNTER_ADD(ZenDDC_Put, int64(Requests.Num()));
 	}
 
+	virtual ~FPutOp()
+	{
+		FMonotonicTimeSpan AverageMainThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.MainThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageOtherThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.OtherThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageLatency = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.Latency.ToSeconds() / Requests.Num());
+
+		for (TRequestWithStats<FCachePutRequest>& Request : Requests)
+		{
+			Request.Stats.MainThreadTime = AverageMainThreadTime;
+			Request.Stats.OtherThreadTime = AverageOtherThreadTime;
+			Request.Stats.Latency = AverageLatency;
+		}
+		CacheStore.ConditionalEvaluatePerformance();
+		CacheStore.ConditionalUpdateStorageSize();
+	}
+
 	void IssueRequests()
 	{
+		FRequestTimer RequestTimer(Requests[0].Stats);
+
 		FRequestBarrier Barrier(Owner);
 		for (TArrayView<const TRequestWithStats<FCachePutRequest>> Batch : Batches)
 		{
@@ -297,6 +364,10 @@ public:
 
 			auto OnRpcComplete = [this, OpRef = TRefCountPtr<FPutOp>(this), Batch](THttpUniquePtr<IHttpResponse>& HttpResponse, FCbPackage& Response)
 			{
+				FRequestTimer RequestTimer(Requests[0].Stats);
+				// Latency can't be measured for Put operations because it is intertwined with upload time.
+				Requests[0].Stats.Latency = FMonotonicTimeSpan::Infinity();
+
 				int32 RequestIndex = 0;
 				if (HttpResponse->GetErrorCode() == EHttpErrorCode::None && HttpResponse->GetStatusCode() >= 200 && HttpResponse->GetStatusCode() <= 299)
 				{
@@ -310,7 +381,6 @@ public:
 						}
 
 						const TRequestWithStats<FCachePutRequest>& RequestWithStats = Batch[RequestIndex++];
-						RequestWithStats.Stats.AddLatency(FMonotonicTimeSpan::FromSeconds(HttpResponse->GetStats().StartTransferTime));
 
 						const FCacheKey& Key = RequestWithStats.Request.Record.GetKey();
 						bool bPutSucceeded = ResponseField.AsBool();
@@ -324,21 +394,28 @@ public:
 					}
 					if (RequestIndex != Batch.Num())
 					{
-						UE_LOG(LogDerivedDataCache, Warning,
+						UE_LOG(LogDerivedDataCache, Display,
 							TEXT("%s: Invalid response received from PutCacheRecords RPC: %d results expected, received %d, from %s"),
 							*CacheStore.GetName(), Batch.Num(), RequestIndex, *WriteToString<256>(*HttpResponse));
 					}
 				}
-				else if (HttpResponse->GetStatusCode() != 404)
+				else if ((HttpResponse->GetErrorCode() != EHttpErrorCode::Canceled) && (HttpResponse->GetStatusCode() != 404))
 				{
-					UE_LOG(LogDerivedDataCache, Warning,
+					UE_LOG(LogDerivedDataCache, Display,
 						TEXT("%s: Error response received from PutCacheRecords RPC: from %s"),
 						*CacheStore.GetName(), *WriteToString<256>(*HttpResponse));
 				}
 
 				for (const TRequestWithStats<FCachePutRequest>& RequestWithStats : Batch.RightChop(RequestIndex))
 				{
-					OnMiss(RequestWithStats);
+					if (HttpResponse->GetErrorCode() == EHttpErrorCode::Canceled)
+					{
+						OnCanceled(RequestWithStats);
+					}
+					else
+					{
+						OnMiss(RequestWithStats);
+					}
 				}
 			};
 			CacheStore.EnqueueAsyncRpc(Owner, BatchPackage, MoveTemp(OnRpcComplete));
@@ -355,7 +432,7 @@ private:
 			RecordSize += Value.GetData().GetCompressedSize();
 		}
 		BatchSize += RecordSize;
-		if (BatchSize > CacheStore.BatchPutMaxBytes)
+		if (BatchSize > CacheStore.MaxBatchPutKB*1024)
 		{
 			BatchSize = RecordSize;
 			return EBatchView::NewBatch;
@@ -365,7 +442,7 @@ private:
 
 	void OnHit(const TRequestWithStats<FCachePutRequest>& RequestWithStats)
 	{
-		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache Put complete for %s from '%s'"),
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache put complete for %s from '%s'"),
 			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Record.GetKey()), *RequestWithStats.Request.Name);
 
 		if (const FCbObject& Meta = RequestWithStats.Request.Record.GetMeta())
@@ -386,10 +463,18 @@ private:
 
 	void OnMiss(const TRequestWithStats<FCachePutRequest>& RequestWithStats)
 	{
-		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache Put miss for '%s' from '%s'"),
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache put failed for '%s' from '%s'"),
 			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Record.GetKey()), *RequestWithStats.Request.Name);
 		RequestWithStats.EndRequest(CacheStore, EStatus::Error);
 		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Error));
+	}
+
+	void OnCanceled(const TRequestWithStats<FCachePutRequest>& RequestWithStats)
+	{
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache put failed with canceled request for '%s' from '%s'"),
+			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Record.GetKey()), *RequestWithStats.Request.Name);
+		RequestWithStats.EndRequest(CacheStore, EStatus::Canceled);
+		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Canceled));
 	}
 
 	FZenCacheStore& CacheStore;
@@ -420,10 +505,24 @@ public:
 	virtual ~FGetOp()
 	{
 		TRACE_COUNTER_SUBTRACT(ZenDDC_CacheRecordRequestCountInFlight, int64(Requests.Num()));
+		FMonotonicTimeSpan AverageMainThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.MainThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageOtherThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.OtherThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageLatency = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.Latency.ToSeconds() / Requests.Num());
+
+		for (TRequestWithStats<FCacheGetRequest>& Request : Requests)
+		{
+			Request.Stats.MainThreadTime = AverageMainThreadTime;
+			Request.Stats.OtherThreadTime = AverageOtherThreadTime;
+			Request.Stats.Latency = AverageLatency;
+		}
+		CacheStore.ConditionalEvaluatePerformance();
+		CacheStore.ConditionalUpdateStorageSize();
 	}
 
 	void IssueRequests()
 	{
+		FRequestTimer RequestTimer(Requests[0].Stats);
+
 		FRequestBarrier Barrier(Owner);
 		ForEachBatch(CacheStore.CacheRecordBatchSize, Requests.Num(),
 			[this](int32 BatchFirst, int32 BatchLast)
@@ -470,6 +569,10 @@ public:
 			FGetOp* OriginalOp = this;
 			auto OnRpcComplete = [this, OpRef = TRefCountPtr<FGetOp>(OriginalOp), Batch](THttpUniquePtr<IHttpResponse>& HttpResponse, FCbPackage& Response)
 			{
+				FRequestTimer RequestTimer(Requests[0].Stats);
+				const FHttpResponseStats& ResponseStats = HttpResponse->GetStats();
+				Requests[0].Stats.Latency = FMonotonicTimeSpan::FromSeconds(ResponseStats.StartTransferTime - ResponseStats.ConnectTime);
+
 				int32 RequestIndex = 0;
 				if (HttpResponse->GetErrorCode() == EHttpErrorCode::None && HttpResponse->GetStatusCode() >= 200 && HttpResponse->GetStatusCode() <= 299)
 				{
@@ -484,7 +587,6 @@ public:
 						}
 
 						const TRequestWithStats<FCacheGetRequest>& RequestWithStats = Batch[RequestIndex++];
-						RequestWithStats.Stats.AddLatency(FMonotonicTimeSpan::FromSeconds(HttpResponse->GetStats().StartTransferTime));
 
 						const FCacheKey& Key = RequestWithStats.Request.Key;
 						FOptionalCacheRecord Record;
@@ -502,21 +604,28 @@ public:
 					}
 					if (RequestIndex != Batch.Num())
 					{
-						UE_LOG(LogDerivedDataCache, Warning,
+						UE_LOG(LogDerivedDataCache, Display,
 							TEXT("%s: Invalid response received from GetCacheRecords RPC: %d results expected, received %d, from %s"),
 							*CacheStore.GetName(), Batch.Num(), RequestIndex, *WriteToString<256>(*HttpResponse));
 					}
 				}
-				else if (HttpResponse->GetStatusCode() != 404)
+				else if ((HttpResponse->GetErrorCode() != EHttpErrorCode::Canceled) && (HttpResponse->GetStatusCode() != 404))
 				{
-					UE_LOG(LogDerivedDataCache, Warning,
+					UE_LOG(LogDerivedDataCache, Display,
 						TEXT("%s: Error response received from GetCacheRecords RPC: from %s"),
 						*CacheStore.GetName(), *WriteToString<256>(*HttpResponse));
 				}
-
+					
 				for (const TRequestWithStats<FCacheGetRequest>& RequestWithStats : Batch.RightChop(RequestIndex))
 				{
-					OnMiss(RequestWithStats);
+					if (HttpResponse->GetErrorCode() == EHttpErrorCode::Canceled)
+					{
+						OnCanceled(RequestWithStats);
+					}
+					else
+					{
+						OnMiss(RequestWithStats);
+					}
 				}
 			};
 
@@ -569,6 +678,14 @@ private:
 		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Error));
 	}
 
+	void OnCanceled(const TRequestWithStats<FCacheGetRequest>& RequestWithStats)
+	{
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache miss with canceled request for '%s' from '%s'"),
+			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Key), *RequestWithStats.Request.Name);
+		RequestWithStats.EndRequest(CacheStore, EStatus::Canceled);
+		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Canceled));
+	}
+
 	FZenCacheStore& CacheStore;
 	IRequestOwner& Owner;
 	TArray<TRequestWithStats<FCacheGetRequest>, TInlineAllocator<1>> Requests;
@@ -593,8 +710,26 @@ public:
 			[this](const TRequestWithStats<FCachePutValueRequest>& NextRequest) { return BatchGroupingFilter(NextRequest.Request); });
 	}
 
+	virtual ~FPutValueOp()
+	{
+		FMonotonicTimeSpan AverageMainThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.MainThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageOtherThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.OtherThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageLatency = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.Latency.ToSeconds() / Requests.Num());
+
+		for (TRequestWithStats<FCachePutValueRequest>& Request : Requests)
+		{
+			Request.Stats.MainThreadTime = AverageMainThreadTime;
+			Request.Stats.OtherThreadTime = AverageOtherThreadTime;
+			Request.Stats.Latency = AverageLatency;
+		}
+		CacheStore.ConditionalEvaluatePerformance();
+		CacheStore.ConditionalUpdateStorageSize();
+	}
+
 	void IssueRequests()
 	{
+		FRequestTimer RequestTimer(Requests[0].Stats);
+
 		FRequestBarrier Barrier(Owner);
 		for (TArrayView<const TRequestWithStats<FCachePutValueRequest>> Batch : Batches)
 		{
@@ -639,6 +774,10 @@ public:
 
 			auto OnRpcComplete = [this, OpRef = TRefCountPtr<FPutValueOp>(this), Batch](THttpUniquePtr<IHttpResponse>& HttpResponse, FCbPackage& Response)
 			{
+				FRequestTimer RequestTimer(Requests[0].Stats);
+				// Latency can't be measured for Put operations because it is intertwined with upload time.
+				Requests[0].Stats.Latency = FMonotonicTimeSpan::Infinity();
+
 				int32 RequestIndex = 0;
 				if (HttpResponse->GetErrorCode() == EHttpErrorCode::None && HttpResponse->GetStatusCode() >= 200 && HttpResponse->GetStatusCode() <= 299)
 				{
@@ -652,7 +791,6 @@ public:
 						}
 
 						const TRequestWithStats<FCachePutValueRequest>& RequestWithStats = Batch[RequestIndex++];
-						RequestWithStats.Stats.AddLatency(FMonotonicTimeSpan::FromSeconds(HttpResponse->GetStats().StartTransferTime));
 
 						bool bPutSucceeded = ResponseField.AsBool();
 						if (CacheStore.DebugOptions.ShouldSimulatePutMiss(RequestWithStats.Request.Key))
@@ -665,21 +803,28 @@ public:
 					}
 					if (RequestIndex != Batch.Num())
 					{
-						UE_LOG(LogDerivedDataCache, Warning,
+						UE_LOG(LogDerivedDataCache, Display,
 							TEXT("%s: Invalid response received from PutCacheValues RPC: %d results expected, received %d, from %s"),
 							*CacheStore.GetName(), Batch.Num(), RequestIndex, *WriteToString<256>(*HttpResponse));
 					}
 				}
-				else if (HttpResponse->GetStatusCode() != 404)
+				else if ((HttpResponse->GetErrorCode() != EHttpErrorCode::Canceled) && (HttpResponse->GetStatusCode() != 404))
 				{
-					UE_LOG(LogDerivedDataCache, Warning,
+					UE_LOG(LogDerivedDataCache, Display,
 						TEXT("%s: Error response received from PutCacheValues RPC: from %s"),
 						*CacheStore.GetName(), *WriteToString<256>(*HttpResponse));
 				}
 
 				for (const TRequestWithStats<FCachePutValueRequest>& RequestWithStats : Batch.RightChop(RequestIndex))
 				{
-					OnMiss(RequestWithStats);
+					if (HttpResponse->GetErrorCode() == EHttpErrorCode::Canceled)
+					{
+						OnCanceled(RequestWithStats);
+					}
+					else
+					{
+						OnMiss(RequestWithStats);
+					}
 				}
 			};
 
@@ -692,7 +837,7 @@ private:
 	{
 		uint64 ValueSize = sizeof(FCacheKey) + NextRequest.Value.GetData().GetCompressedSize();
 		BatchSize += ValueSize;
-		if (BatchSize > CacheStore.BatchPutMaxBytes)
+		if (BatchSize > CacheStore.MaxBatchPutKB*1024)
 		{
 			BatchSize = ValueSize;
 			return EBatchView::NewBatch;
@@ -702,7 +847,7 @@ private:
 
 	void OnHit(const TRequestWithStats<FCachePutValueRequest>& RequestWithStats)
 	{
-		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache PutValue complete for %s from '%s'"),
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache put complete for %s from '%s'"),
 			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Key), *RequestWithStats.Request.Name);
 
 		RequestWithStats.Stats.AddLogicalWrite(RequestWithStats.Request.Value);
@@ -716,10 +861,18 @@ private:
 
 	void OnMiss(const TRequestWithStats<FCachePutValueRequest>& RequestWithStats)
 	{
-		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache PutValue miss for '%s' from '%s'"),
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache put failed for '%s' from '%s'"),
 			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Key), *RequestWithStats.Request.Name);
 		RequestWithStats.EndRequest(CacheStore, EStatus::Error);
 		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Error));
+	}
+
+	void OnCanceled(const TRequestWithStats<FCachePutValueRequest>& RequestWithStats)
+	{
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache put failed with canceled request for '%s' from '%s'"),
+			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Key), *RequestWithStats.Request.Name);
+		RequestWithStats.EndRequest(CacheStore, EStatus::Canceled);
+		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Canceled));
 	}
 
 	FZenCacheStore& CacheStore;
@@ -750,10 +903,24 @@ public:
 	virtual ~FGetValueOp()
 	{
 		TRACE_COUNTER_SUBTRACT(ZenDDC_CacheRecordRequestCountInFlight, int64(Requests.Num()));
+		FMonotonicTimeSpan AverageMainThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.MainThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageOtherThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.OtherThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageLatency = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.Latency.ToSeconds() / Requests.Num());
+
+		for (TRequestWithStats<FCacheGetValueRequest>& Request : Requests)
+		{
+			Request.Stats.MainThreadTime = AverageMainThreadTime;
+			Request.Stats.OtherThreadTime = AverageOtherThreadTime;
+			Request.Stats.Latency = AverageLatency;
+		}
+		CacheStore.ConditionalEvaluatePerformance();
+		CacheStore.ConditionalUpdateStorageSize();
 	}
 
 	void IssueRequests()
 	{
+		FRequestTimer RequestTimer(Requests[0].Stats);
+
 		FRequestBarrier Barrier(Owner);
 		ForEachBatch(CacheStore.CacheRecordBatchSize, Requests.Num(),
 			[this](int32 BatchFirst, int32 BatchLast)
@@ -799,6 +966,10 @@ public:
 			FGetValueOp* OriginalOp = this;
 			auto OnRpcComplete = [this, OpRef = TRefCountPtr<FGetValueOp>(OriginalOp), Batch](THttpUniquePtr<IHttpResponse>& HttpResponse, FCbPackage& Response)
 			{
+				FRequestTimer RequestTimer(Requests[0].Stats);
+				const FHttpResponseStats& ResponseStats = HttpResponse->GetStats();
+				Requests[0].Stats.Latency = FMonotonicTimeSpan::FromSeconds(ResponseStats.StartTransferTime - ResponseStats.ConnectTime);
+
 				int32 RequestIndex = 0;
 				if (HttpResponse->GetErrorCode() == EHttpErrorCode::None && HttpResponse->GetStatusCode() >= 200 && HttpResponse->GetStatusCode() <= 299)
 				{
@@ -813,7 +984,6 @@ public:
 						}
 
 						const TRequestWithStats<FCacheGetValueRequest>& RequestWithStats = Batch[RequestIndex++];
-						RequestWithStats.Stats.AddLatency(FMonotonicTimeSpan::FromSeconds(HttpResponse->GetStats().StartTransferTime));
 
 						FCbObjectView ResultObj = ResultField.AsObjectView();
 						TOptional<FValue> Value;
@@ -826,7 +996,8 @@ public:
 						{
 							FCbFieldView RawHashField = ResultObj["RawHash"];
 							FIoHash RawHash = RawHashField.AsHash();
-							if (const FCbAttachment* Attachment = Response.FindAttachment(RawHash))
+							const FCbAttachment* Attachment = EnumHasAnyFlags(RequestWithStats.Request.Policy, ECachePolicy::SkipData) ? nullptr : Response.FindAttachment(RawHash);
+							if (Attachment)
 							{
 								Value.Emplace(Attachment->AsCompressedBinary());
 							}
@@ -844,21 +1015,28 @@ public:
 					}
 					if (RequestIndex != Batch.Num())
 					{
-						UE_LOG(LogDerivedDataCache, Warning,
+						UE_LOG(LogDerivedDataCache, Display,
 							TEXT("%s: Invalid response received from GetCacheValues RPC: %d results expected, received %d from %s"),
 							*CacheStore.GetName(), Batch.Num(), RequestIndex, *WriteToString<256>(*HttpResponse));
 					}
 				}
-				else if (HttpResponse->GetStatusCode() != 404)
+				else if ((HttpResponse->GetErrorCode() != EHttpErrorCode::Canceled) && (HttpResponse->GetStatusCode() != 404))
 				{
-					UE_LOG(LogDerivedDataCache, Warning,
+					UE_LOG(LogDerivedDataCache, Display,
 						TEXT("%s: Error response received from GetCacheValues RPC: from %s"),
 						*CacheStore.GetName(), *WriteToString<256>(*HttpResponse));
 				}
 
 				for (const TRequestWithStats<FCacheGetValueRequest>& RequestWithStats : Batch.RightChop(RequestIndex))
 				{
-					OnMiss(RequestWithStats);
+					if (HttpResponse->GetErrorCode() == EHttpErrorCode::Canceled)
+					{
+						OnCanceled(RequestWithStats);
+					}
+					else
+					{
+						OnMiss(RequestWithStats);
+					}
 				}
 			};
 
@@ -889,6 +1067,14 @@ private:
 		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Error));
 	};
 
+	void OnCanceled(const TRequestWithStats<FCacheGetValueRequest>& RequestWithStats)
+	{
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache miss with canceled request for '%s' from '%s'"),
+			*CacheStore.GetName(), *WriteToString<96>(RequestWithStats.Request.Key), *RequestWithStats.Request.Name);
+		RequestWithStats.EndRequest(CacheStore, EStatus::Canceled);
+		OnComplete(RequestWithStats.Request.MakeResponse(EStatus::Canceled));
+	};
+
 	FZenCacheStore& CacheStore;
 	IRequestOwner& Owner;
 	TArray<TRequestWithStats<FCacheGetValueRequest>, TInlineAllocator<1>> Requests;
@@ -917,10 +1103,24 @@ public:
 	virtual ~FGetChunksOp()
 	{
 		TRACE_COUNTER_SUBTRACT(ZenDDC_ChunkRequestCountInFlight, int64(Requests.Num()));
+		FMonotonicTimeSpan AverageMainThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.MainThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageOtherThreadTime = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.OtherThreadTime.ToSeconds() / Requests.Num());
+		FMonotonicTimeSpan AverageLatency = FMonotonicTimeSpan::FromSeconds(Requests[0].Stats.Latency.ToSeconds() / Requests.Num());
+
+		for (TRequestWithStats<FCacheGetChunkRequest>& Request : Requests)
+		{
+			Request.Stats.MainThreadTime = AverageMainThreadTime;
+			Request.Stats.OtherThreadTime = AverageOtherThreadTime;
+			Request.Stats.Latency = AverageLatency;
+		}
+		CacheStore.ConditionalEvaluatePerformance();
+		CacheStore.ConditionalUpdateStorageSize();
 	}
 
 	void IssueRequests()
 	{
+		FRequestTimer RequestTimer(Requests[0].Stats);
+
 		FRequestBarrier Barrier(Owner);
 		ForEachBatch(CacheStore.CacheChunksBatchSize, Requests.Num(),
 			[this](int32 BatchFirst, int32 BatchLast)
@@ -932,11 +1132,13 @@ public:
 			{
 				BatchRequest << ANSITEXTVIEW("Method") << "GetCacheChunks";
 				BatchRequest.AddInteger(ANSITEXTVIEW("Accept"), Zen::Http::kCbPkgMagic);
+				uint32_t AcceptFlags = static_cast<uint32_t>(Zen::Http::RpcAcceptOptions::kAllowPartialCacheChunks);
 				if (CacheStore.bIsLocalConnection)
 				{
-					BatchRequest.AddInteger(ANSITEXTVIEW("AcceptFlags"), static_cast<uint32_t>(Zen::Http::RpcAcceptOptions::kAllowLocalReferences));
+					AcceptFlags |= static_cast<uint32_t>(Zen::Http::RpcAcceptOptions::kAllowLocalReferences);
 					BatchRequest.AddInteger(ANSITEXTVIEW("Pid"), FPlatformProcess::GetCurrentProcessId());
 				}
+				BatchRequest.AddInteger(ANSITEXTVIEW("AcceptFlags"), AcceptFlags);
 
 				BatchRequest.BeginObject(ANSITEXTVIEW("Params"));
 				{
@@ -984,6 +1186,10 @@ public:
 			FGetChunksOp* OriginalOp = this;
 			auto OnRpcComplete = [this, OpRef = TRefCountPtr<FGetChunksOp>(OriginalOp), Batch](THttpUniquePtr<IHttpResponse>& HttpResponse, FCbPackage& Response)
 			{
+				FRequestTimer RequestTimer(Requests[0].Stats);
+				const FHttpResponseStats& ResponseStats = HttpResponse->GetStats();
+				Requests[0].Stats.Latency = FMonotonicTimeSpan::FromSeconds(ResponseStats.StartTransferTime - ResponseStats.ConnectTime);
+
 				int32 RequestIndex = 0;
 				if (HttpResponse->GetErrorCode() == EHttpErrorCode::None && HttpResponse->GetStatusCode() >= 200 && HttpResponse->GetStatusCode() <= 299)
 				{
@@ -997,7 +1203,6 @@ public:
 							continue;
 						}
 						const TRequestWithStats<FCacheGetChunkRequest>& RequestWithStats = Batch[RequestIndex++];
-						RequestWithStats.Stats.AddLatency(FMonotonicTimeSpan::FromSeconds(HttpResponse->GetStats().StartTransferTime));
 
 						FIoHash RawHash;
 						bool Succeeded = false;
@@ -1016,18 +1221,9 @@ public:
 							RawHash = HashView.AsHash();
 							if (!HashView.HasError())
 							{
-								if (const FCbAttachment* Attachment = Response.FindAttachment(HashView.AsHash()))
-								{
-									FCompressedBuffer CompressedBuffer = Attachment->AsCompressedBinary();
-									if (CompressedBuffer)
-									{
-										TRACE_COUNTER_ADD(ZenDDC_BytesReceived, CompressedBuffer.GetCompressedSize());
-										RequestedBytes = FCompressedBufferReader(CompressedBuffer).Decompress(Request.RawOffset, Request.RawSize);
-										RawSize = RequestedBytes.GetSize();
-										Succeeded = true;
-									}
-								}
-								else
+								FIoHash AttachmentHash = RawHash;
+								const FCbAttachment* Attachment = nullptr;
+								if (EnumHasAnyFlags(RequestWithStats.Request.Policy, ECachePolicy::SkipData))
 								{
 									FCbFieldView RawSizeField = ResultObject[ANSITEXTVIEW("RawSize")];
 									uint64 TotalSize = RawSizeField.AsUInt64();
@@ -1037,21 +1233,50 @@ public:
 										RawSize = FMath::Min(Request.RawSize, TotalSize - FMath::Min(Request.RawOffset, TotalSize));
 									}
 								}
+								else
+								{
+									FCbFieldView FragmentOffsetField = ResultObject[ANSITEXTVIEW("FragmentOffset")];
+									uint64 FragmentOffset = FragmentOffsetField.AsUInt64();
+
+									FCbFieldView FragmentHashView = ResultObject[ANSITEXTVIEW("FragmentHash")];
+									if (FragmentHashView.IsHash())
+									{
+										FIoHash FragmentHash = FragmentHashView.AsHash();
+										AttachmentHash = FragmentHash;
+									}
+
+									if (Attachment = Response.FindAttachment(AttachmentHash); Attachment != nullptr)
+									{
+										if (FCompressedBuffer CompressedBuffer = Attachment->AsCompressedBinary(); CompressedBuffer)
+										{
+											RequestedBytes = FCompressedBufferReader(CompressedBuffer).Decompress(Request.RawOffset - FragmentOffset, Request.RawSize);
+											RawSize = RequestedBytes.GetSize();
+											Succeeded = true;
+										}
+									}
+								}
 							}
 						}
 						Succeeded ? OnHit(RequestWithStats, MoveTemp(RawHash), RawSize, MoveTemp(RequestedBytes)) : OnMiss(RequestWithStats);
 					}
 				}
-				else if (HttpResponse->GetStatusCode() != 404)
+				else if ((HttpResponse->GetErrorCode() != EHttpErrorCode::Canceled) && (HttpResponse->GetStatusCode() != 404))
 				{
-					UE_LOG(LogDerivedDataCache, Warning,
+					UE_LOG(LogDerivedDataCache, Display,
 						TEXT("%s: Error response received from GetChunks RPC: from %s"),
 						*CacheStore.GetName(), *WriteToString<256>(*HttpResponse));
 				}
 
 				for (const TRequestWithStats<FCacheGetChunkRequest>& RequestWithStats : Batch.RightChop(RequestIndex))
 				{
-					OnMiss(RequestWithStats);
+					if (HttpResponse->GetErrorCode() == EHttpErrorCode::Canceled)
+					{
+						OnCanceled(RequestWithStats);
+					}
+					else
+					{
+						OnMiss(RequestWithStats);
+					}
 				}
 			};
 			CacheStore.EnqueueAsyncRpc(Owner, BatchRequest.Save().AsObject(), MoveTemp(OnRpcComplete));
@@ -1062,11 +1287,11 @@ private:
 	void OnHit(const TRequestWithStats<FCacheGetChunkRequest>& RequestWithStats, FIoHash&& RawHash, uint64 RawSize, FSharedBuffer&& RequestedBytes)
 	{
 		const FCacheGetChunkRequest& Request = RequestWithStats.Request;
-		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: CacheChunk hit for '%s' from '%s'"),
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache hit for '%s' from '%s'"),
 			*CacheStore.GetName(), *WriteToString<96>(Request.Key, '/', Request.Id), *Request.Name);
 
 		// This is a rough estimate of physical read size until Zen communicates stats with each response.
-		RequestWithStats.Stats.LogicalReadSize += RequestedBytes.GetSize();
+		RequestWithStats.Stats.LogicalReadSize += RawSize;
 		RequestWithStats.Stats.PhysicalReadSize += RequestedBytes.GetSize();
 		RequestWithStats.EndRequest(CacheStore, EStatus::Ok);
 
@@ -1079,16 +1304,161 @@ private:
 	void OnMiss(const TRequestWithStats<FCacheGetChunkRequest>& RequestWithStats)
 	{
 		const FCacheGetChunkRequest& Request = RequestWithStats.Request;
-		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: CacheChunk miss with missing value '%s' for '%s' from '%s'"),
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache miss with missing value '%s' for '%s' from '%s'"),
 			*CacheStore.GetName(), *WriteToString<16>(Request.Id), *WriteToString<96>(Request.Key), *Request.Name);
 		RequestWithStats.EndRequest(CacheStore, EStatus::Error);
 		OnComplete(Request.MakeResponse(EStatus::Error));
+	};
+
+	void OnCanceled(const TRequestWithStats<FCacheGetChunkRequest>& RequestWithStats)
+	{
+		const FCacheGetChunkRequest& Request = RequestWithStats.Request;
+		UE_LOG(LogDerivedDataCache, Verbose, TEXT("%s: Cache miss with canceled request for '%s' from '%s'"),
+			*CacheStore.GetName(), *WriteToString<96>(Request.Key, '/', Request.Id), *Request.Name);
+		RequestWithStats.EndRequest(CacheStore, EStatus::Canceled);
+		OnComplete(Request.MakeResponse(EStatus::Canceled));
 	};
 
 	FZenCacheStore& CacheStore;
 	IRequestOwner& Owner;
 	TArray<TRequestWithStats<FCacheGetChunkRequest>, TInlineAllocator<1>> Requests;
 	FOnCacheGetChunkComplete OnComplete;
+};
+
+class FZenCacheStore::FHealthReceiver final : public IHttpReceiver
+{
+public:
+	FHealthReceiver(const FHealthReceiver&) = delete;
+	FHealthReceiver& operator=(const FHealthReceiver&) = delete;
+
+	explicit FHealthReceiver(EHealth& OutHealth, FString* OutResponseBody = nullptr, IHttpReceiver* InNext = nullptr)
+		: Health(OutHealth)
+		, ResponseBody(OutResponseBody)
+		, Next(InNext)
+	{
+		Health = EHealth::Unknown;
+	}
+
+private:
+	IHttpReceiver* OnCreate(IHttpResponse& Response) final
+	{
+		return &BodyReceiver;
+	}
+
+	IHttpReceiver* OnComplete(IHttpResponse& Response) final
+	{
+		FUtf8StringView ResponseStringView(reinterpret_cast<const UTF8CHAR*>(BodyArray.GetData()), IntCastChecked<int32>(BodyArray.Num()));
+		if (ResponseStringView == UTF8TEXTVIEW("OK!"))
+		{
+			Health = EHealth::Ok;
+		}
+		else
+		{
+			Health = EHealth::Error;
+		}
+
+		if (ResponseBody)
+		{
+			*ResponseBody = *WriteToString<64>(ResponseStringView);
+		}
+		return Next;
+	}
+
+private:
+	EHealth& Health;
+	FString* ResponseBody;
+	IHttpReceiver* Next;
+	TArray64<uint8> BodyArray;
+	FHttpByteArrayReceiver BodyReceiver{ BodyArray, this };
+};
+
+class FZenCacheStore::FAsyncHealthReceiver final : public FRequestBase, public IHttpReceiver
+{
+public:
+	FAsyncHealthReceiver(const FAsyncHealthReceiver&) = delete;
+	FAsyncHealthReceiver& operator=(const FAsyncHealthReceiver&) = delete;
+
+	FAsyncHealthReceiver(
+		THttpUniquePtr<IHttpRequest>&& InRequest,
+		IRequestOwner* InOwner,
+		Zen::FZenServiceInstance& InZenServiceInstance,
+		FOnHealthComplete&& InOnHealthComplete)
+		: Request(MoveTemp(InRequest))
+		, Owner(InOwner)
+		, ZenServiceInstance(InZenServiceInstance)
+		, BaseReceiver(Health, nullptr, this)
+		, OnHealthComplete(MoveTemp(InOnHealthComplete))
+	{
+		Request->SendAsync(this, Response);
+	}
+
+private:
+	// IRequest Interface
+
+	void SetPriority(EPriority Priority) final {}
+	void Cancel() final { Monitor->Cancel(); }
+	void Wait() final { Monitor->Wait(); }
+
+	// IHttpReceiver Interface
+
+	IHttpReceiver* OnCreate(IHttpResponse& LocalResponse) final
+	{
+		Monitor = LocalResponse.GetMonitor();
+		Owner->Begin(this);
+		return &BaseReceiver;
+	}
+
+	bool ShouldRecoverAndRetry(IHttpResponse& LocalResponse)
+	{
+		if (!ZenServiceInstance.IsServiceRunningLocally())
+		{
+			return false;
+		}
+
+		if ((LocalResponse.GetErrorCode() == EHttpErrorCode::Connect) ||
+			(LocalResponse.GetErrorCode() == EHttpErrorCode::TlsConnect) ||
+			(LocalResponse.GetErrorCode() == EHttpErrorCode::TimedOut))
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+	IHttpReceiver* OnComplete(IHttpResponse& LocalResponse) final
+	{
+		Owner->End(this, [Self = this, &LocalResponse]
+		{
+			if (Self->ShouldRecoverAndRetry(LocalResponse) && Self->ZenServiceInstance.TryRecovery())
+			{
+				new FAsyncHealthReceiver(MoveTemp(Self->Request), Self->Owner, Self->ZenServiceInstance, MoveTemp(Self->OnHealthComplete));
+				return;
+			}
+
+			Self->Request.Reset();
+			if (Self->OnHealthComplete)
+			{
+				// Launch a task for the completion function since it can execute arbitrary code.
+				Self->Owner->LaunchTask(TEXT("ZenHealthComplete"), [Self = TRefCountPtr(Self)]
+				{
+					// Ensuring that the OnRpcComplete method is destroyed by the time we exit this method by moving it to a local scope variable
+					FOnHealthComplete LocalOnComplete = MoveTemp(Self->OnHealthComplete);
+					LocalOnComplete(Self->Response, Self->Health);
+				});
+			}
+		});
+		return nullptr;
+	}
+
+private:
+	THttpUniquePtr<IHttpRequest> Request;
+	THttpUniquePtr<IHttpResponse> Response;
+	TRefCountPtr<IHttpResponseMonitor> Monitor;
+	IRequestOwner* Owner;
+	Zen::FZenServiceInstance& ZenServiceInstance;
+	EHealth Health;
+	FHealthReceiver BaseReceiver;
+	FOnHealthComplete OnHealthComplete;
 };
 
 class FZenCacheStore::FCbPackageReceiver final : public IHttpReceiver
@@ -1200,7 +1570,9 @@ private:
 				// Launch a task for the completion function since it can execute arbitrary code.
 				Self->Owner->LaunchTask(TEXT("ZenHttpComplete"), [Self = TRefCountPtr(Self)]
 				{
-					Self->OnRpcComplete(Self->Response, Self->Package);
+					// Ensuring that the OnRpcComplete method is destroyed by the time we exit this method by moving it to a local scope variable
+					FOnRpcComplete LocalOnComplete = MoveTemp(Self->OnRpcComplete);
+					LocalOnComplete(Self->Response, Self->Package);
 				});
 			}
 		});
@@ -1219,96 +1591,187 @@ private:
 };
 
 FZenCacheStore::FZenCacheStore(
-	const TCHAR* InServiceUrl,
-	const TCHAR* InNamespace,
-	const TCHAR* InName,
-	const TCHAR* InConfig,
+	const FZenCacheStoreParams& InParams,
 	ICacheStoreOwner* InStoreOwner)
-	: ZenService(InServiceUrl)
+	: ZenService(*InParams.Host)
 	, StoreOwner(InStoreOwner)
+	, PerformanceEvaluationRequestOwner(EPriority::Low)
 {
-	Initialize(InNamespace, InName, InConfig);
+	Initialize(InParams);
 }
 
 FZenCacheStore::FZenCacheStore(
 	UE::Zen::FServiceSettings&& InSettings,
-	const TCHAR* InNamespace,
-	const TCHAR* InName,
-	const TCHAR* InConfig,
+	const FZenCacheStoreParams& InParams,
 	ICacheStoreOwner* InStoreOwner)
 	: ZenService(MoveTemp(InSettings))
 	, StoreOwner(InStoreOwner)
+	, PerformanceEvaluationRequestOwner(EPriority::Low)
 {
-	Initialize(InNamespace, InName, InConfig);
+	Initialize(InParams);
 }
 
 FZenCacheStore::~FZenCacheStore()
 {
+	PerformanceEvaluationRequestOwner.Cancel();
+	if (PerformanceEvaluationThread.IsSet())
+	{
+		PerformanceEvaluationThreadShutdownEvent.Notify();
+		PerformanceEvaluationThread->Join();
+		PerformanceEvaluationThread.Reset();
+		PerformanceEvaluationThreadShutdownEvent.Reset();
+	}
+
 	if (StoreStats)
 	{
 		StoreOwner->DestroyStats(StoreStats);
 	}
 }
 
-void FZenCacheStore::Initialize(
-	const TCHAR* InNamespace,
-	const TCHAR* InName,
-	const TCHAR* InConfig)
+void FZenCacheStore::Initialize(const FZenCacheStoreParams& Params)
 {
-	Namespace = InNamespace;
-	if (IsServiceReady())
+	NodeName = Params.Name;
+	LastPerformanceEvaluationTicks.store(FDateTime::UtcNow().GetTicks(), std::memory_order_relaxed);
+	LastStorageSizeUpdateTicks.store(FDateTime::UtcNow().GetTicks(), std::memory_order_relaxed);
+	Namespace = Params.Namespace;
+
+	RpcUri << ZenService.GetInstance().GetURL() << ANSITEXTVIEW("/z$/$rpc");
+
+	const uint32 MaxConnections = uint32(FMath::Clamp(FPlatformMisc::NumberOfCoresIncludingHyperthreads(), 8, 64));
+	constexpr uint32 RequestPoolSize = 128;
+	constexpr uint32 RequestPoolOverflowSize = 128;
+
+	FHttpConnectionPoolParams ConnectionPoolParams;
+	ConnectionPoolParams.MaxConnections = MaxConnections;
+	ConnectionPoolParams.MinConnections = MaxConnections;
+	ConnectionPool = IHttpManager::Get().CreateConnectionPool(ConnectionPoolParams);
+
+	bool bReady = false;
 	{
-		RpcUri << ZenService.GetInstance().GetURL() << ANSITEXTVIEW("/z$/$rpc");
+		// Issue a synchronous health/ready request with a limited idle time
+		FHttpClientParams ReadinessClientParams;
+		ReadinessClientParams.Version = EHttpVersion::V2;
+		ReadinessClientParams.MaxRequests = 1;
+		ReadinessClientParams.MinRequests = 1;
+		ReadinessClientParams.LowSpeedLimit = 1;
+		ReadinessClientParams.LowSpeedTime = 5; // 5 second idle time limit for the initial readiness check
+		ReadinessClientParams.bBypassProxy = Params.bBypassProxy;
+		THttpUniquePtr<IHttpClient> ReadinessClient = ConnectionPool->CreateClient(ReadinessClientParams);
+		THttpUniquePtr<IHttpRequest> ReadinessRequest = ReadinessClient->TryCreateRequest({});
+		TAnsiStringBuilder<256> StatusUri;
+		StatusUri << ZenService.GetInstance().GetURL() << ANSITEXTVIEW("/health/ready");
+		ReadinessRequest->SetUri(StatusUri);
+		ReadinessRequest->SetMethod(EHttpMethod::Get);
+		ReadinessRequest->AddAcceptType(EHttpMediaType::Text);
+		EHealth Health = EHealth::Unknown;
+		FString ResponseString;
+		FHealthReceiver HealthReceiver(Health, &ResponseString);
+		THttpUniquePtr<IHttpResponse> ReadinessResponse;
+		ReadinessRequest->Send(&HealthReceiver, ReadinessResponse);
+		bReady = Health == EHealth::Ok; // -V547
 
-		const uint32 MaxConnections = uint32(FMath::Clamp(FPlatformMisc::NumberOfCoresIncludingHyperthreads(), 8, 64));
-		constexpr uint32 RequestPoolSize = 128;
-		constexpr uint32 RequestPoolOverflowSize = 128;
-
-		FHttpConnectionPoolParams ConnectionPoolParams;
-		ConnectionPoolParams.MaxConnections = MaxConnections;
-		ConnectionPoolParams.MinConnections = MaxConnections;
-		ConnectionPool = IHttpManager::Get().CreateConnectionPool(ConnectionPoolParams);
-
-		FHttpClientParams ClientParams;
-		ClientParams.Version = EHttpVersion::V2;
-		ClientParams.MaxRequests = RequestPoolSize + RequestPoolOverflowSize;
-		ClientParams.MinRequests = RequestPoolSize;
-		RequestQueue = FHttpRequestQueue(*ConnectionPool, ClientParams);
-
-		bIsUsable = true;
-		bIsLocalConnection = ZenService.GetInstance().IsServiceRunningLocally();
-
-		if (StoreOwner)
+		if (ReadinessResponse->GetErrorCode() == EHttpErrorCode::None &&
+			(ReadinessResponse->GetStatusCode() >= 200 && ReadinessResponse->GetStatusCode() <= 299))
 		{
-			bool bReadOnly = false;
-			FParse::Bool(InConfig, TEXT("ReadOnly="), bReadOnly);
-
-			// Default to locally launched service getting the Local cache store flag.  Can be overridden by explicit value in config.
-			bool bLocal = bIsLocalConnection;
-			FParse::Bool(InConfig, TEXT("Local="), bLocal);
-
-			// Default to non-locally launched service getting the Remote cache store flag.  Can be overridden by explicit value in config.
-			// In the future this could be extended to allow the Remote flag by default (even for locally launched instances) if they have upstreams configured.
-			bool bRemote = !bIsLocalConnection;
-			FParse::Bool(InConfig, TEXT("Remote="), bRemote);
-
-			ECacheStoreFlags Flags = ECacheStoreFlags::Query;
-			Flags |= bReadOnly ? ECacheStoreFlags::None : ECacheStoreFlags::Store;
-			Flags |= bLocal ? ECacheStoreFlags::Local : ECacheStoreFlags::None;
-			Flags |= bRemote ? ECacheStoreFlags::Remote : ECacheStoreFlags::None;
-
-			StoreOwner->Add(this, Flags);
-			StoreStats = StoreOwner->CreateStats(this, Flags, TEXT("Zen"), InName, ZenService.GetInstance().GetURL());
+			UE_LOG(LogDerivedDataCache, Display,
+				TEXT("%s: Using ZenServer HTTP service at %s with namespace %s status: %s."),
+				*GetName(), ZenService.GetInstance().GetURL(), *Namespace, *ResponseString);
 		}
-
-		// Issue a request for stats as it will be fetched asynchronously and issuing now makes them available sooner for future callers.
-		Zen::FZenStats ZenStats;
-		ZenService.GetInstance().GetStats(ZenStats);
+		else
+		{
+			if (ZenService.GetInstance().IsServiceRunningLocally())
+			{
+				UE_LOG(LogDerivedDataCache, Warning,
+					TEXT("%s: Unable to reach ZenServer HTTP service at %s with namespace %s. Status: %d . Response: %s"),
+					*GetName(), ZenService.GetInstance().GetURL(), *Namespace, ReadinessResponse->GetStatusCode(),
+					*ResponseString);
+			}
+			else
+			{
+				UE_LOG(LogDerivedDataCache, Display,
+					TEXT("%s: Unable to reach ZenServer HTTP service at %s with namespace %s. Status: %d . Response: %s"),
+					*GetName(), ZenService.GetInstance().GetURL(), *Namespace, ReadinessResponse->GetStatusCode(),
+					*ResponseString);
+			}
+		}
 	}
 
-	GConfig->GetInt(TEXT("Zen"), TEXT("BatchPutMaxBytes"), BatchPutMaxBytes, GEngineIni);
-	GConfig->GetInt(TEXT("Zen"), TEXT("CacheRecordBatchSize"), CacheRecordBatchSize, GEngineIni);
-	GConfig->GetInt(TEXT("Zen"), TEXT("CacheChunksBatchSize"), CacheChunksBatchSize, GEngineIni);
+	FHttpClientParams ClientParams;
+	ClientParams.MaxRequests = RequestPoolSize + RequestPoolOverflowSize;
+	ClientParams.MinRequests = RequestPoolSize;
+	ClientParams.LowSpeedLimit = 1;
+	ClientParams.LowSpeedTime = 25;
+	ClientParams.bBypassProxy = Params.bBypassProxy;
+	RequestQueue = FHttpRequestQueue(*ConnectionPool, ClientParams);
+
+	bIsLocalConnection = ZenService.GetInstance().IsServiceRunningLocally() || ZenService.GetInstance().GetServiceSettings().IsAutoLaunch();
+	bIsUsable = true;
+
+
+	if (StoreOwner)
+	{
+		// Default to locally launched service getting the Local cache store flag.  Can be overridden by explicit value in config.
+		bool bLocal = Params.bLocal.Get(bIsLocalConnection);
+
+		// Default to non-locally launched service getting the Remote cache store flag.  Can be overridden by explicit value in config.
+		// In the future this could be extended to allow the Remote flag by default (even for locally launched instances) if they have upstreams configured.
+		bool bRemote = Params.bRemote.Get(!bIsLocalConnection);
+
+		DeactivateAtMs = Params.DeactivateAtMs;
+
+		ECacheStoreFlags Flags = ECacheStoreFlags::Query;
+		Flags |= Params.bReadOnly ? ECacheStoreFlags::None : ECacheStoreFlags::Store;
+		Flags |= bLocal ? ECacheStoreFlags::Local : ECacheStoreFlags::None;
+		Flags |= bRemote ? ECacheStoreFlags::Remote : ECacheStoreFlags::None;
+
+		OperationalFlags = Flags;
+
+		if (!bReady)
+		{
+			Flags = OperationalFlags & ~(ECacheStoreFlags::Store | ECacheStoreFlags::Query);
+			if (bIsLocalConnection)
+			{
+				UE_LOG(LogDerivedDataCache, Display,
+					TEXT("%s: Readiness check failed. "
+						"It will be deactivated until responsiveness improves. "
+						"If this is consistent, consider disabling this cache store through "
+						"the use of the '-ddc=NoZenLocalFallback' or '-ddc=InstalledNoZenLocalFallback' "
+						"commandline arguments."),
+					*GetName());
+			}
+			else
+			{
+				UE_LOG(LogDerivedDataCache, Display,
+					TEXT("%s: Readiness check failed. "
+						"It will be deactivated until responsiveness improves. "
+						"If this is consistent, consider disabling this cache store through "
+						"environment variables or other configuration."),
+					*GetName());
+			}
+			bDeactivatedForPerformance.store(true, std::memory_order_relaxed);
+		}
+
+		StoreOwner->Add(this, Flags);
+		TStringBuilder<256> Path(InPlace, ZenService.GetInstance().GetPath(), TEXTVIEW(" ("), Namespace, TEXTVIEW(")"));
+		StoreStats = StoreOwner->CreateStats(this, Flags, TEXT("Zen"), *Params.Name, Path);
+		bTryEvaluatePerformance = !GIsBuildMachine && (StoreStats != nullptr) && (DeactivateAtMs > 0.0f);
+
+		StoreStats->SetAttribute(TEXTVIEW("Namespace"), Namespace);
+
+		if (!bReady)
+		{
+			UpdateStatus();
+			ActivatePerformanceEvaluationThread();
+		}
+	}
+
+	// Issue a request for stats as it will be fetched asynchronously and issuing now makes them available sooner for future callers.
+	Zen::FZenCacheStats ZenStats;
+	ZenService.GetInstance().GetCacheStats(ZenStats);
+
+	MaxBatchPutKB = Params.MaxBatchPutKB;
+	CacheRecordBatchSize = Params.RecordBatchSize;
+	CacheChunksBatchSize = Params.ChunksBatchSize;
 }
 
 bool FZenCacheStore::IsServiceReady()
@@ -1347,6 +1810,163 @@ void FZenCacheStore::EnqueueAsyncRpc(IRequestOwner& Owner, const FCbPackage& Req
 	Request->SetContentType(EHttpMediaType::CbPackage);
 	Request->SetBody(SaveRpcPackage(RequestPackage));
 	new FAsyncCbPackageReceiver(MoveTemp(Request), &Owner, ZenService.GetInstance(), MoveTemp(OnComplete));
+}
+
+void FZenCacheStore::ActivatePerformanceEvaluationThread()
+{
+	if (!PerformanceEvaluationThread.IsSet())
+	{
+		PerformanceEvaluationThread.Emplace(TEXT("ZenCacheStore Performance Evaluation"), [this]
+		{
+			while (!PerformanceEvaluationThreadShutdownEvent.WaitFor(FMonotonicTimeSpan::FromSeconds(30.0)))
+			{
+				IRequestOwner& Owner(PerformanceEvaluationRequestOwner);
+				FRequestBarrier Barrier(Owner);
+				THttpUniquePtr<IHttpRequest> Request = RequestQueue.CreateRequest({});
+				TAnsiStringBuilder<256> StatusUri;
+				StatusUri << ZenService.GetInstance().GetURL() << ANSITEXTVIEW("/health/ready");
+				Request->SetUri(StatusUri);
+				Request->SetMethod(EHttpMethod::Get);
+				Request->AddAcceptType(EHttpMediaType::Text);
+				new FAsyncHealthReceiver(MoveTemp(Request), &Owner, ZenService.GetInstance(), [this, StartTime = FMonotonicTimePoint::Now()](THttpUniquePtr<IHttpResponse>& HttpResponse, EHealth Health)
+					{
+						if (Health != EHealth::Ok)
+						{
+							// Any non-ok health means we hold off any possibility of reactivating and we don't add the lagency to the stats
+							// as the failure may be client-side and instantaneous which will create an artificially low latency measurement.
+							return;
+						}
+
+						double LatencySec = (HttpResponse->GetStats().StartTransferTime - HttpResponse->GetStats().ConnectTime);
+						StoreStats->AddLatency(StartTime, FMonotonicTimePoint::Now(), FMonotonicTimeSpan::FromSeconds(LatencySec));
+						if (!bTryEvaluatePerformance || (StoreStats->GetAverageLatency() * 1000 <= DeactivateAtMs))
+						{
+							if (PerformanceEvaluationThread.IsSet())
+							{
+								PerformanceEvaluationThreadShutdownEvent.Notify();
+							}
+
+							if (bDeactivatedForPerformance.load(std::memory_order_relaxed))
+							{
+								StoreOwner->SetFlags(this, OperationalFlags);
+								UE_LOG(LogDerivedDataCache, Display,
+									TEXT("%s: Performance has improved and meets minimum performance criteria. "
+										"It will be reactivated now."),
+									*GetName());
+								bDeactivatedForPerformance.store(false, std::memory_order_relaxed);
+								UpdateStatus();
+							}
+						}
+					});
+			}
+		});
+	}
+}
+
+void FZenCacheStore::ConditionalUpdateStorageSize()
+{
+	if (!StoreStats)
+	{
+		return;
+	}
+		
+	// Look for an opportunity to measure and evaluate if storage size is acceptable.
+	int64 LocalStorageSizeUpdateTicks = LastStorageSizeUpdateTicks.load(std::memory_order_relaxed);
+	FTimespan TimespanSinceLastStorageSizeUpdate = FDateTime::UtcNow() - FDateTime(LocalStorageSizeUpdateTicks);
+
+	if (TimespanSinceLastStorageSizeUpdate < FTimespan::FromSeconds(30))
+	{
+		return;
+	}
+
+	if (!LastStorageSizeUpdateTicks.compare_exchange_strong(LocalStorageSizeUpdateTicks, FDateTime::UtcNow().GetTicks()))
+	{
+		return;
+	}
+
+	bool PhysicalSizeIsValid = false;
+	double PhysicalSize = 0.0;
+	Zen::FZenCacheStats ZenCacheStats;
+	if (ZenService.GetInstance().GetCacheStats(ZenCacheStats))
+	{
+		PhysicalSize += ZenCacheStats.General.Size.Disk + static_cast<double>(ZenCacheStats.CID.Size.Total);
+		PhysicalSizeIsValid = true;
+	}
+	Zen::FZenProjectStats ZenProjectStats;
+	if (ZenService.GetInstance().GetProjectStats(ZenProjectStats))
+	{
+		PhysicalSize += ZenProjectStats.General.Size.Disk;
+		PhysicalSizeIsValid = true;
+	}
+	if (PhysicalSizeIsValid)
+	{
+		StoreStats->SetTotalPhysicalSize(static_cast<uint64>(PhysicalSize));
+	}
+}
+
+void FZenCacheStore::ConditionalEvaluatePerformance()
+{
+	if (!bTryEvaluatePerformance)
+	{
+		return;
+	}
+
+	// Look for an opportunity to measure and evaluate if performance is acceptable.
+	int64 LocalLastPerfEvaluationTicks = LastPerformanceEvaluationTicks.load(std::memory_order_relaxed);
+	FTimespan TimespanSinceLastPerfEval = FDateTime::UtcNow() - FDateTime(LocalLastPerfEvaluationTicks);
+
+	if (TimespanSinceLastPerfEval < FTimespan::FromSeconds(30))
+	{
+		return;
+	}
+
+	if (!LastPerformanceEvaluationTicks.compare_exchange_strong(LocalLastPerfEvaluationTicks, FDateTime::UtcNow().GetTicks()))
+	{
+		return;
+	}
+
+	// We won the race and get to do the performance check
+
+	if (PerformanceEvaluationThread.IsSet() && PerformanceEvaluationThreadShutdownEvent.IsNotified())
+	{
+		// Join and cleanup old thread before we consider whether we need to start a new one
+		PerformanceEvaluationThread->Join();
+		PerformanceEvaluationThread.Reset();
+		PerformanceEvaluationThreadShutdownEvent.Reset();
+	}
+
+	if (StoreStats->GetAverageLatency() * 1000 > DeactivateAtMs)
+	{
+		if (!bDeactivatedForPerformance.load(std::memory_order_relaxed))
+		{
+			StoreOwner->SetFlags(this, OperationalFlags & ~(ECacheStoreFlags::Store | ECacheStoreFlags::Query));
+			UE_LOG(LogDerivedDataCache, Display,
+				TEXT("%s: Performance does not meet minimum criteria. "
+					"It will be deactivated until performance measurements improve. "
+					"If this is consistent, consider disabling this cache store through "
+					"environment variables or other configuration."),
+				*GetName());
+			bDeactivatedForPerformance.store(true, std::memory_order_relaxed);
+			UpdateStatus();
+		}
+
+		ActivatePerformanceEvaluationThread();
+	}
+}
+
+void FZenCacheStore::UpdateStatus()
+{
+	if (StoreStats)
+	{
+		if (bDeactivatedForPerformance.load(std::memory_order_relaxed))
+		{
+			StoreStats->SetStatus(ECacheStoreStatusCode::Warning, NSLOCTEXT("DerivedDataCache", "DeactivatedForPerformanceOrReadiness", "Deactivated for performance or readiness"));
+		}
+		else
+		{
+			StoreStats->SetStatus(ECacheStoreStatusCode::None, {});
+		}
+	}
 }
 
 void FZenCacheStore::LegacyStats(FDerivedDataCacheStatsNode& OutNode)
@@ -1410,62 +2030,106 @@ void FZenCacheStore::GetChunks(
 	GetChunksOp->IssueRequests();
 }
 
-ILegacyCacheStore* CreateZenCacheStore(const TCHAR* NodeName, const TCHAR* Config, ICacheStoreOwner* Owner)
+void FZenCacheStoreParams::Parse(const TCHAR* NodeName, const TCHAR* Config)
 {
-	FString ServiceUrl;
-	FParse::Value(Config, TEXT("Host="), ServiceUrl);
+	Name = NodeName;
+
+	if (FString ServerId; FParse::Value(Config, TEXT("ServerID="), ServerId))
+	{
+		FString ServerEntry;
+		const TCHAR* ServerSection = TEXT("StorageServers");
+		if (GConfig->GetString(ServerSection, *ServerId, ServerEntry, GEngineIni))
+		{
+			Parse(NodeName, *ServerEntry);
+		}
+		else
+		{
+			UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Using ServerID=%s which was not found in [%s]"), NodeName, *ServerId, ServerSection);
+		}
+	}
+
+	FParse::Value(Config, TEXT("Host="), Host);
 
 	FString OverrideName;
 	if (FParse::Value(Config, TEXT("EnvHostOverride="), OverrideName))
 	{
-		FString ServiceUrlEnv = FPlatformMisc::GetEnvironmentVariable(*OverrideName);
-		if (!ServiceUrlEnv.IsEmpty())
+		FString HostEnv = FPlatformMisc::GetEnvironmentVariable(*OverrideName);
+		if (!HostEnv.IsEmpty())
 		{
-			ServiceUrl = ServiceUrlEnv;
-			UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Found environment override for Host %s=%s"), NodeName, *OverrideName, *ServiceUrl);
+			Host = HostEnv;
+			UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Found environment override for Host %s=%s"), NodeName, *OverrideName, *Host);
 		}
 	}
 
 	if (FParse::Value(Config, TEXT("CommandLineHostOverride="), OverrideName))
 	{
-		if (FParse::Value(FCommandLine::Get(), *(OverrideName + TEXT("=")), ServiceUrl))
+		if (FParse::Value(FCommandLine::Get(), *(OverrideName + TEXT("=")), Host))
 		{
-			UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Found command line override for Host %s=%s"), NodeName, *OverrideName, *ServiceUrl);
+			UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Found command line override for Host %s=%s"), NodeName, *OverrideName, *Host);
 		}
 	}
 
-	if (ServiceUrl == TEXT("None"))
+	FParse::Value(Config, TEXT("Namespace="), Namespace);
+	FParse::Value(Config, TEXT("StructuredNamespace="), Namespace);
+
+	FParse::Bool(Config, TEXT("ReadOnly="), bReadOnly);
+
+	// Sandbox and flush configuration for use in Cold/Warm type use cases
+	FParse::Value(Config, TEXT("Sandbox="), Sandbox);
+	FParse::Bool(Config, TEXT("Flush="), bFlush);
+	FParse::Bool(Config, TEXT("BypassProxy="), bBypassProxy);
+
+	// Performance deactivation
+	FParse::Value(Config, TEXT("DeactivateAt="), DeactivateAtMs);
+
+	// Explicit local and remote configuration
+	if (bool bExplicitLocal = false; FParse::Bool(Config, TEXT("Local="), bExplicitLocal))
 	{
-		UE_LOG(LogDerivedDataCache, Log, TEXT("Disabling %s data cache - host set to 'None'."), NodeName);
+		bLocal = bExplicitLocal;
+	}
+
+	if (bool bExplicitRemote = false; FParse::Bool(Config, TEXT("Remote="), bExplicitRemote))
+	{
+		bRemote = bExplicitRemote;
+	}
+
+	// Request batch fracturing configuration
+	FParse::Value(Config, TEXT("MaxBatchPutKB="), MaxBatchPutKB);
+	FParse::Value(Config, TEXT("RecordBatchSize="), RecordBatchSize);
+	FParse::Value(Config, TEXT("ChunksBatchSize="), ChunksBatchSize);
+}
+
+ILegacyCacheStore* CreateZenCacheStore(const TCHAR* NodeName, const TCHAR* Config, ICacheStoreOwner* Owner)
+{
+	FZenCacheStoreParams Params;
+	Params.Parse(NodeName, Config);
+
+	if (Params.Host == TEXTVIEW("None"))
+	{
+		UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Disabled because Host is set to 'None'"), NodeName);
 		return nullptr;
 	}
 
-	FString Namespace;
-	if (!FParse::Value(Config, TEXT("StructuredNamespace="), Namespace) && !FParse::Value(Config, TEXT("Namespace="), Namespace))
+	if (Params.Namespace.IsEmpty())
 	{
-		Namespace = FApp::GetProjectName();
-		UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Missing required parameter 'Namespace', falling back to '%s'"), NodeName, *Namespace);
+		Params.Namespace = FApp::GetProjectName();
+		UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Missing required parameter 'Namespace', falling back to '%s'"), NodeName, *Params.Namespace);
 	}
 
-	FString Sandbox;
-	FParse::Value(Config, TEXT("Sandbox="), Sandbox);
-	bool bHasSandbox = !Sandbox.IsEmpty();
+	bool bHasSandbox = !Params.Sandbox.IsEmpty();
 	bool bUseLocalDataCachePathOverrides = !bHasSandbox;
 
 	FString CachePathOverride;
-	if (bUseLocalDataCachePathOverrides && UE::Zen::Private::IsLocalAutoLaunched(ServiceUrl) && UE::Zen::Private::GetLocalDataCachePathOverride(CachePathOverride))
+	if (bUseLocalDataCachePathOverrides && UE::Zen::Private::IsLocalAutoLaunched(Params.Host) && UE::Zen::Private::GetLocalDataCachePathOverride(CachePathOverride))
 	{
 		if (CachePathOverride == TEXT("None"))
 		{
-			UE_LOG(LogDerivedDataCache, Log, TEXT("Disabling %s data cache - path set to 'None'."), NodeName);
+			UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Disabled because path is set to 'None'"), NodeName);
 			return nullptr;
 		}
 	}
 
 	TUniquePtr<FZenCacheStore> Backend;
-
-	bool bFlush = false;
-	FParse::Bool(Config, TEXT("Flush="), bFlush);
 
 	if (bHasSandbox)
 	{
@@ -1474,7 +2138,7 @@ ILegacyCacheStore* CreateZenCacheStore(const TCHAR* NodeName, const TCHAR* Confi
 
 		if (!DefaultServiceSettings.IsAutoLaunch())
 		{
-			UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Attempting to use a sandbox when there is no default autolaunch configured to interhit settings from.  Cache will be disabled."), NodeName);
+			UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Attempting to use a sandbox when there is no default autolaunch configured to inherit settings from.  Cache will be disabled."), NodeName);
 			return nullptr;
 		}
 
@@ -1490,16 +2154,15 @@ ILegacyCacheStore* CreateZenCacheStore(const TCHAR* NodeName, const TCHAR* Confi
 
 		FPaths::NormalizeDirectoryName(AutoLaunchSettings.DataPath);
 		AutoLaunchSettings.DataPath += TEXT("_");
-		AutoLaunchSettings.DataPath += Sandbox;
+		AutoLaunchSettings.DataPath += Params.Sandbox;
 		AutoLaunchSettings.bIsDefaultSharedRunContext = false;
 
 		// The unique local instances will always limit process lifetime for now to avoid accumulating many of them
 		AutoLaunchSettings.bLimitProcessLifetime = true;
 
 		// Flush the cache if requested.
-		uint32 MultiprocessId = 0;
-		FParse::Value(FCommandLine::Get(), TEXT("-MultiprocessId="), MultiprocessId);
-		if (bFlush && (MultiprocessId == 0))
+		uint32 MultiprocessId = UE::GetMultiprocessId();
+		if (Params.bFlush && (MultiprocessId == 0))
 		{
 			bool bStopped = true;
 			if (UE::Zen::IsLocalServiceRunning(*AutoLaunchSettings.DataPath))
@@ -1517,16 +2180,23 @@ ILegacyCacheStore* CreateZenCacheStore(const TCHAR* NodeName, const TCHAR* Confi
 			}
 		}
 
-		Backend = MakeUnique<FZenCacheStore>(MoveTemp(ServiceSettings), *Namespace, NodeName, Config, Owner);
+		Backend = MakeUnique<FZenCacheStore>(MoveTemp(ServiceSettings), Params, Owner);
 	}
 	else
 	{
-		Backend = MakeUnique<FZenCacheStore>(*ServiceUrl, *Namespace, NodeName, Config, Owner);
+		Backend = MakeUnique<FZenCacheStore>(Params, Owner);
 	}
 
 	if (!Backend->IsUsable())
 	{
-		UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Failed to contact the service (%s), will not use it."), NodeName, *Backend->GetName());
+		if (Backend->IsLocalConnection())
+		{
+			UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Failed to contact the service (%s), will not use it."), NodeName, *Backend->GetName());
+		}
+		else
+		{
+			UE_LOG(LogDerivedDataCache, Display, TEXT("%s: Failed to contact the service (%s), will not use it."), NodeName, *Backend->GetName());
+		}
 		Backend.Reset();
 		return nullptr;
 	}

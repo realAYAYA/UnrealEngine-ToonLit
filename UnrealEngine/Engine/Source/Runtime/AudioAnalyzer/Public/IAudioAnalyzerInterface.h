@@ -46,6 +46,17 @@ namespace Audio
 		virtual ~IAnalyzerResult() {};
 	};
 
+	/** IAnalyzerControls
+	 *
+	 * This interface defines the controls we want to link to 
+	 * the analyzer in order to do real-time parameter changes
+	 */
+	class IAnalyzerControls
+	{
+	public:
+		virtual ~IAnalyzerControls() {};
+	};
+
 	// An audio analyzer worker
 	class IAnalyzerWorker
 	{
@@ -53,6 +64,9 @@ namespace Audio
 		virtual ~IAnalyzerWorker() {};
 
 		virtual void Analyze(TArrayView<const float> InAudio, IAnalyzerResult* OutResult) = 0;
+
+		virtual void SetControls(TSharedPtr<IAnalyzerControls> InAnalyzerControls) {}
+		virtual void ClearControls() {}
 	};
 
 	// Audio analyzer factory. Primarily used for creating a worker.

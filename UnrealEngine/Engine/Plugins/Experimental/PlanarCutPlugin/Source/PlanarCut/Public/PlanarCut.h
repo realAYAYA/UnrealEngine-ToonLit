@@ -537,6 +537,54 @@ void PLANARCUT_API ConvertToMeshDescription(
 	TFunction<int32(int32, bool)> RemapMaterialIDs = nullptr
 );
 
+/**
+ * Convert chosen Geometry groups inside a GeometryCollection to a single Mesh Description.
+ *
+ * @param OutputMesh				Mesh to be filled with the geometry collection geometry
+ * @param TransformOut				Transform taking output mesh geometry to local space of geometry collection
+ * @param bCenterPivot				Whether to center the geometry at the origin
+ * @param Collection				The collection to be converted
+ * @param TransformIndices			Which transform groups inside the collection to convert
+ * @param RemapMaterialIDs			Optional function to remap (MaterialID, bIsInternal) -> NewMaterialID
+ */
+void PLANARCUT_API ConvertToMeshDescription(
+	FMeshDescription& OutputMesh,
+	FTransform& TransformOut,
+	bool bCenterPivot,
+	FGeometryCollection& Collection,
+	const TManagedArray<FTransform3f>& BoneTransforms,
+	const TArrayView<const int32>& TransformIndices,
+	TFunction<int32(int32, bool)> RemapMaterialIDs = nullptr
+);
+
+/**
+ * Convert chosen Geometry groups inside a GeometryCollection to a single Dynamic Mesh.
+ *
+ * @param OutputMesh				Mesh to be filled with the geometry collection geometry
+ * @param TransformOut				Transform taking output mesh geometry to local space of geometry collection. This will be Identity unless bCenterPivot is true.
+ * @param bCenterPivot				Whether to center the geometry at the origin
+ * @param Collection				The collection to be converted
+ * @param bWeldEdges				Whether to weld edges on conversion
+ * @param BoneTransforms			Transforms for each bone in the geometry collection
+ * @param bUseRelativeTransforms	Whether the BoneTransforms are relative to each bone's parent, or in a shared space (e.g., Collection.Transform is relative, UGeometryCollectionComponent's component space transforms are not)
+ * @param TransformIndices			Which transform groups inside the collection to convert
+ * @param RemapMaterialIDs			Optional function to remap (MaterialID, bIsInternal) -> NewMaterialID
+ * @param bAllowInvisible			Allow mesh to include triangles that are not marked 'visible' (typically, pre-fracture geometry stored for potential history/LOD usage)
+ * @param bSetPolygroupPerBone		Enable PolyGroups on the OutputMesh and set one group per geometry
+ */
+void PLANARCUT_API ConvertGeometryCollectionToDynamicMesh(
+	UE::Geometry::FDynamicMesh3& OutputMesh,
+	FTransform& TransformOut,
+	bool bCenterPivot,
+	const FGeometryCollection& Collection,
+	bool bWeldEdges,
+	TArrayView<const FTransform3f> BoneTransforms,
+	bool bUseRelativeTransforms,
+	TArrayView<const int32> TransformIndices,
+	TFunction<int32(int32, bool)> RemapMaterialIDs = nullptr,
+	bool bAllowInvisible = false,
+	bool bSetPolygroupPerBone = true
+);
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"

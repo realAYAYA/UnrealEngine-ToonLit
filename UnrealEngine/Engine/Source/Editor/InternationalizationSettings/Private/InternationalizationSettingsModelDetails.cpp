@@ -114,25 +114,11 @@ namespace
 			{
 				if (SettingsModel.IsValid())
 				{
-					FInternationalization& I18N = FInternationalization::Get();
-					const bool bSetLanguageAndLocale = I18N.GetCurrentLanguage() == I18N.GetCurrentLocale();
-
 					SettingsModel->SetEditorLanguage(SelectedCulture.IsValid() ? SelectedCulture->GetName() : TEXT(""));
-					if (bSetLanguageAndLocale)
-					{
-						SettingsModel->SetEditorLocale(SelectedCulture.IsValid() ? SelectedCulture->GetName() : TEXT(""));
-					}
-
 					if (SelectedCulture.IsValid())
 					{
-						if (bSetLanguageAndLocale)
-						{
-							I18N.SetCurrentLanguageAndLocale(SelectedCulture->GetName());
-						}
-						else
-						{
-							I18N.SetCurrentLanguage(SelectedCulture->GetName());
-						}
+						FInternationalization& I18N = FInternationalization::Get();
+						I18N.SetCurrentLanguage(SelectedCulture->GetName());
 
 						// Find all Schemas and force a visualization cache clear
 						for (TObjectIterator<UClass> ClassIt; ClassIt; ++ClassIt)

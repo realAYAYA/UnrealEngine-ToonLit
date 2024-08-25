@@ -66,7 +66,7 @@ bool FSkyPassMeshProcessor::Process(
 	FUniformLightMapPolicy NoLightmapPolicy(LMP_NO_LIGHTMAP);
 	const FVertexFactory* VertexFactory = MeshBatch.VertexFactory;
 
-	if (Scene->GetShadingPath()==EShadingPath::Deferred)
+	if (GetFeatureLevelShadingPath(FeatureLevel) == EShadingPath::Deferred)
 	{
 		TMeshProcessorShaders<
 			TBasePassVertexShaderPolicyParamType<LightMapPolicyType>,
@@ -133,7 +133,7 @@ bool FSkyPassMeshProcessor::Process(
 			false, CF_Always, SO_Keep, SO_Keep, SO_Keep,
 			0x00, STENCIL_MOBILE_SKY_MASK>::GetRHI());
 		
-		PassDrawRenderState.SetStencilRef(1); 
+		PassDrawRenderState.SetStencilRef(STENCIL_MOBILE_SKY_MASK); 
 		
 		TMobileBasePassShaderElementData<LightMapPolicyType> ShaderElementData(nullptr, false);
 		ShaderElementData.InitializeMeshMaterialData(ViewIfDynamicMeshCommand, PrimitiveSceneProxy, MeshBatch, StaticMeshId, false);
@@ -167,7 +167,7 @@ void FSkyPassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig& S
 	}
 
 	// Only do deferred path for now
-	if (FScene::GetShadingPath(FeatureLevel) != EShadingPath::Deferred)
+	if (GetFeatureLevelShadingPath(FeatureLevel) != EShadingPath::Deferred)
 	{
 		return;
 	}
@@ -191,7 +191,7 @@ void FSkyPassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig& S
 		FeatureLevel,
 		bRenderSkylight,
 		false,
-		GBL_Default,
+		GBL_Default, 
 		&SkyPassShaders.VertexShader,
 		&SkyPassShaders.PixelShader
 		))
@@ -201,8 +201,9 @@ void FSkyPassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig& S
 	
 	FGraphicsPipelineRenderTargetsInfo RenderTargetsInfo;
 	SetupGBufferRenderTargetInfo(SceneTexturesConfig, RenderTargetsInfo, true /*bSetupDepthStencil*/);
-
-	AddGraphicsPipelineStateInitializer(
+	
+	FBasePassMeshProcessor::AddBasePassGraphicsPipelineStateInitializer(
+		FeatureLevel,
 		VertexFactoryData,
 		Material,
 		PassDrawRenderState,
@@ -211,9 +212,46 @@ void FSkyPassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig& S
 		MeshFillMode,
 		MeshCullMode,
 		(EPrimitiveType)PreCacheParams.PrimitiveType,
-		EMeshPassFeatures::Default,
-		true /*bRequired*/,
+		true /*bPrecacheAlphaColorChannel*/,
+		PSOCollectorIndex,
 		PSOInitializers);
+
+	// Also generate with depth write which is used during CaptureSkyMeshReflection
+	{
+		const FExclusiveDepthStencil::Type SceneBasePassDepthStencilAccess = FScene::GetDefaultBasePassDepthStencilAccess(FeatureLevel);
+		FMeshPassProcessorRenderState SkyCaptureDrawRenderState;
+		FExclusiveDepthStencil::Type BasePassDepthStencilAccess_Sky = FExclusiveDepthStencil::Type(SceneBasePassDepthStencilAccess | FExclusiveDepthStencil::DepthWrite);
+		SetupBasePassState(BasePassDepthStencilAccess_Sky, false, SkyCaptureDrawRenderState);
+
+		// Also change render target format
+		FRDGTextureDesc SkyCaptureRenderTargetDesc = FSkyPassMeshProcessor::GetCaptureFrameSkyEnvMapTextureDesc(1, 1);
+
+		FGraphicsPipelineRenderTargetsInfo SkyCaptureRenderTargetsInfo;
+		SkyCaptureRenderTargetsInfo.NumSamples = 1;
+		AddRenderTargetInfo(SkyCaptureRenderTargetDesc.Format, SkyCaptureRenderTargetDesc.Flags, SkyCaptureRenderTargetsInfo);
+		SetupDepthStencilInfo(PF_DepthStencil, SceneTexturesConfig.DepthCreateFlags, ERenderTargetLoadAction::ELoad,
+			ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthWrite_StencilWrite, SkyCaptureRenderTargetsInfo);
+
+		AddGraphicsPipelineStateInitializer(
+			VertexFactoryData,
+			Material,
+			SkyCaptureDrawRenderState,
+			SkyCaptureRenderTargetsInfo,
+			SkyPassShaders,
+			MeshFillMode,
+			MeshCullMode,
+			(EPrimitiveType)PreCacheParams.PrimitiveType,
+			EMeshPassFeatures::Default,
+			true /*bRequired*/,
+			PSOInitializers);
+	}
+}
+
+FRDGTextureDesc FSkyPassMeshProcessor::GetCaptureFrameSkyEnvMapTextureDesc(uint32 CubeWidth, uint32 CubeMipCount)
+{
+	return FRDGTextureDesc::CreateCube(CubeWidth,
+		PF_FloatR11G11B10, FClearValueBinding::Black, TexCreate_TargetArraySlicesIndependently |
+		TexCreate_ShaderResource | TexCreate_UAV | TexCreate_RenderTargetable, CubeMipCount);
 }
 
 FMeshPassProcessor* CreateSkyPassProcessor(ERHIFeatureLevel::Type FeatureLevel, const FScene* Scene, const FSceneView* InViewIfDynamicMeshCommand, FMeshPassDrawListContext* InDrawListContext)

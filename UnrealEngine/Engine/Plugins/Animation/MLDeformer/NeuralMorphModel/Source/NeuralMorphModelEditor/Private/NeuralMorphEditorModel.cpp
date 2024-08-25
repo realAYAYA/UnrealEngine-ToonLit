@@ -7,6 +7,7 @@
 #include "NeuralMorphInputInfo.h"
 #include "NeuralMorphTrainingModel.h"
 #include "NeuralMorphModelVizSettings.h"
+#include "NeuralMorphEditorProjectSettings.h"
 #include "MLDeformerMorphModelVizSettings.h"
 #include "MLDeformerEditorToolkit.h"
 #include "MLDeformerEditorActor.h"
@@ -88,17 +89,6 @@ namespace UE::NeuralMorphModel
 	{
 		return SNew(SNeuralMorphInputWidget)
 			.EditorModel(this);
-	}
-
-	bool FNeuralMorphEditorModel::IsTrained() const
-	{
-		UNeuralMorphNetwork* MorphNetwork = GetNeuralMorphModel()->GetNeuralMorphNetwork();
-		if (MorphNetwork != nullptr && MorphNetwork->GetMainMLP() != nullptr)
-		{
-			return true;
-		}
-
-		return false;
 	}
 
 	void FNeuralMorphEditorModel::Init(const InitSettings& Settings)
@@ -298,7 +288,6 @@ namespace UE::NeuralMorphModel
 		const FReferenceSkeleton& RefSkel = SkeletalMesh->GetRefSkeleton();
 
 		// Apply the bones to the mask buffer.
-		const TArray<int32> VirtualParentTable = BuildVirtualParentTable(RefSkel, GetEditorInputInfo()->GetBoneNames());
 		for (const FName MaskBoneName : MaskInfo.BoneNames)
 		{
 			const int32 MaskBoneIndex = RefSkel.FindBoneIndex(MaskBoneName);
@@ -311,23 +300,6 @@ namespace UE::NeuralMorphModel
 				UE_LOG(LogNeuralMorphModel, Warning, TEXT("Mask contains a bone named '%s', which cannot be found in the ref skeleton of skeletal mesh '%s'."),
 					*MaskBoneName.ToString(),
 					*SkeletalMesh->GetName());
-			}
-
-			// Add required bones
-			TArray<int32> RequiredBones;
-			const int32 SkeletonBoneIndex = RefSkel.FindBoneIndex(MaskBoneName);
-			if (SkeletonBoneIndex != INDEX_NONE)
-			{
-				AddRequiredBones(RefSkel, SkeletonBoneIndex, VirtualParentTable, RequiredBones);
-			}
-			for (const int32 RequiredBoneIndex: RequiredBones)
-			{
-				check(RequiredBoneIndex != INDEX_NONE);
-				const FName RequiredBoneName = RefSkel.GetBoneName(RequiredBoneIndex);
-				if (!MaskInfo.BoneNames.Contains(RequiredBoneName))
-				{
-					ApplyBoneToMask(RequiredBoneIndex, ItemMaskBuffer);
-				}
 			}
 		}
 	}
@@ -486,6 +458,37 @@ namespace UE::NeuralMorphModel
 		GetNeuralMorphModel()->BoneGroupMaskInfos.Empty();
 	}
 
+	void FNeuralMorphEditorModel::AddTwistBones(const FReferenceSkeleton& RefSkel, TArray<int32>& SkelBoneIndices)
+	{
+		check(UNeuralMorphEditorProjectSettings::Get());
+
+		// Get the twist substring from the per project configuration.
+		// If we have an empty string, just skip the whole twist bone handling.
+		const FString& TwistSubString = UNeuralMorphEditorProjectSettings::Get()->TwistBoneFilter;
+		if (TwistSubString.IsEmpty())
+		{
+			return;
+		}
+
+		// Add child bones with "twist" in their name.
+		TArray<int32> TwistBones;
+		for (const int32 AddedBoneIndex : SkelBoneIndices)
+		{
+			for (int32 Index = 0; Index < RefSkel.GetNum(); ++Index)
+			{
+				if (RefSkel.GetParentIndex(Index) == AddedBoneIndex &&
+					RefSkel.GetBoneName(Index).ToString().Contains(TwistSubString))
+				{
+					TwistBones.AddUnique(Index);
+				}
+			}
+		}
+		for (const int32 TwistBoneIndex : TwistBones)
+		{
+			SkelBoneIndices.AddUnique(TwistBoneIndex);
+		}
+	}
+
 	void FNeuralMorphEditorModel::GenerateBoneMaskInfo(int32 InputInfoBoneIndex, int32 HierarchyDepth)
 	{
 		UNeuralMorphModel* NeuralMorphModel = GetNeuralMorphModel();
@@ -493,7 +496,6 @@ namespace UE::NeuralMorphModel
 		UNeuralMorphInputInfo* NeuralMorphInputInfo = Cast<UNeuralMorphInputInfo>(GetEditorInputInfo());
 		const FReferenceSkeleton& RefSkel = SkeletalMesh->GetRefSkeleton();
 		const TArray<FName>& BoneNames = NeuralMorphInputInfo->GetBoneNames();
-		const TArray<int32> VirtualParentTable = BuildVirtualParentTable(RefSkel, BoneNames);
 		const int32 NumBones = NeuralMorphInputInfo->GetNumBones();
 
 		// Make sure we have a valid bone name.
@@ -513,8 +515,9 @@ namespace UE::NeuralMorphModel
 
 		// Build the list of bones that are required for the mask.
 		TArray<int32> BonesAdded;
-		RecursiveAddBoneToMaskUpwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, VirtualParentTable, BonesAdded);
-		RecursiveAddBoneToMaskDownwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, VirtualParentTable, BonesAdded);
+		RecursiveAddBoneToMaskUpwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, BonesAdded);
+		RecursiveAddBoneToMaskDownwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, BonesAdded);
+		AddTwistBones(RefSkel, BonesAdded);
 
 		// Now that we know which bones we need, add them to the mask.
 		FNeuralMorphMaskInfo* MaskInfo = NeuralMorphModel->BoneMaskInfos.Find(BoneName);
@@ -537,7 +540,6 @@ namespace UE::NeuralMorphModel
 		UNeuralMorphInputInfo* NeuralMorphInputInfo = Cast<UNeuralMorphInputInfo>(GetEditorInputInfo());
 		const FReferenceSkeleton& RefSkel = SkeletalMesh->GetRefSkeleton();
 		const TArray<FName>& BoneNames = NeuralMorphInputInfo->GetBoneNames();
-		const TArray<int32> VirtualParentTable = BuildVirtualParentTable(RefSkel, BoneNames);
 
 		// For all bones.
 		TArray<int32> BonesAdded;
@@ -561,8 +563,9 @@ namespace UE::NeuralMorphModel
 			}
 
 			// Add all bones up and down the chain.
-			RecursiveAddBoneToMaskUpwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, VirtualParentTable, BonesAdded);
-			RecursiveAddBoneToMaskDownwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, VirtualParentTable, BonesAdded);
+			RecursiveAddBoneToMaskUpwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, BonesAdded);
+			RecursiveAddBoneToMaskDownwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, BonesAdded);
+			AddTwistBones(RefSkel, BonesAdded);
 		}
 
 		// Now that we know which bones we need, add them to the mask.
@@ -672,6 +675,8 @@ namespace UE::NeuralMorphModel
 
 	void FNeuralMorphEditorModel::DebugDrawItemMask(FPrimitiveDrawInterface* PDI, int32 MaskItemIndex, const FVector& DrawOffset)
 	{
+		FMLDeformerSampler* Sampler = GetSamplerForActiveAnim();
+
 		UMLDeformerMorphModelVizSettings* VizSettings = Cast<UMLDeformerMorphModelVizSettings>(Model->GetVizSettings());
 		const int32 NumVerts = Model->GetNumBaseMeshVerts();
 		const TArray<FVector3f>& UnskinnedPositions = Sampler->GetUnskinnedVertexPositions();

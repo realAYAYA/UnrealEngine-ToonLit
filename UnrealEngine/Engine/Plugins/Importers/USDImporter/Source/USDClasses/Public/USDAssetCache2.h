@@ -4,7 +4,6 @@
 
 #include "Containers/LruCache.h"
 #include "Containers/Map.h"
-#include "CoreMinimal.h"
 #include "Serialization/BulkData.h"
 #include "UObject/ObjectKey.h"
 
@@ -13,7 +12,7 @@
 /**
  * Owns the assets generated and reused by USD Stages, allowing thread-safe retrieval/storage.
  */
-UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="USD Asset Cache", ScriptName="UsdAssetCache"))
+UCLASS(BlueprintType, Blueprintable, meta = (DisplayName = "USD Asset Cache", ScriptName = "UsdAssetCache"))
 class USDCLASSES_API UUsdAssetCache2 : public UObject
 {
 	GENERATED_BODY()
@@ -89,9 +88,10 @@ public:
 
 	/**
 	 * Removes an UObject referencer from a particular asset, returning true if the operation succeeded.
+	 * If no specific Referencer is provided, all referencers to Asset will be removed.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Caching", meta = (CallInEditor = "true"))
-	bool RemoveAssetReference(const UObject* Asset, const UObject* Referencer);
+	bool RemoveAssetReference(const UObject* Asset, const UObject* Referencer = nullptr);
 
 	/**
 	 * Removes the particular referencer to all assets tracked by the cache, if it was a referencer to any of them.
@@ -220,7 +220,7 @@ private:
 		TSet<FSoftObjectPath> Consumers;
 
 		// Transient stuff
-		ECacheStorageType CurrentStorageType = ECacheStorageType::None;  // Only used internally during RefreshStorage()
+		ECacheStorageType CurrentStorageType = ECacheStorageType::None;	   // Only used internally during RefreshStorage()
 		TSet<FObjectKey> Referencers;
 
 	public:
@@ -248,7 +248,7 @@ private:
 	// When this is set to something, we will track that it is referencing any new asset that we cache.
 	// See FUsdScopedAssetCacheReferencer just below
 	const UObject* CurrentScopedReferencer = nullptr;
-};
+};	  // UCLASS(BlueprintType)
 
 /**
  * The UUsdAssetCache2 can track all the UObjects that are referencing assets, so that it knows when to discard an

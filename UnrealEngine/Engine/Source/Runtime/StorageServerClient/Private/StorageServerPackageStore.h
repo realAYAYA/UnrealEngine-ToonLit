@@ -28,7 +28,8 @@ public:
 	{
 	}
 
-	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageIde, FPackageStoreEntry& OutPackageStoreEntry) override;
+	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageIde, FName PackageName,
+		FPackageStoreEntry& OutPackageStoreEntry) override;
 	
 	virtual bool GetPackageRedirectInfo(FPackageId PackageId, FName& OutSourcePackageName, FPackageId& OutRedirectedToPackageId) override
 	{

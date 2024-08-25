@@ -9,6 +9,7 @@ Texture2DMipDataProvider_DDC.h : Implementation of FTextureMipDataProvider using
 #include "CoreMinimal.h"
 #include "Memory/SharedBuffer.h"
 #include "Streaming/TextureMipDataProvider.h"
+#include "UObject/WeakObjectPtr.h"
 
 #if WITH_EDITORONLY_DATA
 #include "DerivedDataRequestOwner.h"
@@ -20,7 +21,7 @@ class FTexture2DMipDataProvider_DDC : public FTextureMipDataProvider
 {
 public:
 
-	FTexture2DMipDataProvider_DDC(const UTexture* Texture);
+	FTexture2DMipDataProvider_DDC(UTexture* Texture);
 	~FTexture2DMipDataProvider_DDC();
 
 
@@ -45,6 +46,7 @@ private:
 
 	TArray<FSharedBuffer, TInlineAllocator<MAX_TEXTURE_MIP_COUNT> > DDCBuffers;
 	UE::DerivedData::FRequestOwner DDCRequestOwner;
+	TWeakObjectPtr<UTexture> Texture;
 };
 
 #endif //WITH_EDITORONLY_DATA

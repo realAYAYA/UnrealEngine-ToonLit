@@ -91,8 +91,13 @@ static void ClearCachedWindowRects()
 	CachedWindowRect_EventThread = FAndroidCachedWindowRectParams();
 }
 
-static int32 GSurfaceViewWidth = -1;
-static int32 GSurfaceViewHeight = -1;
+static int32 GSurfaceViewX = 0;
+static int32 GSurfaceViewY = 0;
+int32 GSurfaceViewWidth = -1;
+int32 GSurfaceViewHeight = -1;
+
+void* GAndroidWindowOverride = nullptr;
+static ANativeWindow* GAcquiredWindow = nullptr;
 
 void* FAndroidWindow::NativeWindow = NULL;
 
@@ -138,17 +143,14 @@ void FAndroidWindow::SetOSWindowHandle(void* InWindow)
 
 //This function is declared in the Java-defined class, GameActivity.java: "public native void nativeSetObbInfo(String PackageName, int Version, int PatchVersion);"
 static bool GAndroidIsPortrait = false;
-static int GWindowOrientation = -1;
-static std::atomic<bool> GAndroidSafezoneRequiresUpdate = false;
+static EDeviceScreenOrientation GDeviceScreenOrientation = EDeviceScreenOrientation::Unknown;
 static int GAndroidDepthBufferPreference = 0;
 static FVector4 GAndroidPortraitSafezone = FVector4(-1.0f, -1.0f, -1.0f, -1.0f);
 static FVector4 GAndroidLandscapeSafezone = FVector4(-1.0f, -1.0f, -1.0f, -1.0f);
 #if USE_ANDROID_JNI
-JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetWindowInfo(JNIEnv* jenv, jobject thiz, jint orientation, jint DepthBufferPreference, jint PropagateAlpha)
+JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetWindowInfo(JNIEnv* jenv, jobject thiz, jboolean bIsPortrait, jint DepthBufferPreference, jint PropagateAlpha)
 {
 	ClearCachedWindowRects();
-	GWindowOrientation = orientation;
-	bool bIsPortrait = GWindowOrientation == EAndroidConfigurationOrientation::ORIENTATION_PORTRAIT;
 	GAndroidIsPortrait = bIsPortrait == JNI_TRUE;
 	GAndroidDepthBufferPreference = DepthBufferPreference;
 	GAndroidPropagateAlpha = PropagateAlpha;
@@ -158,9 +160,15 @@ JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetWindowInfo(JNIEn
 
 JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetSurfaceViewInfo(JNIEnv* jenv, jobject thiz, jint width, jint height)
 {
-	GSurfaceViewWidth = width;
-	GSurfaceViewHeight = height;
-	UE_LOG(LogAndroid, Log, TEXT("nativeSetSurfaceViewInfo width=%d and height=%d"), GSurfaceViewWidth, GSurfaceViewHeight);
+	STANDALONE_DEBUG_LOG( TEXT("nativeSetSurfaceViewInfo prev[width=%d, height=%d] new[width=%d, height=%d]"), GSurfaceViewWidth, GSurfaceViewHeight, width, height);
+
+	if (GAndroidWindowOverride != nullptr && (width != GSurfaceViewWidth || height != GSurfaceViewHeight))	
+	{
+		GSurfaceViewWidth = width;
+		GSurfaceViewHeight = height;
+		FAppEventManager::GetInstance()->EnqueueAppEvent(APP_EVENT_STATE_WINDOW_RESIZED, FAppEventData((ANativeWindow*)GAndroidWindowOverride));
+		STANDALONE_DEBUG_LOG(TEXT("nativeSetSurfaceViewInfo width=%d and height=%d"), GSurfaceViewWidth, GSurfaceViewHeight);
+	}
 }
 
 JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetSafezoneInfo(JNIEnv* jenv, jobject thiz, jboolean bIsPortrait, jfloat left, jfloat top, jfloat right, jfloat bottom)
@@ -179,10 +187,41 @@ JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetSafezoneInfo(JNI
 		GAndroidLandscapeSafezone.Z = right;
 		GAndroidLandscapeSafezone.W = bottom;
 	}
-
-	GAndroidSafezoneRequiresUpdate = true;
+#if USE_ANDROID_EVENTS
+	FAppEventManager::GetInstance()->EnqueueAppEvent(APP_EVENT_STATE_SAFE_ZONE_UPDATED);
+#endif
 	UE_LOG(LogAndroid, Log, TEXT("nativeSetSafezoneInfo bIsPortrait=%d, left=%f, top=%f, right=%f, bottom=%f"), bIsPortrait ? 1 : 0, left, top, right, bottom);
 }
+
+#if USE_ANDROID_STANDALONE
+
+JNI_METHOD void Java_com_epicgames_makeaar_GameActivityForMakeAAR_nativeSetSurfaceOverride(JNIEnv* jenv, jobject thiz, jobject surface, jint x, jint y)
+{
+	ANativeWindow* prev = (ANativeWindow*)GAndroidWindowOverride;
+	if (surface != 0)
+	{
+		GSurfaceViewX = x;
+		GSurfaceViewY = y;
+
+		GAndroidWindowOverride = (ANativeWindow*)ANativeWindow_fromSurface(jenv, surface);
+		UE_LOG(LogAndroid, Log, TEXT("nativeSetSurfaceOverride applied: prev to new %p -> %p, pos(%d, %d)"), prev, GAndroidWindowOverride, GSurfaceViewX, GSurfaceViewY);
+
+	}
+	else
+	{
+		GAndroidWindowOverride = nullptr;
+		
+		STANDALONE_DEBUG_LOG(TEXT("nativeSetSurfaceOverride(makeaar) setting to null"));
+	}
+
+	if (prev != nullptr)
+	{
+		ANativeWindow_release(prev);
+	}
+}
+
+#endif // USE_ANDROID_STANDALONE
+
 #endif
 
 bool FAndroidWindow::bAreCachedNativeDimensionsValid = false;
@@ -199,12 +238,6 @@ FVector4 FAndroidWindow::GetSafezone(bool bPortrait)
 	return bPortrait ? GAndroidPortraitSafezone : GAndroidLandscapeSafezone;
 }
 
-bool FAndroidWindow::SafezoneUpdated()
-{
-	bool bRequiresUpdate = true;
-	return GAndroidSafezoneRequiresUpdate.compare_exchange_weak(bRequiresUpdate, false);
-}
-
 int32 FAndroidWindow::GetDepthBufferPreference()
 {
 	return GAndroidDepthBufferPreference;
@@ -218,27 +251,104 @@ void FAndroidWindow::InvalidateCachedScreenRect()
 void FAndroidWindow::AcquireWindowRef(ANativeWindow* InWindow)
 {
 #if USE_ANDROID_JNI
+#if USE_ANDROID_STANDALONE
+	STANDALONE_DEBUG_LOG(TEXT("AcquireWindowRef USE_ANDROID_JNI is enabled: InWindow=%p, GAcquiredWindow=%p, GAndroidWindowOverride=%p"), InWindow, GAcquiredWindow, GAndroidWindowOverride);
+
+	if (InWindow == nullptr)
+	{
+		UE_LOG(LogAndroid, Log, TEXT("FAndroidWindow::AcquireWindowRef skipped because InWindow is null."));
+		return;
+	}
+
+	if (GAcquiredWindow == InWindow)
+	{
+		STANDALONE_DEBUG_LOG(TEXT("AcquireWindowRef USE_ANDROID_JNI is enabled: %p and GAcquiredWindow == InWindow"), InWindow);
+		return;
+	}
+
+	if (GAcquiredWindow != nullptr)
+	{
+		STANDALONE_DEBUG_LOG(TEXT("AcquireWindowRef USE_ANDROID_JNI is enabled: %p and GAcquiredWindow != nullptr"), InWindow);
+
+		ReleaseWindowRef(GAcquiredWindow);
+	}
+
+	check(GAcquiredWindow == NULL);
+	STANDALONE_DEBUG_LOG(TEXT("AcquireWindowRef USE_ANDROID_JNI is enabled: %p and ANativeWindow_acquire"), InWindow);
+
+	// Added logic to store the Acquired window and when calling ReleaseWindowRef, check if the window is the same and only release if it matches
+	// This logic is to deal with the fact Android lifecycles for activities can overlap. ideally we would create a context based container to manage this
+	// but for now this is a useful protection.
+	GAcquiredWindow = InWindow;
+	STANDALONE_DEBUG_LOG(TEXT("FAndroidWindow::AcquireWindowRef GAcquiredWindow=%p, GAndroidWindowOverride=%p"), GAcquiredWindow, GAndroidWindowOverride);
+#endif //USE_ANDROID_STANDALONE
+
 	ANativeWindow_acquire(InWindow);
+
 #endif
 }
 
 void FAndroidWindow::ReleaseWindowRef(ANativeWindow* InWindow)
 {
 #if USE_ANDROID_JNI
+#if USE_ANDROID_STANDALONE
+	if (GAcquiredWindow == nullptr && InWindow == nullptr)
+	{
+		STANDALONE_DEBUG_LOG(TEXT("ReleaseWindowRef skipped because GAcquiredWindow is null.  Window %p reference will not be released."), InWindow);
+		return;
+	}
+
+	ANativeWindow* ReleaseWindow = GAcquiredWindow;
+	if (InWindow == nullptr || GAcquiredWindow == InWindow)
+	{
+		InWindow = GAcquiredWindow;
+		GAcquiredWindow = nullptr;
+	}
+
+	STANDALONE_DEBUG_LOG(TEXT("ReleaseWindowRef using window: %p"), InWindow);
+#endif //USE_ANDROID_STANDALONE
 	ANativeWindow_release(InWindow);
 #endif
 }
 
- void FAndroidWindow::SetHardwareWindow_EventThread(void* InWindow)
+void FAndroidWindow::SetHardwareWindow_EventThread(void* InWindow)
 {
 #if USE_ANDROID_EVENTS
+	STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("SetHardwareWindow_EventThread(USE_ANDROID_EVENTS) -> InWindow(%p), GAndroidWindowOverride(%p), IsInAndroidEventThread()=%d"), InWindow, GAndroidWindowOverride, IsInAndroidEventThread());
+
 	check(IsInAndroidEventThread());
 #endif
-	NativeWindow = InWindow; //using raw native window handle for now. Could be changed to use AndroidWindow later if needed
+
+#if USE_ANDROID_STANDALONE
+	if (GAndroidWindowOverride && InWindow != GAndroidWindowOverride)
+	{
+		STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("SetHardwareWindow_EventThread(USE_ANDROID_STANDALONE) -> InWindow(%p) is not current GAndroidWindowOverride(%p)"), InWindow, GAndroidWindowOverride);
+	}
+#endif
+
+	//using raw native window handle for now. Could be changed to use AndroidWindow later if needed
+	NativeWindow = InWindow;
 }
 
 void* FAndroidWindow::GetHardwareWindow_EventThread()
 {
+#if USE_ANDROID_STANDALONE
+	void* result = GAndroidWindowOverride != nullptr ? GAndroidWindowOverride : NativeWindow;
+	if (result != nullptr)
+	{
+		if (GAndroidWindowOverride != NativeWindow)
+		{
+			STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("GetHardwareWindow_EventThread GAndroidWindowOverride=%p, NativeWindow=%p"), GAndroidWindowOverride, NativeWindow);
+		}
+		return result;
+	}
+	else
+	{
+		//STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("ERROR: GetHardwareWindow_EventThread has invalid window!!! GAndroidWindowOverride=%p, NativeWindow=%p"), GAndroidWindowOverride, NativeWindow);
+		return result;
+	}
+#endif
+
 	return NativeWindow;
 }
 
@@ -264,7 +374,7 @@ bool FAndroidWindow::WaitForWindowDimensions()
 // once set the dimensions are 'valid' and further changes are updated via FAppEventManager::Tick 
 void FAndroidWindow::SetWindowDimensions_EventThread(ANativeWindow* DimensionWindow)
 {
-	if(bAreCachedNativeDimensionsValid == false)
+	if (bAreCachedNativeDimensionsValid == false)
 	{
 #if USE_ANDROID_JNI
 		CachedNativeWindowWidth = ANativeWindow_getWidth(DimensionWindow);
@@ -287,6 +397,17 @@ void FAndroidWindow::EventManagerUpdateWindowDimensions(int32 Width, int32 Heigh
 {
 	check(bAreCachedNativeDimensionsValid);
 	check(Width >= 0 && Height >= 0);
+
+#if USE_ANDROID_STANDALONE
+	STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("FAndroidWindow::EventManagerUpdateWindowDimensions GAndroidWindowOverride=%p, Width=%d, Height=%d, GSurfaceViewWidth=%d, GSurfaceViewHeight=%d, CachedNativeWindowWidth=%d, CachedNativeWindowHeight=%d"),
+		GAndroidWindowOverride, Width, Height, GSurfaceViewWidth, GSurfaceViewHeight, CachedNativeWindowWidth, CachedNativeWindowHeight);
+
+	if (GAndroidWindowOverride && GSurfaceViewWidth > 0)
+	{
+		Width = GSurfaceViewWidth;
+		Height = GSurfaceViewHeight;
+	}
+#endif
 
 	bool bChanged = CachedNativeWindowWidth != Width || CachedNativeWindowHeight != Height;
 
@@ -427,7 +548,7 @@ FPlatformRect FAndroidWindow::GetScreenRect(bool bUseEventThreadWindow)
 	// too much of the following code needs JNI things, just assume override
 #if !USE_ANDROID_JNI
 
-	UE_LOG(LogAndroid, Fatal, TEXT("FAndroidWindow::CalculateSurfaceSize currently expedcts non-JNI platforms to override resolution"));
+	UE_LOG(LogAndroid, Fatal, TEXT("FAndroidWindow::CalculateSurfaceSize currently expects non-JNI platforms to override resolution"));
 	return FPlatformRect();
 #else
 
@@ -490,7 +611,7 @@ FPlatformRect FAndroidWindow::GetScreenRect(bool bUseEventThreadWindow)
 				FAndroidDisplayInfo Info = GetAndroidDisplayInfoFromDPITargets(CurrentParams.WindowDPI, CurrentParams.SceneMaxDesiredPixelCount, CurrentParams.SceneMinDPI);
 				ScreenWidth = Info.WindowDims.X;
 				ScreenHeight = Info.WindowDims.Y;
-				if(IsInGameThread())
+				if (IsInGameThread())
 				{
 					static IConsoleVariable* CVarSSP = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SecondaryScreenPercentage.GameViewport"));
 					CVarSSP->Set((float)Info.SceneScaleFactor * 100.0f);
@@ -535,6 +656,7 @@ void FAndroidWindow::CalculateSurfaceSize(int32_t& SurfaceWidth, int32_t& Surfac
 	UE_LOG(LogAndroid, Fatal, TEXT("FAndroidWindow::CalculateSurfaceSize currently expects non-JNI platforms to override resolution"));
 
 #else
+	STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("::CalculateSurfaceSize(USE_ANDROID_JNI) -> bUseEventThreadWindow=%d, GAndroidWindowOverride(%p), IsInAndroidEventThread()=%d"), bUseEventThreadWindow, GAndroidWindowOverride, IsInAndroidEventThread());
 
 	if (bUseEventThreadWindow)
 	{
@@ -564,19 +686,25 @@ void FAndroidWindow::CalculateSurfaceSize(int32_t& SurfaceWidth, int32_t& Surfac
 	// do not convert to a surface size that is larger than native resolution
 	// Mobile VR doesn't need buffer quantization as Unreal never renders directly to the buffer in VR mode. 
 	static const bool bIsMobileVRApp = AndroidThunkCpp_IsOculusMobileApplication();
+	
+#if USE_ANDROID_STANDALONE
+	const int DividableBy = 1;	// don't change size of external window 
+#else
 	const int DividableBy = bIsMobileVRApp ? 1 : 8;
+#endif
+
 	SurfaceWidth = (SurfaceWidth / DividableBy) * DividableBy;
 	SurfaceHeight = (SurfaceHeight / DividableBy) * DividableBy;
 #endif
 }
 
-bool FAndroidWindow::OnWindowOrientationChanged(int Orientation)
+bool FAndroidWindow::OnWindowOrientationChanged(EDeviceScreenOrientation DeviceScreenOrientation)
 {
-	if (GWindowOrientation != Orientation)
+	if (GDeviceScreenOrientation != DeviceScreenOrientation)
 	{
-		GWindowOrientation = Orientation;
-		bool bIsPortrait = GWindowOrientation == EAndroidConfigurationOrientation::ORIENTATION_PORTRAIT;
-		UE_LOG(LogAndroid, Log, TEXT("Window orientation changed: %s"), bIsPortrait ? TEXT("Portrait") : TEXT("Landscape"));
+		GDeviceScreenOrientation = DeviceScreenOrientation;
+		bool bIsPortrait = GDeviceScreenOrientation == EDeviceScreenOrientation::Portrait || GDeviceScreenOrientation == EDeviceScreenOrientation::PortraitUpsideDown;
+		UE_LOG(LogAndroid, Log, TEXT("Window orientation changed: %s, GDeviceScreenOrientation=%d"), bIsPortrait ? TEXT("Portrait") : TEXT("Landscape"), GDeviceScreenOrientation);
 		GAndroidIsPortrait = bIsPortrait;
 		return true;
 	}

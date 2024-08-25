@@ -18,17 +18,16 @@ namespace EpicGames.Horde.Storage.Nodes
 	/// Chunks are pushed into a tree hierarchy as data is appended to the root, with nodes of the tree also split along content-aware boundaries with <see cref="IoHash.NumBytes"/> granularity.
 	/// Once a chunk has been written to storage, it is treated as immutable.
 	/// </summary>
-	public abstract class ChunkedDataNode : Node
+	[BlobConverter(typeof(ChunkedDataNodeConverter))]
+	public abstract class ChunkedDataNode
 	{
 		/// <summary>
 		/// Copies the contents of this node and its children to the given output stream
 		/// </summary>
 		/// <param name="outputStream">The output stream to receive the data</param>
+		/// <param name="options">Options for controling serialization</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		public abstract Task CopyToStreamAsync(Stream outputStream, CancellationToken cancellationToken);
-
-		static readonly Guid s_leafNodeGuid = Node.GetNodeType<LeafChunkedDataNode>().Guid;
-		static readonly Guid s_interiorNodeGuid = Node.GetNodeType<InteriorChunkedDataNode>().Guid;
+		public abstract Task CopyToStreamAsync(Stream outputStream, BlobSerializerOptions? options = null, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Copy the contents of the node to the output stream without creating the intermediate FileNodes
@@ -36,16 +35,16 @@ namespace EpicGames.Horde.Storage.Nodes
 		/// <param name="handle">Handle to the data to read</param>
 		/// <param name="outputStream">The output stream to receive the data</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		public static async Task CopyToStreamAsync(BlobHandle handle, Stream outputStream, CancellationToken cancellationToken)
+		public static async Task CopyToStreamAsync(IBlobHandle handle, Stream outputStream, CancellationToken cancellationToken)
 		{
-			BlobData nodeData = await handle.ReadAsync(cancellationToken);
-			if (nodeData.Type.Guid == s_leafNodeGuid)
+			using BlobData blobData = await handle.ReadBlobDataAsync(cancellationToken);
+			if (blobData.Type.Guid == LeafChunkedDataNode.BlobTypeGuid)
 			{
-				await LeafChunkedDataNode.CopyToStreamAsync(nodeData, outputStream, cancellationToken);
+				await LeafChunkedDataNode.CopyToStreamAsync(blobData, outputStream, cancellationToken);
 			}
-			else if (nodeData.Type.Guid == s_interiorNodeGuid)
+			else if (blobData.Type.Guid == InteriorChunkedDataNode.BlobTypeGuid)
 			{
-				await InteriorChunkedDataNode.CopyToStreamAsync(nodeData, outputStream, cancellationToken);
+				await InteriorChunkedDataNode.CopyToStreamAsync(blobData, outputStream, cancellationToken);
 			}
 			else
 			{
@@ -56,42 +55,158 @@ namespace EpicGames.Horde.Storage.Nodes
 		/// <summary>
 		/// Extracts the contents of this node to a file
 		/// </summary>
+		/// <param name="handle">Handle to the data to read</param>
 		/// <param name="file">File to write with the contents of this node</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public async Task CopyToFileAsync(FileInfo file, CancellationToken cancellationToken)
+		public static async Task CopyToFileAsync(IBlobHandle handle, FileInfo file, CancellationToken cancellationToken)
 		{
-			if(file.Exists && (file.Attributes & FileAttributes.ReadOnly) != 0)
+			if (file.Exists && (file.Attributes & FileAttributes.ReadOnly) != 0)
 			{
 				file.Attributes &= ~FileAttributes.ReadOnly;
 			}
 			using (FileStream stream = file.Open(FileMode.Create, FileAccess.Write, FileShare.Read))
 			{
-				await CopyToStreamAsync(stream, cancellationToken);
+				await CopyToStreamAsync(handle, stream, cancellationToken);
 			}
 		}
 
 		/// <summary>
 		/// Serialize this node and its children into a byte array
 		/// </summary>
+		/// <param name="options">Options to control serialization</param>
 		/// <param name="cancellationToken"></param>
 		/// <returns>Array of data stored by the tree</returns>
-		public async Task<byte[]> ToByteArrayAsync(CancellationToken cancellationToken)
+		public async Task<byte[]> ToByteArrayAsync(BlobSerializerOptions? options = null, CancellationToken cancellationToken = default)
 		{
 			using (MemoryStream stream = new MemoryStream())
 			{
-				await CopyToStreamAsync(stream, cancellationToken);
+				await CopyToStreamAsync(stream, options, cancellationToken);
 				return stream.ToArray();
 			}
 		}
 	}
 
+	class ChunkedDataNodeConverter : BlobConverter<ChunkedDataNode>
+	{
+		/// <inheritdoc/>
+		public override ChunkedDataNode Read(IBlobReader reader, BlobSerializerOptions options)
+		{
+			if (reader.Type.Guid == LeafChunkedDataNode.BlobTypeGuid)
+			{
+				return options.GetConverter<LeafChunkedDataNode>().Read(reader, options);
+			}
+			else if (reader.Type.Guid == InteriorChunkedDataNode.BlobTypeGuid)
+			{
+				return options.GetConverter<InteriorChunkedDataNode>().Read(reader, options);
+			}
+			else
+			{
+				throw new NotSupportedException();
+			}
+		}
+
+		/// <inheritdoc/>
+		public override BlobType Write(IBlobWriter writer, ChunkedDataNode value, BlobSerializerOptions options)
+		{
+			if (value is LeafChunkedDataNode leafNode)
+			{
+				return options.GetConverter<LeafChunkedDataNode>().Write(writer, leafNode, options);
+			}
+			else if (value is InteriorChunkedDataNode interiorNode)
+			{
+				return options.GetConverter<InteriorChunkedDataNode>().Write(writer, interiorNode, options);
+			}
+			else
+			{
+				throw new NotSupportedException();
+			}
+		}
+	}
+
+	/// <summary>
+	/// Type of a chunked data node
+	/// </summary>
+	public enum ChunkedDataNodeType
+	{
+		/// <summary>
+		/// Unknown node type
+		/// </summary>
+		Unknown,
+
+		/// <summary>
+		/// Leaf node
+		/// </summary>
+		Leaf,
+
+		/// <summary>
+		/// An interior node
+		/// </summary>
+		Interior
+	}
+
+	/// <summary>
+	/// Reference to a chunked data node
+	/// </summary>
+	/// <param name="Type">Type of the referenced node</param>
+	/// <param name="Length">Length of the data stream within this node</param>
+	/// <param name="Handle">Handle to the target node</param>
+	public record class ChunkedDataNodeRef(ChunkedDataNodeType Type, long Length, IBlobRef<ChunkedDataNode> Handle)
+	{
+		/// <summary>
+		/// Leaf node constructor
+		/// </summary>
+		public ChunkedDataNodeRef(long length, IBlobRef<LeafChunkedDataNode> handle)
+			: this(ChunkedDataNodeType.Leaf, length, handle)
+		{
+		}
+
+		/// <summary>
+		/// Interior node constructor
+		/// </summary>
+		public ChunkedDataNodeRef(long length, IBlobRef<InteriorChunkedDataNode> handle)
+			: this(ChunkedDataNodeType.Interior, length, handle)
+		{
+		}
+
+		/// <summary>
+		/// Read the node which is the target of this ref
+		/// </summary>
+		public async ValueTask<ChunkedDataNode> ReadBlobAsync(BlobSerializerOptions? options = null, CancellationToken cancellationToken = default)
+		{
+			if (Type == ChunkedDataNodeType.Leaf)
+			{
+				return await Handle.ReadBlobAsync<LeafChunkedDataNode>(options, cancellationToken);
+			}
+			else if (Type == ChunkedDataNodeType.Interior)
+			{
+				return await Handle.ReadBlobAsync<InteriorChunkedDataNode>(options, cancellationToken);
+			}
+			else
+			{
+				throw new InvalidDataException();
+			}
+		}
+	}
+
+	/// <summary>
+	/// Stores the flat list of chunks produced from chunking a single data stream
+	/// </summary>
+	/// <param name="Hash">Hash of the data</param>
+	/// <param name="LeafHandles">Handles to the leaf chunks</param>
+	public record class LeafChunkedData(IoHash Hash, List<ChunkedDataNodeRef> LeafHandles);
+
 	/// <summary>
 	/// File node that contains a chunk of data
 	/// </summary>
-	[NodeType("{B27AFB68-9E20-4A4B-A4D8-788A4098D439}", 1)]
+	[BlobConverter(typeof(LeafChunkedDataNodeConverter))]
 	public sealed class LeafChunkedDataNode : ChunkedDataNode
 	{
+		/// <summary>
+		/// Guid for the blob type
+		/// </summary>
+		public static Guid BlobTypeGuid { get; } = new Guid("{B27AFB68-4A4B-9E20-8A78-D8A439D49840}");
+
 		/// <summary>
 		/// Data for this node
 		/// </summary>
@@ -100,27 +215,13 @@ namespace EpicGames.Horde.Storage.Nodes
 		/// <summary>
 		/// Create an empty leaf node
 		/// </summary>
-		public LeafChunkedDataNode()
+		public LeafChunkedDataNode(ReadOnlyMemory<byte> data)
 		{
-		}
-
-		/// <summary>
-		/// Create a leaf node from the given serialized data
-		/// </summary>
-		public LeafChunkedDataNode(NodeReader reader)
-		{
-			// Keep this code in sync with CopyToStreamAsync
-			Data = reader.ReadFixedLengthBytes(reader.Length);
+			Data = data;
 		}
 
 		/// <inheritdoc/>
-		public override void Serialize(NodeWriter writer)
-		{
-			writer.WriteFixedLengthBytes(Data.Span);
-		}
-
-		/// <inheritdoc/>
-		public override async Task CopyToStreamAsync(Stream outputStream, CancellationToken cancellationToken)
+		public override async Task CopyToStreamAsync(Stream outputStream, BlobSerializerOptions? options, CancellationToken cancellationToken)
 		{
 			await outputStream.WriteAsync(Data, cancellationToken);
 		}
@@ -140,71 +241,98 @@ namespace EpicGames.Horde.Storage.Nodes
 		/// <summary>
 		/// Creates nodes from the given file
 		/// </summary>
-		/// <param name="writer"></param>
-		/// <param name="file"></param>
-		/// <param name="options"></param>
-		/// <param name="cancellationToken"></param>
-		/// <returns></returns>
-		public static async Task<List<NodeRef<ChunkedDataNode>>> CreateFromFileAsync(IStorageWriter writer, FileReference file, LeafChunkedDataNodeOptions options, CancellationToken cancellationToken)
+		/// <param name="writer">Writer for output nodes</param>
+		/// <param name="file">File info</param>
+		/// <param name="options">Options for finding chunk boundaries</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		/// <returns>Hash of the full file data</returns>
+		public static async Task<LeafChunkedData> CreateFromFileAsync(IBlobWriter writer, FileReference file, LeafChunkedDataNodeOptions options, CancellationToken cancellationToken)
 		{
 			using (FileStream stream = FileReference.Open(file, FileMode.Open, FileAccess.Read, FileShare.Read))
 			{
-				return await CreateFromStreamAsync(writer, stream, options, cancellationToken);
+				return await CreateFromStreamAsync(writer, stream, options, null, cancellationToken);
 			}
 		}
 
 		/// <summary>
 		/// Creates nodes from the given file
 		/// </summary>
-		/// <param name="writer"></param>
-		/// <param name="file"></param>
-		/// <param name="options"></param>
-		/// <param name="cancellationToken"></param>
-		/// <returns></returns>
-		public static async Task<List<NodeRef<ChunkedDataNode>>> CreateFromFileAsync(IStorageWriter writer, FileInfo file, LeafChunkedDataNodeOptions options, CancellationToken cancellationToken)
+		/// <param name="writer">Writer for output nodes</param>
+		/// <param name="file">File info</param>
+		/// <param name="options">Options for finding chunk boundaries</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		/// <returns>Hash of the full file data</returns>
+		public static async Task<LeafChunkedData> CreateFromFileAsync(IBlobWriter writer, FileInfo file, LeafChunkedDataNodeOptions options, CancellationToken cancellationToken)
 		{
 			using (FileStream stream = file.Open(FileMode.Open, FileAccess.Read, FileShare.Read))
 			{
-				return await CreateFromStreamAsync(writer, stream, options, cancellationToken);
+				return await CreateFromStreamAsync(writer, stream, options, null, cancellationToken);
 			}
 		}
 
 		/// <summary>
 		/// Creates nodes from the given file
 		/// </summary>
-		/// <param name="writer"></param>
-		/// <param name="stream"></param>
-		/// <param name="options"></param>
-		/// <param name="cancellationToken"></param>
-		/// <returns></returns>
-		public static async Task<List<NodeRef<ChunkedDataNode>>> CreateFromStreamAsync(IStorageWriter writer, Stream stream, LeafChunkedDataNodeOptions options, CancellationToken cancellationToken)
+		/// <param name="writer">Writer for output nodes</param>
+		/// <param name="stream">Stream to read from</param>
+		/// <param name="options">Options for finding chunk boundaries</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		/// <returns>Hash of the full file data</returns>
+		public static Task<LeafChunkedData> CreateFromStreamAsync(IBlobWriter writer, Stream stream, LeafChunkedDataNodeOptions options, CancellationToken cancellationToken)
 		{
-			List<NodeRef<ChunkedDataNode>> handles = new List<NodeRef<ChunkedDataNode>>();
+			return CreateFromStreamAsync(writer, stream, options, null, cancellationToken);
+		}
 
+		/// <summary>
+		/// Creates nodes from the given file
+		/// </summary>
+		/// <param name="writer">Writer for output nodes</param>
+		/// <param name="stream">Stream to read from</param>
+		/// <param name="options">Options for finding chunk boundaries</param>
+		/// <param name="updateStats">Stats for the copy operation</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		/// <returns>Hash of the full file data</returns>
+		internal static async Task<LeafChunkedData> CreateFromStreamAsync(IBlobWriter writer, Stream stream, LeafChunkedDataNodeOptions options, UpdateStats? updateStats, CancellationToken cancellationToken)
+		{
+			using Blake3.Hasher hasher = Blake3.Hasher.New();
 			using IMemoryOwner<byte> readBuffer = MemoryPool<byte>.Shared.Rent(options.MaxSize);
 
+			List<ChunkedDataNodeRef> leafNodeRefs = new List<ChunkedDataNodeRef>();
+
 			int size = 0;
+			int sizeSinceProgressUpdate = 0;
 			for (; ; )
 			{
 				size += await stream.ReadGreedyAsync(readBuffer.Memory.Slice(size), cancellationToken);
-				if (size == 0)
+				if (size == 0 && leafNodeRefs.Count > 0)
 				{
 					break;
 				}
 
 				int nextLength = GetChunkLength(readBuffer.Memory.Span.Slice(0, size), options);
 
-				Memory<byte> outputBuffer = writer.GetOutputBuffer(0, nextLength);
-				readBuffer.Memory.Slice(0, nextLength).CopyTo(outputBuffer);
+				ReadOnlyMemory<byte> nextBlobData = readBuffer.Memory.Slice(0, nextLength);
+				writer.WriteFixedLengthBytes(nextBlobData.Span);
+				hasher.Update(nextBlobData.Span);
 
-				BlobHandle handle = await writer.WriteNodeAsync(nextLength, Array.Empty<BlobHandle>(), GetNodeType<LeafChunkedDataNode>(), cancellationToken);
-				handles.Add(new NodeRef<ChunkedDataNode>(handle));
+				sizeSinceProgressUpdate += nextLength;
+				if (sizeSinceProgressUpdate > 512 * 1024)
+				{
+					updateStats?.Update(0, sizeSinceProgressUpdate);
+					sizeSinceProgressUpdate = 0;
+				}
+
+				IBlobRef<LeafChunkedDataNode> blobHandle = await writer.CompleteAsync<LeafChunkedDataNode>(LeafChunkedDataNodeConverter.BlobType, cancellationToken);
+				leafNodeRefs.Add(new ChunkedDataNodeRef(nextLength, blobHandle));
 
 				readBuffer.Memory.Slice(nextLength, size - nextLength).CopyTo(readBuffer.Memory);
 				size -= nextLength;
 			}
 
-			return handles;
+			updateStats?.Update(1, sizeSinceProgressUpdate);
+
+			IoHash hash = IoHash.FromBlake3(hasher);
+			return new LeafChunkedData(hash, leafNodeRefs);
 		}
 
 		/// <summary>
@@ -259,6 +387,26 @@ namespace EpicGames.Horde.Storage.Nodes
 		}
 	}
 
+	class LeafChunkedDataNodeConverter : BlobConverter<LeafChunkedDataNode>
+	{
+		/// <summary>
+		/// Static accessor for the blob type
+		/// </summary>
+		public static BlobType BlobType { get; } = new BlobType(LeafChunkedDataNode.BlobTypeGuid, 1);
+
+		public override LeafChunkedDataNode Read(IBlobReader reader, BlobSerializerOptions options)
+		{
+			byte[] data = reader.GetMemory().ToArray();
+			return new LeafChunkedDataNode(data);
+		}
+
+		public override BlobType Write(IBlobWriter writer, LeafChunkedDataNode value, BlobSerializerOptions options)
+		{
+			writer.WriteFixedLengthBytes(value.Data.Span);
+			return BlobType;
+		}
+	}
+
 	/// <summary>
 	/// Options for creating interior nodes
 	/// </summary>
@@ -268,6 +416,11 @@ namespace EpicGames.Horde.Storage.Nodes
 	/// <param name="SliceThreshold">Threshold hash value for splitting interior nodes</param>
 	public record class InteriorChunkedDataNodeOptions(int MinChildCount, int TargetChildCount, int MaxChildCount, uint SliceThreshold)
 	{
+		/// <summary>
+		/// Default settings
+		/// </summary>
+		public static InteriorChunkedDataNodeOptions Default { get; } = new InteriorChunkedDataNodeOptions(1, 100, 500);
+
 		/// <summary>
 		/// Constructor
 		/// </summary>
@@ -280,93 +433,112 @@ namespace EpicGames.Horde.Storage.Nodes
 	/// <summary>
 	/// An interior file node
 	/// </summary>
-	[NodeType("{F4DEDDBC-70CB-4C7A-8347-F011AFCCCDB9}", 1)]
+	[BlobConverter(typeof(InteriorChunkedDataNodeConverter))]
 	public class InteriorChunkedDataNode : ChunkedDataNode
 	{
 		/// <summary>
+		/// Static accessor for the blob type guid
+		/// </summary>
+		public static Guid BlobTypeGuid { get; } = Guid.Parse("{F4DEDDBC-4C7A-70CB-11F0-4783B9CDCCAF}");
+
+		/// <summary>
 		/// Child nodes
 		/// </summary>
-		public IReadOnlyList<NodeRef<ChunkedDataNode>> Children { get; }
+		public IReadOnlyList<ChunkedDataNodeRef> Children { get; }
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
 		/// <param name="children"></param>
-		public InteriorChunkedDataNode(IReadOnlyList<NodeRef<ChunkedDataNode>> children)
+		public InteriorChunkedDataNode(IReadOnlyList<ChunkedDataNodeRef> children)
 		{
 			Children = children;
-		}
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		public InteriorChunkedDataNode(NodeReader reader)
-		{
-			// Keep this code in sync with CopyToStreamAsync
-			NodeRef<ChunkedDataNode>[] children = new NodeRef<ChunkedDataNode>[reader.Length / IoHash.NumBytes];
-			for (int idx = 0; idx < children.Length; idx++)
-			{
-				children[idx] = reader.ReadNodeRef<ChunkedDataNode>();
-			}
-			Children = children;
-		}
-
-		/// <inheritdoc/>
-		public override void Serialize(NodeWriter writer)
-		{
-			foreach (NodeRef<ChunkedDataNode> child in Children)
-			{
-				writer.WriteNodeRef(child);
-			}
 		}
 
 		/// <summary>
 		/// Create a tree of nodes from the given list of handles, splitting nodes in each layer based on the hash of the last node.
 		/// </summary>
-		/// <param name="handles">List of leaf handles</param>
+		/// <param name="leafChunkedData">List of leaf handles</param>
 		/// <param name="options">Options for splitting the tree</param>
 		/// <param name="writer">Output writer for new interior nodes</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Handle to the root node of the tree</returns>
-		public static async Task<NodeRef<ChunkedDataNode>> CreateTreeAsync(List<NodeRef<ChunkedDataNode>> handles, InteriorChunkedDataNodeOptions options, IStorageWriter writer, CancellationToken cancellationToken)
+		public static async Task<ChunkedData> CreateTreeAsync(LeafChunkedData leafChunkedData, InteriorChunkedDataNodeOptions options, IBlobWriter writer, CancellationToken cancellationToken)
 		{
-			List<NodeRef<ChunkedDataNode>> handleBuffer = new List<NodeRef<ChunkedDataNode>>();
+			ChunkedDataNodeRef rootRef = await CreateTreeAsync(leafChunkedData.LeafHandles, options, writer, cancellationToken);
+			return new ChunkedData(leafChunkedData.Hash, rootRef);
+		}
 
-			List<InteriorChunkedDataNode> interiorNodes = new List<InteriorChunkedDataNode>();
-			while (handles.Count > 1)
+		/// <summary>
+		/// Create a tree of nodes from the given list of handles, splitting nodes in each layer based on the hash of the last node.
+		/// </summary>
+		/// <param name="nodeRefs">List of leaf nodes</param>
+		/// <param name="chunkingOptions">Options for splitting the tree</param>
+		/// <param name="writer">Output writer for new interior nodes</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		/// <returns>Handle to the root node of the tree</returns>
+		public static async Task<ChunkedDataNodeRef> CreateTreeAsync(List<ChunkedDataNodeRef> nodeRefs, InteriorChunkedDataNodeOptions chunkingOptions, IBlobWriter writer, CancellationToken cancellationToken)
+		{
+			await using MemoryBlobWriter memoryWriter = new MemoryBlobWriter(writer.Options);
+
+			List<ChunkedDataNodeRef> handleBuffer = new List<ChunkedDataNodeRef>();
+
+			List<(InteriorChunkedDataNode, long)> interiorNodes = new List<(InteriorChunkedDataNode, long)>();
+			while (nodeRefs.Count > 1)
 			{
 				interiorNodes.Clear();
-				CreateTreeLayer(handles, options, interiorNodes);
+				CreateTreeLayer(nodeRefs, chunkingOptions, interiorNodes);
 
 				handleBuffer.Clear();
-				foreach (InteriorChunkedDataNode interiorNode in interiorNodes)
+				foreach ((InteriorChunkedDataNode interiorNode, long interiorLength) in interiorNodes)
 				{
-					NodeRef<ChunkedDataNode> handle = await writer.WriteNodeAsync<ChunkedDataNode>(interiorNode, cancellationToken);
-					handleBuffer.Add(handle);
+					IBlobRef<InteriorChunkedDataNode> interiorHandle = await memoryWriter.WriteBlobAsync(interiorNode, cancellationToken);
+					handleBuffer.Add(new ChunkedDataNodeRef(ChunkedDataNodeType.Interior, interiorLength, interiorHandle));
 				}
 
-				handles = handleBuffer;
+				nodeRefs = handleBuffer;
 			}
 
-			return handles[0];
+			return await OrderTreeAsync(nodeRefs[0], writer, cancellationToken);
 		}
-		
+
+		static async Task<ChunkedDataNodeRef> OrderTreeAsync(ChunkedDataNodeRef source, IBlobWriter writer, CancellationToken cancellationToken)
+		{
+			if (source.Type != ChunkedDataNodeType.Interior)
+			{
+				return source;
+			}
+
+			InteriorChunkedDataNode sourceNode = await source.Handle.ReadBlobAsync<InteriorChunkedDataNode>(cancellationToken: cancellationToken);
+
+			List<ChunkedDataNodeRef> children = new List<ChunkedDataNodeRef>(sourceNode.Children);
+			for (int idx = children.Count - 1; idx >= 0; idx--)
+			{
+				children[idx] = await OrderTreeAsync(children[idx], writer, cancellationToken);
+			}
+
+			InteriorChunkedDataNode targetNode = new InteriorChunkedDataNode(children);
+			IBlobRef<InteriorChunkedDataNode> targetHandle = await writer.WriteBlobAsync(targetNode, cancellationToken);
+
+			return new ChunkedDataNodeRef(source.Length, targetHandle);
+		}
+
 		/// <summary>
-		/// Split a list of handles into a layer of interior nodes
+		/// Split a list of leaf handles into a layer of interior nodes
 		/// </summary>
-		static void CreateTreeLayer(List<NodeRef<ChunkedDataNode>> handles, InteriorChunkedDataNodeOptions options, List<InteriorChunkedDataNode> interiorNodes)
+		static void CreateTreeLayer(List<ChunkedDataNodeRef> nodeRefs, InteriorChunkedDataNodeOptions options, List<(InteriorChunkedDataNode, long)> interiorNodes)
 		{
 			Span<byte> buffer = stackalloc byte[IoHash.NumBytes];
 
-			for (int index = 0; index < handles.Count; )
+			for (int index = 0; index < nodeRefs.Count;)
 			{
 				int minIndex = index;
-				int maxIndex = Math.Min(minIndex + options.MaxChildCount, handles.Count);
+				int maxIndex = Math.Min(minIndex + options.MaxChildCount, nodeRefs.Count);
 
-				index = Math.Min(index + options.MinChildCount, handles.Count);
+				index = Math.Min(index + options.MinChildCount, nodeRefs.Count);
 				for (; index < maxIndex; index++)
 				{
-					handles[index].Handle.Hash.CopyTo(buffer);
+					nodeRefs[index].Handle.Hash.CopyTo(buffer);
 
 					uint value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
 					if (value < options.SliceThreshold)
@@ -375,23 +547,24 @@ namespace EpicGames.Horde.Storage.Nodes
 					}
 				}
 
-				NodeRef<ChunkedDataNode>[] children = new NodeRef<ChunkedDataNode>[index - minIndex];
+				ChunkedDataNodeRef[] children = new ChunkedDataNodeRef[index - minIndex];
 				for (int childIndex = minIndex; childIndex < index; childIndex++)
 				{
-					children[childIndex - minIndex] = new NodeRef<ChunkedDataNode>(handles[childIndex]);
+					children[childIndex - minIndex] = nodeRefs[childIndex];
 				}
 
-				interiorNodes.Add(new InteriorChunkedDataNode(children));
+				long interiorLength = children.Sum(x => x.Length);
+				interiorNodes.Add((new InteriorChunkedDataNode(children), interiorLength));
 			}
 		}
 
 		/// <inheritdoc/>
-		public override async Task CopyToStreamAsync(Stream outputStream, CancellationToken cancellationToken)
+		public override async Task CopyToStreamAsync(Stream outputStream, BlobSerializerOptions? options, CancellationToken cancellationToken)
 		{
-			foreach (NodeRef<ChunkedDataNode> childNodeRef in Children)
+			foreach (ChunkedDataNodeRef childNodeRef in Children)
 			{
-				ChunkedDataNode childNode = await childNodeRef.ExpandAsync(cancellationToken);
-				await childNode.CopyToStreamAsync(outputStream, cancellationToken);
+				ChunkedDataNode childNode = await childNodeRef.ReadBlobAsync(options, cancellationToken);
+				await childNode.CopyToStreamAsync(outputStream, options, cancellationToken);
 			}
 		}
 
@@ -403,12 +576,88 @@ namespace EpicGames.Horde.Storage.Nodes
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		public static async Task CopyToStreamAsync(BlobData nodeData, Stream outputStream, CancellationToken cancellationToken)
 		{
-			NodeReader nodeReader = new NodeReader(nodeData);
+			BlobReader nodeReader = new BlobReader(nodeData, null);
 			while (nodeReader.GetMemory(0).Length > 0)
 			{
-				NodeRef nodeRef = nodeReader.ReadNodeRef();
-				await ChunkedDataNode.CopyToStreamAsync(nodeRef.Handle!, outputStream, cancellationToken);
+				IBlobRef<ChunkedDataNode> handle = nodeReader.ReadBlobRef<ChunkedDataNode>();
+				if (nodeReader.Version >= 2)
+				{
+					_ = nodeReader.ReadUnsignedVarInt(); // Type
+				}
+				if (nodeReader.Version >= 3)
+				{
+					_ = nodeReader.ReadUnsignedVarInt(); // Length
+				}
+				await ChunkedDataNode.CopyToStreamAsync(handle, outputStream, cancellationToken);
 			}
+		}
+	}
+
+	/// <summary>
+	/// Converter for interior node types
+	/// </summary>
+	public class InteriorChunkedDataNodeConverter : BlobConverter<InteriorChunkedDataNode>
+	{
+		readonly int _writeVersion;
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		public InteriorChunkedDataNodeConverter() : this(3)
+		{
+		}
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="writeVersion">Version number for serialized data</param>
+		public InteriorChunkedDataNodeConverter(int writeVersion)
+		{
+			_writeVersion = writeVersion;
+		}
+
+		/// <inheritdoc/>
+		public override InteriorChunkedDataNode Read(IBlobReader reader, BlobSerializerOptions options)
+		{
+			// Keep this code in sync with CopyToStreamAsync
+			List<ChunkedDataNodeRef> children = new List<ChunkedDataNodeRef>();
+			while (reader.GetMemory().Length > 0)
+			{
+				IBlobRef<ChunkedDataNode> handle = reader.ReadBlobRef<ChunkedDataNode>();
+
+				ChunkedDataNodeType type = ChunkedDataNodeType.Unknown;
+				if (reader.Version >= 2)
+				{
+					type = (ChunkedDataNodeType)reader.ReadUnsignedVarInt();
+				}
+
+				long length = -1;
+				if (reader.Version >= 3)
+				{
+					length = (long)reader.ReadUnsignedVarInt();
+				}
+
+				children.Add(new ChunkedDataNodeRef(type, length, handle));
+			}
+			return new InteriorChunkedDataNode(children);
+		}
+
+		/// <inheritdoc/>
+		public override BlobType Write(IBlobWriter writer, InteriorChunkedDataNode value, BlobSerializerOptions options)
+		{
+			foreach (ChunkedDataNodeRef child in value.Children)
+			{
+				writer.WriteBlobRef(child.Handle);
+				if (_writeVersion >= 2)
+				{
+					writer.WriteUnsignedVarInt((int)child.Type);
+				}
+				if (_writeVersion >= 3)
+				{
+					writer.WriteUnsignedVarInt((ulong)child.Length);
+				}
+			}
+			return new BlobType(InteriorChunkedDataNode.BlobTypeGuid, _writeVersion);
 		}
 	}
 }

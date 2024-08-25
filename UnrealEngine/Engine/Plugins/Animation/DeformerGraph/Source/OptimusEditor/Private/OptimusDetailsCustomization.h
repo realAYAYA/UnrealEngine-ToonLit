@@ -9,6 +9,7 @@
 #include "PropertyHandle.h"
 #include "Widgets/Input/SComboBox.h"
 
+struct FOptimusExecutionDomain;
 class IOptimusExecutionDomainProvider;
 class FOptimusHLSLSyntaxHighlighter;
 class SEditableTextBox;
@@ -40,7 +41,13 @@ public:
 		IPropertyTypeCustomizationUtils& InCustomizationUtils
 		) override;
 
-private:	
+	void SetUsageMaskOverride(EOptimusDataTypeUsageFlags InOverride)
+	{
+		UsageMaskOverride = InOverride;
+	}
+
+private:
+	
 	FOptimusDataTypeHandle GetCurrentDataType() const;
 	void OnDataTypeChanged(FOptimusDataTypeHandle InDataType);
 
@@ -50,6 +57,8 @@ private:
 	TSharedPtr<IPropertyHandle> TypeObjectProperty;
 	TAttribute<FOptimusDataTypeHandle> CurrentDataType;
 
+	EOptimusDataTypeUsageFlags UsageMaskOverride = EOptimusDataTypeUsageFlags::None;
+	
 };
 
 
@@ -73,16 +82,45 @@ public:
 		IPropertyTypeCustomizationUtils& InCustomizationUtils) override
 	{ }
 
+	enum DomainFlags
+	{
+		DomainType			= 0x1,
+		DomainName			= 0x2,
+		DomainExpression	= 0x4,
+
+		DomainAll			= DomainType + DomainName + DomainExpression     
+	};
+	
+	
 private:
 
+	FText FormatContextName(
+		FName InName
+		) const;
+	
 	void UpdateContextNames();
 
+	static void SetExecutionDomain(
+		TSharedRef<IPropertyHandle> InPropertyHandle,
+		const FOptimusExecutionDomain& InExecutionDomain,
+		DomainFlags InSetFlags = DomainAll
+		);
+	
+	static TOptional<FOptimusExecutionDomain> TryGetSingleExecutionDomain(
+		TSharedRef<IPropertyHandle> InPropertyHandle,
+		DomainFlags InCompareFlags = DomainAll,
+		bool bInCheckMultiples = true
+	);
+	
 	TSharedPtr<SComboBox<FName>> ComboBox;
+	TSharedPtr<SEditableTextBox> ExpressionTextBox;
 	
 	TArray<FName> ContextNames;
 
 	TArray<TWeakObjectPtr<UObject>> WeakOwningObjects;
 };
+
+ENUM_CLASS_FLAGS(FOptimusExecutionDomainCustomization::DomainFlags);
 
 
 class FOptimusDataDomainCustomization :
@@ -145,18 +183,15 @@ private:
 
 	TSharedRef<TArray<FName>> ParameterMarker;
 	TSharedRef<TArray<FName>> ExpressionMarker;
+	
+	TSharedPtr<SComboBox<TSharedRef<TArray<FName>>>> DimensionalComboBox;
 	TSharedPtr<SEditableTextBox> ExpressionTextBox;
 	
 	TArray<TSharedRef<TArray<FName>>> DomainDimensionNames;
 	bool bAllowParameters = false;
 };
 
-inline FOptimusDataDomainCustomization::DomainFlags operator|(FOptimusDataDomainCustomization::DomainFlags A, FOptimusDataDomainCustomization::DomainFlags B)
-{
-	return static_cast<FOptimusDataDomainCustomization::DomainFlags>(static_cast<int32>(A) | static_cast<int32>(B));
-}
-
-
+ENUM_CLASS_FLAGS(FOptimusDataDomainCustomization::DomainFlags);
 
 class FOptimusShaderTextCustomization : 
 	public IPropertyTypeCustomization
@@ -210,6 +245,8 @@ public:
 	};
 	
 	static TSharedRef<IPropertyTypeCustomization> MakeInstance();
+	static EVisibility IsAtomicCheckBoxVisible(const TArray<TWeakObjectPtr<UObject>>& InSelectedObjects,  TSharedRef<IPropertyHandle> InPropertyHandle);
+	static EVisibility IsSupportReadCheckBoxVisible(const TArray<TWeakObjectPtr<UObject>>& InSelectedObjects,  TSharedRef<IPropertyHandle> InPropertyHandle);
 
 	FOptimusParameterBindingCustomization();
 

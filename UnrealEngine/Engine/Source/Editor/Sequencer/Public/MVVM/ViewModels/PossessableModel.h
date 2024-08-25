@@ -43,6 +43,8 @@ public:
 
 	/*~ FObjectBindingModel interface */
 	void Delete() override;
+	FSlateColor GetInvalidBindingLabelColor() const override;
+
 };
 
 } // namespace Sequencer

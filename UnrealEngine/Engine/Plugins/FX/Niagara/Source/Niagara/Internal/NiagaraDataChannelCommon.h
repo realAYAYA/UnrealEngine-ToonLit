@@ -42,6 +42,11 @@ struct FNiagaraDataChannelPublishRequest
 	*/
 	FVector3f LwcTile = FVector3f::ZeroVector;
 
+#if WITH_NIAGARA_DEBUGGER
+	/** Instigator of this write, used for debug tracking */
+	FString DebugSource;
+#endif
+
 	FNiagaraDataChannelPublishRequest() = default;
 	explicit FNiagaraDataChannelPublishRequest(FNiagaraDataBuffer* InData)
 		: Data(InData)
@@ -71,8 +76,7 @@ struct FNiagaraDataChannelData final
 
 	NIAGARA_API void BeginFrame(UNiagaraDataChannelHandler* Owner);
 	NIAGARA_API void EndFrame(UNiagaraDataChannelHandler* Owner);
-	NIAGARA_API void Tick(UNiagaraDataChannelHandler* Owner);
-	NIAGARA_API void ConsumePublishRequests(UNiagaraDataChannelHandler* Owner);
+	NIAGARA_API int32 ConsumePublishRequests(UNiagaraDataChannelHandler* Owner, const ETickingGroup& TickGroup);
 
 	NIAGARA_API FNiagaraDataChannelGameData* GetGameData();
 	NIAGARA_API FNiagaraDataBufferRef GetCPUData(bool bPreviousFrame);

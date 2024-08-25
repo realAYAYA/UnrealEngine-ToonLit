@@ -568,7 +568,7 @@ FString FRDGEventScope::GetPath(const FRDGEventName& Event) const
 
 FRDGEventScopeGuard::FRDGEventScopeGuard(FRDGBuilder& InGraphBuilder, FRDGEventName&& ScopeName, bool InbCondition, ERDGEventScopeFlags InFlags)
 	: GraphBuilder(InGraphBuilder)
-	, bCondition(InbCondition && !GraphBuilder.bFinalEventScopeActive)
+	, bCondition(InbCondition && !GraphBuilder.GPUScopeStacks.bFinalEventScopeActive)
 {
 	if (bCondition)
 	{
@@ -577,7 +577,7 @@ FRDGEventScopeGuard::FRDGEventScopeGuard(FRDGBuilder& InGraphBuilder, FRDGEventN
 			EnumRemoveFlags(InFlags, ERDGEventScopeFlags::Final);
 		}
 
-		GraphBuilder.bFinalEventScopeActive = EnumHasAnyFlags(InFlags, ERDGEventScopeFlags::Final);
+		GraphBuilder.GPUScopeStacks.bFinalEventScopeActive = (EnumHasAnyFlags(InFlags, ERDGEventScopeFlags::Final));
 		GraphBuilder.GPUScopeStacks.BeginEventScope(MoveTemp(ScopeName), GraphBuilder.RHICmdList.GetGPUMask(), InFlags);
 	}
 }
@@ -587,7 +587,7 @@ FRDGEventScopeGuard::~FRDGEventScopeGuard()
 	if (bCondition)
 	{
 		GraphBuilder.GPUScopeStacks.EndEventScope();
-		GraphBuilder.bFinalEventScopeActive = false;
+		GraphBuilder.GPUScopeStacks.bFinalEventScopeActive = false;
 	}
 }
 

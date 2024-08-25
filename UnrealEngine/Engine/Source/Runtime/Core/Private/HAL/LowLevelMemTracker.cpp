@@ -1,15 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "HAL/LowLevelMemTracker.h"
+#include "Containers/ContainerAllocationPolicies.h"
 
 #if ENABLE_LOW_LEVEL_MEM_TRACKER
 
 #include "HAL/LowLevelMemStats.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/ThreadHeartBeat.h"
+#include "HAL/PlatformMemory.h" // for page allocation association.
 #include "LowLevelMemTrackerPrivate.h"
 #include "MemPro/MemProProfiler.h"
+#include "Math/NumericLimits.h"
 #include "Misc/CString.h"
+#include "Misc/CoreDelegates.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Fork.h"
 #include "Misc/OutputDeviceRedirector.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
@@ -19,6 +26,894 @@
 #include "ProfilingDebugging/CsvProfiler.h"
 #include "Templates/Atomic.h"
 #include "Trace/Trace.inl"
+
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+
+// Specifies whether to generate the whole log file in memory before writing.  Switch uses an async thread for file writing,
+// which does array allocations, deadlocking on the critical section.  Writing to memory first avoids a dependency on the
+// async thread, as we can write the memory to a file at the end, after the lock is released.
+#define ARRAY_SLACK_LOG_TO_MEMORY !PLATFORM_WINDOWS
+
+// Useful values to set in the debugger, to set a breakpoint on a particular allocation tag, element size, and max count.  Sometimes this can
+// give more context regarding an allocation than what you get from a stack trace alone.  As an example, the constructor for UAudioCaptureComponent,
+// which allocated a 1.83 MB array, just showed up as "UClass::CreateDefaultObject" in the stack trace.  The constructor for the specific subclass
+// was optimized out, and there was no way to tell from the slack report what it was actually related to.  Stopping on the allocation in the debugger
+// makes it immediately obvious, because you can see that the UClass in question is UAudioCaptureComponent.  These debug values also let you stop
+// on places where the array count changes without triggering an allocation (the tracking only grabs call stacks on reallocation).
+int32 GArraySlackTagToWatch = -1;		// (int32)ELLMTag::UObject;
+int32 GArraySlackSizeToWatch = 0;
+int32 GArraySlackMaxToWatch = 0;
+
+uint32 GArraySlackDumpIndex = 0;				// Incremented for each auto-generated report file
+bool GArraySlackInit = false;					// Set when we start tracking slack -- startup constructor allocations add a lot of noise (start this as true if you want these)
+bool GArraySlackFirstStackOnly = true;			// Only do stack trace on first stack for a given allocation -- faster, but could be useful to know last allocation
+bool GArraySlackGroupByTag = false;				// Group slack by tag when running with -llm
+bool GArraySlackDefaultVerbose = true;			// Whether to default to verbose output, can be overridden with -Verbose=[0,1]
+
+// We require a minimum number of total bytes for a group of allocations with the same stack trace to be reported.  A setting of 64 discards 80% of
+// allocations representing less than 0.2% of the slack memory.  If you want to look at aggregations of smaller allocations, you can use -Stack=N to
+// trim off more of the call stack, which will make more allocations alias to the same stack trace, and show up in the report (this is probably what
+// you would do anyway when investigating that scenario).  Or you could locally set this to zero to get everything.
+//
+// Console platforms have far slower symbol lookup than PC, making slack reports take a couple orders of magnitude longer to generate than on PC,
+// so we use more conservative settings.  Without some sort of trimming of the generated results, a slack report can take over an hour, which just
+// isn't useful (it still can take 15 minutes with these settings, versus around 20 seconds on Windows for a much larger report).
+#if PLATFORM_WINDOWS
+static const int32 GArraySlackThreshold = 64;				// Typically covers 99.8% of slack memory
+static const int32 GArraySlackFullStackNum = MAX_int32;		// Show full call stack context for all allocations
+static const int32 GArraySlackDefaultStackDepth = 9;		// Sort by this deep in the call stack -- matches max call stack depth in FArraySlackTrackingHeader structure
+#else
+static const int32 GArraySlackThreshold = 8192;				// Typically covers 95% of slack memory
+static const int32 GArraySlackFullStackNum = 150;			// Show full call stack context for this many allocations
+static const int32 GArraySlackDefaultStackDepth = 5;		// Sort by this deep in the call stack
+#endif
+
+std::atomic<int64> GArrayMaxByTag[256];
+std::atomic<int64> GArrayUsedByTag[256];
+int64 GArraySlackByTag[256];
+int32 GArrayCountByTag[256];
+
+// Doubly linked list of all tracked allocations, and critical section to protect it.  Critical section is a pointer so we can detect if it's constructed,
+// otherwise you get crashes in startup constructors which run before the constructor of the critical section is called.  Initialized in the LLM tracker,
+// which gets initialized by the first startup code that uses an LLM scope (even when -llm is disabled), which tends to be pretty early -- allocations
+// before that just won't be tracked.  If this became an issue, we could atomically initialize the lock on first access from any thread, but we already
+// defer tracking until engine PreInit anyway to factor out noise from the myriad static global FString constructors, so it doesn't matter as it stands now.
+FArraySlackTrackingHeader* GTrackArrayDetailedList;
+FCriticalSection* GTrackArrayDetailedLock;
+
+// Dummy function to set a breakpoint on where it's called, if you want to investigate code related to a certain allocation
+FORCENOINLINE void LlmTrackSetBreakpointHere()
+{
+	// Need something non-empty that won't compile out
+	static int32 Dummy = 0;
+	Dummy++;
+}
+
+void FArraySlackTrackingHeader::AddAllocation()
+{
+	if (ArrayNum != INDEX_NONE)
+	{
+		GArrayMaxByTag[Tag].fetch_add(ArrayMax * (int64)ElemSize, std::memory_order_relaxed);
+		GArrayUsedByTag[Tag].fetch_add(ArrayNum * (int64)ElemSize, std::memory_order_relaxed);
+
+		// This code is only reached for reallocations, since during the initial allocation, ArrayNum won't have been set yet.
+		ReallocCount++;
+	}
+
+	if (GArraySlackFirstStackOnly == false || NumStackFrames == 0)
+	{
+		// Skip the first 3 stack frames, which are tracking code (CaptureStackBackTrace, LlmTrackArrayAddAllocation, FArraySlackTrackingHeader::Realloc)
+		constexpr int8 SkipStackFrames = 3;
+		uint64 StackFrameTemp[UE_ARRAY_COUNT(StackFrames) + SkipStackFrames];
+		NumStackFrames = (int8)FPlatformStackWalk::CaptureStackBackTrace(StackFrameTemp, UE_ARRAY_COUNT(StackFrameTemp)) - SkipStackFrames;
+		if (NumStackFrames < 0)
+		{
+			NumStackFrames = 0;
+		}
+		for (int32 StackIndex = 0; StackIndex < NumStackFrames; StackIndex++)
+		{
+			StackFrames[StackIndex] = StackFrameTemp[SkipStackFrames + StackIndex];
+		}
+	}
+
+	if (GTrackArrayDetailedLock && GArraySlackInit)
+	{
+		// For detailed tracking, we add the array header to a doubly linked list
+		FScopeLock Lock(GTrackArrayDetailedLock);
+
+		if (GTrackArrayDetailedList)
+		{
+			GTrackArrayDetailedList->Prev = &Next;
+		}
+		Next = GTrackArrayDetailedList;
+		Prev = &GTrackArrayDetailedList;
+		GTrackArrayDetailedList = this;
+
+		if ((Tag == GArraySlackTagToWatch) &&
+			(ElemSize == GArraySlackSizeToWatch) &&
+			(!GArraySlackMaxToWatch || (ArrayMax == GArraySlackMaxToWatch)))
+		{
+			LlmTrackSetBreakpointHere();
+		}
+
+		GArrayCountByTag[Tag]++;
+	}
+}
+
+void FArraySlackTrackingHeader::RemoveAllocation()
+{
+	if (ArrayNum != INDEX_NONE)
+	{
+		GArrayUsedByTag[Tag].fetch_sub(ArrayNum * (int64)ElemSize, std::memory_order_relaxed);
+		GArrayMaxByTag[Tag].fetch_sub(ArrayMax * (int64)ElemSize, std::memory_order_release);
+	}
+
+	if (Prev)
+	{
+		FScopeLock Lock(GTrackArrayDetailedLock);
+
+		GArrayCountByTag[Tag]--;
+
+		if (Next)
+		{
+			Next->Prev = Prev;
+		}
+		(*Prev) = Next;
+
+		Next = nullptr;
+		Prev = nullptr;
+	}
+}
+
+void FArraySlackTrackingHeader::UpdateNumUsed(int64 NewNumUsed)
+{
+	check(NewNumUsed <= ArrayMax);
+
+	if ((Tag == GArraySlackTagToWatch) &&
+		(ElemSize == GArraySlackSizeToWatch) &&
+		(!GArraySlackMaxToWatch || (ArrayMax == GArraySlackMaxToWatch)))
+	{
+		LlmTrackSetBreakpointHere();
+	}
+
+	// Track the allocation in our totals when ArrayNum is first set to something other than INDEX_NONE.  This allows us to
+	// factor out container allocations that aren't arrays (mainly hash tables), which won't ever call "UpdateNumUsed".
+	if (ArrayNum == INDEX_NONE)
+	{
+		GArrayMaxByTag[Tag].fetch_add(ArrayMax * (int64)ElemSize, std::memory_order_relaxed);
+		ArrayNum = 0;
+		FirstAllocFrame = (uint32)GFrameCounter;
+	}
+	GArrayUsedByTag[Tag].fetch_add((NewNumUsed - ArrayNum) * (int64)ElemSize, std::memory_order_relaxed);
+	ArrayNum = NewNumUsed;
+	ArrayPeak = FMath::Max(ArrayPeak, (uint32)FMath::Min(NewNumUsed, 0xffffffffll));
+}
+
+FORCENOINLINE void* FArraySlackTrackingHeader::Realloc(void* Ptr, int64 Count, uint64 ElemSize, int32 Alignment)
+{
+	// Figure out how much padding we need under the allocation
+	int32 HeaderAlign = FPlatformMath::RoundUpToPowerOfTwo(sizeof(FArraySlackTrackingHeader));
+	int32 PaddingRequired = HeaderAlign > Alignment ? HeaderAlign : Alignment;
+
+	// Get the base pointer of the original allocation, and remove tracking for it
+	if (Ptr)
+	{
+		FArraySlackTrackingHeader* TrackingHeader = (FArraySlackTrackingHeader*)((uint8*)Ptr - sizeof(FArraySlackTrackingHeader));
+		TrackingHeader->RemoveAllocation();
+
+		Ptr = (uint8*)TrackingHeader - TrackingHeader->AllocOffset;
+	}
+
+	uint8* ResultPtr = nullptr;
+	if (Count)
+	{
+		ResultPtr = (uint8*)FMemory::Realloc(Ptr, Count * ElemSize + PaddingRequired, Alignment);
+		ResultPtr += PaddingRequired;
+		FArraySlackTrackingHeader* TrackingHeader = (FArraySlackTrackingHeader*)(ResultPtr - sizeof(FArraySlackTrackingHeader));
+
+		// Set the tag and other default information in the allocation if it's newly created
+		if (!Ptr)
+		{
+			// Note that we initially set the slack tracking ArrayNum to INDEX_NONE.  The container allocator is used by both arrays and
+			// other containers (Set / Map / Hash), and we don't know it's actually an array until "UpdateNumUsed" is called on it.
+			check(PaddingRequired <= 65536);
+			TrackingHeader->Next = nullptr;
+			TrackingHeader->Prev = nullptr;
+			TrackingHeader->AllocOffset = (uint16)(PaddingRequired - sizeof(FArraySlackTrackingHeader));
+			TrackingHeader->Tag = LlmGetActiveTag();
+			TrackingHeader->NumStackFrames = 0;			// Filled in later...
+			TrackingHeader->FirstAllocFrame = 0;		// Filled in later...
+			TrackingHeader->ReallocCount = 0;
+			TrackingHeader->ArrayPeak = 0;
+			TrackingHeader->ElemSize = ElemSize;
+			TrackingHeader->ArrayNum = INDEX_NONE;		// Set in UpdateNumUsed
+		}
+
+		// Update ArrayMax and re-register the allocation
+		TrackingHeader->ArrayMax = Count;
+		TrackingHeader->AddAllocation();
+	}
+	else
+	{
+		FMemory::Free(Ptr);
+	}
+
+	return ResultPtr;
+}
+
+struct FArraySlackSortItem
+{
+	FArraySlackTrackingHeader* Header;
+	FName CustomName;
+	uint64 StackTraceTotalSlack;			// Sum of slack for elements with the same stack trace
+	uint32 StackTraceRunLength;				// Run of items with the same stack trace
+	uint32 RunLength;						// Run of identical elements (elemsize, num, max the same)
+	int32 StackTraceIgnore;					// Number of stack trace items to ignore
+
+	bool EqualsTagStackTrace(const FArraySlackSortItem& Other, uint32 StackTraceDepth, bool bLlmEnabled) const
+	{
+		if (bLlmEnabled)
+		{
+			if (Header->Tag != Other.Header->Tag)
+			{
+				return false;
+			}
+			if (CustomName != Other.CustomName)
+			{
+				return false;
+			}
+		}
+
+		// If the stack depth is set to zero, and LLM is disabled, basically everything in the capture will get lumped into
+		// one bucket.  Comparing by ElemSize is a last resort to force some differentiation in the report in that case (or
+		// perhaps if we have a platform that doesn't support stack traces, or someone wants to locally disable them for
+		// performance).  In cases where a stack frame exists, the leaf stack frame is always some sort of template type
+		// specific resize (i.e. TArray<float>::ResizeTo), so this would be redundant, but also harmless.
+		if (Header->ElemSize != Other.Header->ElemSize)
+		{
+			return false;
+		}
+
+		uint32 NumStackFramesThis = FMath::Min((uint32)(Header->NumStackFrames - StackTraceIgnore), StackTraceDepth);
+		uint32 NumStackFramesOther = FMath::Min((uint32)(Other.Header->NumStackFrames - Other.StackTraceIgnore), StackTraceDepth);
+
+		if (NumStackFramesThis != NumStackFramesOther)
+		{
+			return false;
+		}
+
+		return FMemory::Memcmp(&Header->StackFrames[StackTraceIgnore], &Other.Header->StackFrames[Other.StackTraceIgnore], NumStackFramesThis * sizeof(Header->StackFrames[0])) == 0;
+	}
+
+	bool Compare(const FArraySlackSortItem& Other, uint32 StackTraceDepth, bool bLlmEnabled) const
+	{
+		// Order by decreasing stack trace slack total bytes
+		if (StackTraceTotalSlack != Other.StackTraceTotalSlack)
+		{
+			return StackTraceTotalSlack > Other.StackTraceTotalSlack;
+		}
+
+		// Order by tag
+		if (bLlmEnabled)
+		{
+			if (Header->Tag != Other.Header->Tag)
+			{
+				return Header->Tag < Other.Header->Tag;
+			}
+			if (CustomName != Other.CustomName)
+			{
+				return CustomName.GetComparisonIndex().CompareFast(Other.CustomName.GetComparisonIndex()) < 0;
+			}
+		}
+
+		// Order by increasing element size
+		if (Header->ElemSize != Other.Header->ElemSize)
+		{
+			return Header->ElemSize < Other.Header->ElemSize;
+		}
+
+		// Order by stack trace
+		uint32 NumStackFramesThis = FMath::Min((uint32)(Header->NumStackFrames - StackTraceIgnore), StackTraceDepth);
+		uint32 NumStackFramesOther = FMath::Min((uint32)(Other.Header->NumStackFrames - Other.StackTraceIgnore), StackTraceDepth);
+
+		if (NumStackFramesThis != NumStackFramesOther)
+		{
+			return NumStackFramesThis < NumStackFramesOther;
+		}
+		int32 StackFrameOrdinalCompare = memcmp(&Header->StackFrames[StackTraceIgnore], &Other.Header->StackFrames[Other.StackTraceIgnore], NumStackFramesThis * sizeof(Header->StackFrames[0]));
+		if (StackFrameOrdinalCompare)
+		{
+			return StackFrameOrdinalCompare < 0;
+		}
+
+		int64 SlackBytesA = Header->SlackSizeInBytes();
+		int64 SlackBytesB = Other.Header->SlackSizeInBytes();
+		int64 RunSlackBytesA = SlackBytesA * RunLength;
+		int64 RunSlackBytesB = SlackBytesB * Other.RunLength;
+
+		// Order by decreasing run slack total bytes
+		if (RunSlackBytesA != RunSlackBytesB)
+		{
+			return RunSlackBytesA > RunSlackBytesB;
+		}
+
+		// Order by decreasing individual item slack bytes
+		if (SlackBytesA != SlackBytesB)
+		{
+			return SlackBytesA > SlackBytesB;
+		}
+
+		// Order by increasing Max
+		return Header->ArrayMax < Other.Header->ArrayMax;
+	}
+};
+
+static void LlmTrackArrayDumpTag(FArchive* LogFile, FOutputDevice& Output, TAnsiStringBuilder<4096>& Builder, int32 TagIndex, uint32 StackTraceDepth, bool bVerbose, double StartTime)
+{
+	FLowLevelMemTracker& Tracker = FLowLevelMemTracker::Get();
+	bool bLlmEnabled = Tracker.IsEnabled();
+
+	FScopeLock Lock(GTrackArrayDetailedLock);
+
+	TArray<FArraySlackSortItem> ArraySlackSortArray;
+	int32 ReserveAmount = 0;
+	if (TagIndex == INDEX_NONE)
+	{
+		for (int32 CountByTag : GArrayCountByTag)
+		{
+			ReserveAmount += CountByTag;
+		}
+	}
+	else
+	{
+		ReserveAmount = GArrayCountByTag[TagIndex];
+	}
+	ArraySlackSortArray.Reserve(ReserveAmount);
+	ArraySlackSortArray.GetAllocatorInstance().DisableSlackTracking();
+
+	for (FArraySlackTrackingHeader* Current = GTrackArrayDetailedList; Current; Current = Current->Next)
+	{
+		// Don't bother dumping allocations with zero waste (or untracked where ArrayNum == INDEX_NONE)
+		if ((TagIndex == INDEX_NONE || Current->Tag == TagIndex) && (Current->ArrayNum != INDEX_NONE) && (Current->ArrayNum != Current->ArrayMax))
+		{
+			FArraySlackSortItem& SortItem = ArraySlackSortArray.AddDefaulted_GetRef();
+
+			SortItem.Header = Current;
+			if (bLlmEnabled && (Current->Tag == (uint8)ELLMTag::CustomName))
+			{
+				SortItem.CustomName = Tracker.Get().FindPtrDisplayName((uint8*)Current - Current->AllocOffset);
+			}
+			else
+			{
+				SortItem.CustomName = NAME_None;
+			}
+
+			// Filled in later
+			SortItem.StackTraceTotalSlack = 0;
+			SortItem.StackTraceRunLength = 1;
+			SortItem.RunLength = 1;
+			SortItem.StackTraceIgnore = 0;
+		}
+	}
+
+	// We want to ignore ResizeAllocation() if it's the first stack frame, as it's not interesting.  This stack frame will sometimes be there,
+	// and sometimes not, because the most common ResizeAllocation() template variations are tagged FORCENOINLINE to reduce code size.  We set
+	// StackTraceIgnore=1 to indicate where this is the first stack frame, indicating we can ignore it downstream.  It has to be filled in before
+	// the sort, to properly handle the StackTraceDepth setting.
+	//
+	// Assuming symbol lookups are expensive, we sort by leaf stack frame first so we only need to do symbol lookups for unique leaf stack frames.
+	Algo::SortBy(ArraySlackSortArray, [](const FArraySlackSortItem& Item) { return Item.Header->StackFrames[0]; });
+
+	for (int32 ItemIndex = 0; ItemIndex < ArraySlackSortArray.Num(); ItemIndex++)
+	{
+		int32 StackTraceIgnore = 0;
+		if (ItemIndex == 0 || ArraySlackSortArray[ItemIndex].Header->StackFrames[0] != ArraySlackSortArray[ItemIndex - 1].Header->StackFrames[0])
+		{
+			StackTraceIgnore = 0;
+			if (ArraySlackSortArray[ItemIndex].Header->NumStackFrames)
+			{
+				FProgramCounterSymbolInfo SymbolInfo;
+				FPlatformStackWalk::ProgramCounterToSymbolInfo(ArraySlackSortArray[ItemIndex].Header->StackFrames[0], SymbolInfo);
+				if (FCStringAnsi::Strstr(SymbolInfo.FunctionName, "::ResizeAllocation("))
+				{
+					StackTraceIgnore = 1;
+				}
+			}
+		}
+
+		ArraySlackSortArray[ItemIndex].StackTraceIgnore = StackTraceIgnore;
+	}
+
+	// First pass sort -- we haven't yet filled in totals for StackTraceTotalSlack and RunTotalSlack
+	Algo::Sort(ArraySlackSortArray, [StackTraceDepth, bLlmEnabled](const FArraySlackSortItem& A, const FArraySlackSortItem& B) { return A.Compare(B, StackTraceDepth, bLlmEnabled); });
+
+	int64 IgnoredGroups = 0;
+	int64 IgnoredSlack = 0;
+	{
+		// Compute slack associated with each stack trace and runs of identical elements, and store it on the sort elements
+		int32 StackTraceRun = 0;
+		int64 StackTraceTotal = 0;
+		uint32 ElementRun = 0;
+		for (int32 ItemIndex = 0; ItemIndex < ArraySlackSortArray.Num(); ItemIndex++)
+		{
+			// Add current item
+			int64 ElementSlack = ArraySlackSortArray[ItemIndex].Header->SlackSizeInBytes();
+			StackTraceRun++;
+			StackTraceTotal += ElementSlack;
+			ElementRun++;
+
+			// If the next item has a different stack trace, or it's the end of the array, echo the stack trace total slack to all the items
+			if ((ItemIndex == ArraySlackSortArray.Num() - 1) || !ArraySlackSortArray[ItemIndex].EqualsTagStackTrace(ArraySlackSortArray[ItemIndex + 1], StackTraceDepth, bLlmEnabled))
+			{
+				for (int32 RunIndex = ItemIndex - (StackTraceRun - 1); RunIndex <= ItemIndex; RunIndex++)
+				{
+					ArraySlackSortArray[RunIndex].StackTraceTotalSlack = StackTraceTotal;
+					ArraySlackSortArray[RunIndex].StackTraceRunLength = StackTraceRun;
+				}
+				if (StackTraceTotal < GArraySlackThreshold)
+				{
+					IgnoredGroups++;
+					IgnoredSlack += StackTraceTotal;
+				}
+				StackTraceTotal = 0;
+				StackTraceRun = 0;
+			}
+
+			// Check if the item is different at all, and echo run length to all the items
+			if ((ItemIndex == ArraySlackSortArray.Num() - 1) || ArraySlackSortArray[ItemIndex].Compare(ArraySlackSortArray[ItemIndex + 1], StackTraceDepth, bLlmEnabled))
+			{
+				for (int32 RunIndex = ItemIndex - (ElementRun - 1); RunIndex <= ItemIndex; RunIndex++)
+				{
+					ArraySlackSortArray[RunIndex].RunLength = ElementRun;
+				}
+				ElementRun = 0;
+			}
+		}
+	}
+
+	// Second pass, final sort
+	Algo::Sort(ArraySlackSortArray, [StackTraceDepth, bLlmEnabled](const FArraySlackSortItem& A, const FArraySlackSortItem& B) { return A.Compare(B, StackTraceDepth, bLlmEnabled); });
+
+	// Only include tag column if LLM is enabled
+	const TCHAR* TagColumnSeparator = bLlmEnabled ? TEXT("\t") : TEXT("");
+	const ANSICHAR* TagColumnSeparatorANSI = bLlmEnabled ? "\t" : "";
+
+	if (LogFile)
+	{
+		Builder.Reset();
+		Builder.Appendf("Ignored:\t%lld\tGroups,\t%lld\tBytes total\n", IgnoredGroups, IgnoredSlack);
+		Builder.Appendf("Under:\t%d\tGroup size threshold\n\n", GArraySlackThreshold);
+
+		Builder.Appendf("NumArrays\tReallocs\tLifetime\tPeakAvg\tPeak\tElemSize\tNum\tMax\t%s\tStackSlack%s%s\tStackTrace\n",
+			bVerbose ? "ItemSlack" : "LargestItem",
+			TagColumnSeparatorANSI,
+			bLlmEnabled ? "Tag" : "");
+		LogFile->Serialize(Builder.GetData(), Builder.Len());
+	}
+	else
+	{
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("Ignored:\t%lld\tGroups,\t%lld\tBytes total\n"), IgnoredGroups, IgnoredSlack);
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("Under:\t%d\tGroup size threshold\n\n"), GArraySlackThreshold);
+
+		// We prepend "SlackReport" to every line when outputting to the debug window, as this can help filtering out random
+		// log lines after the output is cut and pasted.  You can sort by the first column to accomplish that.
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("SlackReport\tNumArrays\tReallocs\tLifetime\tPeakAvg\tPeak\tElemSize\tNum\tMax\t%s\tStackSlack%s%s\tStackTrace\n"),
+			bVerbose ? "ItemSlack" : "LargestItem",
+			TagColumnSeparator,
+			bLlmEnabled ? TEXT("Tag") : TEXT(""));
+	}
+
+	{
+		uint32 CurrentFrame = (uint32)GFrameCounter;
+		int32 ItemRun = 0;
+		double ItemReallocs = 0.0;
+		double ItemLifetime = 0.0;
+		double ItemPeakSum = 0.0;
+		uint32 ItemPeak = 0;
+		int32 FullStacksPrinted = 0;
+
+		for (int32 ItemIndex = 0; ItemIndex < ArraySlackSortArray.Num(); ItemIndex++)
+		{
+#if PLATFORM_WINDOWS
+			// Windows is a lot faster, so we don't need as much progress logging
+			constexpr int32 ProgressInterval = 25000;
+#else
+			constexpr int32 ProgressInterval = 1000;
+#endif
+			if ((ItemIndex % ProgressInterval) == 0)
+			{
+				Output.Logf(TEXT("Array Slack %d / %d allocs...  (%.2lf minutes, batch %lld bytes -> threshold %lld)"),
+					ItemIndex, ArraySlackSortArray.Num(), (FPlatformTime::Seconds() - StartTime) / 60.0, ArraySlackSortArray[ItemIndex].StackTraceTotalSlack, GArraySlackThreshold);
+			}
+
+			// Count current item
+			ItemRun++;
+			ItemReallocs += ArraySlackSortArray[ItemIndex].Header->ReallocCount;
+			ItemLifetime += CurrentFrame - ArraySlackSortArray[ItemIndex].Header->FirstAllocFrame;
+			ItemPeakSum += ArraySlackSortArray[ItemIndex].Header->ArrayPeak;
+			ItemPeak = FMath::Max(ItemPeak, ArraySlackSortArray[ItemIndex].Header->ArrayPeak);
+
+			// If this item is different than the next, or the last item, echo the count and item
+			if ((ItemIndex == ArraySlackSortArray.Num() - 1) || ArraySlackSortArray[ItemIndex].Compare(ArraySlackSortArray[ItemIndex + 1], StackTraceDepth, bLlmEnabled))
+			{
+				// Determine if this run has the same stack trace as the previous.  In verbose mode, we only print stack trace specific totals for unique
+				// stack traces, and when not verbose, we only print lines at all for unique stack traces.
+				int32 RunStart = ItemIndex - (ItemRun - 1);
+				bool bUniqueStackTrace = RunStart == 0 || !ArraySlackSortArray[RunStart - 1].EqualsTagStackTrace(ArraySlackSortArray[RunStart], StackTraceDepth, bLlmEnabled);
+
+				if ((bVerbose || bUniqueStackTrace) && (ArraySlackSortArray[ItemIndex].StackTraceTotalSlack >= GArraySlackThreshold))
+				{
+					if (LogFile)
+					{
+						Builder.Reset();
+						Builder.Appendf(
+							"%llu\t%.1lf\t%.1lf\t%.1lf\t%u\t%lld\t%lld\t%lld\t%lld\t",
+							bVerbose ? ItemRun : ArraySlackSortArray[ItemIndex].StackTraceRunLength,
+							ItemReallocs / ItemRun,
+							ItemLifetime / ItemRun,
+							ItemPeakSum / ItemRun,
+							ItemPeak,
+							ArraySlackSortArray[ItemIndex].Header->ElemSize,
+							ArraySlackSortArray[ItemIndex].Header->ArrayNum,
+							ArraySlackSortArray[ItemIndex].Header->ArrayMax,
+							ArraySlackSortArray[ItemIndex].Header->SlackSizeInBytes() * ItemRun);
+
+						// Stack trace total slack if it's unique
+						if (bUniqueStackTrace)
+						{
+							Builder.Appendf("%lld", ArraySlackSortArray[ItemIndex].StackTraceTotalSlack);
+						}
+
+						// Tag name
+						if (bLlmEnabled)
+						{
+							Builder.AppendChar('\t');
+							if (ArraySlackSortArray[ItemIndex].CustomName != NAME_None)
+							{
+								Builder.Append(*ArraySlackSortArray[ItemIndex].CustomName.ToString());
+							}
+							else
+							{
+								Builder.Append(Tracker.FindTagDisplayName(ArraySlackSortArray[ItemIndex].Header->Tag).ToString());
+							}
+						}
+					}
+					else
+					{
+						TStringBuilder<32> ByStackSlack;
+						if (bUniqueStackTrace)
+						{
+							ByStackSlack.Appendf(TEXT("%lld"), ArraySlackSortArray[ItemIndex].StackTraceTotalSlack);
+						}
+
+						FPlatformMisc::LowLevelOutputDebugStringf(
+							TEXT("SlackReport\t%llu\t%.1lf\t%.1lf\t%.1lf\t%lld\t%lld\t%lld\t%lld\t%lld\t%s%s%s"),
+							bVerbose ? ItemRun : ArraySlackSortArray[ItemIndex].StackTraceRunLength,
+							ItemReallocs / ItemRun,
+							ItemLifetime / ItemRun,
+							ItemPeakSum / ItemRun,
+							ItemPeak,
+							ArraySlackSortArray[ItemIndex].Header->ElemSize,
+							ArraySlackSortArray[ItemIndex].Header->ArrayNum,
+							ArraySlackSortArray[ItemIndex].Header->ArrayMax,
+							ArraySlackSortArray[ItemIndex].Header->SlackSizeInBytes() * ItemRun,
+							ByStackSlack.ToString(),
+							TagColumnSeparator,
+							!bLlmEnabled ? TEXT("") :
+							(ArraySlackSortArray[ItemIndex].CustomName != NAME_None ?
+								*ArraySlackSortArray[ItemIndex].CustomName.ToString() :
+								*Tracker.FindTagDisplayName(ArraySlackSortArray[ItemIndex].Header->Tag).ToString()));
+					}
+
+					// Only print stack trace if this is a unique stack trace.
+					if (bUniqueStackTrace)
+					{
+						int32 StackFirst = ArraySlackSortArray[ItemIndex].StackTraceIgnore;
+						int32 StackCount = ArraySlackSortArray[ItemIndex].Header->NumStackFrames - ArraySlackSortArray[ItemIndex].StackTraceIgnore;
+						if (FullStacksPrinted >= GArraySlackFullStackNum)
+						{
+							StackCount = FMath::Min(StackCount, (int32)StackTraceDepth);
+						}
+						else
+						{
+							FullStacksPrinted++;
+						}
+
+						for (int32 StackIndex = StackFirst; StackIndex < StackFirst + StackCount; StackIndex++)
+						{
+							FProgramCounterSymbolInfo SymbolInfo;
+							FPlatformStackWalk::ProgramCounterToSymbolInfo(ArraySlackSortArray[ItemIndex].Header->StackFrames[StackIndex], SymbolInfo);
+
+							if (LogFile)
+							{
+								Builder.AppendChar('\t');
+								Builder.Append(SymbolInfo.FunctionName[0] ? SymbolInfo.FunctionName : "UnknownFunction");
+
+								if (SymbolInfo.Filename[0] && SymbolInfo.LineNumber)
+								{
+									// Format " [Filename:Line]"
+									Builder.Append(" [");
+									Builder.Append(SymbolInfo.Filename);
+									Builder.Appendf(":%i]", SymbolInfo.LineNumber);
+								}
+								else
+								{
+									Builder.Append(" []");
+								}
+							}
+							else
+							{
+								TStringBuilder<512> SymbolName;
+								SymbolName.AppendChar(TEXT('\t'));
+								SymbolName.Append(SymbolInfo.FunctionName[0] ? SymbolInfo.FunctionName : "UnknownFunction");
+
+								if (SymbolInfo.Filename[0] && SymbolInfo.LineNumber)
+								{
+									// Format " [Filename:Line]"
+									SymbolName.Append(TEXT(" ["));
+									SymbolName.Append(SymbolInfo.Filename);
+									SymbolName.Appendf(TEXT(":%i]"), SymbolInfo.LineNumber);
+								}
+								else
+								{
+									SymbolName.Append(TEXT(" []"));
+								}
+
+								FPlatformMisc::LowLevelOutputDebugString(SymbolName.ToString());
+							}
+						}
+					}
+
+					if (LogFile)
+					{
+						Builder.AppendChar('\n');
+						LogFile->Serialize(Builder.GetData(), Builder.Len());
+					}
+					else
+					{
+						FPlatformMisc::LowLevelOutputDebugString(TEXT("\n"));
+					}
+				}
+
+				ItemRun = 0;
+				ItemReallocs = 0.0;
+				ItemLifetime = 0.0;
+				ItemPeakSum = 0.0;
+				ItemPeak = 0;
+			}
+		}
+	}
+}
+
+void ArraySlackTrackInit()
+{
+	// Any array allocations before this is called won't have array slack tracking, although subsequent reallocations of existing arrays
+	// will gain tracking if that occurs.  The goal is to filter out startup constructors which run before Main, which introduce a
+	// ton of noise into slack reports.  Especially the roughly 30,000 static FString constructors in the code base, each with a
+	// unique call stack, and all having a little bit of slack due to malloc bucket size rounding.
+	GArraySlackInit = true;
+}
+
+static void LlmTrackArrayTick()
+{
+	// Updating these every frame is handy, so you can see them in a watch window in the debugger or debug print them without running a capture.
+	// We could consider including these as stats, so you can track them in Insights, but the report is giving enough information for now.
+	for (int32 TagIndex = 0; TagIndex < 256; TagIndex++)
+	{
+		GArraySlackByTag[TagIndex] = GArrayMaxByTag[TagIndex] - GArrayUsedByTag[TagIndex];
+	}
+}
+
+void ArraySlackTrackGenerateReport(const TCHAR* Cmd, FOutputDevice& Output)
+{
+	Output.Logf(TEXT("Generating Array Slack report."));
+
+	double StartTime = FPlatformTime::Seconds();
+
+	// Make sure the slack by tag totals are up to date
+	LlmTrackArrayTick();
+
+	// Parse command -- tokens
+	FString LogFilename;
+	uint32 StackTraceDepth = GArraySlackDefaultStackDepth;
+	bool bVerbose = GArraySlackDefaultVerbose;
+	for (FString Arg = FParse::Token(Cmd, false); !Arg.IsEmpty(); Arg = FParse::Token(Cmd, false))
+	{
+		if (Arg[0] == TEXT('-'))
+		{
+			FStringView StackDepthSwitch(TEXTVIEW("-Stack="));
+			FStringView VerboseSwitch(TEXTVIEW("-Verbose="));
+			if ((Arg.Len() > StackDepthSwitch.Len()) && !FCString::Strnicmp(&Arg[0], StackDepthSwitch.GetData(), StackDepthSwitch.Len()))
+			{
+				StackTraceDepth = (uint32)FCString::Strtoui64(&Arg[StackDepthSwitch.Len()], nullptr, 10);
+			}
+			else if ((Arg.Len() > VerboseSwitch.Len()) && !FCString::Strnicmp(&Arg[0], VerboseSwitch.GetData(), VerboseSwitch.Len()))
+			{
+				bVerbose = Arg[VerboseSwitch.Len()] != TEXT('0');
+			}
+			else
+			{
+				Output.Logf(TEXT("Array Slack unsupported switch: \"%s\".  Valid switches:  -Stack=N, -Verbose=[0,1]"), *Arg);
+			}
+		}
+		else
+		{
+			LogFilename = Arg;
+		}
+	}
+
+	FArchive* LogFile = nullptr;
+
+#if ARRAY_SLACK_LOG_TO_MEMORY
+	TArray<uint8> LogFileMemory;
+	LogFileMemory.Reserve(4 * 1024 * 1024);
+	LogFileMemory.GetAllocatorInstance().DisableSlackTracking();
+#endif
+	FString LogFilenameWithPath;
+
+	// Special name "NOFILE" indicates to write to debug log instead of file.  Useful for debugging the system, as you can see the
+	// lines of text generated while debugging, as opposed to needing to wait until the file gets written to look at the output.
+	if (!LogFilename.Equals(TEXT("NOFILE")))
+	{
+		FString AbsoluteProjectLogDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectLogDir());
+		FString SlackReportLogDir = FPaths::Combine(AbsoluteProjectLogDir, TEXT("SlackReport"));
+		IPlatformFile::GetPlatformPhysical().CreateDirectoryTree(*SlackReportLogDir);
+
+		if (LogFilename.IsEmpty())
+		{
+			LogFilename = FString::Printf(TEXT("SlackDump_%03u.tsv"), GArraySlackDumpIndex++);
+		}
+		else
+		{
+			if (!LogFilename.EndsWith(TEXT(".tsv")))
+			{
+				LogFilename.Append(TEXT(".tsv"));
+			}
+		}
+		LogFilenameWithPath = SlackReportLogDir / LogFilename;
+
+#if ARRAY_SLACK_LOG_TO_MEMORY
+		LogFile = new FMemoryWriter(LogFileMemory);
+#else
+		IFileManager* FileManager = &IFileManager::Get();
+		LogFile = FileManager->CreateFileWriter(*LogFilenameWithPath, 0);
+#endif
+	}
+
+	const FLowLevelMemTracker& Tracker = FLowLevelMemTracker::Get();
+	bool bLlmEnabled = Tracker.IsEnabled();
+
+	TAnsiStringBuilder<4096> Builder;
+
+	TArray<uint64> SortedTags;
+	SortedTags.SetNumZeroed(256);
+	SortedTags.GetAllocatorInstance().DisableSlackTracking();
+
+	// Tag summary report is only useful when -llm is enabled
+	if (bLlmEnabled)
+	{
+		if (LogFile)
+		{
+			Builder.Append("Tag\tSlack\tTotalMem\n");
+			LogFile->Serialize(Builder.GetData(), Builder.Len());
+		}
+		else
+		{
+			FPlatformMisc::LowLevelOutputDebugString(TEXT("SlackByTag\tTag\tSlack\tTotalMem\n"));
+		}
+
+		// Sort tags by descending memory.  Store tag index in low 8 bits, memory in high 56 bits.
+		for (int32 TagIndex = 0; TagIndex < 256; TagIndex++)
+		{
+			SortedTags[TagIndex] = (GArraySlackByTag[TagIndex] << 8) | TagIndex;
+		}
+		SortedTags.Sort(TGreater<uint64>());
+
+		for (int32 SortedIndex = 0; SortedIndex < 256; SortedIndex++)
+		{
+			if (SortedTags[SortedIndex] >= 256)
+			{
+				uint32 TagIndex = (uint32)SortedTags[SortedIndex] & 0xff;
+
+				if (LogFile)
+				{
+					Builder.Reset();
+					Builder.Append(Tracker.FindTagDisplayName(TagIndex).ToString());
+					Builder.Appendf("\t%lld\t%lld\n",
+						GArraySlackByTag[TagIndex],
+						GArrayMaxByTag[TagIndex].load(std::memory_order_relaxed));
+					LogFile->Serialize(Builder.GetData(), Builder.Len());
+				}
+				else
+				{
+					FPlatformMisc::LowLevelOutputDebugStringf(TEXT("SlackByTag\t%s\t%lld\t%lld\n"),
+						*Tracker.FindTagDisplayName(TagIndex).ToString(),
+						GArraySlackByTag[TagIndex],
+						GArrayMaxByTag[TagIndex].load(std::memory_order_relaxed));
+				}
+			}
+		}
+
+		if (LogFile)
+		{
+			char NewLines[] = "\n\n";
+			LogFile->Serialize(NewLines, 2);
+		}
+	}
+
+	if (LogFile)
+	{
+		// Append information about options and timing of dump
+		FArraySlackTrackingHeader Dummy;
+		Builder.Reset();
+		Builder.Appendf("Ran with:\t-Stack=%u -Verbose=%d", FMath::Min((uint32)UE_ARRAY_COUNT(Dummy.StackFrames), StackTraceDepth), bVerbose ? 1 : 0);
+		if (FLowLevelMemTracker::Get().IsEnabled())
+		{
+			Builder.Append(" -llm");
+		}
+		if (!bVerbose)
+		{
+			Builder.Append("\t\t\tFields besides NumArrays / StackSlack are for the largest slack bucket (unique Num / Max combo), run with -Verbose=1 to see all buckets");
+		}
+		Builder.Appendf("\nOn frame:\t%u\n\n", (int32)GFrameCounter);
+		LogFile->Serialize(Builder.GetData(), Builder.Len());
+	}
+
+	if (bLlmEnabled && GArraySlackGroupByTag)
+	{
+		// Original behavior grouped by tag, but all in one batch is generally preferable.  Could expose this with a switch in the future.
+		for (int32 SortedIndex = 0; SortedIndex < 256; SortedIndex++)
+		{
+			if (SortedTags[SortedIndex] > 256)
+			{
+				int32 TagIndex = (int32)SortedTags[SortedIndex] & 0xff;
+				if (GArraySlackByTag[TagIndex])
+				{
+#if ARRAY_SLACK_LOG_TO_MEMORY
+					// Disable tracking each loop iteration, in case the memory grew to the point where it was reallocated in the previous iteration.
+					LogFileMemory.GetAllocatorInstance().DisableSlackTracking();
+#endif
+
+					LlmTrackArrayDumpTag(LogFile, Output, Builder, TagIndex, StackTraceDepth, bVerbose, StartTime);
+				}
+			}
+		}
+	}
+	else
+	{
+		// INDEX_NONE == dump all tags in one batch
+		LlmTrackArrayDumpTag(LogFile, Output, Builder, INDEX_NONE, StackTraceDepth, bVerbose, StartTime);
+	}
+
+	if (LogFile)
+	{
+		delete LogFile;
+
+#if ARRAY_SLACK_LOG_TO_MEMORY
+		// Now create the actual file
+		IFileManager* FileManager = &IFileManager::Get();
+		LogFile = FileManager->CreateFileWriter(*LogFilenameWithPath, 0);
+		LogFile->Serialize(LogFileMemory.GetData(), LogFileMemory.Num());
+		delete LogFile;
+#endif
+	}
+
+	Output.Logf(TEXT("Finished generating Array Slack report to %s."), LogFile ? *LogFilename : TEXT("[Debug Output]"));
+}
+
+uint8 LlmGetActiveTag()
+{
+	FLowLevelMemTracker& Tracker = FLowLevelMemTracker::Get();
+	if (!Tracker.IsInitialized())
+	{
+		return 0;
+	}
+
+	const UE::LLMPrivate::FTagData* TagData = Tracker.GetActiveTagData(ELLMTracker::Default);
+	return TagData ? (uint8)TagData->GetEnumTag() : 0;
+}
+
+#endif  // UE_ENABLE_ARRAY_SLACK_TRACKING
 
 UE_TRACE_CHANNEL(MemTagChannel, "Memory overview", true)
 
@@ -80,21 +975,85 @@ FAutoConsoleCommand DumpLLM(
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda(
 		[](const TArray<FString>& Args, UWorld* InWorld, FOutputDevice& Ar)
 	{
-		FString Command = FString::Join(Args, TEXT(","));
+		FString Command = FString::Join(Args, TEXT(" "));
 
+		FLowLevelMemTracker::EDumpFormat DumpFormat = FLowLevelMemTracker::EDumpFormat::PlainText;
 		bool bCSV = FParse::Param(*Command, TEXT("CSV"));
-		bool bSnapshot = FParse::Param(*Command, TEXT("SNAPSHOT"));
+		if (bCSV)
+		{
+			DumpFormat = FLowLevelMemTracker::EDumpFormat::CSV;
+		}
 
-		UE::LLM::ESizeParams SizeParams(UE::LLM::ESizeParams::Default);
+		UE::LLM::ESizeParams SizeParams = UE::LLM::ESizeParams::Default;
+		bool bSnapshot = FParse::Param(*Command, TEXT("SNAPSHOT"));
 		if (bSnapshot)
 		{
 			EnumAddFlags(SizeParams, UE::LLM::ESizeParams::RelativeToSnapshot);
 		}
-		FLowLevelMemTracker::Get().DumpToLog(
-			bCSV ? FLowLevelMemTracker::EDumpFormat::CSV : FLowLevelMemTracker::EDumpFormat::PlainText, &Ar, SizeParams);
+
+		ELLMTagSet TagSet = ELLMTagSet::None;
+		if (FParse::Param(*Command, TEXT("Assets")))
+		{
+			TagSet = ELLMTagSet::Assets;
+		}
+		else if (FParse::Param(*Command, TEXT("AssetClasses")))
+		{
+			TagSet = ELLMTagSet::AssetClasses;
+		}
+
+		FLowLevelMemTracker::Get().DumpToLog(DumpFormat, &Ar, SizeParams, TagSet);
 	}));
 
-void FLowLevelMemTracker::DumpToLog(EDumpFormat DumpFormat, FOutputDevice* OutputDevice, UE::LLM::ESizeParams SizeParams)
+#if !PLATFORM_HAS_MULTITHREADED_PREMAIN
+struct FLowLevelMemTracker::FEnableStateScopeLock
+{
+};
+bool FLowLevelMemTracker::TryEnterEnabled(FLowLevelMemTracker::FEnableStateScopeLock& ScopeLock)
+{
+	return IsEnabled();
+}
+#else // !PLATFORM_HAS_MULTITHREADED_PREMAIN
+struct FLowLevelMemTracker::FEnableStateScopeLock
+{
+	// Undefine copy/move constructor since FReadScopeLock does not support it.
+	FEnableStateScopeLock() = default;
+	FEnableStateScopeLock(const FEnableStateScopeLock&) = delete;
+	FEnableStateScopeLock(FEnableStateScopeLock&&) = delete;
+
+	TOptional<FReadScopeLock> Inner;
+};
+
+namespace UE::LLMPrivate
+{
+
+FRWLock& GetEnableStateLock()
+{
+	static FRWLock Lock;
+	return Lock;
+}
+
+}
+
+bool FLowLevelMemTracker::TryEnterEnabled(FLowLevelMemTracker::FEnableStateScopeLock& ScopeLock)
+{
+	switch (EnabledState)
+	{
+	case EEnabled::NotYetKnown:
+		ScopeLock.Inner.Emplace(UE::LLMPrivate::GetEnableStateLock());
+		// Evaluate EnabledState again since it may have changed under ProcessCommandLine's WriteLock.
+		return IsEnabled();
+	case EEnabled::Disabled:
+		return false;
+	case EEnabled::Enabled:
+		return true;
+	default:
+		checkNoEntry();
+		return false;
+	}
+}
+#endif // !PLATFORM_HAS_MULTITHREADED_PREMAIN
+
+void FLowLevelMemTracker::DumpToLog(EDumpFormat DumpFormat, FOutputDevice* OutputDevice, UE::LLM::ESizeParams SizeParams, ELLMTagSet TagSet)
 {
 	if (!IsEnabled())
 	{
@@ -127,7 +1086,7 @@ void FLowLevelMemTracker::DumpToLog(EDumpFormat DumpFormat, FOutputDevice* Outpu
 		EnumAddFlags(PeakSizeParams, UE::LLM::ESizeParams::ReportPeak);
 
 		TArray<FTagLine> TagLines;
-		for (const UE::LLMPrivate::FTagData* TagData : GetTrackedTags(TrackerType))
+		for (const UE::LLMPrivate::FTagData* TagData : GetTrackedTags(TrackerType, TagSet))
 		{
 			int64 CurrentAmount = GetTagAmountForTracker(TrackerType, TagData, SizeParams);
 			int64 PeakAmount = GetTagAmountForTracker(TrackerType, TagData, PeakSizeParams);
@@ -348,10 +1307,10 @@ public:
 	void Publish(FLowLevelMemTracker& LLMRef, const FTrackerTagSizeMap& TagSizes,
 		const FTagData* OverrideTrackedTotalName, const FTagData* OverrideUntaggedName, int64 TrackedTotal,
 		UE::LLM::ESizeParams SizeParams);
-	static void TraceGenericTags(FLowLevelMemTracker& LLMRef);
 
 private:
 	static const void* GetTagId(const FTagData* TagData);
+	void SendTagDeclaration(const FTagData* TagData);
 
 	ELLMTracker				Tracker;
 	TFastPointerLLMSet<const FTagData*> DeclaredTags;
@@ -446,6 +1405,12 @@ public:
 
 	void Clear();
 
+	// Dump the allocation count and size for each tag, along with the porportion that is private/shared/unreferenced
+	// on linux machines. This will dump to a CSV in the project Saved/LLM directory with a separate file for each
+	// tracker and forked child. Integers will be appended to the filename to prevent overwrites. Returns false
+	// if the memory inforation can't be retrieved (likely because it's not on a supported platform)
+	bool DumpForkedAllocationInfo();
+
 	void PublishStats(UE::LLM::ESizeParams SizeParam);
 	void PublishCsv(UE::LLM::ESizeParams SizeParam);
 	void PublishTrace(UE::LLM::ESizeParams SizeParam);
@@ -499,7 +1464,7 @@ public:
 		}
 
 #if LLM_ENABLED_FULL_TAGS
-		int32 GetCompressedTag(ELLMTagSet InTagSet)
+		int32 GetCompressedTag(ELLMTagSet InTagSet = ELLMTagSet::None)
 		{
 #if !LLM_ALLOW_ASSETS_TAGS
 			return (InTagSet == ELLMTagSet::None) ? Tag : InvalidCompressedTagValue;
@@ -508,7 +1473,7 @@ public:
 #endif
 		}
 
-		void SetCompressedTag(int32 InTag, ELLMTagSet InTagSet)
+		void SetCompressedTag(int32 InTag, ELLMTagSet InTagSet = ELLMTagSet::None)
 		{
 #if !LLM_ALLOW_ASSETS_TAGS
 			if (InTagSet == ELLMTagSet::None)
@@ -560,7 +1525,7 @@ public:
 	void GetTagsNamesWithAmount(TMap<FName, uint64>& OutTagsNamesWithAmount, ELLMTagSet TagSet = ELLMTagSet::None);
 	void GetTagsNamesWithAmountFiltered(TMap<FName, uint64>& OutTagsNamesWithAmount, ELLMTagSet TagSet, TArray<FLLMTagSetAllocationFilter>& Filters);
 
-	bool FindTagsForPtr(void* InPtr, TArray<const FTagData*, TInlineAllocator<static_cast<int32>(ELLMTagSet::Max)>>& OutTags);
+	bool FindTagsForPtr(void* InPtr, TArray<const FTagData*, TInlineAllocator<static_cast<int32>(ELLMTagSet::Max)>>& OutTags) const;
 
 	int64 GetAllocTypeAmount(ELLMAllocType AllocType);
 
@@ -589,6 +1554,12 @@ protected:
 
 	FCriticalSection PendingThreadStatesGuard;
 	TArray<FLLMThreadState*, FDefaultLLMAllocator> PendingThreadStates;
+	/**
+	 * Backup map from thread to threadstate. The primary lookup method is FPlatformTLS, but that is unavailable
+	 * during thread termination on some platforms. When unavailable, we use this TMap (under PendingThreadStatesGuard
+	 * critical section) to find the state.
+	 */
+	TMap<uint32, FLLMThreadState*, FDefaultSetLLMAllocator> ThreadIdToThreadState;
 
 	/** Sum of memory from all tracked tags. Duplicated in separate storage to make it instantly available at any time of frame without waiting for accumulation from threads during update.
 	    GCC_ALIGN is required because it is modified in FPlatformAtomics::InterlockedAdd, which requires aligned values. */
@@ -616,6 +1587,44 @@ protected:
 const TCHAR* ToString(ETagReferenceSource ReferenceSource);
 void SetMemoryStatByFName(FName Name, int64 Amount);
 void ValidateUniqueName(FStringView UniqueName);
+
+typedef TArray<TPair<FLLMInitialisedCallback, UPTRINT>, TInlineAllocator<1>> FInitializedCallbacksArray;
+FInitializedCallbacksArray& GetInitialisedCallbacks()
+{
+	static FInitializedCallbacksArray Array;
+	return Array;
+}
+
+typedef TArray<TPair<FTagCreationCallback, UPTRINT>, TInlineAllocator<1>> FTagCreationCallbacksArray;
+FTagCreationCallbacksArray& GetTagCreationCallbacks()
+{
+	static FTagCreationCallbacksArray Array;
+	return Array;
+}
+
+void FPrivateCallbacks::AddInitialisedCallback(FLLMInitialisedCallback Callback, UPTRINT UserData)
+{
+	FLowLevelMemTracker::Get().BootstrapInitialise();
+
+	FInitializedCallbacksArray& Callbacks = UE::LLMPrivate::GetInitialisedCallbacks();
+	Callbacks.Add(TPair<FLLMInitialisedCallback, UPTRINT> { Callback, UserData });
+}
+
+void FPrivateCallbacks::AddTagCreationCallback(FTagCreationCallback Callback, UPTRINT UserData)
+{
+	FLowLevelMemTracker::Get().BootstrapInitialise();
+
+	FTagCreationCallbacksArray& Callbacks = UE::LLMPrivate::GetTagCreationCallbacks();
+	Callbacks.Add(TPair<FTagCreationCallback, UPTRINT> { Callback, UserData });
+}
+
+void FPrivateCallbacks::RemoveTagCreationCallback(FTagCreationCallback Callback)
+{
+	FLowLevelMemTracker::Get().BootstrapInitialise();
+
+	FTagCreationCallbacksArray& Callbacks = UE::LLMPrivate::GetTagCreationCallbacks();
+	Callbacks.RemoveAll([Callback](TPair<FTagCreationCallback, UPTRINT>& Pair) { return Pair.Key == Callback; });
+}
 
 } // namespace UE::LLMPrivate
 
@@ -747,14 +1756,10 @@ FLowLevelMemTracker& FLowLevelMemTracker::Construct()
 	return Tracker;
 }
 
-bool FLowLevelMemTracker::IsEnabled()
-{
-	return !bIsDisabled;
-}
-
 FLowLevelMemTracker* FLowLevelMemTracker::TrackerInstance = nullptr;
 // LLM must start off enabled because allocations happen before the command line enables/disables us
 bool FLowLevelMemTracker::bIsDisabled = false;
+FLowLevelMemTracker::EEnabled FLowLevelMemTracker::EnabledState = EEnabled::NotYetKnown;
 
 static const TCHAR* InvalidLLMTagName = TEXT("?");
 
@@ -786,7 +1791,10 @@ FLowLevelMemTracker::FLowLevelMemTracker()
 	int32 Alignment = 0;
 	if (!FPlatformMemory::GetLLMAllocFunctions(PlatformLLMAlloc, PlatformLLMFree, Alignment))
 	{
+		EnabledState = EEnabled::Disabled;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 		bIsDisabled = true;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 		bCanEnable = false;
 		bConfigurationComplete = true;
 		return;
@@ -807,7 +1815,10 @@ FLowLevelMemTracker::~FLowLevelMemTracker()
 {
 	using namespace UE::LLMPrivate;
 
+	EnabledState = EEnabled::Disabled;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	bIsDisabled = true;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 	Clear();
 	FLLMAllocator::Get() = nullptr;
 }
@@ -852,7 +1863,7 @@ void FLowLevelMemTracker::Clear()
 		return;
 	}
 
-	LLMCheck(bIsDisabled); // tracking must be stopped at this point or it will crash while tracking its own destruction
+	LLMCheck(!IsEnabled()); // tracking must be stopped at this point or it will crash while tracking its own destruction
 	for (int32 TrackerIndex = 0; TrackerIndex < static_cast<int32>(ELLMTracker::Max); TrackerIndex++)
 	{
 		GetTracker((ELLMTracker)TrackerIndex)->Clear();
@@ -869,8 +1880,7 @@ void FLowLevelMemTracker::Clear()
 void FLowLevelMemTracker::OnPreFork()
 {
 	using namespace UE::LLMPrivate;
-
-	if (!bIsDisabled)
+	if (IsEnabled())
 	{
 		FLLMTracker& DefaultTracker = *GetTracker(ELLMTracker::Default);
 		FLLMTracker& PlatformTracker = *GetTracker(ELLMTracker::Platform);
@@ -882,7 +1892,12 @@ void FLowLevelMemTracker::OnPreFork()
 
 void FLowLevelMemTracker::UpdateStatsPerFrame(const TCHAR* LogName)
 {
-	if (bIsDisabled)
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+	// Slack tracking, when compiled in, can run even when regular LLM tracking is disabled
+	LlmTrackArrayTick();
+#endif
+
+	if (!IsEnabled())
 	{
 		if (bFirstTimeUpdating)
 		{
@@ -923,7 +1938,7 @@ void FLowLevelMemTracker::UpdateStatsPerFrame(const TCHAR* LogName)
 
 void FLowLevelMemTracker::Tick()
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -961,7 +1976,7 @@ void FLowLevelMemTracker::TickInternal()
 
 	// Cache the amount of memory used early, since some of these functions (FindOrAddTagData) can
 	// cause allocations, which will throw the numbers off slightly.
-	FPlatformMemoryStats PlatformStats = FPlatformMemory::GetStats();
+	FPlatformMemoryStats PlatformStats = FPlatformMemory::GetStatsRaw();
 #if PLATFORM_DESKTOP
 	// virtual is working set + paged out memory.
 	const int64 PlatformProcessMemory = static_cast<int64>(PlatformStats.UsedVirtual);
@@ -1106,7 +2121,7 @@ void FLowLevelMemTracker::PublishDataPerFrame(const TCHAR* LogName)
 
 	// set overhead stats
 	SET_MEMORY_STAT(STAT_LLMOverheadTotal, MemoryUsageCurrentOverhead);
-	if (!bIsDisabled)
+	if (IsEnabled())
 	{
 		FLLMTracker& DefaultTracker = *GetTracker(ELLMTracker::Default);
 		FLLMTracker& PlatformTracker = *GetTracker(ELLMTracker::Platform);
@@ -1182,7 +2197,7 @@ void FLowLevelMemTracker::InitialiseProgramSize()
 
 void FLowLevelMemTracker::SetProgramSize(uint64 InProgramSize)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -1227,7 +2242,10 @@ void FLowLevelMemTracker::ProcessCommandLine(const TCHAR* CmdLine)
 
 	if (!bCanEnable)
 	{
+		LLMCheck(EnabledState == EEnabled::Disabled);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 		LLMCheck(bIsDisabled);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 		if (!bShouldDisable)
 		{
 			UE_LOG(LogInit, Log,
@@ -1241,11 +2259,26 @@ void FLowLevelMemTracker::ProcessCommandLine(const TCHAR* CmdLine)
 	{
 		// Before we shutdown, update once so we can publish the overhead-when-disabled later during the first
 		// call to UpdateStatsPerFrame.
-		if (!bIsDisabled)
+		if (IsEnabled())
 		{
 			Tick();
 		}
-		bIsDisabled = true;
+
+		{
+#if PLATFORM_HAS_MULTITHREADED_PREMAIN
+			// The EnableStateLock must be limited in scope because other code in the function
+			// allocates memory and would block on the readlock. Trying to take it around the write of the
+			// EnabledState is sufficient; this will cause us to wait until threads already in OnLowLevelAlloc exit the
+			// function and clear their readlock, and will cause new calls to those functions to block while we're waiting
+			// and call IsEnabled again after we release the lock.
+			FWriteScopeLock EnableStateLock(UE::LLMPrivate::GetEnableStateLock());
+#endif
+
+			EnabledState = EEnabled::Disabled;
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+			bIsDisabled = true;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+		}
 		bCsvWriterEnabled = false;
 		bTraceWriterEnabled = false;
 		bCanEnable = false; // Reenabling after a clear is not implemented
@@ -1253,10 +2286,15 @@ void FLowLevelMemTracker::ProcessCommandLine(const TCHAR* CmdLine)
 		return;
 	}
 	CSV_METADATA(TEXT("LLM"), TEXT("1"));
+
+	// PLATFORM_HAS_MULTITHREADED_PREMAIN: No need for a Write lock because we are not changing state to disabled.
+	// The other data we modify in this function is synchronized using other methods.
+	EnabledState = EEnabled::Enabled;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	bIsDisabled = false;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 	bCsvWriterEnabled = bLocalCsvWriterEnabled;
 	bTraceWriterEnabled = bLocalTraceWriterEnabled;
-	BootstrapInitialise();
 	FinishInitialise();
 
 	// activate tag sets (we ignore None set, it's always on)
@@ -1296,12 +2334,22 @@ void FLowLevelMemTracker::ProcessCommandLine(const TCHAR* CmdLine)
 
 	UE_LOG(LogInit, Log, TEXT("LLM enabled CsvWriter: %s TraceWriter: %s"),
 		bCsvWriterEnabled ? TEXT("on") : TEXT("off"), bTraceWriterEnabled ? TEXT("on") : TEXT("off"));
+
+	// Disable hitchdetector because LLM is already slow enough.
+	if (!FParse::Param(CmdLine, TEXT("DetectHitchesWithLLM")))
+	{
+		// Schedule disabling when it's safe to init HitchHeartBeat
+		FCoreDelegates::OnPostEngineInit.AddLambda([]{
+			// Calling Get() will instantiate FGameThreadHitchHeartBeat if it is not already.
+			FGameThreadHitchHeartBeat::Get().Stop();
+		});
+	}
 }
 
 // Return the total amount of memory being tracked
 uint64 FLowLevelMemTracker::GetTotalTrackedMemory(ELLMTracker Tracker)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return 0;
 	}
@@ -1313,10 +2361,12 @@ uint64 FLowLevelMemTracker::GetTotalTrackedMemory(ELLMTracker Tracker)
 void FLowLevelMemTracker::OnLowLevelAlloc(ELLMTracker Tracker, const void* Ptr, uint64 Size, ELLMTag DefaultTag,
 	ELLMAllocType AllocType, bool bTrackInMemPro)
 {
-	if (bIsDisabled)
+	FEnableStateScopeLock EnableScopeLock;
+	if (!TryEnterEnabled(EnableScopeLock))
 	{
 		return;
 	}
+
 	BootstrapInitialise();
 
 	GetTracker(Tracker)->TrackAllocation(Ptr, static_cast<int64>(Size), DefaultTag, AllocType, bTrackInMemPro);
@@ -1325,10 +2375,12 @@ void FLowLevelMemTracker::OnLowLevelAlloc(ELLMTracker Tracker, const void* Ptr, 
 void FLowLevelMemTracker::OnLowLevelAlloc(ELLMTracker Tracker, const void* Ptr, uint64 Size, FName DefaultTag,
 	ELLMAllocType AllocType, bool bTrackInMemPro)
 {
-	if (bIsDisabled)
+	FEnableStateScopeLock EnableScopeLock;
+	if (!TryEnterEnabled(EnableScopeLock))
 	{
 		return;
 	}
+
 	BootstrapInitialise();
 
 	GetTracker(Tracker)->TrackAllocation(Ptr, static_cast<int64>(Size), DefaultTag, AllocType, bTrackInMemPro);
@@ -1337,10 +2389,12 @@ void FLowLevelMemTracker::OnLowLevelAlloc(ELLMTracker Tracker, const void* Ptr, 
 void FLowLevelMemTracker::OnLowLevelFree(ELLMTracker Tracker, const void* Ptr,
 	ELLMAllocType AllocType, bool bTrackInMemPro)
 {
-	if (bIsDisabled)
+	FEnableStateScopeLock EnableScopeLock;
+	if (!TryEnterEnabled(EnableScopeLock))
 	{
 		return;
 	}
+
 	BootstrapInitialise();
 
 	if (Ptr != nullptr)
@@ -1352,10 +2406,12 @@ void FLowLevelMemTracker::OnLowLevelFree(ELLMTracker Tracker, const void* Ptr,
 void FLowLevelMemTracker::OnLowLevelChangeInMemoryUse(ELLMTracker Tracker, int64 DeltaMemory, ELLMTag DefaultTag,
 	ELLMAllocType AllocType)
 {
-	if (bIsDisabled)
+	FEnableStateScopeLock EnableScopeLock;
+	if (!TryEnterEnabled(EnableScopeLock))
 	{
 		return;
 	}
+
 	BootstrapInitialise();
 	GetTracker(Tracker)->TrackMemoryOfActiveTag(DeltaMemory, DefaultTag, AllocType);
 }
@@ -1363,10 +2419,12 @@ void FLowLevelMemTracker::OnLowLevelChangeInMemoryUse(ELLMTracker Tracker, int64
 void FLowLevelMemTracker::OnLowLevelChangeInMemoryUse(ELLMTracker Tracker, int64 DeltaMemory, FName DefaultTag,
 	ELLMAllocType AllocType)
 {
-	if (bIsDisabled)
+	FEnableStateScopeLock EnableScopeLock;
+	if (!TryEnterEnabled(EnableScopeLock))
 	{
 		return;
 	}
+
 	BootstrapInitialise();
 	GetTracker(Tracker)->TrackMemoryOfActiveTag(DeltaMemory, DefaultTag, AllocType);
 }
@@ -1374,10 +2432,12 @@ void FLowLevelMemTracker::OnLowLevelChangeInMemoryUse(ELLMTracker Tracker, int64
 void FLowLevelMemTracker::OnLowLevelAllocMoved(ELLMTracker Tracker, const void* Dest, const void* Source,
 	ELLMAllocType AllocType)
 {
-	if (bIsDisabled)
+	FEnableStateScopeLock EnableScopeLock;
+	if (!TryEnterEnabled(EnableScopeLock))
 	{
 		return;
 	}
+
 	BootstrapInitialise();
 
 	//update the allocation map
@@ -1389,9 +2449,14 @@ UE::LLMPrivate::FLLMTracker* FLowLevelMemTracker::GetTracker(ELLMTracker Tracker
 	return Trackers[static_cast<int32>(Tracker)];
 }
 
+const UE::LLMPrivate::FLLMTracker* FLowLevelMemTracker::GetTracker(ELLMTracker Tracker) const
+{
+	return Trackers[static_cast<int32>(Tracker)];
+}
+
 bool FLowLevelMemTracker::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return false;
 	}
@@ -1432,6 +2497,17 @@ bool FLowLevelMemTracker::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 
 			UpdateStatsPerFrame(TEXT("After cleanup"));
 		}
+		else if (FParse::Command(&Cmd, TEXT("DUMPPRIVATESHARED")))
+		{
+			for (int32 TrackerIndex = 0; TrackerIndex < static_cast<int32>(ELLMTracker::Max); TrackerIndex++)
+			{
+				if (GetTracker((ELLMTracker)TrackerIndex)->DumpForkedAllocationInfo() == false)
+				{
+					FPlatformMisc::LowLevelOutputDebugString(TEXT("Failed to dumping forked allocation info (check platform supports it?)\n"));
+					return true;
+				}
+			}
+		}
 		else if (FParse::Command(&Cmd, TEXT("REMEMBER")))
 		{
 			CSV_EVENT_GLOBAL(TEXT("LLM_REMEMBER"));
@@ -1464,7 +2540,7 @@ bool FLowLevelMemTracker::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 
 bool FLowLevelMemTracker::IsTagSetActive(ELLMTagSet Set)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return false;
 	}
@@ -1476,7 +2552,7 @@ bool FLowLevelMemTracker::IsTagSetActive(ELLMTagSet Set)
 bool FLowLevelMemTracker::ShouldReduceThreads()
 {
 #if LLM_ENABLED_REDUCE_THREADS
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return false;
 	}
@@ -1517,7 +2593,7 @@ void FLowLevelMemTracker::RegisterPlatformTag(int32 Tag, const TCHAR* Name, FNam
 {
 	MemoryTrace_AnnounceCustomTag(Tag, ParentTag, Name);
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -1533,7 +2609,7 @@ void FLowLevelMemTracker::RegisterProjectTag(int32 Tag, const TCHAR* Name, FName
 {
 	MemoryTrace_AnnounceCustomTag(Tag, ParentTag, Name);
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -1545,7 +2621,7 @@ void FLowLevelMemTracker::RegisterProjectTag(int32 Tag, const TCHAR* Name, FName
 
 void GlobalRegisterTagDeclaration(FLLMTagDeclaration& TagDeclaration)
 {
-	if (FLowLevelMemTracker::bIsDisabled)
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		return;
 	}
@@ -1581,10 +2657,12 @@ void FLowLevelMemTracker::BootstrapTagDatas()
 		LLM_ENUM_GENERIC_TAGS(REGISTER_ELLMTAG);
 #undef REGISTER_ELLMTAG
 
+#if LLM_ALLOW_NAMES_TAGS
 		// The CustomName tag is an adapter for connecting LLM_SCOPE_BYNAME tags with platforms that used the
 		// ELLMTag-based reporting. We want to hide this procedural tag in systems that use FName-based reporting;
 		// if it is displayed it confusingly just displays a sum of every LLM_SCOPE_BYNAME tag.
 		TagDataEnumMap[static_cast<int32>(ELLMTag::CustomName)]->SetIsReportable(false);
+#endif
 	}
 }
 
@@ -1594,14 +2672,26 @@ void FLowLevelMemTracker::FinishInitialise()
 	{
 		return;
 	}
+	BootstrapInitialise();
+
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+	GTrackArrayDetailedLock = new FCriticalSection();
+#endif
 	bFullyInitialised = true;
 	// Make sure that FNames and Malloc have already been initialised, since we will use them during InitialiseTagDatas
 	// We force this by calling LLMGetTagUniqueName, which initializes FNames internally, and will therein trigger
 	// FName system construction, which will itself trigger Malloc construction.
 	(void)LLMGetTagUniqueName(ELLMTag::Untagged);
 	InitialiseTagDatas();
+
+	UE::LLMPrivate::FInitializedCallbacksArray& Callbacks = UE::LLMPrivate::GetInitialisedCallbacks();
+	for (const TPair<UE::LLMPrivate::FLLMInitialisedCallback, UPTRINT>& Callback : Callbacks)
+	{
+		Callback.Key(Callback.Value);
+	}
+	Callbacks.Empty();
 }
- 
+
 void FLowLevelMemTracker::InitialiseTagDatas_SetLLMTagNames()
 {
 	using namespace UE::LLMPrivate;
@@ -1807,9 +2897,7 @@ UE::LLMPrivate::FTagData& FLowLevelMemTracker::RegisterTagData(FName Name, FName
 		// by another thread in between FindOrAddTagData's check of TagDataNameMap->Find and now. Note that it is not
 		// valid for an LLM_SCOPE to be called before a formal registration (e.g. LLM_DECLARE_TAG). If a formal
 		// registration exists for a tag, it must precede its use in any LLM_SCOPE calls.
-		if ((ParentName.IsNone() && TagDataForName->GetParent() != nullptr) ||
-			(!ParentName.IsNone() &&
-				(TagDataForName->GetParent() == nullptr || TagDataForName->GetParent()->GetName() != ParentName)) ||
+		if (ParentName != TagDataForName->GetParentNameSafeBeforeFinishConstruct() ||
 			StatName != TagDataForName->GetStatName() ||
 			SummaryStatName != TagDataForName->GetSummaryStatName() ||
 			bHasEnumTag != TagDataForName->HasEnumTag() ||
@@ -1951,7 +3039,6 @@ void FLowLevelMemTracker::FinishConstruct(UE::LLMPrivate::FTagData* TagData,
 			TagData->SetParent(ParentData);
 		}
 	}
-	TagData->SetFinishConstructed();
 
 	FTagData* ParentData = const_cast<FTagData*>(TagData->GetParent());
 	if (ParentData)
@@ -1960,13 +3047,31 @@ void FLowLevelMemTracker::FinishConstruct(UE::LLMPrivate::FTagData* TagData,
 		// called and walk up the parent chain.
 		FinishConstruct(ParentData, ReferenceSource);
 	}
+
+	TagData->SetFinishConstructed();
+
+	// Broadcast the tag creation, except for generic tags which are constructed before any subscriber could
+	// possibly have registered. Subscribers must instead read those from GetTrackedTags.
+	if (!TagData->HasEnumTag() || TagData->GetEnumTag() >= ELLMTag::GenericTagCount)
+	{
+		// Leave the critical section while calling the callback, since the callback could be arbitrary
+		// code that calls back into LLM. The TagData pointer is immutable so we do not have to worry about
+		// it disappearing out from under us.
+		TagDataLock.ReadUnlock();
+		for (const TPair<UE::LLMPrivate::FTagCreationCallback, UPTRINT>& Callback :
+			UE::LLMPrivate::GetTagCreationCallbacks())
+		{
+			Callback.Key(TagData, Callback.Value);
+		}
+		TagDataLock.ReadLock();
+	}
 }
 
 TArray<const UE::LLMPrivate::FTagData*> FLowLevelMemTracker::GetTrackedTags(ELLMTagSet TagSet)
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return TArray<const FTagData*>();
 	}
@@ -1986,7 +3091,7 @@ TArray<const UE::LLMPrivate::FTagData*> FLowLevelMemTracker::GetTrackedTags(ELLM
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return TArray<const FTagData*>();
 	}
@@ -2001,7 +3106,7 @@ void FLowLevelMemTracker::GetTrackedTagsNamesWithAmount(TMap<FName, uint64>& Tag
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -2016,7 +3121,7 @@ void FLowLevelMemTracker::GetTrackedTagsNamesWithAmountFiltered(TMap<FName, uint
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -2031,7 +3136,7 @@ bool FLowLevelMemTracker::FindTagByName( const TCHAR* Name, uint64& OutTag, ELLM
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return false;
 	}
@@ -2073,7 +3178,7 @@ bool FLowLevelMemTracker::FindTagByName( const TCHAR* Name, uint64& OutTag, ELLM
 
 const TCHAR* FLowLevelMemTracker::FindTagName(uint64 Tag) const
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return nullptr;
 	}
@@ -2102,7 +3207,7 @@ FName FLowLevelMemTracker::FindTagDisplayName(uint64 Tag) const
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return NAME_None;
 	}
@@ -2121,6 +3226,22 @@ FName FLowLevelMemTracker::FindTagDisplayName(uint64 Tag) const
 	return NAME_None;
 }
 
+FName FLowLevelMemTracker::FindPtrDisplayName(void* Ptr) const
+{
+	using namespace UE::LLMPrivate;
+
+	if (!IsEnabled() || !bFullyInitialised)
+	{
+		return NAME_None;
+	}
+
+	const FLLMTracker* TrackerData = GetTracker(ELLMTracker::Default);
+	TArray<const FTagData*, TInlineAllocator<static_cast<int32>(ELLMTagSet::Max)>> Tags;
+	TrackerData->FindTagsForPtr(Ptr, Tags);
+
+	return Tags.Num() ? Tags[0]->GetDisplayName() : NAME_None;
+}
+
 FName FLowLevelMemTracker::GetTagDisplayName(const UE::LLMPrivate::FTagData* TagData) const
 {
 	return TagData->GetDisplayName();
@@ -2128,7 +3249,15 @@ FName FLowLevelMemTracker::GetTagDisplayName(const UE::LLMPrivate::FTagData* Tag
 
 FString FLowLevelMemTracker::GetTagDisplayPathName(const UE::LLMPrivate::FTagData* TagData) const
 {
-	return TagData->GetDisplayPath();
+	TStringBuilder<FName::StringBufferSize> Buffer;
+	GetTagDisplayPathName(TagData, Buffer);
+	return FString(Buffer);
+}
+
+void FLowLevelMemTracker::GetTagDisplayPathName(const UE::LLMPrivate::FTagData* TagData,
+	FStringBuilderBase& OutPathName, int32 MaxLen) const
+{
+	TagData->GetDisplayPath(OutPathName, MaxLen);
 }
 
 FName FLowLevelMemTracker::GetTagUniqueName(const UE::LLMPrivate::FTagData* TagData) const
@@ -2136,10 +3265,25 @@ FName FLowLevelMemTracker::GetTagUniqueName(const UE::LLMPrivate::FTagData* TagD
 	return TagData->GetName();
 }
 
+const UE::LLMPrivate::FTagData* FLowLevelMemTracker::GetTagParent(const UE::LLMPrivate::FTagData* TagData) const
+{
+	return TagData->GetParent();
+}
+
+bool FLowLevelMemTracker::GetTagIsEnumTag(const UE::LLMPrivate::FTagData* TagData) const
+{
+	return TagData->HasEnumTag();
+}
+
+ELLMTag FLowLevelMemTracker::GetTagClosestEnumTag(const UE::LLMPrivate::FTagData* TagData) const
+{
+	return TagData->GetEnumTag();
+}
+
 // Deprecated in 5.3
 int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, ELLMTag Tag, bool bPeakAmount)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return 0;
 	}
@@ -2155,7 +3299,7 @@ int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, const UE:
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return 0;
 	}
@@ -2175,7 +3319,7 @@ int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, const UE:
 int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, FName Tag, ELLMTagSet TagSet,
 	bool bPeakAmount)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return 0;
 	}
@@ -2196,7 +3340,7 @@ int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, const UE:
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return 0;
 	}
@@ -2215,7 +3359,7 @@ int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, const UE:
 int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, FName Tag, ELLMTagSet TagSet,
 	UE::LLM::ESizeParams SizeParams)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return 0;
 	}
@@ -2227,7 +3371,7 @@ int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, FName Tag
 
 int64 FLowLevelMemTracker::GetTagAmountForTracker(ELLMTracker Tracker, ELLMTag Tag, UE::LLM::ESizeParams SizeParams)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return 0;
 	}
@@ -2241,7 +3385,7 @@ void FLowLevelMemTracker::SetTagAmountForTracker(ELLMTracker Tracker, ELLMTag Ta
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -2256,7 +3400,7 @@ void FLowLevelMemTracker::SetTagAmountForTracker(ELLMTracker Tracker, FName Tag,
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return;
 	}
@@ -2271,7 +3415,7 @@ int64 FLowLevelMemTracker::GetActiveTag(ELLMTracker Tracker)
 {
 	using namespace UE::LLMPrivate;
 
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return static_cast<int64>(ELLMTag::Untagged);
 	}
@@ -2290,7 +3434,7 @@ int64 FLowLevelMemTracker::GetActiveTag(ELLMTracker Tracker)
 
 const UE::LLMPrivate::FTagData* FLowLevelMemTracker::GetActiveTagData(ELLMTracker Tracker, ELLMTagSet TagSet /*= ELLMTagSet::None*/)
 {
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return nullptr;
 	}
@@ -2302,7 +3446,7 @@ const UE::LLMPrivate::FTagData* FLowLevelMemTracker::GetActiveTagData(ELLMTracke
 uint64 FLowLevelMemTracker::DumpTag( ELLMTracker Tracker, const char* FileName, int LineNumber )
 {
 	using namespace UE::LLMPrivate;
-	if (bIsDisabled)
+	if (!IsEnabled())
 	{
 		return static_cast<int64>(ELLMTag::Untagged);
 	}
@@ -2377,6 +3521,12 @@ const UE::LLMPrivate::FTagData* FLowLevelMemTracker::FindOrAddTagData(ELLMTag En
 const UE::LLMPrivate::FTagData* FLowLevelMemTracker::FindOrAddTagData(FName TagName, ELLMTagSet TagSet, bool bIsStatTag,
 	UE::LLMPrivate::ETagReferenceSource ReferenceSource)
 {
+	return FindOrAddTagData(TagName, TagSet, bIsStatTag ? TagName : NAME_None, ReferenceSource);
+}
+
+const UE::LLMPrivate::FTagData* FLowLevelMemTracker::FindOrAddTagData(FName TagName, ELLMTagSet TagSet, FName StatName,
+	UE::LLMPrivate::ETagReferenceSource ReferenceSource)
+{
 	using namespace UE::LLMPrivate;
 
 	{
@@ -2396,12 +3546,12 @@ const UE::LLMPrivate::FTagData* FLowLevelMemTracker::FindOrAddTagData(FName TagN
 		FinishInitialise();
 		// Reeneter this function so that we retry the find above; note we avoid infinite recursion because
 		// bFullyInitialised is now true.
-		return FindOrAddTagData(TagName, TagSet, bIsStatTag, ReferenceSource);
+		return FindOrAddTagData(TagName, TagSet, StatName, ReferenceSource);
 	}
 	LLMCheckf(!bIsBootstrapping, TEXT("LLM Error: Invalid use of FName tag when initialising tags."));
 
 	// Add the new Tag
-	FName StatName = bIsStatTag ? TagName : NAME_None;
+	bool bIsStatTag = !StatName.IsNone() && StatName == TagName;
 	FTagData* TagData = &RegisterTagData(TagName, NAME_None, NAME_None, StatName, NAME_None, false,
 		ELLMTag::CustomName, bIsStatTag, ReferenceSource, TagSet);
 	{
@@ -2459,9 +3609,9 @@ void FLLMScope::Init(ELLMTag TagEnum, bool bInIsStatTag, ELLMTagSet InTagSet, EL
 	LLMCheck((TagEnum != ELLMTag::FMalloc) || (ELLMTracker::Platform == InTracker));
 
 	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
-	// We have to check bIsDisabled again after calling Get, because the constructor is called from Get, and will set 
-	// bIsDisabled=false if the platform doesn't support it.
-	if (FLowLevelMemTracker::bIsDisabled)
+	// We have to check IsEnabled() again after calling Get, because the constructor is called
+	// from Get, and will set EnabledState=Disabled if the platform doesn't support it.
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		bEnabled = false;
 		return;
@@ -2483,9 +3633,9 @@ void FLLMScope::Init(ELLMTag TagEnum, bool bInIsStatTag, ELLMTagSet InTagSet, EL
 void FLLMScope::Init(FName TagName, bool bInIsStatTag, ELLMTagSet InTagSet, ELLMTracker InTracker, bool bOverride)
 {
 	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
-	// We have to check bIsDisabled again after calling Get, because the constructor is called from Get, and will set
-	// bIsDisabled=false if the platform doesn't support it.
-	if (FLowLevelMemTracker::bIsDisabled)
+	// We have to check IsEnabled() again after calling Get, because the constructor is called
+	// from Get, and will set EnabledStae=Disabled if the platform doesn't support it.
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		bEnabled = false;
 		return;
@@ -2514,9 +3664,9 @@ void FLLMScope::Init(const UE::LLMPrivate::FTagData* TagData, bool bInIsStatTag,
 	ELLMTracker InTracker, bool bOverride)
 {
 	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
-	// We have to check bIsDisabled again after calling Get, because the constructor is called from Get, and will set
-	// bIsDisabled=false if the platform doesn't support it.
-	if (FLowLevelMemTracker::bIsDisabled)
+	// We have to check IsEnabled() again after calling Get, because the constructor is called
+	// from Get, and will set EnabledState=Disabled if the platform doesn't support it.
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		bEnabled = false;
 		return;
@@ -2541,10 +3691,95 @@ void FLLMScope::Destruct()
 	LLMRef.GetTracker(Tracker)->PopTag(TagSet);
 }
 
+void FLLMScopeDynamic::Init(ELLMTracker InTracker, ELLMTagSet InTagSet)
+{
+	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
+	// We have to check IsEnabled() again after calling Get, because the constructor is called
+	// from Get, and will set EnabledState=Disabled if the platform doesn't support it.
+	if (!FLowLevelMemTracker::IsEnabled())
+	{
+		bEnabled = false;
+		return;
+	}
+	LLMRef.BootstrapInitialise();
+	if (!LLMRef.IsTagSetActive(InTagSet))
+	{
+		bEnabled = false;
+		return;
+	}
+	bEnabled = true;
+	TagData = nullptr;
+	Tracker = InTracker;
+	TagSet = InTagSet;
+}
+
+bool FLLMScopeDynamic::TryFindTag(FName TagName)
+{
+	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
+	TagData = LLMRef.FindTagData(TagName, TagSet, UE::LLMPrivate::ETagReferenceSource::Scope);
+	return TagData != nullptr;
+}
+
+bool FLLMScopeDynamic::TryAddTagAndActivate(FName TagName, const ILLMDynamicTagConstructor& Constructor)
+{
+	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
+	FName StatFullName = NAME_None;
+#if LLM_ENABLED_STAT_TAGS && STATS
+	FString StatConstructorName = Constructor.GetStatName();
+	if (!StatConstructorName.IsEmpty())
+	{
+		if (Constructor.NeedsStatConstruction())
+		{
+			switch (TagSet)
+			{
+			case ELLMTagSet::None:
+				StatFullName = FDynamicStats::CreateMemoryStatId<FStatGroup_STATGROUP_LLMFULL>(
+					StatConstructorName).GetName();
+				break;
+			case ELLMTagSet::Assets:
+				StatFullName = FDynamicStats::CreateMemoryStatId<FStatGroup_STATGROUP_LLMAssets>(
+					StatConstructorName).GetName();
+				break;
+			case ELLMTagSet::AssetClasses:
+				StatFullName = FDynamicStats::CreateMemoryStatId<FStatGroup_STATGROUP_LLMAssets>(
+					StatConstructorName).GetName();
+				break;
+			default:
+				checkNoEntry();
+				break;
+			}
+		}
+		else
+		{
+			StatFullName = FName(*StatConstructorName);
+		}
+	}
+#endif
+	TagData = LLMRef.FindOrAddTagData(TagName, TagSet, StatFullName, UE::LLMPrivate::ETagReferenceSource::Scope);
+	LLMRef.GetTracker(Tracker)->PushTag(TagData, TagSet);
+	return true;
+}
+
+void FLLMScopeDynamic::Activate()
+{
+	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
+	LLMRef.GetTracker(Tracker)->PushTag(TagData, TagSet);
+}
+
+void FLLMScopeDynamic::Destruct()
+{
+	if (TagData)
+	{
+		FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
+		LLMRef.GetTracker(Tracker)->PopTag(TagSet);
+	}
+}
+
+
 FLLMPauseScope::FLLMPauseScope(FName TagName, bool bIsStatTag, uint64 Amount, ELLMTracker TrackerToPause,
 	ELLMAllocType InAllocType)
 {
-	if (FLowLevelMemTracker::bIsDisabled)
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		bEnabled = false;
 		return;
@@ -2555,7 +3790,7 @@ FLLMPauseScope::FLLMPauseScope(FName TagName, bool bIsStatTag, uint64 Amount, EL
 FLLMPauseScope::FLLMPauseScope(ELLMTag TagEnum, bool bIsStatTag, uint64 Amount, ELLMTracker TrackerToPause,
 	ELLMAllocType InAllocType)
 {
-	if (FLowLevelMemTracker::bIsDisabled)
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		bEnabled = false;
 		return;
@@ -2568,9 +3803,9 @@ void FLLMPauseScope::Init(FName TagName, ELLMTag EnumTag, bool bIsEnumTag, bool 
 	ELLMTracker TrackerToPause, ELLMAllocType InAllocType)
 {
 	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
-	// We have to check bIsDisabled again after calling Get, because the constructor is called from Get, and will set 
-	// bIsDisabled=false if the platform doesn't support it.
-	if (FLowLevelMemTracker::bIsDisabled)
+	// We have to check IsEnabled() again after calling Get, because the constructor is called
+	// from Get, and will set EnabledState=Disabled if the platform doesn't support it.
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		bEnabled = false;
 		return;
@@ -2635,21 +3870,21 @@ FLLMPauseScope::~FLLMPauseScope()
 FLLMScopeFromPtr::FLLMScopeFromPtr(void* Ptr, ELLMTracker InTracker)
 {
 	using namespace UE::LLMPrivate;
-	if (FLowLevelMemTracker::bIsDisabled)
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		DisableAll();
 		return;
 	}
-	if(Ptr == nullptr)
+	if (Ptr == nullptr)
 	{
 		DisableAll();
 		return;
 	}
 
 	FLowLevelMemTracker& LLMRef = FLowLevelMemTracker::Get();
-	// We have to check bIsDisabled again after calling Get, because the constructor is called from Get, and will set
-	// bIsDisabled=false if the platform doesn't support it.
-	if (FLowLevelMemTracker::bIsDisabled)
+	// We have to check IsEnabled() again after calling Get, because the constructor is called
+	// from Get, and will set EnabledState=Disabled if the platform doesn't support it.
+	if (!FLowLevelMemTracker::IsEnabled())
 	{
 		DisableAll();
 		return;
@@ -2710,9 +3945,9 @@ void FLLMTagDeclaration::ConstructUniqueName()
 namespace UE::LLMPrivate::LLMTagDeclarationInternal
 {
 
-TArray<FLLMTagDeclaration::FCreationCallback, TInlineAllocator<2>>& GetCreationCallbacks()
+TArray<FLLMTagDeclaration::FCreationCallback, TInlineAllocator<1>>& GetCreationCallbacks()
 {
-	static TArray<FLLMTagDeclaration::FCreationCallback, TInlineAllocator<2>> CreationCallbacks;
+	static TArray<FLLMTagDeclaration::FCreationCallback, TInlineAllocator<1>> CreationCallbacks;
 	return CreationCallbacks;
 }
 
@@ -2726,7 +3961,7 @@ FLLMTagDeclaration*& GetList()
 
 void FLLMTagDeclaration::AddCreationCallback(FCreationCallback InCallback)
 {
-	TArray<FCreationCallback, TInlineAllocator<2>>& CreationCallbacks =
+	TArray<FCreationCallback, TInlineAllocator<1>>& CreationCallbacks =
 		UE::LLMPrivate::LLMTagDeclarationInternal::GetCreationCallbacks();
 	if (CreationCallbacks.Num() >= CreationCallbacks.Max())
 	{
@@ -2740,7 +3975,7 @@ void FLLMTagDeclaration::AddCreationCallback(FCreationCallback InCallback)
 
 void FLLMTagDeclaration::ClearCreationCallbacks()
 {
-	TArray<FCreationCallback, TInlineAllocator<2>>& CreationCallbacks =
+	TArray<FCreationCallback, TInlineAllocator<1>>& CreationCallbacks =
 		UE::LLMPrivate::LLMTagDeclarationInternal::GetCreationCallbacks();
 	CreationCallbacks.Empty();
 }
@@ -2775,8 +4010,8 @@ bool HandleAssert(bool bLog, const TCHAR* Format, ...)
 	if (bLog)
 	{
 		TCHAR DescriptionString[4096];
-	GET_VARARGS(DescriptionString, UE_ARRAY_COUNT(DescriptionString), UE_ARRAY_COUNT(DescriptionString) - 1,
-		Format, Format);
+		GET_TYPED_VARARGS(TCHAR, DescriptionString, UE_ARRAY_COUNT(DescriptionString), UE_ARRAY_COUNT(DescriptionString) - 1,
+			Format, Format);
 
 		FPlatformMisc::LowLevelOutputDebugString(DescriptionString);
 
@@ -3205,7 +4440,7 @@ FTagData::FTagData(FName InName, ELLMTagSet InTagSet, FName InDisplayName, FName
 	: Name(InName), DisplayName(InDisplayName), ParentName(InParentName), StatName(InStatName)
 	, SummaryStatName(InSummaryStatName), EnumTag(InEnumTag), ReferenceSource(InReferenceSource)
 	, TagSet(InTagSet), bIsFinishConstructed(false), bParentIsName(true), bHasEnumTag(bInHasEnumTag)
-	, bIsReportable(InTagSet == ELLMTagSet::None)
+	, bIsReportable(true)
 {
 }
 
@@ -3252,19 +4487,36 @@ FName FTagData::GetDisplayName() const
 	return DisplayName;
 }
 
-FString FTagData::GetDisplayPath() const
+void FTagData::GetDisplayPath(FStringBuilderBase& Result, int32 MaxLen) const
 {
-	TStringBuilder<256> NameBuffer;
-	AppendDisplayPath(NameBuffer);
-	return FString(NameBuffer);
+	Result.Reset();
+	AppendDisplayPath(Result, MaxLen);
 }
 
-void FTagData::AppendDisplayPath(FStringBuilderBase& Result) const
+void FTagData::AppendDisplayPath(FStringBuilderBase& Result, int32 MaxLen) const
 {
 	if (Parent && Parent->IsUsedAsDisplayParent())
 	{
-		Parent->AppendDisplayPath(Result);
+		Parent->AppendDisplayPath(Result, MaxLen);
+		if (MaxLen >= 0 && Result.Len() + 1 >= MaxLen)
+		{
+			return;
+		}
 		Result << TEXT("/");
+	}
+	if (MaxLen >= 0)
+	{
+		int32 MaxRemainingLen = MaxLen - Result.Len();
+		if (static_cast<int32>(DisplayName.GetStringLength() + 1) > MaxRemainingLen)
+		{
+			if (MaxRemainingLen > 1)
+			{
+				TStringBuilder<FName::StringBufferSize> Buffer;
+				DisplayName.AppendString(Buffer);
+				Result << Buffer.ToView().Left(MaxRemainingLen - 1);
+			}
+			return;
+		}
 	}
 	DisplayName.AppendString(Result);
 }
@@ -3281,6 +4533,18 @@ FName FTagData::GetParentName() const
 	LLMCheckf(bParentIsName, TEXT("GetParentName called on TagData %s after SetParent was called"),
 		*WriteToString<FName::StringBufferSize>(Name));
 	return ParentName;
+}
+
+FName FTagData::GetParentNameSafeBeforeFinishConstruct() const
+{
+	if (bParentIsName)
+	{
+		return ParentName;
+	}
+	else
+	{
+		return Parent ? Parent->GetName() : NAME_None;
+	}
 }
 
 FName FTagData::GetStatName() const
@@ -3341,6 +4605,11 @@ int32 FTagData::GetIndex() const
 }
 
 bool FTagData::IsReportable() const
+{
+	return bIsReportable && TagSet == ELLMTagSet::None;
+}
+
+bool FTagData::IsStatsReportable() const
 {
 	return bIsReportable;
 }
@@ -3444,16 +4713,20 @@ void FLLMTracker::Initialise(
 FLLMThreadState* FLLMTracker::GetOrCreateState()
 {
 	// look for already allocated thread state
-	FLLMThreadState* State = (FLLMThreadState*)FPlatformTLS::GetTlsValue(TlsSlot);
-	// get one if needed
+	FLLMThreadState* State = GetState();
+	// Create one if needed
 	if (State == nullptr)
 	{
 		State = LLMRef.Allocator.New<FLLMThreadState>();
+		LLMCheckf(State != nullptr, TEXT("LLMRef.Allocator.New returned nullptr."));
 
-		// Add to pending thread states, these will be consumed on the GT
+		// Add to pending thread states, (these will be consumed on the main thread and transferred to ThreadStates,
+		// which is only read/write on main thread). Also add to our backup map from thread id to thread state.
+		uint32 ThreadId = FPlatformTLS::GetCurrentThreadId();
 		{
 			FScopeLock Lock(&PendingThreadStatesGuard);
 			PendingThreadStates.Add(State);
+			ThreadIdToThreadState.Add(ThreadId, State);
 		}
 
 		// push to Tls
@@ -3464,7 +4737,22 @@ FLLMThreadState* FLLMTracker::GetOrCreateState()
 
 FLLMThreadState* FLLMTracker::GetState()
 {
-	return (FLLMThreadState*)FPlatformTLS::GetTlsValue(TlsSlot);
+	FLLMThreadState* State = (FLLMThreadState*)FPlatformTLS::GetTlsValue(TlsSlot);
+	if (!State)
+	{
+		// GetTlsValue might return null even if we previously set it, if called during thread termination
+		// Check our backup mapping from thread id to thread state before concluding the state does not exist.
+		uint32 ThreadId = FPlatformTLS::GetCurrentThreadId();
+		{
+			FScopeLock Lock(&PendingThreadStatesGuard);
+			FLLMThreadState** ExistingState = ThreadIdToThreadState.Find(ThreadId);
+			if (ExistingState)
+			{
+				State = *ExistingState;
+			}
+		}
+	}
+	return State; // Can be nullptr if not yet created
 }
 
 void FLLMTracker::PushTag(ELLMTag EnumTag, ELLMTagSet TagSet)
@@ -3756,6 +5044,7 @@ void FLLMTracker::Clear()
 			LLMRef.Allocator.Delete(ThreadState);
 		}
 		PendingThreadStates.Empty();
+		ThreadIdToThreadState.Empty();
 	}
 
 	for (FLLMThreadState* ThreadState : ThreadStates)
@@ -3875,7 +5164,7 @@ void FLLMTracker::UpdateThreads()
 
 			for (int32 i = 0; i < NumPendingThreadStatesToConsume; ++i)
 			{
-				ThreadStates.Add(PendingThreadStates.Pop(false /*bAllowShrinking*/));
+				ThreadStates.Add(PendingThreadStates.Pop(EAllowShrinking::No));
 			}
 		}
 		PendingThreadStatesGuard.Unlock();
@@ -3903,7 +5192,7 @@ void FLLMTracker::PublishStats(UE::LLM::ESizeParams SizeParams)
 	for (const TPair<const FTagData*, FTrackerTagSizeData>& It : TagSizes)
 	{
 		const FTagData* TagData = It.Key;
-		if (!TagData->IsReportable())
+		if (!TagData->IsStatsReportable())
 		{
 			continue;
 		}
@@ -3918,6 +5207,268 @@ void FLLMTracker::PublishStats(UE::LLM::ESizeParams SizeParams)
 		SetMemoryStatByFName(TagData->GetStatName(), Amount);
 		SetMemoryStatByFName(TagData->GetSummaryStatName(), Amount);
 	}
+}
+
+static bool PageLessThan(const FForkedPageAllocation& LHS, const FForkedPageAllocation& RHS)
+{
+	return LHS.PageStart < RHS.PageStart;
+}
+static bool PageFinder(const FForkedPageAllocation& LHS, const uint64 AddressRHS)
+{
+	return LHS.PageStart < AddressRHS;
+}
+
+bool FLLMTracker::DumpForkedAllocationInfo()
+{
+	// Try to associate the allocations with a page range so we can determine whether it's
+	// in unique or shared memory. Then print out the set for each tag.
+	TArray<FForkedPageAllocation> Pages;
+	if (FGenericPlatformMemory::GetForkedPageAllocationInfo(Pages) == false)
+	{
+		// Create a Placeholder page so we can test on platforms that don't support forkedpages
+		FForkedPageAllocation& Page = Pages.Emplace_GetRef();
+		Page.PageStart = 0;
+		Page.PageEnd = MAX_uint64;
+		Page.SharedCleanKiB = 1024 * 100;
+		Page.SharedDirtyKiB = 1024 * 110;
+		Page.PrivateCleanKiB = 1024 * 120;
+		Page.PrivateDirtyKiB = 1024 * 130;
+	}
+
+	Algo::Sort(Pages, PageLessThan);
+
+	enum EClassification
+	{
+		Class_Split,
+		Class_Unreferenced,
+		Class_Private,
+		Class_Shared,
+		Class_COUNT
+	};
+
+	struct FCounts
+	{
+		uint64 TotalAllocations = 0;
+		uint64 CrossPageAllocationCount = 0;
+
+		uint64 AllocCount[Class_COUNT] = {};
+
+		uint64 TotalBytes = 0;
+		uint64 ByteCount[Class_COUNT] = {};
+	};
+
+	
+	// We cannot call GetTag to find the Tag from the Allocation when we are within AllocationMap, because GetTag
+	// locks the TagDataLock and TagDataLock has to be entered before entering AllocationMap.LockAll.
+	// So for the TagIdentifier use the CompressedTag rather than calling GetTag.
+#if LLM_ENABLED_FULL_TAGS
+	TMap<int32, FCounts> CountsPerTag;
+#else
+	TMap<ELLMTag, FCounts> CountsPerTag;
+#endif
+	int32 NumTags;
+	{
+		FReadScopeLock TagDataScopeLock(LLMRef.TagDataLock);
+		NumTags = LLMRef.TagDatas->Num();
+	}
+
+	CountsPerTag.Reserve(NumTags);
+	AllocationMap.LockAll();
+	for (const FLLMAllocMap::FTuple& Tuple : AllocationMap)
+	{
+		void* Ptr = Tuple.Key.GetPointer();
+
+		int FirstPageEqualOrAfterPtr = Algo::LowerBound(Pages, (uint64)Ptr, PageFinder);
+		int ContainingAllocationIndex;
+		if (FirstPageEqualOrAfterPtr < Pages.Num() && Pages[FirstPageEqualOrAfterPtr].PageStart == (uint64)Ptr)
+		{
+			ContainingAllocationIndex = FirstPageEqualOrAfterPtr;
+		}
+		else
+		{
+			ContainingAllocationIndex = FirstPageEqualOrAfterPtr - 1;
+		}
+		if (ContainingAllocationIndex < 0 || Pages[ContainingAllocationIndex].PageEnd <= (uint64)Ptr)
+		{
+			UE_LOG(LogHAL, Error, TEXT("Can't find allocation 0x%llx in the pages list!"), (uint64)Ptr);
+			continue;
+		}
+
+		// We unfortunately don't know exactly which of the details apply because we don't know which pages
+		// in the allocation section are shared/unique etc, so we just keep some generalities.
+		uint64 SizeHigh = Tuple.Key.GetExtraData() << 32;
+		uint64 SizeLow = Tuple.Value1;
+		uint64 Size = SizeHigh | SizeLow;
+
+		// Number of page allocations for the ue allocation
+		uint32 PageAllocationCount = 0;
+
+		// Track the classification for each page allocation so we can try to classify the ue allocation
+		uint32 SplitCount = 0;
+		uint32 SharedCount = 0;
+		uint32 PrivateCount = 0;
+		uint32 UnreferencedCount = 0;
+		
+		// Walk the page allocations until we get them all if we aren't all in the same one.
+		uint64 Remaining = Size;
+		while (Remaining)
+		{
+			if (ContainingAllocationIndex >= Pages.Num())
+			{
+				UE_LOG(LogHAL, Error, TEXT("Allocation 0x%llu extended beyond the pages!"), (uint64)Ptr);
+				break;
+			}
+
+			PageAllocationCount++;
+			FForkedPageAllocation& Page = Pages[ContainingAllocationIndex];
+
+			uint64 PageKiB = (Page.PageEnd - Page.PageStart) / 1024;
+
+			uint64 OffsetInPage = (uint64)Ptr - Page.PageStart;
+			uint64 RemainingInPage = Page.PageEnd - (uint64)Ptr;
+
+			uint64 AmountInThisPage = Remaining;
+			if (AmountInThisPage > RemainingInPage)
+			{
+				AmountInThisPage = RemainingInPage;
+			}
+
+			uint64 SharedKiB = Page.SharedCleanKiB + Page.SharedDirtyKiB;
+			uint64 PrivateKiB = Page.PrivateCleanKiB + Page.PrivateDirtyKiB;
+			uint64 UnreferencedKiB = PageKiB - SharedKiB - PrivateKiB;
+
+			// We can't classify the page if we have more than one of any.
+			uint64 TypeCount = !!SharedKiB + !!PrivateKiB + !!UnreferencedKiB;
+			bool bIsSplit = TypeCount > 1;
+
+			if (bIsSplit)
+			{
+				// The page is split and we have no way to know which is ours.
+				SplitCount++;
+			}
+			else if (SharedKiB)
+			{
+				SharedCount++;
+			}
+			else if (PrivateKiB)
+			{
+				PrivateCount++;
+			}
+			else
+			{
+				UnreferencedCount++;
+			}
+
+			Remaining -= AmountInThisPage;
+			ContainingAllocationIndex++;
+		}
+
+		if (Remaining)
+		{
+			// We error'd out, ignore this allocation.
+			continue;
+		}
+
+		// Classify the allocation - is it entirely private, entirely shared, or what.
+		uint64 ClassCount = !!SharedCount + !!PrivateCount + !!UnreferencedCount;
+		EClassification AllocClass = Class_Split;
+		if (ClassCount > 1)
+		{
+			AllocClass = Class_Split;
+		}
+		else if (SharedCount)
+		{
+			AllocClass = Class_Shared;
+		}
+		else if (PrivateCount)
+		{
+			AllocClass = Class_Private;
+		}
+		else
+		{
+			AllocClass = Class_Unreferenced;
+		}
+
+		// Associate the tag and the page stats.
+		FCounts& Counts = CountsPerTag.FindOrAdd(Tuple.Value2.GetCompressedTag());
+		Counts.AllocCount[AllocClass]++;
+		Counts.ByteCount[AllocClass] += Size;
+		Counts.TotalAllocations++;
+		Counts.TotalBytes += Size;
+		if (PageAllocationCount > 1)
+		{
+			Counts.CrossPageAllocationCount++;
+		}
+	}
+	AllocationMap.UnlockAll();
+
+	CountsPerTag.ValueSort([](const FCounts& A, const FCounts& B)
+	{
+		return A.TotalBytes > B.TotalBytes;
+	});
+
+	TArray<FString> Lines;
+	Lines.Reserve(CountsPerTag.Num() * 2 + 1);
+
+	Lines.Add(TEXT("Tag,SharedKib,PrivateKib,SplitKib,UnrefKib,TotalKib,SharedCount,PrivateCount,SplitCount,UnrefCount,TotalCount,CrossCount"));
+
+
+#if LLM_ENABLED_FULL_TAGS
+	for (TPair<int32, FCounts>& P : CountsPerTag)
+#else
+	for (TPair<ELLMTag, FCounts>& P : CountsPerTag)
+#endif
+	{
+		FLowLevelAllocInfo AllocInfoPlaceholder;
+		AllocInfoPlaceholder.SetCompressedTag(P.Key);
+		const FTagData* Tag = AllocInfoPlaceholder.GetTag(LLMRef);
+		if (!Tag)
+		{
+			continue;
+		}
+		Lines.Add(
+			FString::Printf(TEXT("%s,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu"),
+				*Tag->GetDisplayName().ToString(),
+				P.Value.ByteCount[Class_Shared] / (1024),
+				P.Value.ByteCount[Class_Private] / (1024),
+				P.Value.ByteCount[Class_Split] / (1024),
+				P.Value.ByteCount[Class_Unreferenced] / (1024),
+				P.Value.TotalBytes / (1024),
+				P.Value.AllocCount[Class_Shared],
+				P.Value.AllocCount[Class_Private],
+				P.Value.AllocCount[Class_Split],
+				P.Value.AllocCount[Class_Unreferenced],
+				P.Value.TotalAllocations,
+				P.Value.CrossPageAllocationCount)
+			);
+	}
+
+	FString SavedDir = FPaths::ProjectSavedDir() / TEXT("LLM");
+
+	uint16 ForkId = FForkProcessHelper::GetForkedChildProcessIndex();
+
+	FString ForkString = ForkId == 0 ? FString(TEXT("Parent")) : FString::Printf(TEXT("Child%d"), ForkId);
+	const TCHAR* TrackerString = TEXT("Default");
+	if (Tracker == ELLMTracker::Platform)
+	{
+		TrackerString = TEXT("Platform");
+	}
+	static_assert((int)ELLMTracker::Max == 2, "Add other tracker type strings here");
+
+	FString UniqueFilename = SavedDir / FString::Printf(TEXT("LLM_PrivateShared_Tracker%s_%s.csv"), TrackerString, *ForkString);
+
+	uint32 Counter = 1;
+	while (IFileManager::Get().FileSize(*UniqueFilename) >= 0)
+	{
+		UniqueFilename = SavedDir / *FString::Printf(TEXT("LLM_PrivateShared_Tracker%s_%s_%d.csv"), TrackerString, *ForkString, Counter);
+		Counter++;
+	}
+	
+	if (FFileHelper::SaveStringArrayToFile(Lines, *UniqueFilename) == false)
+	{
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("Failed to write llm private/shared csv file: %s\n"), *UniqueFilename);
+	}
+	return true;
 }
 
 void FLLMTracker::PublishCsv(UE::LLM::ESizeParams SizeParams)
@@ -4018,18 +5569,55 @@ void FLLMTracker::GetTagsNamesWithAmount(TMap<FName, uint64>& OutTagsNamesWithAm
 
 void FLLMTracker::GetTagsNamesWithAmountFiltered(TMap<FName, uint64>& OutTagsNamesWithAmount, ELLMTagSet TagSet /* = ELLMTagSet::None */, TArray<FLLMTagSetAllocationFilter>& Filters)
 {
+	// We cannot call GetTag to find the Tag from the Allocation when we are within AllocationMap, because GetTag
+	// locks the TagDataLock and TagDataLock has to be entered before entering AllocationMap.LockAll.
+	// So for the TagIdentifier use the CompressedTag rather than calling GetTag.
+	struct FLocalTagData
+	{
+		FName Name;
+		uint64 Size = 0;
+	};
+#if LLM_ENABLED_FULL_TAGS
+	TMap<int32, FLocalTagData> CompressedTagToTagData;
+#else
+	TMap<ELLMTag, FLocalTagData> CompressedTagToTagData;
+#endif
+	int32 NumTags;
+	{
+		FReadScopeLock TagDataScopeLock(LLMRef.TagDataLock);
+		NumTags = LLMRef.TagDatas->Num();
+	}
+	CompressedTagToTagData.Reserve(NumTags);
+	{
+		FReadScopeLock TagDataScopeLock(LLMRef.TagDataLock);
+		for (FTagData* TagData : (*LLMRef.TagDatas))
+		{
+			FLLMTracker::FLowLevelAllocInfo AllocInfo;
+			AllocInfo.SetTag(TagData, LLMRef);
+			FLocalTagData& Data = CompressedTagToTagData.FindOrAdd(AllocInfo.GetCompressedTag());
+			if (Data.Name == NAME_None)
+			{
+				Data.Name = TagData->GetName();
+			}
+		}
+	}
+
 	AllocationMap.LockAll();
 	for (const FLLMAllocMap::FTuple& Tuple : AllocationMap)
 	{
 		bool bIncludeAllocation = true;
 		for (const FLLMTagSetAllocationFilter& Filter : Filters)
 		{
+			FLocalTagData* Data = nullptr;
 #if LLM_ALLOW_ASSETS_TAGS
-			const FTagData* TagData = Tuple.Value2.GetTag(LLMRef, Filter.TagSet);
+			Data = CompressedTagToTagData.Find(Tuple.Value2.GetCompressedTag(Filter.TagSet));
 #else
-			const FTagData* TagData = Tuple.Value2.GetTag(LLMRef);
+			if (Filter.TagSet == ELLMTagSet::None)
+			{
+				Data = CompressedTagToTagData.Find(Tuple.Value2.GetCompressedTag());
+			}
 #endif
-			if (TagData == nullptr || TagData->GetName() != Filter.Name)
+			if (!Data || Data->Name != Filter.Name)
 			{
 				bIncludeAllocation = false;
 				break;
@@ -4039,28 +5627,36 @@ void FLLMTracker::GetTagsNamesWithAmountFiltered(TMap<FName, uint64>& OutTagsNam
 		if (bIncludeAllocation)
 		{
 #if LLM_ALLOW_ASSETS_TAGS
-			const FTagData* TagData = Tuple.Value2.GetTag(LLMRef, TagSet);
+			FLocalTagData* Data = CompressedTagToTagData.Find(Tuple.Value2.GetCompressedTag(TagSet));
 #else
-			const FTagData* TagData = Tuple.Value2.GetTag(LLMRef);
+			FLocalTagData* Data = CompressedTagToTagData.Find(Tuple.Value2.GetCompressedTag());
 #endif
-			if (TagData != nullptr)
+			if (Data)
 			{
-				uint64& Size = OutTagsNamesWithAmount.FindOrAdd(TagData->GetName());
-				Size += Tuple.Value1;
+				Data->Size += Tuple.Value1;
 			}
 		}
 	}
 	AllocationMap.UnlockAll();
+#if LLM_ENABLED_FULL_TAGS
+	for (TPair<int32, FLocalTagData>& Pair : CompressedTagToTagData)
+#else
+	for (TPair<ELLMTag, FLocalTagData>& Pair : CompressedTagToTagData)
+#endif
+	{
+		if (Pair.Value.Size != 0)
+		{
+			OutTagsNamesWithAmount.FindOrAdd(Pair.Value.Name, 0) += Pair.Value.Size;
+		}
+	}
 }
 
-bool FLLMTracker::FindTagsForPtr(void* InPtr, TArray<const FTagData *, TInlineAllocator<static_cast<int32>(ELLMTagSet::Max)>>& OutTags)
+bool FLLMTracker::FindTagsForPtr(void* InPtr, TArray<const FTagData *, TInlineAllocator<static_cast<int32>(ELLMTagSet::Max)>>& OutTags) const
 {
-	FLLMThreadState* State = GetOrCreateState();
-		
-	uint32* Size;
-	FLowLevelAllocInfo* AllocInfoPtr;
-	AllocationMap.Find(PointerKey(InPtr), Size, AllocInfoPtr);
-	if (!AllocInfoPtr)
+	uint32 Size;
+	FLowLevelAllocInfo AllocInfoPtr;
+	PointerKey FoundKey = AllocationMap.Find(PointerKey(InPtr), Size, AllocInfoPtr);
+	if (!FoundKey)
 	{
 		return false;
 	}
@@ -4069,10 +5665,10 @@ bool FLLMTracker::FindTagsForPtr(void* InPtr, TArray<const FTagData *, TInlineAl
 #if LLM_ALLOW_ASSETS_TAGS
 	for (int32 TagSetIndex = 0; TagSetIndex < static_cast<int32>(ELLMTagSet::Max); TagSetIndex++)
 	{
-		OutTags[TagSetIndex] = AllocInfoPtr->GetTag(LLMRef, static_cast<ELLMTagSet>(TagSetIndex));
+		OutTags[TagSetIndex] = AllocInfoPtr.GetTag(LLMRef, static_cast<ELLMTagSet>(TagSetIndex));
 	}
 #else
-	OutTags[static_cast<int32>(ELLMTagSet::None)] = AllocInfoPtr->GetTag(LLMRef);
+	OutTags[static_cast<int32>(ELLMTagSet::None)] = AllocInfoPtr.GetTag(LLMRef);
 #endif
 
 	return true;
@@ -4151,7 +5747,7 @@ void FLLMThreadState::PopTag(ELLMTagSet TagSet)
 
 	LLMCheckf(TagStack[static_cast<int32>(TagSet)].Num() > 0,
 		TEXT("Called FLLMThreadState::PopTag without a matching Push (stack was empty on pop)"));
-	TagStack[static_cast<int32>(TagSet)].Pop(false /* bAllowShrinking */);
+	TagStack[static_cast<int32>(TagSet)].Pop(EAllowShrinking::No);
 }
 
 const FTagData* FLLMThreadState::GetTopTag(ELLMTagSet TagSet)
@@ -4652,23 +6248,6 @@ void FLLMTraceWriter::Publish(FLowLevelMemTracker& LLMRef, const FTrackerTagSize
 			<< TrackerSpec.Name(TrackerNames[(uint8)Tracker].Name, NameLen);
 	}
 
-	TStringBuilder<1024> NameBuffer;
-	auto SendTagDeclaration = [this, &NameBuffer](const FTagData* TagData)
-	{
-		if (!TagData || DeclaredTags.Contains(TagData))
-		{
-			return;
-		}
-		DeclaredTags.Add(TagData);
-
-		const FTagData* Parent = TagData->GetParent();
-		NameBuffer.Reset();
-		TagData->AppendDisplayPath(NameBuffer);
-		UE_TRACE_LOG(LLM, TagsSpec, MemTagChannel, NameBuffer.Len() * sizeof(ANSICHAR))
-			<< TagsSpec.TagId(GetTagId(TagData))
-			<< TagsSpec.ParentId(GetTagId(Parent))
-			<< TagsSpec.Name(*NameBuffer, NameBuffer.Len());
-	};
 	SendTagDeclaration(OverrideTrackedTotalTagData);
 	SendTagDeclaration(OverrideUntaggedTagData);
 	for (const TPair<const FTagData*, FTrackerTagSizeData>& It : TagSizes)
@@ -4738,18 +6317,29 @@ void FLLMTraceWriter::Publish(FLowLevelMemTracker& LLMRef, const FTrackerTagSize
 		<< TagValue.Values(TagValues.GetData(), TagCount);
 }
 
-void FLLMTraceWriter::TraceGenericTags(FLowLevelMemTracker& LLMRef)
+void FLLMTraceWriter::SendTagDeclaration(const FTagData* TagData)
 {
-	for (int32 GenericTagIndex = 0; GenericTagIndex < static_cast<int32>(ELLMTag::GenericTagCount); GenericTagIndex++)
+	if (!TagData)
 	{
-		const FTagData* TagData = LLMRef.FindTagData(static_cast<ELLMTag>(GenericTagIndex));
-		FString TagName = TagData->GetDisplayPath();
-		UE_TRACE_LOG(LLM, TagsSpec, MemTagChannel, TagName.Len() * sizeof(ANSICHAR))
-			<< TagsSpec.TagId(GetTagId(TagData))
-			<< TagsSpec.ParentId(GetTagId(TagData->GetParent()))
-			<< TagsSpec.Name(*TagName, TagName.Len());
+		return;
 	}
-}
+	bool bAlreadyInSet;
+	DeclaredTags.Add(TagData, &bAlreadyInSet);
+	if (bAlreadyInSet)
+	{
+		return;
+	}
+
+	const FTagData* Parent = TagData->GetParent();
+	SendTagDeclaration(Parent);
+
+	TStringBuilder<1024> NameBuffer;
+	TagData->AppendDisplayPath(NameBuffer);
+	UE_TRACE_LOG(LLM, TagsSpec, MemTagChannel, NameBuffer.Len() * sizeof(ANSICHAR))
+		<< TagsSpec.TagId(GetTagId(TagData))
+		<< TagsSpec.ParentId(GetTagId(Parent))
+		<< TagsSpec.Name(*NameBuffer, NameBuffer.Len());
+};
 
 // FLLMCsvProfilerWriter implementation.
 FLLMCsvProfilerWriter::FLLMCsvProfilerWriter()
@@ -4817,7 +6407,9 @@ void FLLMCsvProfilerWriter::RecordTagToCsv(int32 CsvCategoryIndex, const FTagDat
 	FName* CsvStatNamePtr = TagDataToCsvStatName.Find(TagData);
 	if (CsvStatNamePtr == nullptr)
 	{
-		NewCsvStatName = FName(TagData->GetDisplayPath());
+		TStringBuilder<FName::StringBufferSize> DisplayPath;
+		TagData->GetDisplayPath(DisplayPath);
+		NewCsvStatName = FName(DisplayPath);
 		TagDataToCsvStatName.Add(TagData, NewCsvStatName);
 		CsvStatNamePtr = &NewCsvStatName;
 	}
@@ -4828,4 +6420,25 @@ void FLLMCsvProfilerWriter::RecordTagToCsv(int32 CsvCategoryIndex, const FTagDat
 
 } // namespace UE::LLMPrivate
 
-#endif // #if ENABLE_LOW_LEVEL_MEM_TRACKER
+#else // #if ENABLE_LOW_LEVEL_MEM_TRACKER
+
+// We need to stub some functions so things link when the UE_ENABLE_ARRAY_SLACK_TRACKING debug feature is enabled in builds
+// where LLM is disabled.  Compiling out the slack tracking code completely is difficult due to include order issues.
+// Slack tracking is in a header that must be included before LLM, so it can't access the ENABLE_LOW_LEVEL_MEM_TRACKER
+// define.  And moving that define leads to a chain reaction of other include order issues.  It's just not worth it for
+// a rarely enabled debug feature to go to all that trouble, when stubbing functions works fine...
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+uint8 LlmGetActiveTag() { return 0; }
+void ArraySlackTrackInit() {}
+void ArraySlackTrackGenerateReport(const TCHAR* Cmd, FOutputDevice& Ar) {}
+void FArraySlackTrackingHeader::AddAllocation() {}
+void FArraySlackTrackingHeader::RemoveAllocation() {}
+void FArraySlackTrackingHeader::UpdateNumUsed(int64 NewNumUsed) {}
+
+FORCENOINLINE void* FArraySlackTrackingHeader::Realloc(void* Ptr, int64 Count, uint64 ElemSize, int32 Alignment)
+{
+	return FMemory::Realloc(Ptr, Count * ElemSize, Alignment);
+}
+#endif
+
+#endif  // #else .. #if ENABLE_LOW_LEVEL_MEM_TRACKER

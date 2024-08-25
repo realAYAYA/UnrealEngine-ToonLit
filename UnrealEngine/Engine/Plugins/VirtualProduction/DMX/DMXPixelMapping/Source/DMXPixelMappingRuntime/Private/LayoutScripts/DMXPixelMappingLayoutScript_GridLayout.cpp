@@ -53,7 +53,7 @@ void UDMXPixelMappingLayoutScript_GridLayout::Layout_Implementation(const TArray
 	// No empty rows:
 	// Example, user sets the grid to 1x9 interactively, but there's 10 cells (tokens).
 	// Hence UI flips to 2x9, to respect his 9 value, and compensate for the missing cell.
-	// Now the Grid is 2x9 = 18 cells, but we have only 10 cells. So 4 rows remain empty.
+	// Now the Grid is 2x9 = 18 cells, but we have only 10 cells. The last 4 columns remain empty.
 	const int32 ActualRows = FMath::RoundFromZero((float)NumTokens / Columns);
 
 	// Cell Size
@@ -113,8 +113,9 @@ void UDMXPixelMappingLayoutScript_GridLayout::Layout_Implementation(const TArray
 
 			OutTokens[PositionIDIndex].PositionX = AbsolutePosition.X + Column * ComponentSizeX + ClampedPadding / 2.f;
 			OutTokens[PositionIDIndex].PositionY = AbsolutePosition.Y + Row * ComponentSizeY + ClampedPadding / 2.f;
-			OutTokens[PositionIDIndex].SizeX = FMath::Max(1.f, ComponentSizeX - ClampedPadding);
-			OutTokens[PositionIDIndex].SizeY = FMath::Max(1.f, ComponentSizeY - ClampedPadding);
+			OutTokens[PositionIDIndex].SizeX = FMath::Max(UE_SMALL_NUMBER, ComponentSizeX - ClampedPadding);
+			OutTokens[PositionIDIndex].SizeY = FMath::Max(UE_SMALL_NUMBER, ComponentSizeY - ClampedPadding);
+			OutTokens[PositionIDIndex].RelativeRotation = ParentRotation;
 		}
 		else
 		{

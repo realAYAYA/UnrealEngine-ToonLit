@@ -17,7 +17,7 @@ void VisualizeIrradianceCachePS(
 	float2 ScreenUV = SvPositionToBufferUV(SVPos);
 	float2 ScreenPosition = (ScreenUV.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
 	float SceneDepth = CalcSceneDepth(ScreenUV);
-	float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+	float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), DFHackToFloat(PrimaryView.ScreenToWorld)).xyz;
 	float3 ShadingNormal = GetGBufferData(ScreenUV).WorldNormal;
 	
 	bool bIrradianceQuerySuccessful = false;

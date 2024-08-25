@@ -14,11 +14,11 @@ UReplicationDataStream::~UReplicationDataStream()
 {
 }
 
-UDataStream::EWriteResult UReplicationDataStream::BeginWrite()
+UDataStream::EWriteResult UReplicationDataStream::BeginWrite(const FBeginWriteParameters& Params)
 {
 	if (ReplicationWriter != nullptr)
 	{
-		return ReplicationWriter->BeginWrite();
+		return ReplicationWriter->BeginWrite(Params);
 	}
 
 	return EWriteResult::NoData;

@@ -7,13 +7,11 @@
 #include "UsdWrappers/UsdPrim.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/usd/prim.h"
-	#include "pxr/usd/usd/payloads.h"
+#include "pxr/usd/usd/payloads.h"
+#include "pxr/usd/usd/prim.h"
 #include "USDIncludesEnd.h"
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -48,9 +46,9 @@ namespace UE
 
 			// pxr::UsdPayloads has no default constructor, so we store the prim itself.
 			TUsdStore<pxr::UsdPrim> PxrUsdPrim;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 		};
-	}
+	}	  // namespace Internal
 
 	FUsdPayloads::FUsdPayloads()
 	{
@@ -61,7 +59,7 @@ namespace UE
 	{
 #if USE_USD_SDK
 		Impl = MakeUnique<Internal::FUsdPayloadsImpl>(Other.Impl->PxrUsdPrim.Get());
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdPayloads::FUsdPayloads(FUsdPayloads&& Other) = default;
@@ -70,7 +68,7 @@ namespace UE
 	{
 #if USE_USD_SDK
 		Impl = MakeUnique<Internal::FUsdPayloadsImpl>(Other.Impl->PxrUsdPrim.Get());
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return *this;
 	}
@@ -93,7 +91,7 @@ namespace UE
 		return (bool)Impl->PxrUsdPrim.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 #if USE_USD_SDK
@@ -134,7 +132,7 @@ namespace UE
 	{
 		Impl = MakeUnique<Internal::FUsdPayloadsImpl>(InPrim);
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	bool FUsdPayloads::AddPayload(const FSdfPayload& Payload, EUsdListPosition Position)
 	{
@@ -149,20 +147,14 @@ namespace UE
 
 			const pxr::SdfPayload UsdPayload(AssetPath, UsdPrimPath, UsdLayerOffset);
 
-			return Impl->PxrUsdPrim.Get().GetPayloads().AddPayload(
-				UsdPayload,
-				static_cast<pxr::UsdListPosition>(Position));
+			return Impl->PxrUsdPrim.Get().GetPayloads().AddPayload(UsdPayload, static_cast<pxr::UsdListPosition>(Position));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
 
-	bool FUsdPayloads::AddPayload(
-		const FString& Identifier,
-		const FSdfPath& PrimPath,
-		const FSdfLayerOffset& LayerOffset,
-		EUsdListPosition Position)
+	bool FUsdPayloads::AddPayload(const FString& Identifier, const FSdfPath& PrimPath, const FSdfLayerOffset& LayerOffset, EUsdListPosition Position)
 	{
 #if USE_USD_SDK
 		if (Impl->PxrUsdPrim.Get())
@@ -174,17 +166,18 @@ namespace UE
 			const pxr::SdfLayerOffset UsdLayerOffset(LayerOffset.Offset, LayerOffset.Scale);
 
 			return Impl->PxrUsdPrim.Get().GetPayloads().AddPayload(
-				UsdIdentifier, UsdPrimPath, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
+				UsdIdentifier,
+				UsdPrimPath,
+				UsdLayerOffset,
+				static_cast<pxr::UsdListPosition>(Position)
+			);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
 
-	bool FUsdPayloads::AddPayload(
-		const FString& Identifier,
-		const FSdfLayerOffset& LayerOffset,
-		EUsdListPosition Position)
+	bool FUsdPayloads::AddPayload(const FString& Identifier, const FSdfLayerOffset& LayerOffset, EUsdListPosition Position)
 	{
 #if USE_USD_SDK
 		if (Impl->PxrUsdPrim.Get())
@@ -194,18 +187,14 @@ namespace UE
 			const std::string UsdIdentifier(TCHAR_TO_ANSI(*Identifier));
 			const pxr::SdfLayerOffset UsdLayerOffset(LayerOffset.Offset, LayerOffset.Scale);
 
-			return Impl->PxrUsdPrim.Get().GetPayloads().AddPayload(
-				UsdIdentifier, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
+			return Impl->PxrUsdPrim.Get().GetPayloads().AddPayload(UsdIdentifier, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
 
-	bool FUsdPayloads::AddInternalPayload(
-		const FSdfPath& PrimPath,
-		const FSdfLayerOffset& LayerOffset,
-		EUsdListPosition Position)
+	bool FUsdPayloads::AddInternalPayload(const FSdfPath& PrimPath, const FSdfLayerOffset& LayerOffset, EUsdListPosition Position)
 	{
 #if USE_USD_SDK
 		if (Impl->PxrUsdPrim.Get())
@@ -215,10 +204,9 @@ namespace UE
 			const pxr::SdfPath UsdPrimPath(PrimPath);
 			const pxr::SdfLayerOffset UsdLayerOffset(LayerOffset.Offset, LayerOffset.Scale);
 
-			return Impl->PxrUsdPrim.Get().GetPayloads().AddInternalPayload(
-				UsdPrimPath, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
+			return Impl->PxrUsdPrim.Get().GetPayloads().AddInternalPayload(UsdPrimPath, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -238,7 +226,7 @@ namespace UE
 
 			return Impl->PxrUsdPrim.Get().GetPayloads().RemovePayload(UsdPayload);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -252,7 +240,7 @@ namespace UE
 
 			return Impl->PxrUsdPrim.Get().GetPayloads().ClearPayloads();
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -278,7 +266,7 @@ namespace UE
 
 			return Impl->PxrUsdPrim.Get().GetPayloads().SetPayloads(UsdPayloads);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -290,8 +278,8 @@ namespace UE
 		{
 			return FUsdPrim(Impl->PxrUsdPrim.Get());
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return FUsdPrim{};
 	}
-}
+}	 // namespace UE

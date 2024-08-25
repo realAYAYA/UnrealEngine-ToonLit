@@ -19,9 +19,6 @@ class UProceduralMeshComponent;
 class FDisplayClusterViewportPostProcessOutputRemap
 {
 public:
-	FDisplayClusterViewportPostProcessOutputRemap();
-	virtual ~FDisplayClusterViewportPostProcessOutputRemap();
-
 	// Game thread update calls
 	bool UpdateConfiguration_ExternalFile(const FString& InExternalFile);
 	bool UpdateConfiguration_StaticMesh(UStaticMesh* InStaticMesh);
@@ -40,12 +37,12 @@ public:
 	void PerformPostProcessFrame_RenderThread(FRHICommandListImmediate& RHICmdList, const TArray<FRHITexture2D*>* InFrameTargets = nullptr, const TArray<FRHITexture2D*>* InAdditionalFrameTargets = nullptr) const;
 
 private:
-	bool ImplInitializeConfiguration();
+	bool ImplInitializeOutputRemap();
 
 private:
+	// Name of the external file used for remapping. Empty if not used.
 	FString ExternalFile;
 
-private:
+	// Reference to the mesh component that is used for remapping.
 	TSharedPtr<IDisplayClusterRender_MeshComponent, ESPMode::ThreadSafe> OutputRemapMesh;
-	class IDisplayClusterShaders& ShadersAPI;
 };

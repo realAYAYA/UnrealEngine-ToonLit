@@ -6,187 +6,93 @@
 #include "../ShadingModelsSampling.ush"
 #include "../ClearCoatCommon.ush"
 
-#if STRATA_ENABLED 
-#define STRATA_INLINE_SHADING 0
-#include "/Engine/Private/Strata/Strata.ush"
-#include "/Engine/Private/Strata/StrataEvaluation.ush"
-#include "/Engine/Private/Strata/StrataTile.ush"
+#if SUBSTRATE_ENABLED 
+#define SUBSTRATE_INLINE_SHADING 0
+#include "/Engine/Private/Substrate/Substrate.ush"
+#include "/Engine/Private/Substrate/SubstrateEvaluation.ush"
+#include "/Engine/Private/Substrate/SubstrateTile.ush"
 #endif
 
 // Currently Substrate does not support direct lighting at it implies pre-blending rough specular, 
 // which makes multi-BSDF lighting/composition incorrect. Furthermore, the direct lighting is not implemented for Substrate yet
-#define SUPPORT_LUMEN_DIRECT_LIGHTING (STRATA_ENABLED == 0)
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// Strata tile helper function 
-
-#if STRATA_ENABLED
-uint2 GetTilePositionFlatten(FStrataBSDFTile InTile0, uint2 InTile0Coord, uint InBSDFIndex, uint2 InOverflowTileCount, inout bool bIsValid)
-{
-	// First tile is always valid. 
-	// * InBSDFIndex is 0-based
-	// * Tile.Index is 1-based. This is why there is a -1.
-	// * Tile.Count is the actual number of BSDF
-	bIsValid = InBSDFIndex == 0 || InBSDFIndex < (InTile0.Count);
-
-	uint2 Out = InTile0Coord;
-	if (InBSDFIndex > 0)
-	{
-		Out = InTile0.TileCoord;
-		Out.x = Out.x + (InBSDFIndex - 1);
-		if (Out.x >= uint(InOverflowTileCount.x))
-		{
-			Out.x = Out.x % uint(InOverflowTileCount.x);
-			Out.y++;
-		}
-	}
-	return Out;
-}
-
-uint2 GetBSDFPositionFlatten(uint2 InSvPosition, uint InBSDFIndex, Texture2D<uint> InBSDFTileTexture, uint2 InOverflowTileCount)
-{
-	uint2 Out = InSvPosition;
-
-	if (InBSDFIndex > 0)
-	{
-		const uint2 Tile0Coord = InSvPosition >> STRATA_TILE_SIZE_DIV_AS_SHIFT;
-		bool bIsValid = false;
-
-		// Compute the source pixel corod
-		const FStrataBSDFTile BSDFTile0 = UnpackBSDFTile(InBSDFTileTexture[Tile0Coord]);
-		const uint2 LocalCoord = InSvPosition - Tile0Coord * STRATA_TILE_SIZE;
-		const uint2 TileNCoord = GetTilePositionFlatten(BSDFTile0, Tile0Coord, InBSDFIndex, InOverflowTileCount, bIsValid);
-
-		// Update coordinate only if the tile is valid
-		if (bIsValid)
-		{
-			Out = TileNCoord * STRATA_TILE_SIZE + LocalCoord;
-		}
-	}
-	return Out;
-}
-
-bool IsTileNCoordValid(uint2 InTileNCoord)
-{
-	InTileNCoord -= Strata.OverflowTileOffset;
-	const uint LinearTileCoord = InTileNCoord.y * Strata.OverflowTileCount.x + InTileNCoord.x;
-	return LinearTileCoord < Strata.BSDFTileCountBuffer[0];
-}
-#endif
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// Abstract coord for reflection tracing
-
-struct FReflectionTracingCoord
-{
-	uint2 Coord;
-	uint2 CoordFlatten;
-};
-
-// Helper function computing:
-// * Coord       : Screen-coordinate (primarty space), 
-// * CoordFlatten: Flatten/linearize coordinates allowing to handle pixel with several layers
-FReflectionTracingCoord GetReflectionTracingCoord(uint2 InReflectionTracingCoord)
-{
-	FReflectionTracingCoord Out;
-	Out.Coord = InReflectionTracingCoord;
-	Out.CoordFlatten = InReflectionTracingCoord;
-
-#if STRATA_ENABLED
-	const uint2 TileNCoord = InReflectionTracingCoord >> STRATA_TILE_SIZE_DIV_AS_SHIFT;
-	if (TileNCoord.y >= uint(Strata.OverflowTileOffset.y))
-	{
-		// Compute the source pixel corod
-		const FStrataBSDFTile TileN = UnpackBSDFTile(Strata.BSDFTileTexture[TileNCoord]);
-		const uint2 LocalCoord = InReflectionTracingCoord - TileNCoord * STRATA_TILE_SIZE;
-		Out.Coord = TileN.TileCoord * STRATA_TILE_SIZE + LocalCoord;
-	}
-#endif
-	return Out;
-}
-
-uint EncodeTraceTexel(uint2 ReflectionTracingCoord)
-{
-	return (ReflectionTracingCoord.x & 0xFFFF) | ((ReflectionTracingCoord.y & 0xFFFF) << 16);
-}
-
-FReflectionTracingCoord DecodeTraceTexel(uint TraceTexelData)
-{
-	uint2 TraceCoord;
-	TraceCoord.x = TraceTexelData & 0xFFFF;
-	TraceCoord.y = (TraceTexelData >> 16) & 0xFFFF;
-	return GetReflectionTracingCoord(TraceCoord);
-}
+#define SUPPORT_LUMEN_DIRECT_LIGHTING (SUBSTRATE_ENABLED == 0)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Abstract coord for material data
 struct FLumenMaterialCoord
 {
 	uint2 SvPosition;
-	uint2 SvPositionFlatten;
-	uint  TileBSDFIndex;
-	uint  TileBSDFCount;
+	uint3 SvPositionFlatten;
+	uint  ClosureIndex;
 };
 
-FLumenMaterialCoord GetLumenMaterialCoord(in uint2 SvPosition, bool bIsOverflow)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Abstract ScreenProbeGather / Reflection coord building
+
+FLumenMaterialCoord GetLumenMaterialCoord(in uint2 SvPosition, uint InClosureIndex)
 {
 	FLumenMaterialCoord Out = (FLumenMaterialCoord)0;
-	Out.TileBSDFIndex = 0;
-	Out.TileBSDFCount = 1;
-	Out.SvPosition = SvPosition;
-	Out.SvPositionFlatten = SvPosition;
-
-#if STRATA_ENABLED
-	if (bIsOverflow)
-	{
-		//SvPosition += Strata.OverflowTileOffset * STRATA_TILE_SIZE;
-		const uint2 TileNCoord = SvPosition >> STRATA_TILE_SIZE_DIV_AS_SHIFT;
-		const uint2 LocalCoord = SvPosition - TileNCoord * STRATA_TILE_SIZE;
-
-		const FStrataBSDFTile BSDFNTile = UnpackBSDFTile(Strata.BSDFTileTexture[TileNCoord]);
-
-		Out.TileBSDFIndex = BSDFNTile.Index;
-		Out.TileBSDFCount = BSDFNTile.Count;
-		Out.SvPosition = BSDFNTile.TileCoord * STRATA_TILE_SIZE + LocalCoord;
-		Out.SvPositionFlatten = SvPosition;
-	}
+	Out.SvPosition = SvPosition;	
+#if SUBSTRATE_ENABLED
+	Out.ClosureIndex  = InClosureIndex;
+#else
+	Out.ClosureIndex  = 0;
 #endif
+	Out.SvPositionFlatten = uint3(Out.SvPosition, Out.ClosureIndex);
 	return Out;
 }
 
-FLumenMaterialCoord GetLumenMaterialCoord(in uint2 SvPositionInPrimarySpace, uint InBSDFIndex)
+#ifndef PERMUTATION_OVERFLOW_TILE
+#define PERMUTATION_OVERFLOW_TILE 0
+#endif
+
+uint GetLumenMaterialLinearIndex(uint2 GroupId)
+{
+	const uint2 ZPackedIndex = GroupId;
+	return ZPackedIndex.x + ZPackedIndex.y * Substrate.TileCount.x;
+}
+
+FLumenMaterialCoord GetLumenMaterialCoord(uint2 DispatchThreadId, uint2 GroupId, uint2 GroupThreadId, inout bool bIsValid, inout bool bIsAnyValid, bool bAddMinRect=true)
 {
 	FLumenMaterialCoord Out = (FLumenMaterialCoord)0;
-	Out.TileBSDFIndex = 0;
-	Out.TileBSDFCount = 1;
-	Out.SvPosition = SvPositionInPrimarySpace;
-	Out.SvPositionFlatten = SvPositionInPrimarySpace;
-
-#if STRATA_ENABLED
-	if (InBSDFIndex > 0)
+#if SUBSTRATE_ENABLED && PERMUTATION_OVERFLOW_TILE
+	const uint LinearIndex = GetLumenMaterialLinearIndex(GroupId);
+	bIsValid = false;
+	bIsAnyValid = false;
+	if (LinearIndex < Substrate.ClosureTileCountBuffer[0])
 	{
-		//SvPosition += Strata.OverflowTileOffset * STRATA_TILE_SIZE;
-		const uint2 Tile0Coord = SvPositionInPrimarySpace >> STRATA_TILE_SIZE_DIV_AS_SHIFT;
-		const uint2 LocalCoord = SvPositionInPrimarySpace - Tile0Coord * STRATA_TILE_SIZE;
-
-		const FStrataBSDFTile BSDF0Tile = UnpackBSDFTile(Strata.BSDFTileTexture[Tile0Coord]);
-
-		bool bIsValid = true;
-		Out.TileBSDFIndex = InBSDFIndex;
-		Out.TileBSDFCount = BSDF0Tile.Count;
-		Out.SvPosition = SvPositionInPrimarySpace;
-		Out.SvPositionFlatten = GetTilePositionFlatten(BSDF0Tile, Tile0Coord, InBSDFIndex, Strata.OverflowTileCount, bIsValid) * STRATA_TILE_SIZE + LocalCoord;
+		const FSubstrateClosureTile Tile = UnpackClosureTile(Substrate.ClosureTileBuffer[LinearIndex]);
+		Out.SvPosition = Tile.TileCoord * SUBSTRATE_TILE_SIZE + GroupThreadId /*Local (tile) coord*/;
+		Out.ClosureIndex  = Tile.ClosureIndex;
+		bIsValid = all(Out.SvPosition < View.ViewRectMinAndSize.zw);
+		bIsAnyValid = true;
 	}
+#else
+	bIsValid = all(DispatchThreadId < View.ViewRectMinAndSize.zw);
+	bIsAnyValid = true;
+	Out.SvPosition = DispatchThreadId;
+	Out.ClosureIndex = 0;
 #endif
+	Out.SvPosition += bAddMinRect ? View.ViewRectMinAndSize.xy /*ViewMin*/ : 0;
+	Out.SvPositionFlatten = uint3(Out.SvPosition, Out.ClosureIndex);
 	return Out;
+}
+
+FLumenMaterialCoord GetLumenMaterialCoord(uint2 DispatchThreadId, uint2 GroupId, uint2 GroupThreadId)
+{
+	bool bIsValid = false;
+	bool bIsAnyValid = false;
+	return GetLumenMaterialCoord(DispatchThreadId, GroupId, GroupThreadId, bIsValid, bIsAnyValid);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// Abstract input material data (FGBufferData/Strata)
+// Abstract input material data (FGBufferData/Substrate)
 struct FLumenMaterialData
 {
 	float SceneDepth;
 
+	float3 DiffuseAlbedo;
 	float3 WorldNormal;
 	float  Roughness;
 	float  TopLayerRoughness;
@@ -201,7 +107,8 @@ struct FLumenMaterialData
 	bool   bIsFrontLayerTranslucency;
 	float  Anisotropy;
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
+	bool bIsValid;
 	bool bHasSecondSpecularLobe;
 	float3x3 TangentBasis;
 #elif !FRONT_LAYER_TRANSLUCENCY
@@ -224,14 +131,14 @@ bool RequiresBxDFImportanceSampling(uint ShadingModelID)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Read material data functions
 
-// Strata material internal read function - Average/Top layer data
-FLumenMaterialData InternalReadMaterialData_Strata(uint2 InPixelPos)
+// Substrate material internal read function - Average/Top layer data
+FLumenMaterialData InternalReadMaterialData_Substrate(uint2 InPixelPos)
 {
 	FLumenMaterialData Out = (FLumenMaterialData)0;
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(InPixelPos, 0)));
+	const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(InPixelPos, 0)));
 	Out.WorldNormal						= TopLayerData.WorldNormal;
 	Out.Roughness						= TopLayerData.Roughness;
 	Out.TopLayerRoughness				= TopLayerData.Roughness;
@@ -243,80 +150,83 @@ FLumenMaterialData InternalReadMaterialData_Strata(uint2 InPixelPos)
 
 	Out.SceneDepth						= ConvertFromDeviceZ(SceneTexturesStruct.SceneDepthTexture.Load(int3(InPixelPos, 0)).r);
 
-#if STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE
+#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
 
-	FStrataAddressing StrataAddressing	= GetStrataPixelDataByteOffset(InPixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-	FStrataPixelHeader StrataPixelHeader= UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-	FStrataSubsurfaceHeader SSSHeader	= StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, InPixelPos);
+	FSubstrateAddressing SubstrateAddressing	= GetSubstratePixelDataByteOffset(InPixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader SubstratePixelHeader= UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	FSubstrateSubsurfaceHeader SSSHeader	= SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, InPixelPos);
 
-	// When Lumen is not used, only MaterialAO and ShadingID (see IsValid) are read, sourced form the single UINT read for the StrataPixelHeader.
-	const uint BSDFType = StrataPixelHeader.StrataGetBSDFType();
+	// When Lumen is not used, only MaterialAO and ShadingID (see IsValid) are read, sourced form the single UINT read for the SubstratePixelHeader.
+	const uint BSDFType = SubstratePixelHeader.SubstrateGetBSDFType();
 
-	Out.MaterialAO						= StrataGetIrradianceAndAO(StrataPixelHeader).MaterialAO;
-	Out.ShadingID						= StrataPixelHeader.IsStrataMaterial() ? SHADINGMODELID_STRATA : SHADINGMODELID_UNLIT;
-	Out.DiffuseIndirectSampleOcclusion	= StrataGetIrradianceAndAO(StrataPixelHeader).DiffuseIndirectSampleOcclusion;
-	Out.bNeedsSeparateLightAccumulation = StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader);
-	Out.bIsSLW							= BSDFType == STRATA_BSDF_TYPE_SINGLELAYERWATER;
-	Out.bIsHair							= BSDFType == STRATA_BSDF_TYPE_HAIR;
-	Out.bHasBackfaceDiffuse				= BSDFType == STRATA_BSDF_TYPE_SLAB && StrataPixelHeader.HasSubsurface();
+	Out.MaterialAO						= SubstrateGetIrradianceAndAO(SubstratePixelHeader).MaterialAO;
+	Out.ShadingID						= SubstratePixelHeader.IsSubstrateMaterial() ? SHADINGMODELID_SUBSTRATE : SHADINGMODELID_UNLIT;
+	Out.DiffuseIndirectSampleOcclusion	= SubstrateGetIrradianceAndAO(SubstratePixelHeader).DiffuseIndirectSampleOcclusion;
+	Out.bNeedsSeparateLightAccumulation = SubstrateSubSurfaceHeaderGetUseDiffusion(SSSHeader);
+	Out.bIsSLW							= BSDFType == SUBSTRATE_BSDF_TYPE_SINGLELAYERWATER;
+	Out.bIsHair							= BSDFType == SUBSTRATE_BSDF_TYPE_HAIR;
+	Out.bHasBackfaceDiffuse				= BSDFType == SUBSTRATE_BSDF_TYPE_SLAB && SubstratePixelHeader.HasSubsurface();
 	Out.bRequiresBxDFImportanceSampling = Out.bIsHair;
+	Out.bIsValid 						= SubstratePixelHeader.ClosureCount > 0;
 
-	// STRATA_TODO: For now, use only the last BSDF (arbitrary)
-	Strata_for(uint BSDFIndex = 0, BSDFIndex < StrataPixelHeader.BSDFCount, ++BSDFIndex)
+	// SUBSTRATE_TODO: For now, use only the last BSDF (arbitrary)
+	Substrate_for(uint ClosureIndex = 0, ClosureIndex < SubstratePixelHeader.ClosureCount, ++ClosureIndex)
 	{
 		float3 NullV				= float3(0, 0, 1);
-		FStrataBSDF BSDF			= UnpackStrataBSDF(Strata.MaterialTextureArray, StrataAddressing, StrataPixelHeader);
-		FStrataBSDFContext Context	= StrataCreateBSDFContext(StrataPixelHeader, BSDF, StrataAddressing, NullV);
+		FSubstrateBSDF BSDF			= UnpackSubstrateBSDF(Substrate.MaterialTextureArray, SubstrateAddressing, SubstratePixelHeader);
+		FSubstrateBSDFContext Context	= SubstrateCreateBSDFContext(SubstratePixelHeader, BSDF, SubstrateAddressing, NullV);
 		Out.TangentBasis			= Context.TangentBasis;
-		Out.Anisotropy				= StrataGetBSDFAnisotropy(BSDF);
+		Out.Anisotropy				= SubstrateGetBSDFAnisotropy(BSDF);
+		Out.DiffuseAlbedo 			= SubstrateGetBSDFDiffuseColor(BSDF);
 	}
-#endif // STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+#endif // SUBSTRATE_ENABLED
 
 	return Out;
 }
 
-// Strata material internal read function - Per-BSDF data
-FLumenMaterialData InternalReadMaterialData_Strata(uint2 InCoord, uint InBSDFIndex, uint InBSDFCount, float MaxRoughnessToTraceSmoothReflection)
+// Substrate material internal read function - Per-BSDF data
+FLumenMaterialData InternalReadMaterialData_Substrate(uint2 InCoord, uint InClosureIndex, float MaxRoughnessToTraceSmoothReflection)
 {
 	FLumenMaterialData Out = (FLumenMaterialData)0;
-#if STRATA_ENABLED && STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE
-	if (InBSDFCount > 0)
+#if SUBSTRATE_ENABLED && SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
 	{
-		FStrataAddressing StrataAddressing			= GetStrataPixelDataByteOffset(InCoord, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-		const FStrataPixelHeader StrataPixelHeader	= UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
+		FSubstrateAddressing SubstrateAddressing			= GetSubstratePixelDataByteOffset(InCoord, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		const FSubstratePixelHeader SubstratePixelHeader	= UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
 
-		if (StrataPixelHeader.BSDFCount > 0)
+		if (InClosureIndex < SubstratePixelHeader.ClosureCount)
 		{
 			// Move data read address to the requested BDSF
-			if (InBSDFIndex > 0)
+			if (InClosureIndex > 0)
 			{
-				const uint AddressOffset = UnpackBSDFOffsetAtIndex(Strata.BSDFOffsetTexture[InCoord], InBSDFIndex, InBSDFCount);
-				StrataSeekBSDF(StrataAddressing, AddressOffset);
+				const uint AddressOffset = UnpackClosureOffsetAtIndex(Substrate.ClosureOffsetTexture[InCoord], InClosureIndex, SubstratePixelHeader.ClosureCount);
+				SubstrateSeekClosure(SubstrateAddressing, AddressOffset);
 			}
 
-			const FStrataSubsurfaceHeader SSSHeader			= StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, InCoord);
-			const FStrataBSDF BSDF							= UnpackStrataBSDFIn(Strata.MaterialTextureArray, StrataAddressing, StrataPixelHeader);
-			const FStrataIrradianceAndOcclusion IrradianceAO= StrataGetIrradianceAndAO(StrataPixelHeader);
+			const FSubstrateSubsurfaceHeader SSSHeader			= SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, InCoord);
+			FSubstrateBSDF BSDF									= UnpackSubstrateBSDFIn(Substrate.MaterialTextureArray, SubstrateAddressing, SubstratePixelHeader);
+			const FSubstrateIrradianceAndOcclusion IrradianceAO	= SubstrateGetIrradianceAndAO(SubstratePixelHeader);
 
-			const uint BSDFType = StrataGetBSDFType(BSDF);
+			const uint BSDFType = SubstrateGetBSDFType(BSDF);
 
+			Out.DiffuseAlbedo 					= SubstrateGetBSDFDiffuseColor(BSDF);
 			Out.SceneDepth						= ConvertFromDeviceZ(SceneTexturesStruct.SceneDepthTexture.Load(int3(InCoord, 0)).r);
-			Out.TangentBasis					= StrataGetBSDFSharedBasis(StrataPixelHeader, BSDF, StrataAddressing);
+			Out.TangentBasis					= SubstrateGetBSDFSharedBasis(SubstratePixelHeader, BSDF, SubstrateAddressing);
 			Out.WorldNormal						= Out.TangentBasis[2];
 			Out.MaterialAO						= IrradianceAO.MaterialAO;
-			Out.ShadingID						= SHADINGMODELID_STRATA;
+			Out.ShadingID						= SHADINGMODELID_SUBSTRATE;
 			Out.DiffuseIndirectSampleOcclusion	= IrradianceAO.DiffuseIndirectSampleOcclusion;
-			Out.bNeedsSeparateLightAccumulation = StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader);
-			Out.bIsSLW							= BSDFType == STRATA_BSDF_TYPE_SINGLELAYERWATER;
-			Out.bIsHair							= BSDFType == STRATA_BSDF_TYPE_HAIR;
-			Out.bHasBackfaceDiffuse				= BSDFType == STRATA_BSDF_TYPE_SLAB ? BSDF.HasBackScattering() : false;
+			Out.bNeedsSeparateLightAccumulation = SubstrateSubSurfaceHeaderGetUseDiffusion(SSSHeader);
+			Out.bIsSLW							= BSDFType == SUBSTRATE_BSDF_TYPE_SINGLELAYERWATER;
+			Out.bIsHair							= BSDFType == SUBSTRATE_BSDF_TYPE_HAIR;
+			Out.bHasBackfaceDiffuse				= BSDFType == SUBSTRATE_BSDF_TYPE_SLAB ? BSDF.HasBackScattering() : false;
 			Out.bRequiresBxDFImportanceSampling = Out.bIsHair;
 			Out.bIsFrontLayerTranslucency		= false;
-			Out.Anisotropy						= StrataGetBSDFAnisotropy(BSDF);
+			Out.Anisotropy						= SubstrateGetBSDFAnisotropy(BSDF);
+			Out.bIsValid 						= true;
 
 
-			Out.Roughness				= StrataGetBSDFRoughness(BSDF);
+			Out.Roughness				= SubstrateGetBSDFRoughness(BSDF);
 			Out.TopLayerRoughness		= Out.Roughness;
 			Out.bHasSecondSpecularLobe	= false;
 			const bool bHasHaziness = BSDF_GETHASHAZINESS(BSDF);
@@ -371,9 +281,10 @@ FLumenMaterialData InternalReadMaterialData_FrontLayerTranslucency(uint2 InPixel
 FLumenMaterialData InternalReadMaterialData_GBuffer(const FGBufferData GBufferData)
 {
 	FLumenMaterialData Out = (FLumenMaterialData)0;
-#if !STRATA_ENABLED && !FRONT_LAYER_TRANSLUCENCY
+#if !SUBSTRATE_ENABLED && !FRONT_LAYER_TRANSLUCENCY
 	Out.SceneDepth = GBufferData.Depth;
 	Out.WorldNormal = GBufferData.WorldNormal;
+	Out.DiffuseAlbedo = GBufferData.BaseColor;
 	Out.Roughness = GBufferData.Roughness;
 	Out.Anisotropy = GBufferData.Anisotropy;
 	Out.TopLayerRoughness = GetClearCoatRoughness(GBufferData);
@@ -399,8 +310,8 @@ FLumenMaterialData ReadMaterialData(uint2 InPixelPos)
 {
 #if FRONT_LAYER_TRANSLUCENCY
 	return InternalReadMaterialData_FrontLayerTranslucency(InPixelPos);
-#elif STRATA_ENABLED
-	return InternalReadMaterialData_Strata(InPixelPos);
+#elif SUBSTRATE_ENABLED
+	return InternalReadMaterialData_Substrate(InPixelPos);
 #else
 	return InternalReadMaterialData_GBuffer(InPixelPos);
 #endif
@@ -408,8 +319,8 @@ FLumenMaterialData ReadMaterialData(uint2 InPixelPos)
 
 FLumenMaterialData ReadMaterialDataFromSceneTextures(uint2 InPixelPos, float2 InBufferUV)
 {
-#if STRATA_ENABLED
-	return InternalReadMaterialData_Strata(InPixelPos);
+#if SUBSTRATE_ENABLED
+	return InternalReadMaterialData_Substrate(InPixelPos);
 #else
 	return InternalReadMaterialData_GBuffer(GetGBufferDataFromSceneTextures(InBufferUV));
 #endif
@@ -419,8 +330,8 @@ FLumenMaterialData ReadMaterialData(uint2 InPixelPos, float2 InBufferUV)
 {
 #if FRONT_LAYER_TRANSLUCENCY
 	return InternalReadMaterialData_FrontLayerTranslucency(InPixelPos);
-#elif STRATA_ENABLED
-	return InternalReadMaterialData_Strata(InPixelPos);
+#elif SUBSTRATE_ENABLED
+	return InternalReadMaterialData_Substrate(InPixelPos);
 #else
 	return InternalReadMaterialData_GBuffer(InBufferUV);
 #endif
@@ -430,8 +341,8 @@ FLumenMaterialData ReadMaterialData(FLumenMaterialCoord InCoord, float MaxRoughn
 {
 #if FRONT_LAYER_TRANSLUCENCY
 	return InternalReadMaterialData_FrontLayerTranslucency(InCoord.SvPosition);
-#elif STRATA_ENABLED
-	return InternalReadMaterialData_Strata(InCoord.SvPosition, InCoord.TileBSDFIndex, InCoord.TileBSDFCount, MaxRoughnessToTraceSmoothReflection);
+#elif SUBSTRATE_ENABLED
+	return InternalReadMaterialData_Substrate(InCoord.SvPosition, InCoord.ClosureIndex, MaxRoughnessToTraceSmoothReflection);
 #else
 	return InternalReadMaterialData_GBuffer(InCoord.SvPosition);
 #endif
@@ -456,7 +367,7 @@ bool HasBackfaceDiffuse(FLumenMaterialData In)
 
 bool IsClearCoat(FLumenMaterialData In)
 {
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	return In.bHasSecondSpecularLobe;
 #else
 	return In.ShadingID == SHADINGMODELID_CLEAR_COAT;
@@ -511,7 +422,7 @@ bool HasBentNormal(FLumenMaterialData In)
 
 bool HasDefaultShading(FLumenMaterialData In)
 {
-	return In.ShadingID == SHADINGMODELID_DEFAULT_LIT || (In.ShadingID == SHADINGMODELID_STRATA && !In.bIsHair);
+	return In.ShadingID == SHADINGMODELID_DEFAULT_LIT || (In.ShadingID == SHADINGMODELID_SUBSTRATE && !In.bIsHair);
 }
 
 bool HasComplexShading(FLumenMaterialData In)
@@ -526,7 +437,7 @@ bool ShouldComputeIndirectLighting(FLumenMaterialData In)
 
 float3x3 GetTangentBasis(FLumenMaterialData In)
 {
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	if (HasAnisotropy(In)) 
 	{ 
 		return In.TangentBasis; 
@@ -556,8 +467,8 @@ float3x3 GetTangentBasis(FLumenMaterialData In)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Sampling
 
-#if STRATA_ENABLED
-FBxDFSample SampleStrataBxDF(const uint TermMask, FLumenMaterialData InMaterial, float3 V, float4 E)
+#if SUBSTRATE_ENABLED
+FBxDFSample SampleSubstrateBxDF(const uint TermMask, FLumenMaterialData InMaterial, float3 V, float4 E)
 {
 	// Temporary place holder while converting lumen
 	return SampleDefaultLitBxDF(TermMask, InMaterial.WorldNormal, GetTangentBasis(InMaterial), InMaterial.Anisotropy, InMaterial.Roughness, V, E);
@@ -566,8 +477,8 @@ FBxDFSample SampleStrataBxDF(const uint TermMask, FLumenMaterialData InMaterial,
 
 FBxDFSample SampleBxDF(const uint TermMask, FLumenMaterialData InMaterial, float3 V, float4 E)
 {
-#if STRATA_ENABLED
-	return SampleStrataBxDF(TermMask, InMaterial, V, E);
+#if SUBSTRATE_ENABLED
+	return SampleSubstrateBxDF(TermMask, InMaterial, V, E);
 #elif FRONT_LAYER_TRANSLUCENCY
 	FBxDFSample Unused = (FBxDFSample)0;
 	return Unused;

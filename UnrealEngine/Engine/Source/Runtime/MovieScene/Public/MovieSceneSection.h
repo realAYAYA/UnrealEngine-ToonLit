@@ -32,19 +32,6 @@
 #include "UObject/ScriptInterface.h"
 #include "UObject/UObjectGlobals.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "EntitySystem/MovieSceneEntityBuilder.h"
-#include "Evaluation/MovieSceneEvaluationCustomVersion.h"
-#include "Evaluation/MovieSceneSequenceHierarchy.h"
-#include "Generators/MovieSceneEasingFunction.h"
-#include "KeyParams.h"
-#include "Misc/FrameTime.h"
-#include "MovieScene.h"
-#include "MovieSceneFrameMigration.h"
-#include "MovieSceneFwd.h"
-#include "UObject/ObjectMacros.h"
-#endif
-
 #include "MovieSceneSection.generated.h"
 
 class FArchive;
@@ -458,7 +445,7 @@ public:
 	 *
 	 * @param DeltaTime	The distance in time to move the curve
 	 */
-	MOVIESCENE_API void MoveSection(FFrameNumber DeltaTime);
+	MOVIESCENE_API virtual void MoveSection(FFrameNumber DeltaTime);
 
 	/**
 	 * Return the range within which this section is effective. Used for automatic calculation of sequence bounds.
@@ -619,6 +606,12 @@ public:
 	 */
 	MOVIESCENE_API void GetOverlappingSections(TArray<UMovieSceneSection*>& OutSections, bool bSameRow, bool bIncludeThis);
 
+	/* Returns whether this section can have an open lower bound. This will generally be false if sections of this type cannot be blended and there is another section on the same row before this one.*/
+	MOVIESCENE_API bool CanHaveOpenLowerBound() const;
+
+	/* Returns whether this section can have an open upper bound. This will generally be false if sections of this type cannot be blended and there is another section on the same row after this one.*/
+	MOVIESCENE_API bool CanHaveOpenUpperBound() const;
+
 	/**
 	 * Evaluate this sections's easing functions based on the specified time
 	 */
@@ -716,6 +709,7 @@ private:
 	 */
 	MOVIESCENE_API virtual EMovieSceneChannelProxyType CacheChannelProxy();
 
+	void MoveSectionImpl(FFrameNumber DeltaTime);
 
 public:
 
@@ -809,8 +803,8 @@ template<typename SectionParams>
 inline FFrameNumber GetFirstLoopStartOffsetAtTrimTime(FQualifiedFrameTime TrimTime, const SectionParams& Params, FFrameNumber StartFrame, FFrameRate FrameRate)
 {
 	const float AnimPlayRate = FMath::IsNearlyZero(Params.PlayRate) ? 1.0f : Params.PlayRate;
-	const float AnimPosition = (TrimTime.Time - StartFrame) / TrimTime.Rate * AnimPlayRate;
-	const float SeqLength = Params.GetSequenceLength() - FrameRate.AsSeconds(Params.StartFrameOffset + Params.EndFrameOffset) / AnimPlayRate;
+	const float AnimPosition = static_cast<float>((TrimTime.Time - StartFrame) / TrimTime.Rate * AnimPlayRate);
+	const float SeqLength = static_cast<float>(Params.GetSequenceLength() - FrameRate.AsSeconds(Params.StartFrameOffset + Params.EndFrameOffset) / AnimPlayRate);
 
 	FFrameNumber NewOffset = FrameRate.AsFrameNumber(FMath::Fmod(AnimPosition, SeqLength));
 	NewOffset += Params.FirstLoopStartFrameOffset;

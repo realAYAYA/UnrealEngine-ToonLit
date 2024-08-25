@@ -12,6 +12,16 @@
 class FName;
 class UObject;
 
+UENUM()
+enum class EActorBrowsingFolderDoubleClickMethod : uint8
+{
+	/** Expands / Collapses the folder */
+	ToggleExpansion,
+
+	/** Marks / unmarks the folder as the Current Folder */
+	ToggleCurrentFolder,
+};
+
 USTRUCT()
 struct FActorBrowsingModeConfig
 {
@@ -58,6 +68,10 @@ public:
 	/** True when the Scene Outliner updates when an actor is selected in the viewport */
 	UPROPERTY()
 	bool bAlwaysFrameSelection = true;
+
+	/** Specifies the behavior of double click on a folder */
+	UPROPERTY()
+	EActorBrowsingFolderDoubleClickMethod FolderDoubleClickMethod = EActorBrowsingFolderDoubleClickMethod::ToggleExpansion;
 };
 
 UCLASS(EditorConfig="ActorBrowsingMode")

@@ -184,18 +184,12 @@ STDMETHODIMP FWmfMediaSink::GetCharacteristics(__RPC__out DWORD* pdwCharacterist
 		return E_POINTER;
 	}
 
-	FScopeLock Lock(&CriticalSection);
-
 	if (!StreamSink.IsValid())
 	{
 		return MF_E_SHUTDOWN;
 	}
 
-#if WMFMEDIA_PLAYER_VERSION == 1
-	*pdwCharacteristics = MEDIASINK_FIXED_STREAMS | MEDIASINK_CAN_PREROLL;
-#else  // WMFMEDIA_PLAYER_VERSION == 1
-	*pdwCharacteristics = MEDIASINK_FIXED_STREAMS | MEDIASINK_CAN_PREROLL | MEDIASINK_RATELESS;
-#endif // WMFMEDIA_PLAYER_VERSION == 1
+	*pdwCharacteristics = MEDIASINK_FIXED_STREAMS | MEDIASINK_RATELESS;
 
 	return S_OK;
 }
@@ -331,18 +325,39 @@ STDMETHODIMP FWmfMediaSink::SetPresentationClock(__RPC__in_opt IMFPresentationCl
 	// Register ourselves to get state notifications from the new clock.
 	if (pPresentationClock != NULL)
 	{
-		const HRESULT Result = pPresentationClock->AddClockStateSink(this);
+		TComPtr<IMFRateControl> RateControl;
 
+		HRESULT Result = pPresentationClock->QueryInterface(IID_PPV_ARGS(&RateControl));
+ 		if (FAILED(Result))
+		{
+			UE_LOG(LogWmfMedia, Error, TEXT("Failed to retrieve rate interface from presentation clock: %s"), *WmfMedia::ResultToString(Result));
+			return Result;
+		}
+
+		float Rate;
+		Result = RateControl->GetRate(NULL, &Rate);
+		if (FAILED(Result))
+		{
+			UE_LOG(LogWmfMedia, Error, TEXT("Failed to retrieve rate from presentation clock: %s"), *WmfMedia::ResultToString(Result));
+			return Result;
+		}
+
+		// Make sure the sink knows the current clock rate (the presentation clock may only be known after initial rate setup is already done)
+		StreamSink->SetClockRate(Rate);
+
+		Result = pPresentationClock->AddClockStateSink(this);
 		if (FAILED(Result))
 		{
 			UE_LOG(LogWmfMedia, Error, TEXT("Failed to add media sink to presentation clock: %s"), *WmfMedia::ResultToString(Result));
 			return Result;
 		}
 	}
+	else
+	{
+		StreamSink->SetClockRate(-1.0f);
+	}
 
 	PresentationClock = pPresentationClock;
-
-	StreamSink->SetPresentationClock(PresentationClock);
 
 	return S_OK;
 }
@@ -365,22 +380,6 @@ STDMETHODIMP FWmfMediaSink::Shutdown()
 	}
 
 	return MF_E_SHUTDOWN;
-}
-
-
-/* IMFMediaSinkPreroll interface
- *****************************************************************************/
-
-STDMETHODIMP FWmfMediaSink::NotifyPreroll(MFTIME hnsUpcomingStartTime)
-{
-	FScopeLock Lock(&CriticalSection);
-
-	if (!StreamSink.IsValid())
-	{
-		return MF_E_SHUTDOWN;
-	}
-
-	return StreamSink->Preroll();
 }
 
 

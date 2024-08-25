@@ -345,33 +345,29 @@ void FAssetRegistrySearchProvider::Search(FSearchQueryPtr SearchQuery)
 	Registry.GetAllAssets(Assets);
 
 	Async(EAsyncExecution::LargeThreadPool, [Assets = MoveTemp(Assets), SearchQuery]() mutable {
+		TRACE_CPUPROFILER_EVENT_SCOPE_STR("FAssetRegistrySearchProvider Async Search");
 		FTextFilterExpressionEvaluator TextFilterExpressionEvaluator(ETextFilterExpressionEvaluatorMode::Complex);
 		TextFilterExpressionEvaluator.SetFilterText(FText::FromString(SearchQuery->QueryText));
 		FFrontendFilter_TextFilterExpressionContext_HackCopy TextFilterExpressionContext;
 
+		TArray<FSearchRecord> SearchResults;
 		for (auto AssetIter = Assets.CreateIterator(); AssetIter; ++AssetIter)
 		{
 			const FAssetData& Asset = *AssetIter;
 			TextFilterExpressionContext.SetAsset(&Asset);
-			if (!TextFilterExpressionEvaluator.TestTextFilter(TextFilterExpressionContext))
+			if (TextFilterExpressionEvaluator.TestTextFilter(TextFilterExpressionContext))
 			{
-				AssetIter.RemoveCurrent();
+				FSearchRecord Record;
+				Record.AssetPath = Asset.GetObjectPathString();
+				Record.AssetName = Asset.AssetName.ToString();
+				Record.AssetClass = Asset.AssetClassPath;
+
+				const float WorstCase = Record.AssetName.Len() + SearchQuery->QueryText.Len();
+				Record.Score = -50.0f * (1.0f - (Algo::LevenshteinDistance(Record.AssetName.ToLower(), SearchQuery->QueryText.ToLower()) / WorstCase));
+
+				SearchResults.Add(Record);
 			}
 			TextFilterExpressionContext.ClearAsset();
-		}
-
-		TArray<FSearchRecord> SearchResults;
-		for (const FAssetData& Asset : Assets)
-		{
-			FSearchRecord Record;
-			Record.AssetPath = Asset.GetObjectPathString();
-			Record.AssetName = Asset.AssetName.ToString();
-			Record.AssetClass = Asset.AssetClassPath;
-
-			const float WorstCase = Record.AssetName.Len() + SearchQuery->QueryText.Len();
-			Record.Score = -50.0f * (1.0f - (Algo::LevenshteinDistance(Record.AssetName.ToLower(), SearchQuery->QueryText.ToLower()) / WorstCase));
-
-			SearchResults.Add(Record);
 		}
 
 		Async(EAsyncExecution::TaskGraphMainThread, [SearchQuery, SearchResults = MoveTemp(SearchResults)]() mutable {

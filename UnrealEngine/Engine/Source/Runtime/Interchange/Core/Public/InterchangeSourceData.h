@@ -43,6 +43,7 @@ public:
 	/** Return the hash of the content point by Filename. */
 	FORCEINLINE TOptional<FMD5Hash> GetFileContentHash() const
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeSourceData::GetFileContentHash);
 		if(!FileContentHashCache.IsSet())
 		{
 			ComputeFileContentHashCache();

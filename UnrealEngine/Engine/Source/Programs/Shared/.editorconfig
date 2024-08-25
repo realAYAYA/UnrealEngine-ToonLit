@@ -7,7 +7,7 @@
 
 csharp_style_prefer_switch_expression = false
 csharp_style_implicit_object_creation_when_type_is_apparent = false
-dotnet_remove_unnecessary_suppression_exclusions = false
+dotnet_remove_unnecessary_suppression_exclusions = all
 
 # Sort using and Import directives with System.* appearing first
 dotnet_sort_system_directives_first = true
@@ -160,6 +160,15 @@ dotnet_diagnostic.CA1822.severity = warning
 # IDE0005: Using directive is unnecessary
 dotnet_diagnostic.IDE0005.severity = warning
 
+# IDE0073: Null check can be simplified
+dotnet_diagnostic.IDE0270.severity = silent
+
+# IDE0090: 'new' expression can be simplified
+dotnet_diagnostic.IDE0090.severity = silent
+
+# IDE1006: Enforce naming conventions
+dotnet_diagnostic.IDE1006.severity = warning
+
 # dotnet_style_allow_multiple_blank_lines_experimental
 dotnet_diagnostic.IDE2000.severity = warning
 
@@ -256,6 +265,19 @@ csharp_prefer_braces = true:silent
 csharp_preserve_single_line_blocks = true
 csharp_preserve_single_line_statements = true
 
+# Async methods should have "Async" suffix
+dotnet_naming_rule.async_methods_end_in_async.symbols = any_async_methods
+dotnet_naming_rule.async_methods_end_in_async.style = end_in_async
+dotnet_naming_rule.async_methods_end_in_async.severity = warning
+
+dotnet_naming_symbols.any_async_methods.applicable_kinds = method
+dotnet_naming_symbols.any_async_methods.applicable_accessibilities = *
+dotnet_naming_symbols.any_async_methods.required_modifiers = async
+
+dotnet_naming_style.end_in_async.required_prefix = 
+dotnet_naming_style.end_in_async.required_suffix = Async
+dotnet_naming_style.end_in_async.capitalization = pascal_case
+dotnet_naming_style.end_in_async.word_separator = 
 
 # All Rules Enabled as build warnings
 # Description: All Rules are enabled as build warnings. Rules with IsEnabledByDefault = false are force enabled as build warnings.
@@ -370,7 +392,7 @@ dotnet_diagnostic.CA1054.severity = warning
 dotnet_diagnostic.CA1055.severity = warning
 
 # CA1056: URI-like properties should not be strings
-dotnet_diagnostic.CA1056.severity = warning
+dotnet_diagnostic.CA1056.severity = silent
 
 # CA1058: Types should not extend certain base types
 dotnet_diagnostic.CA1058.severity = warning
@@ -537,8 +559,8 @@ dotnet_diagnostic.CA1815.severity = none
 # CA1816: Dispose methods should call SuppressFinalize
 dotnet_diagnostic.CA1816.severity = warning
 
-# CA1819: Properties should not return arrays
-dotnet_diagnostic.CA1819.severity = warning
+# CA1819: Properties should not return arrays (rationale: System.Text.Json serialization requires array properties)
+dotnet_diagnostic.CA1819.severity = silent
 
 # CA1820: Test for empty strings using string length
 dotnet_diagnostic.CA1820.severity = warning
@@ -1073,3 +1095,9 @@ dotnet_diagnostic.CA5404.severity = none
 
 # CA5405: Do not always skip token validation in delegates
 dotnet_diagnostic.CA5405.severity = warning
+
+
+[*Test*.cs]
+
+# CA1707: Identifiers should not contain underscores
+dotnet_diagnostic.CA1707.severity = none

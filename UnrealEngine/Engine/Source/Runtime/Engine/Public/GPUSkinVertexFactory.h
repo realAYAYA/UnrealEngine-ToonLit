@@ -25,16 +25,6 @@ template <class T> class TConsoleVariableData;
 BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FAPEXClothUniformShaderParameters,)
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 
-enum
-{
-	// 256 works for real uniform buffers, emulated UB can support up to 75 
-	MAX_GPU_BONE_MATRICES_UNIFORMBUFFER = 256,
-};
-
-BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FBoneMatricesUniformShaderParameters,)
-	SHADER_PARAMETER_ARRAY(FMatrix3x4, BoneMatrices, [MAX_GPU_BONE_MATRICES_UNIFORMBUFFER])
-END_GLOBAL_SHADER_PARAMETER_STRUCT()
-
 #define SET_BONE_DATA(B, X) B.SetMatrixTranspose(X)
 
 /** Shared data & implementation for the different types of pool */
@@ -105,7 +95,7 @@ public:
 	/** Creates the resource 
 	 * @param Args The buffer size in bytes.
 	 */
-	FVertexBufferAndSRV CreateResource(FSharedPoolPolicyData::CreationArguments Args);
+	FVertexBufferAndSRV CreateResource(FRHICommandListBase& RHICmdList, FSharedPoolPolicyData::CreationArguments Args);
 	
 	/** Gets the arguments used to create resource
 	 * @param Resource The buffer to get data for.
@@ -137,7 +127,7 @@ public:
 	/** Creates the resource 
 	 * @param Args The buffer size in bytes.
 	 */
-	FVertexBufferAndSRV CreateResource(FSharedPoolPolicyData::CreationArguments Args);
+	FVertexBufferAndSRV CreateResource(FRHICommandListBase& RHICmdList, FSharedPoolPolicyData::CreationArguments Args);
 };
 
 /** A pool for vertex buffers with consistent usage, bucketed for efficiency. */
@@ -211,14 +201,12 @@ public:
 		}
 
 		// @param FrameTime from GFrameTime
-		bool UpdateBoneData(FRHICommandListImmediate& RHICmdList, const TArray<FMatrix44f>& ReferenceToLocalMatrices,
-			const TArray<FBoneIndexType>& BoneMap, uint32 RevisionNumber, bool bPrevious, ERHIFeatureLevel::Type FeatureLevel, 
+		void UpdateBoneData(FRHICommandList& RHICmdList, const TArray<FMatrix44f>& ReferenceToLocalMatrices,
+			const TArray<FBoneIndexType>& BoneMap, uint32 RevisionNumber, ERHIFeatureLevel::Type FeatureLevel, 
 			bool bUseSkinCache, bool bForceUpdateImmediately, const FName& AssetPathName);
 
 		void ReleaseBoneData()
 		{
-			ensure(IsInRenderingThread());
-
 			UniformBuffer.SafeRelease();
 
 			for(uint32 i = 0; i < 2; ++i)
@@ -255,7 +243,8 @@ public:
 			if(!RetPtr->VertexBufferRHI.IsValid())
 			{
 				// this only should happen if we request the old data
-				check(bPrevious);
+				checkf(bPrevious, TEXT("Trying to access current bone buffer for reading, but it is null. BoneBuffer[0] = %p, BoneBuffer[1] = %p, CurrentRevisionNumber = %u, PreviousRevisionNumber = %u"),
+					BoneBuffer[0].VertexBufferRHI.GetReference(), BoneBuffer[1].VertexBufferRHI.GetReference(), CurrentRevisionNumber, PreviousRevisionNumber);
 
 				// if we don't have any old data we use the current one
 				RetPtr = &GetBoneBufferInternal(false);
@@ -359,7 +348,10 @@ public:
 	* update the resource with new data from the game thread.
 	* @param	InData - new stream component data
 	*/
-	virtual void SetData(const FGPUSkinDataType* InData);
+	UE_DEPRECATED(5.3, "Use SetData with a command list.")
+	void SetData(const FGPUSkinDataType* InData);
+
+	virtual void SetData(FRHICommandListBase& RHICmdList, const FGPUSkinDataType* InData);
 
 	uint32 GetNumVertices() const
 	{
@@ -387,6 +379,12 @@ public:
 	 * the maximum supported bone influences.
 	 */
 	ENGINE_API static int32 GetBoneInfluenceLimitForAsset(int32 AssetProvidedLimit, const ITargetPlatform* TargetPlatform = nullptr);
+
+	/**
+	 * Returns true if mesh LODs with Unlimited Bone Influences must always be rendered using a
+	 * Mesh Deformer for the given shader platform.
+	 */
+	ENGINE_API static bool GetAlwaysUseDeformerForUnlimitedBoneInfluences(EShaderPlatform Platform);
 
 	/** Morph vertex factory functions */
 	virtual void UpdateMorphVertexStream(const class FMorphVertexBuffer* MorphVertexBuffer) {}
@@ -501,7 +499,7 @@ public:
 			Reset();
 		}
 
-		bool UpdateClothSimulData(FRHICommandListImmediate& RHICmdList, const TArray<FVector3f>& InSimulPositions, const TArray<FVector3f>& InSimulNormals, uint32 RevisionNumber, 
+		void UpdateClothSimulData(FRHICommandList& RHICmdList, TConstArrayView<FVector3f> InSimulPositions, TConstArrayView<FVector3f> InSimulNormals, uint32 RevisionNumber, 
 									ERHIFeatureLevel::Type FeatureLevel, bool bForceUpdateImmediately, const FName& AssetPathName);
 
 		void ReleaseClothSimulData()
@@ -693,7 +691,7 @@ public:
 	* update the resource with new data from the game thread.
 	* @param	InData - new stream component data
 	*/
-	virtual void SetData(const FGPUSkinDataType* InData) override;
+	virtual void SetData(FRHICommandListBase& RHICmdList, const FGPUSkinDataType* InData) override;
 
 	virtual FGPUBaseSkinVertexFactory* GetVertexFactory() override
 	{
@@ -799,6 +797,9 @@ public:
 	 * The SRVs are cached per attribute. If any passed in SRV is changed from the cached value then we recreate the vertex factory uniform buffer here.
 	 * Note that on platforms that support manual vertex fetch, only Position will be in the final vertex stream and other attributes will be read through an SRV.
 	 */
+	void SetVertexAttributes(FRHICommandListBase& RHICmdList, FGPUBaseSkinVertexFactory const* InSourceVertexFactory, FAddVertexAttributeDesc const& InDesc);
+
+	UE_DEPRECATED(5.4, "SetVertexAttributes requires a command list.")
 	void SetVertexAttributes(FGPUBaseSkinVertexFactory const* InSourceVertexFactory, FAddVertexAttributeDesc const& InDesc);
 
 	/** 

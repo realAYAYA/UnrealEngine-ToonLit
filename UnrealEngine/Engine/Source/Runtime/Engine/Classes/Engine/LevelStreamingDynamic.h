@@ -57,6 +57,12 @@ class ULevelStreamingDynamic : public ULevelStreaming
 
 		/** Set whether the level will be made visible initially. */
 		bool bInitiallyVisible = true;
+
+		/** Set whether we allow to reuse an existing level streaming. */
+		bool bAllowReuseExitingLevelStreaming = false;
+
+		/** Set EditorPath Owner */
+		UObject* EditorPathOwner = nullptr;
 	};
 
 	/**  

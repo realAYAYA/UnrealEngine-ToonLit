@@ -5,24 +5,41 @@
 #include "../WaveOpUtil.ush"
 #include "../ComputeShaderUtils.ush"
 
-#include "NaniteAttributeDecode.ush"
+#define SPLIT_WORK_QUEUE (PATCHES) // TODO: Remove once shader rewriter has been fixed (UE-202409)
 
-#if (RASTER_BIN_PASS == NANITE_RASTER_BIN_COUNT)
+#ifndef NANITE_TESSELLATION
+#define NANITE_TESSELLATION PATCHES
+#endif
+
+#include "NaniteAttributeDecode.ush"
+#include "NaniteTessellation.ush"
+
+#if (RASTER_BIN_PASS == NANITE_RASTER_BIN_INIT)
+	#define RASTER_BIN_INIT		1
+	#define RASTER_BIN_COUNT	0
+	#define RASTER_BIN_SCATTER	0
+	#define RASTER_BIN_RESERVE	0
+	#define RASTER_BIN_FINALIZE	0
+#elif (RASTER_BIN_PASS == NANITE_RASTER_BIN_COUNT)
+	#define RASTER_BIN_INIT		0
 	#define RASTER_BIN_COUNT	1
 	#define RASTER_BIN_SCATTER	0
 	#define RASTER_BIN_RESERVE	0
 	#define RASTER_BIN_FINALIZE	0
 #elif (RASTER_BIN_PASS == NANITE_RASTER_BIN_SCATTER)
+	#define RASTER_BIN_INIT		0
 	#define RASTER_BIN_COUNT	0
 	#define RASTER_BIN_SCATTER	1
 	#define RASTER_BIN_RESERVE	0
 	#define RASTER_BIN_FINALIZE	0
 #elif (RASTER_BIN_PASS == NANITE_RASTER_BIN_RESERVE)
+	#define RASTER_BIN_INIT		0
 	#define RASTER_BIN_COUNT	0
 	#define RASTER_BIN_SCATTER	0
 	#define RASTER_BIN_RESERVE	1
 	#define RASTER_BIN_FINALIZE	0
 #else
+	#define RASTER_BIN_INIT		0
 	#define RASTER_BIN_COUNT	0
 	#define RASTER_BIN_SCATTER	0
 	#define RASTER_BIN_RESERVE	0
@@ -33,13 +50,25 @@
 #define VIRTUAL_TEXTURE_TARGET 0
 #endif
 
-uint FixedFunctionBin;
+#ifndef FORCE_BATCHING
+#define FORCE_BATCHING 0
+#endif
+
+uint MeshPassIndex;
+uint MinSupportedWaveSize;
 
 RWStructuredBuffer<FNaniteRasterBinMeta> OutRasterBinMeta;
 
 FNaniteMaterialFlags GetRasterBinMaterialFlags(uint BinIndex)
 {
 	return UnpackNaniteMaterialFlags(OutRasterBinMeta[BinIndex].MaterialFlags);
+}
+
+void InitRasterBin(uint BinIndex)
+{
+	OutRasterBinMeta[BinIndex].ClusterOffset	= 0;
+	OutRasterBinMeta[BinIndex].BinSWCount		= 0;
+	OutRasterBinMeta[BinIndex].BinHWCount		= 0;
 }
 
 uint2 GetRasterBinCount(uint BinIndex)
@@ -63,7 +92,53 @@ uint GetRasterBinOffset(uint BinIndex)
 	return OutRasterBinMeta[BinIndex].ClusterOffset;
 }
 
-#if RASTER_BIN_RESERVE
+uint GetRemappedRasterBinFromIndex(
+	uint InRelativeMaterialIndex,
+	uint InPrimitiveIndex,
+	uint InRegularRasterBinCount,
+	uint InRenderFlags,
+	bool bSecondaryRasterBin)
+{
+	uint RasterBin = GetMaterialRasterBinFromIndex(
+		InRelativeMaterialIndex,
+		InPrimitiveIndex,
+		MeshPassIndex,
+		InRegularRasterBinCount,
+		bSecondaryRasterBin
+	);
+
+	const FNaniteMaterialFlags MaterialFlags = GetRasterBinMaterialFlags(RasterBin);
+	return RemapRasterBin(RasterBin, InRenderFlags, MaterialFlags);
+}
+
+#if NANITE_TESSELLATION
+
+[numthreads(1, 1, 1)]
+void InitVisiblePatchesArgs() 
+{
+	const uint NumVisiblePatches = RWVisiblePatchesArgs[3];
+
+	RWVisiblePatchesArgs[0] = ( NumVisiblePatches + 63u ) / 64u;
+	RWVisiblePatchesArgs[1] = 1;
+	RWVisiblePatchesArgs[2] = 1;
+}
+
+#endif
+
+#if RASTER_BIN_INIT
+
+uint RasterBinCount;
+
+[numthreads(64, 1, 1)]
+void RasterBinInit(uint RasterBinIndex : SV_DispatchThreadID)
+{
+	if (RasterBinIndex < RasterBinCount)
+	{
+		InitRasterBin(RasterBinIndex);
+	}
+}
+
+#elif RASTER_BIN_RESERVE
 
 uint RasterBinCount;
 
@@ -95,6 +170,7 @@ void RasterBinReserve(uint RasterBinIndex : SV_DispatchThreadID)
 #elif RASTER_BIN_FINALIZE
 
 uint RasterBinCount;
+uint FinalizeMode;
 
 RWBuffer<uint> OutRasterBinArgsSWHW;
 
@@ -110,17 +186,29 @@ void RasterBinFinalize(uint RasterBinIndex : SV_DispatchThreadID)
 		{
 			const uint ClusterCount = OutRasterBinArgsSWHW[Offset + 4u]; // HW: ThreadGroupCountX
 
-			// Need to span the launch size across X,Y,Z so any single dimension does not exceed the 64k
-			// limit as per https://microsoft.github.io/DirectX-Specs/d3d/MeshShader.html#dispatchmesh-api
-			// The product of X*Y*Z can be 2^22, so we convert 1D->3D->1D to work around this limitation.
-			const uint DimensionLimit = (1u << 16u) - 1u;
+			BRANCH
+			if (FinalizeMode == 0) // Wrapping
+			{
+			#if !PLATFORM_REQUIRES_UNWRAPPED_MESH_SHADER_ARGS
+				// Need to span the launch size across X,Y,Z so any single dimension does not exceed the 64k
+				// limit as per https://microsoft.github.io/DirectX-Specs/d3d/MeshShader.html#dispatchmesh-api
+				// The product of X*Y*Z can be 2^22, so we convert 1D->3D->1D to work around this limitation.
+				const uint DimensionLimit = (1u << 16u) - 1u;
 
-			const uint3 GroupCount = GetGroupCountWrapped(ClusterCount, DimensionLimit.xx);
+				const uint3 GroupCount = GetGroupCountWrapped(ClusterCount, DimensionLimit.xx);
 
-			// HW: ThreadGroupCountXYZ
-			OutRasterBinArgsSWHW[Offset + 4u] = GroupCount.x;
-			OutRasterBinArgsSWHW[Offset + 5u] = GroupCount.y;
-			OutRasterBinArgsSWHW[Offset + 6u] = GroupCount.z;
+				// HW: ThreadGroupCountXYZ
+				OutRasterBinArgsSWHW[Offset + 4u] = GroupCount.x;
+				OutRasterBinArgsSWHW[Offset + 5u] = GroupCount.y;
+				OutRasterBinArgsSWHW[Offset + 6u] = GroupCount.z;
+			#endif
+			}
+			else if (FinalizeMode == 1) // VK_NV_mesh_shader
+			{
+				// VK_NV_mesh_shader draw indirect command (count, first, <unused>)
+				// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkDrawMeshTasksIndirectCommandNV.html
+				OutRasterBinArgsSWHW[Offset + 5u] = 0u;
+			}
 		}
 	}
 }
@@ -135,7 +223,6 @@ StructuredBuffer<uint2> InTotalPrevDrawClusters;
 uint bUsePrimOrMeshShader;
 
 uint RegularMaterialRasterBinCount;
-ByteAddressBuffer MaterialSlotTable;
 
 #if RASTER_BIN_SCATTER
 RWBuffer<uint> OutRasterBinArgsSWHW;
@@ -242,7 +329,19 @@ uint AllocateRasterBinCluster(uint BinIndex, bool bSoftware, uint BatchCount)
 void ExportRasterBin(uint RasterBin, uint ClusterIndex, uint RangeStart, uint RangeEnd, uint BatchCount, uint BatchInfoOffset, FCluster Cluster, bool bBatchInfoInlined, bool bSoftware)
 {
 	const FNaniteMaterialFlags BinMaterialFlags = GetRasterBinMaterialFlags(RasterBin);
-	bool bUseBatch = !bSoftware && bUsePrimOrMeshShader && BinMaterialFlags.bVertexProgrammable;
+	
+	if (MinSupportedWaveSize < 32 && BinMaterialFlags.bPixelProgrammable)
+	{
+		// SW pixel programmable path requires wave size >= 32. Fall back to HW raster when that is not guaranteed.
+		bSoftware = false;
+	}
+
+#if FORCE_BATCHING
+	const bool bForceBatching = true;
+#else
+	const bool bForceBatching = false;
+#endif
+	bool bUseBatch = !bSoftware && bUsePrimOrMeshShader && (bForceBatching || BinMaterialFlags.bVertexProgrammable);
 	if (BinMaterialFlags.bDisplacement)
 	{
 		// Displacement forces 100% software, and also the vert reuse batching
@@ -287,20 +386,6 @@ void ScalarizeForEachMatching( T Value, FFunction Function )
 	}
 }
 
-ByteAddressBuffer	VisiblePatches;
-Buffer< uint >		VisiblePatchesArgs;
-RWBuffer< uint >	RWVisiblePatchesArgs;
-
-[numthreads(1, 1, 1)]
-void InitVisiblePatchesArgs() 
-{
-	const uint NumVisiblePatches = RWVisiblePatchesArgs[3];
-
-	RWVisiblePatchesArgs[0] = ( NumVisiblePatches + 63u ) / 64u;
-	RWVisiblePatchesArgs[1] = 1;
-	RWVisiblePatchesArgs[2] = 1;
-}
-
 [numthreads(64, 1, 1)]
 void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupThreadIndex : SV_GroupIndex)
 {
@@ -310,7 +395,12 @@ void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupT
 	
 	if( VisibleIndex < NumVisiblePatches )
 	{
-		uint PatchEncoded = VisiblePatches.Load( VisibleIndex * 16 );
+#if NANITE_TESSELLATION_PATCH_REFS
+		const uint PatchIndex = VisiblePatches.Load(VisibleIndex * 8);
+		const uint PatchEncoded = SplitWorkQueue.DataBuffer.Load(PatchIndex * 16);
+#else
+		const uint PatchEncoded = VisiblePatches.Load(VisibleIndex * 16);
+#endif
 
 		uint VisibleClusterIndex	= PatchEncoded.x >> 7;
 		uint TriIndex				= PatchEncoded.x & 0x7F;
@@ -319,7 +409,14 @@ void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupT
 		FInstanceSceneData InstanceData = GetInstanceSceneData( VisibleCluster.InstanceId, false );
 		FCluster Cluster = GetCluster( VisibleCluster.PageIndex, VisibleCluster.ClusterIndex );
 
-		uint RasterBin = GetMaterialRasterBin( Cluster, InstanceData.PrimitiveId, TriIndex, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, /* secondary bin */ false, MaterialSlotTable );
+		const uint RasterBin = GetRemappedRasterBinFromIndex(
+			GetRelativeMaterialIndex(Cluster, TriIndex),
+			InstanceData.PrimitiveId,
+			RegularMaterialRasterBinCount,
+			RenderFlags,
+			/* Secondary Bin */ false
+		);
+
 		uint IndexInBin = 0;
 
 		// Scalarize atomics
@@ -334,7 +431,13 @@ void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupT
 				#if RASTER_BIN_COUNT
 					WaveInterlockedAddScalar(OutRasterBinMeta[UniformBinIndex].BinSWCount, 1);
 				#elif RASTER_BIN_SCATTER
-					WaveInterlockedAddScalar_( OutRasterBinArgsSWHW[ UniformBinIndex * NANITE_RASTERIZER_ARG_COUNT ], 1, IndexInBin );
+					WaveInterlockedAddScalar_( OutRasterBinArgsSWHW[ UniformBinIndex * NANITE_RASTERIZER_ARG_COUNT + 3 ], 1, IndexInBin );
+					const uint Num = IndexInBin + WaveActiveCountBits(true);
+					if(WaveIsFirstLane())
+					{
+						const uint NumGroups = (Num + MaxPatchesPerGroup - 1) / MaxPatchesPerGroup;	// Slow integer divide. Fix me?
+						InterlockedMax(OutRasterBinArgsSWHW[ UniformBinIndex * NANITE_RASTERIZER_ARG_COUNT + 0 ], NumGroups);
+					}
 				#endif
 					bDone = true;
 				}
@@ -382,10 +485,7 @@ void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupT
 		FCluster Cluster					= GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
 		const bool bWPOEnabled				= (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
 		const bool bSecondaryBin			= !bWPOEnabled; // use secondary bin where applicable when WPO disabled
-
-		// TODO: Embed fast path material uint in FVisibleCluster
-		// TODO: Upload uniform with default material bin index, directly allocate/store indirections into 0th range
-		// TODO: Optimize and/or separate out slow path into another dispatch? (possibly with groupshared bin tracking to avoid searching)
+		const bool bMergeRanges				= false;	// Merging ranges is incompatible with tessellation. Cluster rasterizer assumes UVDensities is uniform. 	// TODO: Reenable it for non-tessellation materials?
 
 		BRANCH
 		if (IsMaterialFastPath(Cluster))
@@ -410,45 +510,47 @@ void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupT
 
 			// The 0th material range is always non-zero length
 			{
-				RasterBin0 = GetMaterialRasterBinFromIndex(Cluster.Material0Index, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryBin, MaterialSlotTable);
+				RasterBin0 = GetRemappedRasterBinFromIndex(Cluster.Material0Index, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, bSecondaryBin);
 			}
 
 			BRANCH
 			if (Cluster.Material1Length > 0u)
 			{
-				RasterBin1 = GetMaterialRasterBinFromIndex(Cluster.Material1Index, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryBin, MaterialSlotTable);
+				RasterBin1 = GetRemappedRasterBinFromIndex(Cluster.Material1Index, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, bSecondaryBin);
 			}
 
 			BRANCH
 			if (Material2Length > 0)
 			{
-				RasterBin2 = GetMaterialRasterBinFromIndex(Cluster.Material2Index, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryBin, MaterialSlotTable);
+				RasterBin2 = GetRemappedRasterBinFromIndex(Cluster.Material2Index, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, bSecondaryBin);
 			}
 
-			if (RasterBin0 == RasterBin1 && RasterBin0 == RasterBin2)
-			{
-				RasterLen0 = Cluster.NumTris;
-				BatchCount0 += BatchCount1 + BatchCount2;
-			}
-			else if (RasterBin0 == RasterBin1)
-			{
-				RasterLen0 = (Cluster.Material0Length + Cluster.Material1Length);
-				RasterLen2 = Material2Length;
-				BatchCount0 += BatchCount1;
-			}
-			else if (RasterBin1 == RasterBin2)
-			{
-				RasterLen0 = Cluster.Material0Length;
-				RasterLen1 = Cluster.NumTris - Cluster.Material0Length;
-				BatchCount1 += BatchCount2;
-			}
-			else
-			{
-				RasterLen0 = Cluster.Material0Length;
-				RasterLen1 = Cluster.Material1Length;
-				RasterLen2 = Material2Length;
-			}
+			RasterLen0 = Cluster.Material0Length;
+			RasterLen1 = Cluster.Material1Length;
+			RasterLen2 = Material2Length;
 
+			BRANCH
+			if (bMergeRanges)
+			{
+				if (RasterBin0 == RasterBin1 && RasterBin0 == RasterBin2)
+				{
+					RasterLen0 = Cluster.NumTris;
+					BatchCount0 += BatchCount1 + BatchCount2;
+				}
+				else if (RasterBin0 == RasterBin1)
+				{
+					RasterLen0 = (Cluster.Material0Length + Cluster.Material1Length);
+					RasterLen2 = Material2Length;
+					BatchCount0 += BatchCount1;
+				}
+				else if (RasterBin1 == RasterBin2)
+				{
+					RasterLen0 = Cluster.Material0Length;
+					RasterLen1 = Cluster.NumTris - Cluster.Material0Length;
+					BatchCount1 += BatchCount2;
+				}
+			}
+			
 			// The 0th material range is always non-zero length
 			{
 				ExportRasterBin(RasterBin0, VisibleClusterIndex, 0u, RasterLen0, BatchCount0, BatchInfoOffset0, Cluster, true, bSoftware);
@@ -491,13 +593,12 @@ void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupT
 				uint MaterialIndex;
 				DecodeMaterialRange(EncodedRange, TriStart, TriLength, MaterialIndex);
 
-				const uint RasterBinN = GetMaterialRasterBinFromIndex(MaterialIndex, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryBin, MaterialSlotTable);
+				const uint RasterBinN = GetRemappedRasterBinFromIndex(MaterialIndex, InstanceData.PrimitiveId, RegularMaterialRasterBinCount, RenderFlags, bSecondaryBin);
 
 				const uint BatchCount = BitStreamReader_Read_RO(ClusterPageData, BatchCountStreamState, 4, 4);
 
 				// Check if raster slot matches the current run, and that the triangle range is contiguous.
-				const bool bMergeRange = (RasterBinN == CurrentRangeBin);
-				if (bMergeRange)
+				if (bMergeRanges && (RasterBinN == CurrentRangeBin))
 				{
 					// Update current range
 					CurrentRangeEnd = TriStart + TriLength;

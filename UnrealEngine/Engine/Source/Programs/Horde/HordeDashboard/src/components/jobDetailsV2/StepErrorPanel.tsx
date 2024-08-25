@@ -1,19 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { List, Stack, Text } from "@fluentui/react";
-import { getFocusStyle, getTheme, mergeStyleSets } from '@fluentui/react/lib/Styling';
+import { List, Pivot, PivotItem, Spinner, SpinnerSize, Stack, Text } from "@fluentui/react";
+import { getFocusStyle, mergeStyleSets } from '@fluentui/react/lib/Styling';
 import { observer } from "mobx-react-lite";
 import React, { useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import backend from "../../backend";
 import { EventData, EventSeverity } from '../../backend/Api';
 import { ISideRailLink } from "../../base/components/SideRail";
-import { hordeClasses } from "../../styles/Styles";
+import { getHordeStyling } from "../../styles/Styles";
+import { getHordeTheme } from "../../styles/theme";
 import { renderLine } from '../LogRender';
 import { JobDataView, JobDetailsV2 } from "./JobDetailsViewCommon";
 
-const errorSideRail: ISideRailLink = { text: "Errors", url: "rail_step_errors" };
-const warningSideRail: ISideRailLink = { text: "Warnings", url: "rail_step_warnings" };
+const errorSideRail: ISideRailLink = { text: "Events", url: "rail_log_events" };
 
 class StepSummaryErrorsView extends JobDataView {
 
@@ -37,7 +37,7 @@ class StepSummaryErrorsView extends JobDataView {
 
    }
 
-   set(stepId: string) {
+   async set(stepId: string) {
 
       const details = this.details;
       if (!details) {
@@ -64,27 +64,58 @@ class StepSummaryErrorsView extends JobDataView {
          return;
       }
 
+      let index = 0;
+      let count = 20;
+      this.events = [];
 
-      backend.getLogEvents(step.logId).then(events => {
-         this.events = events;
+      let init = false;
+
+      try {
+
+         while (true) {
+
+            const events = await backend.getLogEvents(step.logId, { index: index, count: count });
+
+            this.events.push(...events);
+
+            this.updateReady();
+
+            if (!init) {
+
+               init = true;
+
+               const rails: ISideRailLink[] = [];
+               if (this.events.length) {
+                  rails.push(errorSideRail);
+               }
+
+               this.initialize(rails);
+            }
+
+            if (!events.length) {
+               break;
+            }
+
+            index += count;
+         }
+
+
+      } finally {
+
+         this.loaded = true;
          this.updateReady();
-      }).finally(() => {
 
-         const rails: ISideRailLink[] = [];
-         if (this.errors.length) {
-            rails.push(errorSideRail);
+         if (!init) {
+            this.initialize([]);
          }
-         if (this.warnings.length) {
-            rails.push(warningSideRail);
-         }
-         this.initialize(rails)
-      });
 
+      }
    }
 
    clear() {
       this.stepId = "";
       this.events = [];
+      this.loaded = false;
       super.clear();
    }
 
@@ -100,70 +131,82 @@ class StepSummaryErrorsView extends JobDataView {
 
    events: EventData[] = []
 
+   loaded = false;
+
    order = 2;
 
 }
 
 JobDetailsV2.registerDataView("StepSummaryErrorsView", (details: JobDetailsV2) => new StepSummaryErrorsView(details));
 
-const theme = getTheme();
+let _styles: any;
 
-const styles = mergeStyleSets({
-   gutter: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: "#EC4C47",
-         borderLeftWidth: 6,
-         padding: 0,
-         margin: 0,
-         paddingTop: 8,
-         paddingBottom: 8,
-         paddingRight: 8,
-         marginTop: 0,
-         marginBottom: 0
-      }
-   ],
-   gutterWarning: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: "rgb(247, 209, 84)",
-         borderLeftWidth: 6,
-         padding: 0,
-         margin: 0,
-         paddingTop: 8,
-         paddingBottom: 8,
-         paddingRight: 8,
-         marginTop: 0,
-         marginBottom: 0
-      }
-   ],
-   itemCell: [
-      getFocusStyle(theme, { inset: -1 }),
-      {
-         selectors: {
-            '&:hover': { background: "rgb(243, 242, 241)" }
+const getStyles = () => {
+
+   const theme = getHordeTheme();
+
+   const styles = _styles ?? mergeStyleSets({
+      gutter: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: "#EC4C47",
+            borderLeftWidth: 6,
+            padding: 0,
+            margin: 0,
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingRight: 8,
+            marginTop: 0,
+            marginBottom: 0
          }
-      }
-   ],
+      ],
+      gutterWarning: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: "rgb(247, 209, 84)",
+            borderLeftWidth: 6,
+            padding: 0,
+            margin: 0,
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingRight: 8,
+            marginTop: 0,
+            marginBottom: 0
+         }
+      ],
+      itemCell: [
+         getFocusStyle(theme, { inset: -1 }),
+         {
+            selectors: {
+               '&:hover': { background: theme.palette.neutralLight }
+            }
+         }
+      ]
+   });
 
-});
+   _styles = styles;
+   return styles;
 
-const ErrorPane: React.FC<{ jobDetails: JobDetailsV2; view: StepSummaryErrorsView, stepId: string; showErrors: boolean; count?: number }> = ({ jobDetails, view, stepId, showErrors, count }) => {
+}
+
+
+
+const ErrorPane: React.FC<{ jobDetails: JobDetailsV2; view: StepSummaryErrorsView, stepId: string; showErrors?: boolean }> = ({ jobDetails, view, stepId, showErrors }) => {
+
+   const navigate = useNavigate();
+   const styles = getStyles();
+   const { modeColors } = getHordeStyling();
 
    if (!stepId) {
       return (<div />);
    }
 
-   let events = showErrors ? view.errors : view.warnings;
+   const events = showErrors ? view.errors : view.warnings;
 
    const step = jobDetails.stepById(stepId);
 
    if (!step) {
       return null;
-   }
-
-   if (count) {
-      events = events.slice(0, count);
    }
 
    if (!events.length) {
@@ -178,7 +221,7 @@ const ErrorPane: React.FC<{ jobDetails: JobDetailsV2; view: StepSummaryErrorsVie
 
       const url = `/log/${item.logId}?lineindex=${item.lineIndex}`;
 
-      const lines = item.lines.filter(line => line.message?.trim().length).map(line => <Stack key={`steperrorpane_line_${item.lineIndex}`} styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "anywhere", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> <Link className="log-link" to={url}>{renderLine(line, undefined, {})}</Link></Stack>);
+      const lines = item.lines.filter(line => line.message?.trim().length).map(line => <Stack key={`steperrorpane_line_${item.lineIndex}`} styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "anywhere", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> <Link style={{ color: modeColors.text }} to={url}>{renderLine(navigate, line, undefined, {})}</Link></Stack>);
 
       return (<Stack className={styles.itemCell} styles={{ root: { padding: 8, marginRight: 8 } }}><Stack className={item.severity === EventSeverity.Warning ? styles.gutterWarning : styles.gutter} styles={{ root: { padding: 0, margin: 0 } }}>
          <Stack styles={{ root: { paddingLeft: 14 } }}>
@@ -204,7 +247,7 @@ const ErrorPane: React.FC<{ jobDetails: JobDetailsV2; view: StepSummaryErrorsVie
    </Stack>);
 };
 
-export const StepErrorPanel: React.FC<{ jobDetails: JobDetailsV2; stepId: string, showErrors: boolean }> = observer(({ jobDetails, stepId, showErrors }) => {
+export const StepErrorPanel: React.FC<{ jobDetails: JobDetailsV2; stepId: string }> = observer(({ jobDetails, stepId }) => {
 
    const dataView = jobDetails.getDataView<StepSummaryErrorsView>("StepSummaryErrorsView");
 
@@ -214,22 +257,46 @@ export const StepErrorPanel: React.FC<{ jobDetails: JobDetailsV2; stepId: string
       };
    }, [dataView]);
 
-   dataView.subscribe();   
+   const { hordeClasses } = getHordeStyling();
+
+   dataView.subscribe();
 
    dataView.set(stepId);
 
-   const events = showErrors ? dataView.errors : dataView.warnings;
+   const events = dataView.events;
 
-   if (!events.length || !jobDetails?.viewsReady) {
+   if (!events.length) {
       return null;
    }
 
-   return (<Stack id={showErrors ? errorSideRail.url : warningSideRail.url} styles={{ root: { paddingTop: 18, paddingRight: 12 } }}>
+   if (!jobDetails.viewReady(dataView.order)) {
+      return null;
+   }
+
+   const errors = dataView.errors;
+   const warnings = dataView.warnings;
+
+
+   return (<Stack id={errorSideRail.url} styles={{ root: { paddingTop: 18, paddingRight: 12 } }}>
       <Stack className={hordeClasses.raised}>
          <Stack tokens={{ childrenGap: 12 }}>
-            <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>{showErrors ? "Errors" : "Warnings"}</Text>
+            <Stack horizontal tokens={{ childrenGap: 18 }}>
+               <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Events</Text>
+               {!dataView.loaded && <Spinner size={SpinnerSize.medium} />}
+            </Stack>
             <Stack styles={{ root: { paddingLeft: 4, paddingRight: 0, paddingTop: 8, paddingBottom: 4 } }}>
-               <ErrorPane view={dataView} stepId={stepId} jobDetails={jobDetails} showErrors={showErrors} />
+               <Pivot>
+                  {!!errors.length && <PivotItem headerText="Errors" itemCount={errors.length}>
+                     <Stack style={{ paddingTop: 12 }}>
+                        <ErrorPane view={dataView} stepId={stepId} jobDetails={jobDetails} showErrors={true} />
+                     </Stack>
+                  </PivotItem>}
+                  {!!warnings.length && <PivotItem headerText="Warnings" itemCount={warnings.length}>
+                     <Stack style={{ paddingTop: 12 }}>
+                        <ErrorPane view={dataView} stepId={stepId} jobDetails={jobDetails} />
+                     </Stack>
+                  </PivotItem>}
+               </Pivot>
             </Stack>
          </Stack>
       </Stack>

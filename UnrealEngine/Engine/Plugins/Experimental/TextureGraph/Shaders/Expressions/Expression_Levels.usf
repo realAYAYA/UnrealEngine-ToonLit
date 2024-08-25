@@ -1,0 +1,36 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/TextureGraph/SamplerStates.ush"
+
+Texture2D Input;
+float MinValue;
+float MaxValue;
+float Gamma;
+
+float3 GammaCorrection(float3 Clr, float GammaValue)
+{
+	float invGamma = 1.0 / GammaValue;
+	return pow(Clr, float3(invGamma, invGamma, invGamma));
+}
+
+float3 LevelsControlInputRange(float3 Clr, float3 MinInput, float3 MaxInput)
+{
+	return min(max(Clr - MinInput, float3(0, 0, 0)) / (float3(MaxInput) - MinInput), float3(1, 1, 1));
+}
+
+float3 LevelsControlInput(float3 Clr, float3 MinInput, float GammaValue, float3 MaxInput)
+{
+	return GammaCorrection(LevelsControlInputRange(Clr, MinInput, MaxInput), GammaValue);
+}
+
+float4 FSH_Levels(float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 Clr = Input.Sample(SamplerStates_NoBorder, uv);
+	// float4 MinInput = MinValue.Sample(SamplerStates_NoBorder, uv);
+	// float4 MaxInput = MaxValue.Sample(SamplerStates_NoBorder, uv);
+
+	float3 LevelClr = LevelsControlInput(Clr, float3(MinValue, MinValue, MinValue), Gamma, float3(MaxValue, MaxValue, MaxValue));
+	
+	return float4(LevelClr.rgb, Clr.a);
+}
+

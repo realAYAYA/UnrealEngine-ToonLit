@@ -25,14 +25,14 @@ void FChaosEngineModule::StartupModule()
 		Chaos::GSingleThreadedPhysics = 1;
 	}
 
-#if WITH_CHAOS_VISUAL_DEBUGGER
+#if CHAOS_VISUAL_DEBUGGER_ENABLED
 	FChaosVisualDebuggerTrace::RegisterEventHandlers();
 #endif
 }
 
 void FChaosEngineModule::ShutdownModule()
 {
-#if WITH_CHAOS_VISUAL_DEBUGGER
+#if CHAOS_VISUAL_DEBUGGER_ENABLED
 	FChaosVisualDebuggerTrace::UnregisterEventHandlers();
 #endif
 }

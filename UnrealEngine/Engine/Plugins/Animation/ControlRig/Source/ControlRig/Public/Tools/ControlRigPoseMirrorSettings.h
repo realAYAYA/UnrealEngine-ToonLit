@@ -6,7 +6,6 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
-#include "ControlRig.h"
 #include "ControlRigPoseMirrorSettings.generated.h"
 
 

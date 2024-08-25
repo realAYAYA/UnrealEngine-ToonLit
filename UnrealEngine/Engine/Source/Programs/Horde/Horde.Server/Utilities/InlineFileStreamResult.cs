@@ -28,7 +28,7 @@ namespace Horde.Server.Utilities
 			ContentDisposition contentDisposition = new ContentDisposition();
 			contentDisposition.Inline = true;
 			contentDisposition.FileName = _fileName;
-			context.HttpContext.Response.Headers.Add("Content-Disposition", contentDisposition.ToString());
+			context.HttpContext.Response.Headers["Content-Disposition"] = contentDisposition.ToString();
 
 			return base.ExecuteResultAsync(context);
 		}

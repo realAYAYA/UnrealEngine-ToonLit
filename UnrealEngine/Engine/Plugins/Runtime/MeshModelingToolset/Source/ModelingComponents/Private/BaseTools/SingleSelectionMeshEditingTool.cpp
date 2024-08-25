@@ -45,17 +45,6 @@ void USingleSelectionMeshEditingToolBuilder::InitializeNewTool(USingleSelectionM
 	check(Target);
 	NewTool->SetTarget(Target);
 	NewTool->SetWorld(SceneState.World);
-
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (WantsInputSelectionIfAvailable())
-	{
-		const UDEPRECATED_PersistentMeshSelection* InputSelection = UE::Geometry::GetCurrentToolInputSelection(SceneState, Target);
-		if (InputSelection != nullptr)
-		{
-			NewTool->SetInputSelection(InputSelection);
-		}
-	}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 

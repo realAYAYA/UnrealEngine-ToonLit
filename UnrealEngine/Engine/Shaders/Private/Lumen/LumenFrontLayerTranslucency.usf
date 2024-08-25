@@ -22,7 +22,7 @@ struct FLumenFrontLayerTranslucencyGBufferVSToPS
 {
 	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
 	FLumenFrontLayerTranslucencyGBufferInterpolantsVSToPS PassInterpolants;
-	float4 Position : SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 };
 
 void MainVS(
@@ -72,23 +72,22 @@ void MainPS(
 	float3 WorldNormal = MaterialParameters.WorldNormal;
 	float Roughness = GetMaterialRoughness(PixelMaterialInputs);
 
-#if TEMPLATE_USES_STRATA
+#if TEMPLATE_USES_SUBSTRATE
 	{
 		const float3 V = MaterialParameters.CameraVector;
 		const float3 L = MaterialParameters.WorldNormal;
 
-		// Initialise a Strata header with normal in registers
-		FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
-		FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
-		StrataPixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+		// Initialise a Substrate header with normal in registers
+		FSubstrateData SubstrateData = PixelMaterialInputs.GetFrontSubstrateData();
+		FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
+		SubstratePixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
 
 		float TotalCoverage = 1.f;
-		if (StrataPixelHeader.StrataTree.BSDFCount > 0)
+		if (SubstratePixelHeader.SubstrateTree.BSDFCount > 0)
 		{
-			const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, true /*bRoughDiffuseEnabled*/, 0 /*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
+			const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, true /*bRoughDiffuseEnabled*/, 0 /*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
 			float3 TotalTransmittancePreCoverage = 0;
-			FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
-			StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, StrataData, V, Settings, TotalCoverage, TotalTransmittancePreCoverage);
+			SubstratePixelHeader.SubstrateUpdateTree(SubstrateData, V, Settings, TotalCoverage, TotalTransmittancePreCoverage);
 
 			// Clip pixels that will never receive any lumen front material reflections.
 			// We cannot generalise and use GetMaterialClippingVelocity for that because this function clips with a 1/255 threshold...that can result in NaN refelctions if some pixels are not genrated correctly.
@@ -98,18 +97,19 @@ void MainPS(
 			WorldNormal = 0;
 			Roughness = 0;
 			float TopLayerTotalWeight = 0.0f;
-			STRATA_UNROLL_N(STRATA_CLAMPED_BSDF_COUNT)
-			for (int BSDFIdx = 0; BSDFIdx < StrataPixelHeader.StrataTree.BSDFCount; ++BSDFIdx)
+			SUBSTRATE_UNROLL_N(SUBSTRATE_CLAMPED_CLOSURE_COUNT)
+			for (int BSDFIdx = 0; BSDFIdx < SubstratePixelHeader.SubstrateTree.BSDFCount; ++BSDFIdx)
 			{
-				#define CurrentBSDF StrataPixelHeader.StrataTree.BSDFs[BSDFIdx]
-				if (StrataIsBSDFVisible(CurrentBSDF))
+				#define CurrentBSDF SubstratePixelHeader.SubstrateTree.BSDFs[BSDFIdx]
+				if (SubstrateIsBSDFVisible(CurrentBSDF))
 				{
-					FStrataBSDFContext StrataBSDFContext = StrataCreateBSDFContext(StrataPixelHeader, CurrentBSDF, NullStrataAddressing, V, L);
+					FSubstrateAddressing NullSubstrateAddressing = (FSubstrateAddressing)0;	// Fake unused in SubstrateCreateBSDFContext when using Forward inline shading
+					FSubstrateBSDFContext SubstrateBSDFContext = SubstrateCreateBSDFContext(SubstratePixelHeader, CurrentBSDF, NullSubstrateAddressing, V, L);
 					const float Weight = Luminance(CurrentBSDF.LuminanceWeightV);
-					WorldNormal += Weight * StrataBSDFContext.N;
+					WorldNormal += Weight * SubstrateBSDFContext.N;
 
 					TopLayerTotalWeight += CurrentBSDF.TopLayerDataWeight;
-					Roughness += CurrentBSDF.TopLayerDataWeight * StrataGetBSDFRoughness(CurrentBSDF);
+					Roughness += CurrentBSDF.TopLayerDataWeight * SubstrateGetBSDFRoughness(CurrentBSDF);
 				}
 				#undef CurrentBSDF
 			}
@@ -127,7 +127,7 @@ void MainPS(
 #if !MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT
 	clip(PixelMaterialInputs.Opacity <= 0.0f ? -1.0f : 1.0f);
 #endif
-#endif // TEMPLATE_USES_STRATA
+#endif // TEMPLATE_USES_SUBSTRATE
 
 	GetMaterialCoverageAndClipping(MaterialParameters, PixelMaterialInputs);
 

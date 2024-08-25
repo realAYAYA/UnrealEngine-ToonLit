@@ -3,7 +3,7 @@
 #pragma once
 
 #include "MassEntityManager.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassSignalSubsystem.generated.h"
 
 namespace UE::MassSignal 
@@ -15,7 +15,7 @@ namespace UE::MassSignal
 * A subsystem for handling Signals in Mass
 */
 UCLASS()
-class MASSSIGNALS_API UMassSignalSubsystem : public UTickableWorldSubsystem
+class MASSSIGNALS_API UMassSignalSubsystem : public UMassTickableSubsystemBase
 {
 	GENERATED_BODY()
 	

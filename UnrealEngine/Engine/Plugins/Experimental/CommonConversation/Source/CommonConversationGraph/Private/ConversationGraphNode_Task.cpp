@@ -3,6 +3,8 @@
 #include "ConversationGraphNode_Task.h"
 #include "ConversationTaskNode.h"
 #include "ConversationGraphTypes.h"
+#include "ConversationGraphSchema.h"
+#include "EdGraph/EdGraph.h"
 #include "SGraphEditorActionMenuAI.h"
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
@@ -61,12 +63,16 @@ void UConversationGraphNode_Task::GetNodeContextMenuActions(UToolMenu* Menu, UGr
 	};
 
 	FToolMenuSection& Section = Menu->FindOrAddSection("ConversationGraphNode_Task");
+	const UConversationGraphSchema* Schema = Context->Graph ? Cast<const UConversationGraphSchema>(Context->Graph->GetSchema()) : nullptr;
 
-	Section.AddSubMenu(
-		"AddRequirement",
-		LOCTEXT("AddRequirement", "Add Requirement..."),
-		LOCTEXT("AddRequirementTooltip", "Adds a new requirement as a subnode"),
-		FNewMenuDelegate::CreateLambda(CreateAddRequirementSubMenu, (UEdGraph*)Context->Graph));
+	if (!Schema || Schema->HasSubNodeClasses(int32(EConversationGraphSubNodeType::Requirement)))
+	{
+		Section.AddSubMenu(
+			"AddRequirement",
+			LOCTEXT("AddRequirement", "Add Requirement..."),
+			LOCTEXT("AddRequirementTooltip", "Adds a new requirement as a subnode"),
+			FNewMenuDelegate::CreateLambda(CreateAddRequirementSubMenu, (UEdGraph*)Context->Graph));
+	}
 
 
 	auto CreateAddSideEffectSubMenu = [WeakThis](FMenuBuilder& MenuBuilder, UEdGraph* Graph)
@@ -81,11 +87,14 @@ void UConversationGraphNode_Task::GetNodeContextMenuActions(UToolMenu* Menu, UGr
 		MenuBuilder.AddWidget(Menu, FText(), true);
 	};
 
-	Section.AddSubMenu(
-		"AddSideEffect",
-		LOCTEXT("AddSideEffect", "Add Side Effect..."),
-		LOCTEXT("AddSideEffectTooltip", "Adds a new side effect as a subnode"),
-		FNewMenuDelegate::CreateLambda(CreateAddSideEffectSubMenu, (UEdGraph*)Context->Graph));
+	if (!Schema || Schema->HasSubNodeClasses(int32(EConversationGraphSubNodeType::SideEffect)))
+	{
+		Section.AddSubMenu(
+			"AddSideEffect",
+			LOCTEXT("AddSideEffect", "Add Side Effect..."),
+			LOCTEXT("AddSideEffectTooltip", "Adds a new side effect as a subnode"),
+			FNewMenuDelegate::CreateLambda(CreateAddSideEffectSubMenu, (UEdGraph*)Context->Graph));
+	}
 
 
 	auto CreateAddChoiceSubMenu = [WeakThis](FMenuBuilder& MenuBuilder, UEdGraph* Graph)
@@ -100,11 +109,14 @@ void UConversationGraphNode_Task::GetNodeContextMenuActions(UToolMenu* Menu, UGr
 		MenuBuilder.AddWidget(Menu, FText(), true);
 	};
 
-	Section.AddSubMenu(
-		"AddChoice",
-		LOCTEXT("AddChoice", "Add Choice..."),
-		LOCTEXT("AddChoiceTooltip", "Adds a new choice as a subnode"),
-		FNewMenuDelegate::CreateLambda(CreateAddChoiceSubMenu, (UEdGraph*)Context->Graph));
+	if (!Schema || Schema->HasSubNodeClasses(int32(EConversationGraphSubNodeType::Choice)))
+	{
+		Section.AddSubMenu(
+			"AddChoice",
+			LOCTEXT("AddChoice", "Add Choice..."),
+			LOCTEXT("AddChoiceTooltip", "Adds a new choice as a subnode"),
+			FNewMenuDelegate::CreateLambda(CreateAddChoiceSubMenu, (UEdGraph*)Context->Graph));
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

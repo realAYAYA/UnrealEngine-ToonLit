@@ -28,12 +28,21 @@ public:
 	IRISCORE_API static bool SplitNetBlob(const FNetBlobCreationInfo& CreationInfo, const FSplitParams& SplitParams, const TRefCountPtr<FRawDataNetBlob>& Blob, TArray<TRefCountPtr<FNetBlob>>& OutPartialBlobs);
 
 public:
+	enum class ESequenceFlags : uint32
+	{
+		None = 0,
+		IsFirstPart = 1U,
+	};
+	FRIEND_ENUM_CLASS_FLAGS(ESequenceFlags);
+
 	IRISCORE_API FPartialNetBlob(const FNetBlobCreationInfo& CreationInfo);
 
-	uint32 GetPartIndex() const { return PartIndex; }
-
 	// This will only return legible data for the first part on the receiving end.
-	uint32 GetPartCount() const { return (PartIndex == 0U ? PartCount : 0U); }
+	uint32 GetPartCount() const { return (IsFirstPart() ? PartCount : 0U); }
+
+	bool IsFirstPart() const { return EnumHasAnyFlags(SequenceFlags, ESequenceFlags::IsFirstPart); }
+
+	uint32 GetSequenceNumber() const { return SequenceNumber; }
 
 	uint32 GetPayloadBitCount() const { return PayloadBitCount; }
 	const uint32* GetPayload() const { return Payload.GetData(); }
@@ -43,9 +52,6 @@ public:
 	void SetDebugName(const FNetDebugName& InDebugName) { DebugName = InDebugName; }
 
 private:
-
-	bool IsFirstPart() const { return PartIndex == 0; }
-	bool IsLastPart() const { return PartIndex+1 == PartCount; }
 
 	virtual TArrayView<const FNetObjectReference> GetExports() const override final;
 	virtual void SerializeWithObject(FNetSerializationContext& Context, FNetRefHandle RefHandle) const override;
@@ -77,10 +83,11 @@ private:
 	FNetBlobCreationInfo OriginalCreationInfo;
 	TRefCountPtr<FNetBlob> OriginalBlob;
 
-	uint16 PartIndex;
+	ESequenceFlags SequenceFlags = ESequenceFlags::None;
+	uint32 SequenceNumber = 0;
 	// PartCount is only valid if it's the first part.
-	uint16 PartCount;
-	uint16 PayloadBitCount;
+	uint16 PartCount = 0;
+	uint16 PayloadBitCount = 0;
 	// Use uint32 for guaranteed FNetBitStreamReader/Writer compatibility
 	TArray<uint32> Payload;
 

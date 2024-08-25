@@ -21,10 +21,13 @@
 #include "ControlRigBlueprint.h"
 #include "ControlRigBlueprintActions.h"
 #include "ControlRigEditorModule.h"
+#include "ModularRig.h"
 #include "RigVMBlueprintGeneratedClass.h"
 #include "Graph/ControlRigGraphSchema.h"
 #include "Graph/ControlRigGraph.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "ModularRigController.h"
+#include "Settings/ControlRigSettings.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigBlueprintFactory)
 
@@ -42,7 +45,7 @@ public:
 	void Construct( const FArguments& InArgs )
 	{
 		bOkClicked = false;
-		ParentClass = UControlRig::StaticClass();
+		ParentClass = UControlRig::StaticClass(); // default to control rig
 
 		ChildSlot
 		[
@@ -266,13 +269,16 @@ UControlRigBlueprintFactory::UControlRigBlueprintFactory()
 	bCreateNew = true;
 	bEditAfterNew = true;
 	SupportedClass = UControlRigBlueprint::StaticClass();
-	ParentClass = UControlRig::StaticClass();
+	ParentClass = UControlRig::StaticClass(); // default to control rig
 }
 
 bool UControlRigBlueprintFactory::ConfigureProperties()
 {
-	// we don't need to do anything,
-	// let's return true to indicate that all properties have been configured to produce a control rig
+	if (CVarControlRigHierarchyEnableModules.GetValueOnAnyThread())
+	{
+		TSharedRef<SControlRigBlueprintCreateDialog> Dialog = SNew(SControlRigBlueprintCreateDialog);
+		return Dialog->ConfigureProperties(this);
+	}
 	return true;
 };
 
@@ -292,6 +298,23 @@ UObject* UControlRigBlueprintFactory::FactoryCreateNew(UClass* Class, UObject* I
 	{
 		UControlRigBlueprint* ControlRigBlueprint = CastChecked<UControlRigBlueprint>(FKismetEditorUtilities::CreateBlueprint(ParentClass, InParent, Name, BPTYPE_Normal, UControlRigBlueprint::StaticClass(), URigVMBlueprintGeneratedClass::StaticClass(), CallingContext));
 		FControlRigEditorModule::Get().CreateRootGraphIfRequired(ControlRigBlueprint);
+
+		// add the default module
+		if(ParentClass->IsChildOf(UModularRig::StaticClass()))
+		{
+			const FSoftObjectPath DefaultRootModulePath = UControlRigSettings::Get()->DefaultRootModule;
+			if(const UControlRigBlueprint* DefaultRootModule = Cast<UControlRigBlueprint>(DefaultRootModulePath.TryLoad()))
+			{
+				if(UClass* DefaultRootModuleClass = Cast<UClass>(DefaultRootModule->GetControlRigClass()))
+				{
+					if(DefaultRootModuleClass->IsChildOf(UControlRig::StaticClass()))
+					{
+						static const FName RootName = TEXT("Root");
+						ControlRigBlueprint->ModularRigModel.GetController()->AddModule(RootName, DefaultRootModuleClass, FString(), false);
+					}
+				}
+			}
+		}
 		return ControlRigBlueprint;
 	}
 }
@@ -301,14 +324,14 @@ UObject* UControlRigBlueprintFactory::FactoryCreateNew(UClass* Class, UObject* I
 	return FactoryCreateNew(Class, InParent, Name, Flags, Context, Warn, NAME_None);
 }
 
-UControlRigBlueprint* UControlRigBlueprintFactory::CreateNewControlRigAsset(const FString& InDesiredPackagePath)
+UControlRigBlueprint* UControlRigBlueprintFactory::CreateNewControlRigAsset(const FString& InDesiredPackagePath, const bool bModularRig)
 {
-	return FControlRigBlueprintActions::CreateNewControlRigAsset(InDesiredPackagePath);
+	return FControlRigBlueprintActions::CreateNewControlRigAsset(InDesiredPackagePath, bModularRig);
 }
 
-UControlRigBlueprint* UControlRigBlueprintFactory::CreateControlRigFromSkeletalMeshOrSkeleton(UObject* InSelectedObject)
+UControlRigBlueprint* UControlRigBlueprintFactory::CreateControlRigFromSkeletalMeshOrSkeleton(UObject* InSelectedObject, const bool bModularRig)
 {
-	return FControlRigBlueprintActions::CreateControlRigFromSkeletalMeshOrSkeleton(InSelectedObject);
+	return FControlRigBlueprintActions::CreateControlRigFromSkeletalMeshOrSkeleton(InSelectedObject, bModularRig);
 }
 
 #undef LOCTEXT_NAMESPACE

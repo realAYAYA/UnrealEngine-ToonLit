@@ -380,4 +380,131 @@ bool FOnlineLeaderboardsEOS::WriteOnlinePlayerRatings(const FName& SessionName, 
 	return false;
 }
 
+bool FOnlineLeaderboardsEOS::HandleLeaderboardsExec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar)
+{
+#if !UE_BUILD_SHIPPING
+	bool bWasHandled = true;
+
+	if (FParse::Command(&Cmd, TEXT("ReadLeaderboards"))) /* ONLINE (EOS if using EOSPlus) LEADERBOARDS ReadLeaderboards LocalUserNum=0 LeaderboardName=Deaths SortedColumn=Deaths DataType=Int32 */
+	{
+		int LocalUserNum;
+		FParse::Value(Cmd, TEXT("LocalUserNum="), LocalUserNum);
+		const FUniqueNetIdPtr NetIdPtr = EOSSubsystem->UserManager->GetUniquePlayerId(LocalUserNum);
+
+		FString LeaderboardName;
+		FParse::Value(Cmd, TEXT("LeaderboardName="), LeaderboardName);
+		FString SortedColumn;
+		FParse::Value(Cmd, TEXT("SortedColumn="), SortedColumn);
+		FString DataTypeStr;
+		FParse::Value(Cmd, TEXT("DataType="), DataTypeStr);
+		const EOnlineKeyValuePairDataType::Type DataType = EOnlineKeyValuePairDataType::FromString(DataTypeStr);
+
+		FOnlineLeaderboardReadRef ReadRef = MakeShared<FOnlineLeaderboardRead>();
+		ReadRef->LeaderboardName = FName(*LeaderboardName);
+		ReadRef->SortedColumn = FName(*SortedColumn);
+		ReadRef->ColumnMetadata.Add(FColumnMetaData(FName(*SortedColumn), DataType));
+
+		AddOnLeaderboardReadCompleteDelegate_Handle(FOnLeaderboardReadCompleteDelegate::CreateLambda([ReadRef](bool bWasSuccessful)
+			{
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("FOnlineLeaderboardsEOS::ReadLeaderboards finished with bWasSuccessful=%s"), *LexToString(bWasSuccessful));
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("%s"), *ReadRef->ToLogString());
+			}));
+
+		ReadLeaderboards({ NetIdPtr.ToSharedRef() }, ReadRef);
+	}
+	else if (FParse::Command(&Cmd, TEXT("ReadLeaderboardsForFriends"))) /* ONLINE (EOS if using EOSPlus) LEADERBOARDS ReadLeaderboardsForFriends LocalUserNum=0 LeaderboardName=Deaths SortedColumn=Deaths DataType=Int32 */
+	{
+		int LocalUserNum;
+		FParse::Value(Cmd, TEXT("LocalUserNum="), LocalUserNum);
+
+		FString LeaderboardName;
+		FParse::Value(Cmd, TEXT("LeaderboardName="), LeaderboardName);
+		FString SortedColumn;
+		FParse::Value(Cmd, TEXT("SortedColumn="), SortedColumn);
+		FString DataTypeStr;
+		FParse::Value(Cmd, TEXT("DataType="), DataTypeStr);
+		const EOnlineKeyValuePairDataType::Type DataType = EOnlineKeyValuePairDataType::FromString(DataTypeStr);
+
+		FOnlineLeaderboardReadRef ReadRef = MakeShared<FOnlineLeaderboardRead>();
+		ReadRef->LeaderboardName = FName(*LeaderboardName);
+		ReadRef->SortedColumn = FName(*SortedColumn);
+		ReadRef->ColumnMetadata.Add(FColumnMetaData(FName(*SortedColumn), DataType));
+
+		AddOnLeaderboardReadCompleteDelegate_Handle(FOnLeaderboardReadCompleteDelegate::CreateLambda([ReadRef](bool bWasSuccessful)
+			{
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("FOnlineLeaderboardsEOS::ReadLeaderboards finished with bWasSuccessful=%s"), *LexToString(bWasSuccessful));
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("%s"), *ReadRef->ToLogString());
+			}));
+
+		ReadLeaderboardsForFriends(LocalUserNum, ReadRef);
+	}
+	else if (FParse::Command(&Cmd, TEXT("ReadLeaderboardsAroundRank"))) /* ONLINE (EOS if using EOSPlus) LEADERBOARDS ReadLeaderboardsAroundRank Rank=1 Range=10 LeaderboardName=Deaths SortedColumn=Deaths DataType=Int32 */
+	{
+		int Rank;
+		FParse::Value(Cmd, TEXT("Rank="), Rank);
+		int Range;
+		FParse::Value(Cmd, TEXT("Range="), Range);
+
+		FString LeaderboardName;
+		FParse::Value(Cmd, TEXT("LeaderboardName="), LeaderboardName);
+		FString SortedColumn;
+		FParse::Value(Cmd, TEXT("SortedColumn="), SortedColumn);
+		FString DataTypeStr;
+		FParse::Value(Cmd, TEXT("DataType="), DataTypeStr);
+		const EOnlineKeyValuePairDataType::Type DataType = EOnlineKeyValuePairDataType::FromString(DataTypeStr);
+
+		FOnlineLeaderboardReadRef ReadRef = MakeShared<FOnlineLeaderboardRead>();
+		ReadRef->LeaderboardName = FName(*LeaderboardName);
+		ReadRef->SortedColumn = FName(*SortedColumn);
+		ReadRef->ColumnMetadata.Add(FColumnMetaData(FName(*SortedColumn), DataType));
+
+		AddOnLeaderboardReadCompleteDelegate_Handle(FOnLeaderboardReadCompleteDelegate::CreateLambda([ReadRef](bool bWasSuccessful)
+			{
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("FOnlineLeaderboardsEOS::ReadLeaderboards finished with bWasSuccessful=%s"), *LexToString(bWasSuccessful));
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("%s"), *ReadRef->ToLogString());
+			}));
+
+		ReadLeaderboardsAroundRank(Rank, Range, ReadRef);
+	}
+	else if (FParse::Command(&Cmd, TEXT("ReadLeaderboardsAroundUser"))) /* ONLINE (EOS if using EOSPlus) LEADERBOARDS ReadLeaderboardsAroundUser LocalUserNum=0 Range=10 LeaderboardName=Deaths SortedColumn=Deaths DataType=Int32 */
+	{
+		int LocalUserNum;
+		FParse::Value(Cmd, TEXT("LocalUserNum="), LocalUserNum);
+		const FUniqueNetIdPtr NetIdPtr = EOSSubsystem->UserManager->GetUniquePlayerId(LocalUserNum);
+
+		int Range;
+		FParse::Value(Cmd, TEXT("Range="), Range);
+
+		FString LeaderboardName;
+		FParse::Value(Cmd, TEXT("LeaderboardName="), LeaderboardName);
+		FString SortedColumn;
+		FParse::Value(Cmd, TEXT("SortedColumn="), SortedColumn);
+		FString DataTypeStr;
+		FParse::Value(Cmd, TEXT("DataType="), DataTypeStr);
+		const EOnlineKeyValuePairDataType::Type DataType = EOnlineKeyValuePairDataType::FromString(DataTypeStr);
+
+		FOnlineLeaderboardReadRef ReadRef = MakeShared<FOnlineLeaderboardRead>();
+		ReadRef->LeaderboardName = FName(*LeaderboardName);
+		ReadRef->SortedColumn = FName(*SortedColumn);
+		ReadRef->ColumnMetadata.Add(FColumnMetaData(FName(*SortedColumn), DataType));
+
+		AddOnLeaderboardReadCompleteDelegate_Handle(FOnLeaderboardReadCompleteDelegate::CreateLambda([ReadRef](bool bWasSuccessful)
+			{
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("FOnlineLeaderboardsEOS::ReadLeaderboards finished with bWasSuccessful=%s"), *LexToString(bWasSuccessful));
+				UE_LOG_ONLINE_LEADERBOARD(Log, TEXT("%s"), *ReadRef->ToLogString());
+			}));
+
+		ReadLeaderboardsAroundUser(NetIdPtr.ToSharedRef(), Range, ReadRef);
+	}
+	else
+	{
+		bWasHandled = false;
+	}
+
+	return bWasHandled;
+#else
+	return false;
+#endif // !UE_BUILD_SHIPPING
+}
+
 #endif

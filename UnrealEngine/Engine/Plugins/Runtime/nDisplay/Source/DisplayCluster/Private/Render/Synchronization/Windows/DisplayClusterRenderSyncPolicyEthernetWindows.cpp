@@ -2,7 +2,9 @@
 
 #include "Render/Synchronization/DisplayClusterRenderSyncPolicyEthernet.h"
 
+#include "Misc/DisplayClusterGlobals.h"
 #include "Misc/DisplayClusterLog.h"
+#include "DisplayClusterCallbacks.h"
 #include "DisplayClusterConfigurationStrings.h"
 
 #include "Engine/Engine.h"
@@ -83,6 +85,12 @@ bool FDisplayClusterRenderSyncPolicyEthernet::SynchronizeClusterRendering(int32&
 			// No need to present frame, we already did that
 			bNeedEnginePresent = false;
 		}
+	}
+
+	if (!bNeedEnginePresent)
+	{
+		// Notify custom presentation was done
+		GDisplayCluster->GetCallbacks().OnDisplayClusterFramePresented_RHIThread().Broadcast(false);
 	}
 
 	++FrameCounter;

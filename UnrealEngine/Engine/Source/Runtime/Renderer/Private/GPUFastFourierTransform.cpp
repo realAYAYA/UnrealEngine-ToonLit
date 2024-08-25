@@ -178,7 +178,7 @@ class FReorderFFTPassCS : public FFFTShader
 		SHADER_PARAMETER(int32, LogTwoLength)
 		SHADER_PARAMETER(int32, BitCount)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcSRV)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcSRV)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstUAV)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -201,7 +201,7 @@ class FGroupShardSubFFTPassCS : public FFFTShader
 		SHADER_PARAMETER(int32, TransformLength)
 		SHADER_PARAMETER(int32, NumSubRegions)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstTexture)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -229,7 +229,7 @@ class FComplexFFTPassCS : public FFFTShader
 		SHADER_PARAMETER(int32, PowTwoLength)
 		SHADER_PARAMETER(int32, BitCount)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcSRV)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcSRV)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, DstPostFilterParameters)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstUAV)
 	END_SHADER_PARAMETER_STRUCT()
@@ -251,7 +251,7 @@ class FPackTwoForOneFFTPassCS : public FFFTShader
 		SHADER_PARAMETER(FIntRect, DstRect)
 		SHADER_PARAMETER(int32, TransformType)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcSRV)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcSRV)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstUAV)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -272,7 +272,7 @@ class FCopyWindowCS : public FFFTShader
 		SHADER_PARAMETER(FIntRect, DstRect)
 		SHADER_PARAMETER(FVector3f, BrightPixelGain)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcSRV)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcSRV)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstUAV)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -296,7 +296,7 @@ class FComplexMultiplyImagesCS : public FFFTShader
 		SHADER_PARAMETER(FIntRect, SrcRect)
 		SHADER_PARAMETER(int32, DataLayout)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcSRV)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcSRV)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, KnlSRV)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstUAV)
 	END_SHADER_PARAMETER_STRUCT()
@@ -323,7 +323,7 @@ class FGSComplexTransformCS : public FFFTShader
 		SHADER_PARAMETER(FVector3f, BrightPixelGain)
 		SHADER_PARAMETER(int32, TransformType)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstTexture)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -361,7 +361,7 @@ class FGSTwoForOneTransformCS : public FFFTShader
 		SHADER_PARAMETER(FVector3f, BrightPixelGain)
 		SHADER_PARAMETER(int32, TransformType)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcTexture)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, DstPostFilterParameters)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstTexture)
 	END_SHADER_PARAMETER_STRUCT()
@@ -398,7 +398,7 @@ class FGSConvolutionWithTextureCS : public FFFTShader
 		SHADER_PARAMETER(FIntPoint, DstExtent)
 		SHADER_PARAMETER(int32, TransformType)
 
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SrcTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, SrcTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FilterTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, DstTexture)
 	END_SHADER_PARAMETER_STRUCT()
@@ -452,7 +452,7 @@ void DispatchReorderFFTPassCS(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const GPUFFT::FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef DstTexture, const FIntRect& DstWindow,
 	const bool bScrubNaNs = false)
 {
@@ -506,7 +506,7 @@ void DispatchGSSubComplexFFTPassCS(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const GPUFFT::FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef DstTexture)
 {
 	const uint32 TransformLength = FFTDesc.SignalLength;
@@ -563,7 +563,7 @@ void DispatchComplexFFTPassCS(
 	const FGlobalShaderMap* ShaderMap,
 	const GPUFFT::FFTDescription& FFTDesc,
 	const uint32 PassLength,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGBufferRef DstPostFilterParameters,
 	FRDGTextureRef DstTexture)
 {
@@ -619,7 +619,7 @@ void DispatchPackTwoForOneFFTPassCS(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const GPUFFT::FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture,
+	FRDGTextureSRVRef SrcTexture,
 	FRDGTextureRef DstTexture)
 {
 	const uint32 TransformLength = FFTDesc.SignalLength;
@@ -676,7 +676,7 @@ void DispatchCopyWindowCS(
 	FRDGBuilder& GraphBuilder,
 	ERDGPassFlags ComputePassFlags,
 	const FGlobalShaderMap* ShaderMap,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef DstTexture, const FIntRect& DstWindow,
 	const GPUFFT::FPreFilter& PreFilter = GPUFFT::FPreFilter(TNumericLimits<float>::Max(), TNumericLimits<float>::Lowest(), 0.f))
 {
@@ -731,7 +731,7 @@ void DispatchComplexMultiplyImagesCS(
 	ERDGPassFlags ComputePassFlags,
 	const FGlobalShaderMap* ShaderMap,
 	const bool bHorizontalScanlines,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef KnlTexure,
 	FRDGTextureRef DstTexture)
 {
@@ -776,7 +776,7 @@ void DispatchGSComplexFFTCS(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const GPUFFT::FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcRect,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcRect,
 	FRDGTextureRef DstTexture)
 {
 	const uint32 TransformLength = FFTDesc.SignalLength;
@@ -839,7 +839,7 @@ void DispatchGSTwoForOneFFTCS(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const GPUFFT::FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcRect,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcRect,
 	FRDGTextureRef DstTexture, const FIntRect& DstRect,
 	const GPUFFT::FPreFilter& PreFilter,
 	FRDGBufferRef DstPostFilterParameters)
@@ -906,7 +906,7 @@ void DispatchGSConvolutionWithTextureCS(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const GPUFFT::FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcRect,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcRect,
 	FRDGTextureRef PreTransformedKernel,
 	FRDGTextureRef DstTexture)
 {
@@ -968,7 +968,7 @@ void GPUFFT::CopyImage2D(
 	FRDGBuilder& GraphBuilder,
 	ERDGPassFlags ComputePassFlags,
 	const FGlobalShaderMap* ShaderMap,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef DstTexture, const FIntRect& DstWindow,
 	const FPreFilter& PreFilter)
 {
@@ -979,7 +979,7 @@ void GPUFFT::ComplexFFTImage1D::MultiPass(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef DstTexture,
 	FRDGBufferRef PostFilterParameters,
 	const bool bScrubNaNs)
@@ -1045,7 +1045,7 @@ void GPUFFT::ComplexFFTImage1D::MultiPass(
 	// In total 2 + Log2(TransformLength / SubPassLength() )  passes.   This will be on the order of 3 or 4 passes 
 	// compared with 12 or more ..
 	{
-		FRDGTextureDesc SpectralDesc = FFTDesc.IsForward() ? DstTexture->Desc : SrcTexture->Desc;
+		FRDGTextureDesc SpectralDesc = FFTDesc.IsForward() ? DstTexture->Desc : SrcTexture->Desc.Texture->Desc;
 
 		// Re-order the data so we can do a pass of group-shared transforms
 		FRDGTextureRef SpectralTexture = GraphBuilder.CreateTexture(SpectralDesc, TEXT("FFT.Spectral"));
@@ -1057,7 +1057,7 @@ void GPUFFT::ComplexFFTImage1D::MultiPass(
 		FRDGTextureRef PrevSpectralTexture = GraphBuilder.CreateTexture(SpectralDesc, TEXT("FFT.Spectral"));
 		DispatchGSSubComplexFFTPassCS(
 			GraphBuilder, ShaderMap, FFTDesc,
-			/* SrcTexture = */ SpectralTexture, XFormWindow,
+			/* SrcTexture = */ GraphBuilder.CreateSRV(FRDGTextureSRVDesc(SpectralTexture)), XFormWindow,
 			/* DstTexture = */ PrevSpectralTexture);
 		
 		for (uint32 Ns = FGroupShardSubFFTPassCS::SubPassLength(); Ns < TransformLength; Ns *= 2)
@@ -1080,7 +1080,7 @@ void GPUFFT::ComplexFFTImage1D::MultiPass(
 			DispatchComplexFFTPassCS(
 				GraphBuilder, ShaderMap, FFTDesc,
 				Ns,
-				/* SrcTexture = */ PrevSpectralTexture, XFormWindow,
+				/* SrcTexture = */ GraphBuilder.CreateSRV(FRDGTextureSRVDesc(PrevSpectralTexture)), XFormWindow,
 				/* DstPostFilterParameters = */ DstPostFilterParameters,
 				/* DstTexture = */ OpDstTexture);
 
@@ -1095,7 +1095,7 @@ void GPUFFT::TwoForOneRealFFTImage1D::MultiPass(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef DstTexture, const FIntRect& DstWindow,
 	const FPreFilter& PreFilter,
 	FRDGBufferRef PostFilterParameters)
@@ -1117,8 +1117,8 @@ void GPUFFT::TwoForOneRealFFTImage1D::MultiPass(
 		if (IsActive(PreFilter))
 		{
 			FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(
-				SrcTexture->Desc.Extent,
-				SrcTexture->Desc.Format,
+				SrcTexture->Desc.Texture->Desc.Extent,
+				SrcTexture->Desc.Texture->Desc.Format,
 				FClearValueBinding::None,
 				TexCreate_ShaderResource | TexCreate_UAV);
 
@@ -1130,7 +1130,7 @@ void GPUFFT::TwoForOneRealFFTImage1D::MultiPass(
 				/* DstTexture = */ PreFilteredTexture, SrcWindow,
 				PreFilter);
 
-			SrcTexture = PreFilteredTexture;
+			SrcTexture = GraphBuilder.CreateSRV(FRDGTextureSRVDesc(PreFilteredTexture));
 		}
 
 		FRDGTextureRef SpectralTexture = GraphBuilder.CreateTexture(DstTexture->Desc, TEXT("FFT.Spectral"));
@@ -1145,7 +1145,7 @@ void GPUFFT::TwoForOneRealFFTImage1D::MultiPass(
 		ensure(DstWindow.Min == FIntPoint::ZeroValue);
 		DispatchPackTwoForOneFFTPassCS(
 			GraphBuilder, ShaderMap, FFTDesc,
-			/* SrcTexture = */ SpectralTexture,
+			/* SrcTexture = */ GraphBuilder.CreateSRV(FRDGTextureSRVDesc(SpectralTexture)),
 			/* DstTexture = */ DstTexture);
 	}
 	else  // Inverse transform.
@@ -1153,7 +1153,7 @@ void GPUFFT::TwoForOneRealFFTImage1D::MultiPass(
 		RDG_EVENT_SCOPE(GraphBuilder, "TwoForOneRealFFTImage1D(Inverse)");
 
 		// Pack the 4 transforms of real data as 2 transforms of complex data 
-		FRDGTextureRef SpectralTexture = GraphBuilder.CreateTexture(SrcTexture->Desc, TEXT("FFT.Spectral"));
+		FRDGTextureRef SpectralTexture = GraphBuilder.CreateTexture(SrcTexture->Desc.Texture->Desc, TEXT("FFT.Spectral"));
 		ensure(SrcWindow.Min == FIntPoint::ZeroValue);
 		DispatchPackTwoForOneFFTPassCS(
 			GraphBuilder, ShaderMap, FFTDesc,
@@ -1164,7 +1164,7 @@ void GPUFFT::TwoForOneRealFFTImage1D::MultiPass(
 		ensure(DstWindow.Min == FIntPoint::ZeroValue);
 		ComplexFFTImage1D::MultiPass(
 			GraphBuilder, ShaderMap, FFTDesc,
-			/* SrcTexture = */ SpectralTexture, SrcWindow,
+			/* SrcTexture = */ GraphBuilder.CreateSRV(FRDGTextureSRVDesc(SpectralTexture)), SrcWindow,
 			/* DstTexture = */ DstTexture,
 			/* PostFilterParameters = */ PostFilterParameters,
 			/* bScrubNaNs = */ false);
@@ -1175,7 +1175,7 @@ void GPUFFT::FFTImage2D(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const FIntPoint& FrequencySize, bool bHorizontalFirst,
-	FRDGTextureRef SrcTexture, const FIntRect& ROIRect,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& ROIRect,
 	FRDGTextureRef DstTexture)
 {
 	using GPUFFT::FFTDescription;
@@ -1210,7 +1210,7 @@ void GPUFFT::FFTImage2D(
 	ComplexFFTImage1D::MultiPass(
 		GraphBuilder, ShaderMap,
 		ComplexFFTDesc,
-		TempTexture, TmpRect,
+		GraphBuilder.CreateSRV(FRDGTextureSRVDesc(TempTexture)), TmpRect,
 		DstTexture);
 }
 
@@ -1218,7 +1218,7 @@ void GPUFFT::ConvolutionWithTextureImage1D::MultiPass(
 	FRDGBuilder& GraphBuilder,
 	const FGlobalShaderMap* ShaderMap,
 	const FFTDescription& FFTDesc,
-	FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 	FRDGTextureRef TransformedKernel,
 	FRDGTextureRef DstTexture)
 {
@@ -1237,17 +1237,17 @@ void GPUFFT::ConvolutionWithTextureImage1D::MultiPass(
 		const FIntRect  TargetRect(FIntPoint(0, 0), TargetExtent);
 
 		// Forward transform: Results in DstBuffer
-		FRDGTextureRef SpectralTexture0 = GraphBuilder.CreateTexture(SrcTexture->Desc, TEXT("FFT.Spectral"));
+		FRDGTextureRef SpectralTexture0 = GraphBuilder.CreateTexture(SrcTexture->Desc.Texture->Desc, TEXT("FFT.Spectral"));
 		ComplexFFTImage1D::MultiPass(
 			GraphBuilder, ShaderMap, FFTDesc,
 			/* SrcTexture = */ SrcTexture, SrcWindow,
 			/* DstTexture = */ SpectralTexture0);
 
 		// Apply convolution kernel.
-		FRDGTextureRef SpectralTexture1 = GraphBuilder.CreateTexture(SrcTexture->Desc, TEXT("FFT.Spectral"));
+		FRDGTextureRef SpectralTexture1 = GraphBuilder.CreateTexture(SrcTexture->Desc.Texture->Desc, TEXT("FFT.Spectral"));
 		DispatchComplexMultiplyImagesCS(
 			GraphBuilder, FFTDesc.ComputePassFlags, ShaderMap, FFTDesc.IsHorizontal(),
-			/* SrcTexture = */ SpectralTexture0, TargetRect,
+			/* SrcTexture = */ GraphBuilder.CreateSRV(FRDGTextureSRVDesc(SpectralTexture0)), TargetRect,
 			TransformedKernel, 
 			/* DstTexture = */ SpectralTexture1);
 
@@ -1257,7 +1257,7 @@ void GPUFFT::ConvolutionWithTextureImage1D::MultiPass(
 
 		ComplexFFTImage1D::MultiPass(
 			GraphBuilder, ShaderMap, InvFFTDesc,
-			/* SrcTexture = */ SpectralTexture1, TargetRect,
+			/* SrcTexture = */ GraphBuilder.CreateSRV(FRDGTextureSRVDesc(SpectralTexture1)), TargetRect,
 			/* DstTexture = */ DstTexture);
 	}
 }
@@ -1314,7 +1314,7 @@ void GPUFFT::ConvolutionWithTextureImage2D(
 	const FGlobalShaderMap* ShaderMap,
 	const FIntPoint& FrequencySize, bool bHorizontalFirst,
 	FRDGTextureRef TransformedKernel,
-	FRDGTextureRef SrcTexture, const FIntRect& ROIRect,
+	FRDGTextureSRVRef SrcTexture, const FIntRect& ROIRect,
 	FRDGTextureRef DstTexture, const FIntRect& DstRect,
 	const FPreFilter& PreFilter,
 	FRDGBufferRef PostFilterParameters,
@@ -1370,7 +1370,7 @@ void GPUFFT::ConvolutionWithTextureImage2D(
 	ConvolutionWithTextureImage1D::MultiPass(
 		GraphBuilder, ShaderMap,
 		ConvolutionFFTDesc,
-		TwoForOneFFTOutput, SpectralOutputRect,
+		GraphBuilder.CreateSRV(FRDGTextureSRVDesc(TwoForOneFFTOutput)), SpectralOutputRect,
 		TransformedKernel,
 		ConvolutionOutput);
 
@@ -1380,7 +1380,7 @@ void GPUFFT::ConvolutionWithTextureImage2D(
 	TwoForOneRealFFTImage1D::MultiPass(
 		GraphBuilder, ShaderMap,
 		TwoForOneIvnFFTDesc,
-		ConvolutionOutput, SpectralOutputRect,
+		GraphBuilder.CreateSRV(FRDGTextureSRVDesc(ConvolutionOutput)), SpectralOutputRect,
 		DstTexture, DstRect,
 		PreFilter,
 		PostFilterParameters);

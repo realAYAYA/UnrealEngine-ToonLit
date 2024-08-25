@@ -5,39 +5,47 @@ import { observer } from 'mobx-react-lite';
 import React, { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import backend, { useBackend } from '../backend';
-import { ProjectData } from "../backend/Api";
+import { AuthMethod, ProjectData } from "../backend/Api";
 import dashboard from '../backend/Dashboard';
 import { ProjectStore } from '../backend/ProjectStore';
-import { modeColors } from '../styles/Styles';
 import { PreviewChangesModal } from './PreviewChanges';
 import { VersionModal } from './VersionModal';
+import { getHordeTheme } from '../styles/theme';
+import { getHordeStyling } from '../styles/Styles';
 
-const logoutURL = "/account";
 
-// Styles for both command bar and overflow/menu items
-const itemStyles: Partial<IContextualMenuItemStyles> = {
-   label: { fontSize: 12 },
-   root: {
-      paddingLeft: 6,
-      selectors: {
-         'a:link,a:visited': {
-            color: modeColors.text
+const getStyles = () => {
+
+   const theme = getHordeTheme();
+
+   // Styles for both command bar and overflow/menu items
+   const itemStyles: Partial<IContextualMenuItemStyles> = {
+      label: { fontSize: 12 },
+      root: {
+         paddingLeft: 6,
+         selectors: {
+            'a:link,a:visited': {
+               color: theme.semanticColors.bodyText
+            }
          }
       }
-   }
-};
-// For passing the styles through to the context menus
-const menuStyles: Partial<IContextualMenuStyles> = {
-   root: {
-      fontSize: 12, selectors: {
-         'a:link,a:visited': {
-            color: modeColors.text
+   };
+   // For passing the styles through to the context menus
+   const menuStyles: Partial<IContextualMenuStyles> = {
+      root: {
+         fontSize: 12, selectors: {
+            'a:link,a:visited': {
+               color: theme.semanticColors.bodyText
+            }
          }
-      }
-   },
-   header: { fontFamily: "Horde Open Sans Bold" },
-   subComponentStyles: { menuItem: itemStyles, callout: {} }
-};
+      },
+      header: { fontFamily: "Horde Open Sans Bold" },
+      subComponentStyles: { menuItem: itemStyles, callout: {} }
+   };
+
+   return [itemStyles, menuStyles];
+}
+
 
 type ButtonData = {
    project: ProjectData;
@@ -45,6 +53,9 @@ type ButtonData = {
 
 // Top level project button component
 const ProjectButton: React.FunctionComponent<IButtonProps> = (props) => {
+
+   const hordeTheme = getHordeTheme();
+   const [itemStyles] = getStyles();
 
    const navigate = useNavigate();
    const { project } = props.data as ButtonData;
@@ -77,13 +88,16 @@ const ProjectButton: React.FunctionComponent<IButtonProps> = (props) => {
                ...props.styles,
                ...itemStyles,
                root: {
-                  backgroundColor: modeColors.header,
-                  color: modeColors.text,
+                  backgroundColor: hordeTheme.horde.topNavBackground,
                   height: 30,
                   paddingLeft: 12,
                   paddingRight: 12,
                   margin: 0,
-                  fontFamily: "Horde Raleway Regular"
+                  fontFamily: "Horde Raleway Regular",
+                  fontSize: 12
+               },
+               label: {
+                  color: hordeTheme.semanticColors.bodyText
                },
                menuIcon: {
                   display: "none"
@@ -101,6 +115,8 @@ type IProjectContextualMenuItem = IContextualMenuItem & {
 // individual menu items
 const ProjectMenuItem: React.FunctionComponent<IContextualMenuItemProps> = props => {
 
+   const { modeColors } = getHordeStyling();
+
    const item = props.item as IProjectContextualMenuItem;
 
    if (!item.link) {
@@ -108,16 +124,20 @@ const ProjectMenuItem: React.FunctionComponent<IContextualMenuItemProps> = props
    }
 
    // Due to ContextualMenu implementation quirks, passing styles here doesn't work
-   return <Link to={item.link} onClick={(ev: any) => { ev.stopPropagation(); return true; }}> <ContextualMenuItem onClick={(ev: any) => { ev.preventDefault(); return true; }} {...props} /></Link>;
+   return <Link style={{ color: modeColors.text }} to={item.link} onClick={(ev: any) => { ev.stopPropagation(); return true; }}> <ContextualMenuItem onClick={(ev: any) => { ev.preventDefault(); return true; }} {...props} /></Link>;
 };
 
 const generateProjectMenu = (store: ProjectStore) => {
+
+   const { modeColors } = getHordeStyling();
 
    const projects = store.projects;
 
    if (!projects || !projects.length) {
       return [];
    }
+
+   const [, menuStyles] = getStyles();
 
    const cbProps: ICommandBarItemProps[] = [];
 
@@ -127,12 +147,34 @@ const generateProjectMenu = (store: ProjectStore) => {
 
       // setup streams as sub items
       const subItems: IProjectContextualMenuItem[] = [];
-
+      let useSubMenu = false;
+      let numStreams = 0;
 
       if (p.categories) {
 
          const cats = p.categories.filter(c => c.showOnNavMenu);
          const track = new Set<string>();
+
+         // count up streams
+         cats.forEach(c => {
+
+            if (track.has(c.name)) {
+               return;
+            }
+
+            const streams = p.streams?.filter(s => c.streams.indexOf(s.id) !== -1);
+
+            if (!streams || !streams.length) {
+               return;
+            }
+
+            numStreams += streams.length;
+
+            track.add(c.name);
+         });
+
+         const useSubMenu = numStreams >= 10;
+         track.clear();
 
          cats.forEach(c => {
 
@@ -146,41 +188,45 @@ const generateProjectMenu = (store: ProjectStore) => {
                return;
             }
 
+
             track.add(c.name);
 
+            // style: { fontFamily: "Horde Open Sans SemiBold" },
+
             const catItem: IContextualMenuItem = {
-               itemType: ContextualMenuItemType.Section,
+               itemType: useSubMenu ? ContextualMenuItemType.Normal : ContextualMenuItemType.Section,
+               text: useSubMenu ? c.name : undefined,
                key: `stream_category_${c.name}`,
-               sectionProps: {
+               sectionProps: useSubMenu ? undefined : {
                   title: c.name,
                   items: [],
                   bottomDivider: true
-               }
+               },
+               subMenuProps: useSubMenu ? {
+                  items: [],
+                  contextualMenuItemAs: useSubMenu ? ProjectMenuItem : undefined
+               } : undefined
             }
 
+            const items = useSubMenu ? catItem.subMenuProps!.items : catItem.sectionProps!.items;
 
             streams.forEach(stream => {
 
-
-               catItem.sectionProps!.items.push(
+               items.push(
                   {
-
-                     style: { color: modeColors.text },
+                     style: { color: modeColors.text, fontSize: 12 },
                      key: stream.id, text: stream.name, data: { project: p, stream: stream }, link: `/stream/${stream.id}`
                   }
                );
-
             })
 
             subItems.push(catItem);
-
 
          })
 
          if (subItems.length) {
             subItems.push(
                {
-                  style: { color: modeColors.text },
                   key: `show_all_${p.id}`, text: "Show All", data: { project: p, stream: undefined }, link: `/project/${p.id}`
                }
             );
@@ -192,7 +238,6 @@ const generateProjectMenu = (store: ProjectStore) => {
          p.streams?.forEach(stream => {
             subItems.push(
                {
-                  style: { color: modeColors.text },
                   key: stream.id, text: stream.name, data: { project: p, stream: stream }, link: `/stream/${stream.id}`
                }
             );
@@ -207,7 +252,7 @@ const generateProjectMenu = (store: ProjectStore) => {
 
       const style = { ...menuStyles } as Partial<IContextualMenuStyles>;
 
-      // project button        
+      // project button
       const cbItem: ICommandBarItemProps = {
          key: p.id,
          text: p.name.toUpperCase(),
@@ -215,8 +260,10 @@ const generateProjectMenu = (store: ProjectStore) => {
             project: p
 
          },
+
          subMenuProps: {
-            contextualMenuItemAs: ProjectMenuItem,
+            contextualMenuItemAs: useSubMenu ? undefined : ProjectMenuItem,
+            subMenuHoverDelay: 0,
             styles: style,
             items: subItems
          }
@@ -229,12 +276,16 @@ const generateProjectMenu = (store: ProjectStore) => {
 };
 
 
-// Top level admin button component
-const AdminButton: React.FunctionComponent<IButtonProps> = (props) => {
+const MenuButton: React.FC<{ props: IButtonProps, link?: string }> = ({ props, link }) => {
 
    const navigate = useNavigate();
 
    const buttonRef = React.createRef<IButton>();
+
+   const hordeTheme = getHordeTheme();
+
+   const [itemStyles] = getStyles();
+
    return (
       <Stack disableShrink={true}
          onMouseEnter={() => {
@@ -248,17 +299,23 @@ const AdminButton: React.FunctionComponent<IButtonProps> = (props) => {
             menuProps={{ subMenuHoverDelay: 0, items: [] }}
 
             onMouseUp={(ev => {
+               if (!link) {
+                  return;
+               }
                if (ev?.button === 1) {
-                  window.open(`/agents`);
+                  window.open(link);
                }
             })}
 
             onMenuClick={(ev) => {
 
+               if (!link) {
+                  return;
+               }
                if (ev?.metaKey || ev?.ctrlKey) {
-                  window.open(`/agents`);
+                  window.open(link);
                } else {
-                  navigate(`/agents`);
+                  navigate(link);
                }
             }}
             {...props}
@@ -266,12 +323,14 @@ const AdminButton: React.FunctionComponent<IButtonProps> = (props) => {
                ...props.styles,
                ...itemStyles,
                root: {
-                  backgroundColor: modeColors.header,
+                  backgroundColor: hordeTheme.horde.topNavBackground,
+                  color: hordeTheme.semanticColors.bodyText,
                   height: 30,
                   paddingLeft: 12,
                   paddingRight: 12,
                   margin: 0,
-                  fontFamily: "Horde Raleway Regular"
+                  fontFamily: "Horde Raleway Regular",
+                  fontSize: 12
                },
                menuIcon: {
                   display: "none"
@@ -282,6 +341,19 @@ const AdminButton: React.FunctionComponent<IButtonProps> = (props) => {
    );
 };
 
+const ToolsButton: React.FunctionComponent<IButtonProps> = (props) => {
+   return <MenuButton props={props} />
+}
+
+
+const HelpButton: React.FunctionComponent<IButtonProps> = (props) => {
+   return <MenuButton props={props} link="/docs" />
+}
+
+const ServerButton: React.FunctionComponent<IButtonProps> = (props) => {
+   return <MenuButton props={props} link="/serverstatus" />
+}
+
 
 // this module global is needed to enforce showing dialog ony once, in case component is recreated
 let globalHasShown = true; // true, disabled
@@ -291,6 +363,8 @@ const RequestLogout: React.FC = observer(() => {
 
    // subscribe
    if (dashboard.updated) { }
+
+   const logoutURL = dashboard.authMethod === AuthMethod.Horde ? "/index" : "/account";
 
    if (!dashboard.requestLogout || hasShown || globalHasShown) {
       return null
@@ -348,25 +422,101 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
    // subscribe
    if (dashboard.updated) { }
 
-   const generateAdminMenu = () => {
+   const logoutURL = dashboard.authMethod === AuthMethod.Horde ? "/index" : "/account";
 
+   const hordeTheme = getHordeTheme();
+
+   const generateToolsMenu = () => {
+
+      const [, menuStyles] = getStyles();
+
+      const cbProps: ICommandBarItemProps[] = [];
+
+      const features = dashboard.user?.dashboardFeatures;
+
+      const serviceItems: IContextualMenuItem[] = [];
+      
+      serviceItems.push({
+         key: "admin_analytics",
+         text: "Analytics",
+         link: `/analytics`
+      });
+
+      if (features?.showTests !== false) {
+         serviceItems.push({
+            key: "admin_tests",
+            text: "Automation Hub",
+            link: `/automation`
+         });
+      }
+
+      serviceItems.push({
+         key: "software_tools",
+         text: "Downloads",
+         link: `/tools`
+      });
+
+      const style = { ...menuStyles } as Partial<IContextualMenuStyles>;
+
+      const cbItem: ICommandBarItemProps = {
+         key: "tools_button",
+         text: "TOOLS",
+         subMenuProps: {
+            contextualMenuItemAs: ProjectMenuItem,
+            styles: style,
+            items: serviceItems
+         }
+      };
+
+      cbProps.push(cbItem);
+
+      return cbProps;
+
+   }
+
+   const generateServerMenu = () => {
+
+      const [, menuStyles] = getStyles();
 
       const cbProps: ICommandBarItemProps[] = [];
 
       const subItems: IContextualMenuItem[] = [];
 
-      // Resources
+      // Resources      
       const resourceItems: IContextualMenuItem[] = [];
+      const monitoringItems: IContextualMenuItem[] = [];
 
       const features = dashboard.user?.dashboardFeatures;
 
-      if (features?.showAgents !== false) {
+      if (features?.showAgents === true) {
+
          resourceItems.push({
             key: "admin_agents",
             text: "Agents",
             link: `/agents`
          });
 
+         if (features?.showAgentRegistration === true) {
+
+            resourceItems.push({
+               key: "admin_agents_registration",
+               text: "Agent Enrollment",
+               link: `/agents/registration`
+            });
+
+         }
+
+      }
+
+      if (features?.showDeviceManager === true) {
+         resourceItems.push({
+            key: "admin_devices",
+            text: "Devices",
+            link: `/devices`
+         });
+      }
+
+      if (features?.showAgents === true) {
          resourceItems.push({
             key: "admin_pools",
             text: "Pools",
@@ -374,13 +524,20 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
          });
       }
 
-      if (features?.showPerforceServers !== false) {
+
+      if (features?.showAccounts) {
          resourceItems.push({
-            key: "admin_perforce_servers",
-            text: "Perforce Servers",
-            link: `/perforce/servers`
+            key: "admin_user_accounts",
+            text: "User Accounts",
+            link: `/accounts`
          });
       }
+
+      resourceItems.push({
+         key: "admin_service_accounts",
+         text: "Service Accounts",
+         link: `/accounts/service`
+      });
 
       if (resourceItems.length) {
          subItems.push({
@@ -394,42 +551,12 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
          });
       }
 
-      // Automation
-      const automatonItems: IContextualMenuItem[] = [];
-
-      if (features?.showDeviceManager !== false) {
-         automatonItems.push({
-            key: "admin_devices",
-            text: "Devices",
-            link: `/devices`
-         });
-      }
-
-      if (features?.showTests !== false) {
-         automatonItems.push({
-            key: "admin_tests",
-            text: "Tests",
-            link: `/automation`
-         });
-      }
-      if (automatonItems.length) {
-         subItems.push({
-            itemType: ContextualMenuItemType.Section,
-            key: `admin_automation`,
-            sectionProps: {
-               title: "Automation",
-               items: automatonItems,
-               bottomDivider: true
-            }
-         });
-      }
-
       // Monitoring
-      const monitoringItems: IContextualMenuItem[] = [];
+
       if (features?.showAgents !== false) {
          monitoringItems.push({
             key: "admin_utilization",
-            text: "Utilization",
+            text: "Agent Utilization",
             link: `/reports/utilization`
          });
       }
@@ -443,6 +570,20 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
          });
       }
 
+      if (features?.showPerforceServers !== false) {
+         monitoringItems.push({
+            key: "admin_perforce_servers",
+            text: "Perforce Servers",
+            link: `/perforce/servers`
+         });
+      }
+
+      monitoringItems.push({
+         key: "admin_serverstatus",
+         text: "Status",
+         link: `/serverstatus`
+      });
+
       if (monitoringItems.length) {
          subItems.push({
             itemType: ContextualMenuItemType.Section,
@@ -452,67 +593,8 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
                items: monitoringItems,
                bottomDivider: true
             }
-         });   
+         });
       }
-
-      const softwareItems: IContextualMenuItem[] = [];
-      softwareItems.push({
-         key: "software_tools",
-         text: "Tools",
-         link: `/tools`
-      });
-
-      subItems.push({
-         itemType: ContextualMenuItemType.Section,
-         key: `server_software`,
-         sectionProps: {
-            title: "Software",
-            items: softwareItems,
-            bottomDivider: true
-         }
-      });
-
-
-      const docsItems: IContextualMenuItem[] = [];
-      docsItems.push({
-         key: "server_docs",
-         text: "Documentation",
-         link: `/docs`
-      });
-
-      docsItems.push({
-         key: "server_docs_releasenotes",
-         text: "Release Notes",
-         link: `/docs/ReleaseNotes.md`
-      });
-
-      subItems.push({
-         itemType: ContextualMenuItemType.Section,
-         key: `server_docs_item`,
-         sectionProps: {
-            title: "Documentation",
-            items: docsItems,
-            bottomDivider: true
-         }
-      });
-
-      // Configuration
-      const versionItems: IContextualMenuItem[] = [];
-      versionItems.push({
-         key: "server_versions",
-         text: "Version",
-         onClick: () => { setShowVersion(true) }
-      });
-
-      subItems.push({
-         itemType: ContextualMenuItemType.Section,
-         key: `admin_version`,
-         sectionProps: {
-            title: "Version",
-            items: versionItems,
-            bottomDivider: true
-         }
-      });
 
       const style = { ...menuStyles } as Partial<IContextualMenuStyles>;
 
@@ -538,19 +620,71 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
       cbProps.push(cbItem);
 
       return cbProps;
-   };
+   }
 
+   const generateHelpMenu = () => {
 
+      const [, menuStyles] = getStyles();
 
-   let initials = "?.?";
-   try {
-      const username = dashboard.username ?? "?.?";
-      if (username.indexOf(".") !== -1) {
-         const firstlast = username.split(".");
-         initials = firstlast[0][0].toUpperCase() + firstlast[1][0].toUpperCase();
-      } else {
-         initials = username.toUpperCase().slice(0, 2);
+      const cbProps: ICommandBarItemProps[] = [];
+
+      const hordeItems: IContextualMenuItem[] = [];
+
+      hordeItems.push({
+         key: "server_docs",
+         text: "Documentation",
+         link: `/docs`
+      });
+
+      hordeItems.push({
+         key: "server_api",
+         text: "API Browser",
+         href: `/swagger/index.html`
+      });
+
+      hordeItems.push({
+         key: "server_docs_releasenotes",
+         text: "Release Notes",
+         link: `/docs/ReleaseNotes.md`
+      });
+
+      hordeItems.push({
+         key: "server_versions",
+         text: "Version",
+         onClick: () => { setShowVersion(true) }
+      });
+
+      const style = { ...menuStyles } as Partial<IContextualMenuStyles>;
+
+      const cbItem: ICommandBarItemProps = {
+         key: "help_button",
+         text: "HELP",
+         subMenuProps: {
+            contextualMenuItemAs: ProjectMenuItem,
+            styles: style,
+            items: hordeItems
+         }
+      };
+
+      cbProps.push(cbItem);
+
+      return cbProps;
+
+   }
+
+   function getInitials(name: string) {      
+      const nameArray = name.indexOf(".") === -1 ? name.split(" ") : name.split(".");
+      if (nameArray.length === 1) {
+         return name.toUpperCase().slice(0, 2);
       }
+      const firstInitial = nameArray[0].charAt(0).toUpperCase();
+      const lastInitial = nameArray[nameArray.length - 1].charAt(0).toUpperCase();
+      return firstInitial + lastInitial;
+    }
+
+   let initials = "??";
+   try {
+      initials = getInitials(dashboard.username ?? "? ?")
    } catch (reason) {
       console.log(reason);
    }
@@ -603,18 +737,18 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
    }
 
    return (
-      <div style={{ backgroundColor: modeColors.header }}>
+      <div style={{ backgroundColor: hordeTheme.horde.topNavBackground }}>
          {showVersion && <VersionModal show={true} onClose={() => { setShowVersion(false) }} />}
          {showPreviewChanges && <PreviewChangesModal onClose={() => { setShowPreviewChanges(false) }} />}
-         <Stack tokens={{ maxWidth: 1464, childrenGap: 0 }} disableShrink={true} styles={{ root: { backgroundColor: modeColors.header, margin: "auto", width: "100%" } }}>
+         <Stack tokens={{ maxWidth: 1440, childrenGap: 0 }} disableShrink={true} styles={{ root: { backgroundColor: hordeTheme.horde.topNavBackground, margin: "auto", width: "100%" } }}>
             <Stack horizontal verticalAlign='center' styles={{ root: { height: "60px" } }} >
 
-               <Link to="/index"><Stack horizontal styles={{ root: { paddingLeft: 8, cursor: 'pointer' } }}>
+               <Link to="/index"><Stack horizontal styles={{ root: { paddingLeft: 0, cursor: 'pointer' } }}>
                   <Stack styles={{ root: { paddingTop: 2, paddingRight: 6 } }}>
                      <img style={{ width: 32 }} src={logoSrc} alt="" />
                   </Stack>
                   <Stack styles={{ root: { paddingTop: 11 } }}>
-                     <Text styles={{ root: { fontFamily: "Horde Raleway Bold", color: dashboard.darktheme ? "#FFFFFFFF" : modeColors.text } }}>HORDE{dashboard.preview ? " PREVIEW" : ""}</Text>
+                     <Text styles={{ root: { fontFamily: "Horde Raleway Bold" } }}>HORDE{dashboard.preview ? " PREVIEW" : ""}</Text>
                   </Stack>
                </Stack>
                </Link>
@@ -622,7 +756,7 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
                <RequestLogout />
 
                <Stack grow>
-                  <CommandBar styles={{ root: { paddingTop: 17, backgroundColor: modeColors.header } }}
+                  <CommandBar styles={{ root: { paddingTop: 17, backgroundColor: hordeTheme.horde.topNavBackground } }}
                      buttonAs={ProjectButton}
                      onReduceData={() => undefined}
                      items={generateProjectMenu(projectStore)}
@@ -632,20 +766,34 @@ export const TopNav: React.FC<{ suppressServer?: boolean }> = observer(({ suppre
                <Stack grow />
                <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 0 }}>
                   <Stack>
-                     {showServer && <CommandBar styles={{ root: { paddingTop: 17, paddingLeft: 0, paddingRight: 32, backgroundColor: modeColors.header } }}
-                        buttonAs={AdminButton}
+                     <CommandBar styles={{ root: { paddingTop: 17, paddingLeft: 0, paddingRight: 12, backgroundColor: hordeTheme.horde.topNavBackground } }}
+                        buttonAs={ToolsButton}
                         onReduceData={() => undefined}
-                        items={generateAdminMenu()}
+                        items={generateToolsMenu()}
+                     />
+                  </Stack>
+
+                  <Stack>
+                     {showServer && <CommandBar styles={{ root: { paddingTop: 17, paddingLeft: 0, paddingRight: 12, backgroundColor: hordeTheme.horde.topNavBackground } }}
+                        buttonAs={ServerButton}
+                        onReduceData={() => undefined}
+                        items={generateServerMenu()}
                      />}
                   </Stack>
 
-                  <Stack styles={{ root: {} }} onMouseEnter={() => setShowMenu(true)}
+                  <Stack>
+                     {showServer && <CommandBar styles={{ root: { paddingTop: 17, paddingLeft: 0, paddingRight: 32, backgroundColor: hordeTheme.horde.topNavBackground } }}
+                        buttonAs={HelpButton}
+                        onReduceData={() => undefined}
+                        items={generateHelpMenu()}
+                     />}
+                  </Stack>
+
+                  <Stack style={{width: "32px"}} onMouseEnter={() => setShowMenu(true)}
                      onMouseLeave={() => { setShowMenu(false) }} >
                      <div ref={divRef}>
-                        <a href="/" onClick={(ev) => { ev.preventDefault(); setShowMenu(true); }}>
-                           <Persona styles={{ root: { selectors: { ".ms-Persona-initials": { fontWeight: "unset", fontFamily: "Horde Open Sans SemiBold" } } } }} imageShouldFadeIn={false} imageInitials={initials} imageUrl={dashboard.userImage32} size={PersonaSize.size32}
-                              onClick={() => { navigate("/index") }} />
-                        </a>
+                        <Persona styles={{ root: { selectors: { ".ms-Persona-initials": { fontWeight: "unset", fontFamily: "Horde Open Sans SemiBold", cursor: "pointer" } } } }} imageShouldFadeIn={false} imageInitials={initials} imageUrl={dashboard.userImage32} size={PersonaSize.size32}
+                           onClick={() => { navigate("/dashboard"); }} />
                      </div>
                      <ContextualMenu
                         items={menuItems}

@@ -7,6 +7,8 @@
 #include "UObject/ObjectMacros.h"
 #include "Engine/EngineTypes.h"
 #include "Components/SceneComponent.h"
+#include "PSOPrecache.h"
+
 #include "DecalComponent.generated.h"
 
 class FDeferredDecalProxy;
@@ -122,6 +124,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Rendering|Components|Decal")
 	ENGINE_API virtual class UMaterialInstanceDynamic* CreateDynamicMaterialInstance();
 
+#if UE_WITH_PSO_PRECACHING
+protected:
+	/** Graph event used to track all the PSO precache events - used for delayed proxy creation */
+	FGraphEventRef PSOPrecacheCompileEvent;
+#endif
 
 public:
 	/** The decal proxy. */
@@ -130,6 +137,7 @@ public:
 	/**
 	 * Pushes new selection state to the render thread primitive proxy
 	 */
+	UE_DEPRECATED(5.4, "This method has no effect, calls to this method may be safely removed.")
 	ENGINE_API void PushSelectionToProxy();
 
 protected:
@@ -175,11 +183,13 @@ public:
 	ENGINE_API virtual void DestroyRenderState_Concurrent() override;
 	ENGINE_API virtual void SendRenderTransform_Concurrent() override;
 	ENGINE_API virtual const UObject* AdditionalStatObject() const override;
+	ENGINE_API virtual void PrecachePSOs() override;
 	//~ End UActorComponent Interface
 	
 	//~ Begin UObject Interface. 
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
 	ENGINE_API virtual bool IsPostLoadThreadSafe() const override;
+	ENGINE_API virtual void PostLoad() override;
 	//~ End UObject Interface
 
 	//~ Begin USceneComponent Interface

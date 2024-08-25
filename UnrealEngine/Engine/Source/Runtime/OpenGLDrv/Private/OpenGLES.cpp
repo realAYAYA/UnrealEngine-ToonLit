@@ -128,6 +128,9 @@ bool FOpenGLES::bRequiresReadOnlyBuffersWorkaround = false;
 /* This is to avoid a bug in Adreno drivers that define GL_ARM_shader_framebuffer_fetch_depth_stencil even when device does not support this extension  */
 bool FOpenGLES::bRequiresARMShaderFramebufferFetchDepthStencilUndef = false;
 
+/** Framebuffer fetch can be used to do programmable blending without running into driver issues */
+bool FOpenGLES::bSupportsShaderFramebufferFetchProgrammableBlending = true;
+
 /** GL_EXT_buffer_storage */
 bool FOpenGLES::bSupportsBufferStorage = false;
 
@@ -146,6 +149,9 @@ GLint FOpenGLES::MaxCombinedUAVUnits = 0;
 
 /** GL_EXT_texture_compression_astc_decode_mode */
 bool FOpenGLES::bSupportsASTCDecodeMode = false;
+
+// GL_OES_get_program_binary
+bool FOpenGLES::bSupportsProgramBinary = false;
 
 FOpenGLES::EFeatureLevelSupport FOpenGLES::CurrentFeatureLevelSupport = FOpenGLES::EFeatureLevelSupport::ES31;
 
@@ -274,6 +280,8 @@ void FOpenGLES::ProcessExtensions(const FString& ExtensionsString)
 		// indicates RHI supports on-chip MSAA but this device does not.
 		MaxMSAASamplesTileMem = 1;
 	}
+
+	bSupportsProgramBinary = ExtensionsString.Contains(TEXT("GL_OES_get_program_binary"));
 
 	bSupportsETC2 = true;
 	// According to https://www.khronos.org/registry/gles/extensions/EXT/EXT_color_buffer_float.txt

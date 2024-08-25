@@ -247,7 +247,7 @@ export function runTests(parentLogger: ContextualLogger) {
 
 	// test up
 	unitTestLogger.info('... activity counters ...')
-	test.updateActivityCounters({merges: 50, stompQueued: 11, traces: 13})
+	test.updateActivityCounters({merges: 50, stompQueued: 11, traces: 13, unlockQueued: 2})
 	test.flush()
 
 	test.stop()

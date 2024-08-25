@@ -313,8 +313,12 @@ namespace UnrealBuildTool
 
 			Action NewAction = Graph.CreateAction(Type);
 			NewAction.CommandPath = Unreal.DotnetPath;
+			NewAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 			NewAction.CommandArguments = $"\"{Unreal.UnrealBuildToolDllPath}\" -Mode={Attribute.Name} {Arguments}";
 			NewAction.CommandDescription = Attribute.Name;
+			NewAction.bCanExecuteRemotely = false;
+			NewAction.bCanExecuteRemotelyWithSNDBS = false;
+			NewAction.bCanExecuteInUBA = false;
 			return NewAction;
 		}
 

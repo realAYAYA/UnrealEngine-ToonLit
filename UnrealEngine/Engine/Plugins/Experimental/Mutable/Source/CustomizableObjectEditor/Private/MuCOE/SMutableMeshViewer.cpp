@@ -203,7 +203,14 @@ void SMutableMeshViewer::SetMesh(const mu::MeshPtrConst& InMesh)
 	if (InMesh != MutableMesh)
 	{
 		MutableMesh = InMesh;
-		bIsPendingUpdate = true;
+
+		// Extract a copy of the tags
+		int32 TagCount = MutableMesh ? MutableMesh->GetTagCount() : 0;
+		MeshTagList.SetNum(TagCount, EAllowShrinking::No);
+		for (int32 TagIndex=0; TagIndex<TagCount; ++TagIndex)
+		{
+			MeshTagList[TagIndex] = MakeShared<FString>(MutableMesh->GetTag(TagIndex));
+		}
 
 		if (MutableMesh)
 		{
@@ -433,13 +440,40 @@ TSharedRef<SWidget> SMutableMeshViewer::GenerateDataTableSlates()
 			]
 
 			// Bones data ----------------------------------------------------------------
-			+ SVerticalBox::Slot().
-			  Padding(0, EndOfSectionSpacing).
-			  AutoHeight()
+			+ SVerticalBox::Slot()
+			  .Padding(0, EndOfSectionSpacing)
+			  .AutoHeight()
 			[
 				SAssignNew(MutableSkeletonViewer, SMutableSkeletonViewer)
 			]
 			// ---------------------------------
+
+			// Tags
+			+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock).
+					Text(LOCTEXT("Tags", "Tags"))
+				]
+
+			+ SVerticalBox::Slot()
+				.Padding(IndentationSpace, AfterTitleSpacing)
+				.AutoHeight()
+				[
+					SNew(SListView< TSharedPtr<FString> >)
+					.ListItemsSource(&MeshTagList)
+					.OnGenerateRow(this, &SMutableMeshViewer::GenerateTagRow)
+				]
+			// ---------------------------------
+		];
+}
+
+
+TSharedRef<ITableRow> SMutableMeshViewer::GenerateTagRow(TSharedPtr<FString> InItem, const TSharedRef<STableViewBase>& OwnerTable)
+{
+	return SNew(STableRow<TSharedPtr<FName>>, OwnerTable)
+		[
+			SNew(STextBlock).Text(FText::FromString(*InItem))
 		];
 }
 

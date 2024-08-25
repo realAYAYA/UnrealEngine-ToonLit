@@ -41,8 +41,10 @@ void FTexture2DStreamOut_AsyncCreate::AsyncCreate(const FContext& Context)
 			Context.Resource->GetPixelFormat(),
 			ResourceState.NumRequestedLODs,
 			Context.Resource->GetCreationFlags(),
+			ERHIAccess::Unknown,
 			nullptr,
 			0,
+			*Context.Resource->GetTextureName().ToString(),
 			CompletionEvent);
 
 		if (CompletionEvent)

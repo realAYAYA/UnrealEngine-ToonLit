@@ -50,7 +50,6 @@ FOnlineSubsystemImpl::FOnlineSubsystemImpl(FName InSubsystemName, FName InInstan
 
 FOnlineSubsystemImpl::~FOnlineSubsystemImpl()
 {
-	FCoreDelegates::TSOnConfigSectionsChanged().RemoveAll(this);
 }
 
 void FOnlineSubsystemImpl::PreUnload()
@@ -59,6 +58,7 @@ void FOnlineSubsystemImpl::PreUnload()
 
 bool FOnlineSubsystemImpl::Shutdown()
 {
+	FCoreDelegates::TSOnConfigSectionsChanged().RemoveAll(this);
 	OnNamedInterfaceCleanup();
 	StopTicker();
 	return true;
@@ -131,7 +131,7 @@ bool FOnlineSubsystemImpl::Tick(float DeltaTime)
 				QUICK_SCOPE_CYCLE_COUNTER(STAT_FOnlineSubsystemImpl_Tick_ExecuteCallback);
 				Callback.ExecuteIfBound();
 			}
-			CurrentTickBuffer.SetNum(0, false); // keep the memory around
+			CurrentTickBuffer.SetNum(0, EAllowShrinking::No); // keep the memory around
 		}
 	}
 	return true;
@@ -809,6 +809,11 @@ IOnlineTurnBasedPtr FOnlineSubsystemImpl::GetTurnBasedInterface() const
 }
 
 IOnlineTournamentPtr FOnlineSubsystemImpl::GetTournamentInterface() const
+{
+	return nullptr;
+}
+
+IOnlineContentAgeRestrictionPtr FOnlineSubsystemImpl::GetOnlineContentAgeRestrictionInterface() const
 {
 	return nullptr;
 }

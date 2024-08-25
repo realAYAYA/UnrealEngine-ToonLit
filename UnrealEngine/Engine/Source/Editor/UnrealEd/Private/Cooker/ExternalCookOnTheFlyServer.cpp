@@ -122,7 +122,7 @@ void FExternalCookOnTheFlyServer::AssetUpdatedOnDisk(const FAssetData& AssetData
 	AllPackagesToRecook.Add(AssetData.PackageName);
 	while (!ModifiedPackagesToRecurse.IsEmpty())
 	{
-		FName ModifiedPackage = ModifiedPackagesToRecurse.Pop(false);
+		FName ModifiedPackage = ModifiedPackagesToRecurse.Pop(EAllowShrinking::No);
 		TArray<FName> Referencers;
 		AssetRegistry.GetReferencers(ModifiedPackage, Referencers, UE::AssetRegistry::EDependencyCategory::Package, UE::AssetRegistry::EDependencyQuery::Hard);
 		for (FName Referencer : Referencers)

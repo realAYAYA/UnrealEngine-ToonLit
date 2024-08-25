@@ -2,26 +2,11 @@
 
 #pragma once
 
-#include "MuCOE/Nodes/CustomizableObjectNodeMaterialBase.h"
+#include "MuCOE/Nodes/CustomizableObjectNodeVariation.h"
 
 #include "CustomizableObjectNodeMaterialVariation.generated.h"
 
-namespace ENodeTitleType { enum Type : int; }
-
-class UCustomizableObjectNodeRemapPins;
-class UEdGraphPin;
-class UObject;
-struct FPropertyChangedEvent;
-
-
-USTRUCT()
-struct CUSTOMIZABLEOBJECTEDITOR_API FCustomizableObjectMaterialVariation
-{
-	GENERATED_USTRUCT_BODY()
-
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
-	FString Tag;
-};
+struct FCustomizableObjectMaterialVariation;
 
 
 UENUM(BlueprintType)
@@ -33,48 +18,26 @@ enum class ECustomizableObjectNodeMaterialVariationType : uint8
 
 
 UCLASS()
-class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeMaterialVariation : public UCustomizableObjectNodeMaterialBase
+class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeMaterialVariation : public UCustomizableObjectNodeVariation
 {
 public:
 	GENERATED_BODY()
 
-	UCustomizableObjectNodeMaterialVariation();
-	
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	ECustomizableObjectNodeMaterialVariationType Type = ECustomizableObjectNodeMaterialVariationType::Tag;
 
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
-	TArray<FCustomizableObjectMaterialVariation> Variations;
+private:
+	// Deprecated properties
+	UPROPERTY()
+	TArray<FCustomizableObjectMaterialVariation> Variations_DEPRECATED;
 
-	// UObject interface.
-	void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-
-	// Begin EdGraphNode interface
-	FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
-	FLinearColor GetNodeTitleColor() const override;
-	FText GetTooltipText() const override;
-
+public:
 	// UCustomizableObjectNode interface
-	void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
-
-	UEdGraphPin* OutputPin() const
-	{
-		return FindPin(TEXT("Material"));
-	}
-
-	UEdGraphPin* DefaultPin() const
-	{
-		return FindPin(TEXT("Default"));
-	}
-
-	int32 GetNumVariations() const
-	{
-		return Variations.Num();
-	}
-
-	UEdGraphPin* VariationPin(int Index) const
-	{
-		return FindPin(FString::Printf(TEXT("Variation %d"),Index));
-	}
+	virtual void BackwardsCompatibleFixup() override;
+	virtual bool IsSingleOutputNode() const override;
+	
+	// UCustomizableObjectNodeVariation interface
+	virtual FName GetCategory() const override;
+	virtual bool IsInputPinArray() const override;
 };
 

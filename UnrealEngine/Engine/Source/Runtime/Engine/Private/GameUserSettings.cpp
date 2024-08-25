@@ -17,6 +17,12 @@
 #include "HAL/PlatformFramePacer.h"
 #include "HDRHelper.h"
 #include "UnrealClient.h"
+#include "ComponentRecreateRenderStateContext.h"
+
+// For sandboxing migration of UserSettings from AppData\Local to AppData\LocalLow.
+#if PLATFORM_WINDOWS
+#include "Windows/WindowsPlatformProcess.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GameUserSettings)
 
@@ -500,8 +506,12 @@ void UGameUserSettings::ApplyResolutionSettings(bool bCheckForCommandLineOverrid
 
 void UGameUserSettings::ApplySettings(bool bCheckForCommandLineOverrides)
 {
-	ApplyResolutionSettings(bCheckForCommandLineOverrides);
-	ApplyNonResolutionSettings();
+	{
+		// Push recreate render state context to force single recreate instead of multiple recreates for each changed cvar
+		FGlobalComponentRecreateRenderStateContext Context;
+		ApplyResolutionSettings(bCheckForCommandLineOverrides);
+		ApplyNonResolutionSettings();
+	}
 	RequestUIUpdate();
 
 	SaveSettings();
@@ -583,6 +593,45 @@ void UGameUserSettings::SaveSettings()
 
 void UGameUserSettings::LoadConfigIni(bool bForceReload/*=false*/)
 {
+#if PLATFORM_WINDOWS
+	// If configured, try to migrate the user ini file by copying it from AppData\Local to AppData\LocalLow.
+	static const bool bShouldAutomigrateUserData = FPaths::ShouldSaveToUserDir() &&
+		FWindowsPlatformProcess::ShouldExpectLowIntegrityLevel() &&
+		(WINDOWS_LOWINTEGRITYLEVEL_AUTOMIGRATE_USERDATA || FParse::Param(FCommandLine::Get(), TEXT("AutomigrateUserDataToLowIntegrity")));
+	if (bShouldAutomigrateUserData)
+	{
+		static bool bAttemptedSettingsMigration = false;
+		if (!bAttemptedSettingsMigration)
+		{
+			bAttemptedSettingsMigration = true;
+
+			// The low integrity ini file path e.g. AppData\LocalLow\...
+			const FString LowIntegrityPath = FConfigCacheIni::GetDestIniFilename(*GGameUserSettingsIni, nullptr, *FPaths::GeneratedConfigDir());
+			if (LowIntegrityPath.StartsWith(FWindowsPlatformProcess::UserSettingsDir())) // Confirm that assumptions are valid.
+			{
+				// The medium integrity ini file path e.g. AppData\Local\...
+				const FString MediumIntegrityPath = LowIntegrityPath.Replace(FWindowsPlatformProcess::UserSettingsDir(), FWindowsPlatformProcess::UserSettingsDirMediumIntegrity());
+
+				// This file must exist for migration to proceed. We only migrate from medium integrity to low integrity, not the reverse.
+				if (FPaths::FileExists(MediumIntegrityPath))
+				{
+					FDateTime MediumIntegrityTimestamp, LowIntegrityTimestamp;
+					IFileManager::Get().GetTimeStampPair(*MediumIntegrityPath, *LowIntegrityPath, MediumIntegrityTimestamp, LowIntegrityTimestamp);
+					if (MediumIntegrityTimestamp > LowIntegrityTimestamp)
+					{
+						UE_LOG(LogTemp, Log, TEXT("Migrating config file to low integrity. %s to %s"), *MediumIntegrityPath, *LowIntegrityPath);
+						IFileManager::Get().Copy(*LowIntegrityPath, *MediumIntegrityPath, true);
+					}
+					else
+					{
+						UE_LOG(LogTemp, Log, TEXT("Skipping config file migration to low integrity. %s is newer than %s"), *LowIntegrityPath, *MediumIntegrityPath);
+					}
+				}
+			}
+		}
+	}
+#endif
+
 	FConfigContext Context = FConfigContext::ReadIntoGConfig();
 	Context.bForceReload = bForceReload;
 	Context.Load(TEXT("GameUserSettings"), GGameUserSettingsIni);
@@ -945,7 +994,7 @@ void UGameUserSettings::EnableHDRDisplayOutputInternal(bool bEnable, int32 Displ
 		if (bEnable)
 		{
 #if PLATFORM_WINDOWS
-			if (IsRHIDeviceNVIDIA() || IsRHIDeviceAMD())
+			if (GRHIHDRNeedsVendorExtensions)
 			{
 				// Force exclusive fullscreen
 				SetPreferredFullscreenMode(0);

@@ -34,6 +34,11 @@ public:
 		return EKeys::Gamepad_FaceButton_Right;
 	}
 
+	static FKey GetPlatformDeleteKey()
+	{
+		return EKeys::Delete;
+	}
+
 protected:
 	/**
 	* Retrieves some standard key code mappings (usually called by a subclass's GetCharKeyMap)

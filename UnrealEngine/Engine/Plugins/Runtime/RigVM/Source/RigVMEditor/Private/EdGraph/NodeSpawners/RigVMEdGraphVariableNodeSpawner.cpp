@@ -116,7 +116,6 @@ UEdGraphNode* URigVMEdGraphVariableNodeSpawner::Invoke(UEdGraph* ParentGraph, FB
 	URigVMEdGraphNode* NewNode = nullptr;
 
 	bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
-	bool const bIsUserFacingNode = !bIsTemplateNode;
 
 	// First create a backing member for our node
 	URigVMEdGraph* RigGraph = Cast<URigVMEdGraph>(ParentGraph);
@@ -132,13 +131,6 @@ UEdGraphNode* URigVMEdGraphVariableNodeSpawner::Invoke(UEdGraph* ParentGraph, FB
 		GEditor->CancelTransaction(0);
 	}
 #endif
-
-	URigVMController* Controller = bIsTemplateNode ? RigGraph->GetTemplateController() : RigBlueprint->GetController(ParentGraph);
-
-	if (bIsUserFacingNode)
-	{
-		Controller->OpenUndoBracket(TEXT("Add Variable"));
-	}
 
 	FString ObjectPath;
 	if (ExternalVariable.TypeObject)
@@ -164,22 +156,30 @@ UEdGraphNode* URigVMEdGraphVariableNodeSpawner::Invoke(UEdGraph* ParentGraph, FB
 		static const FString SetterPrefix = TEXT("Setter");
 		NodeName = FString::Printf(VariableNodeNameFormat, bIsGetter ? *GetterPrefix : *SetterPrefix, *ExternalVariable.Name.ToString());
 
-		NewNode = NewObject<URigVMEdGraphNode>(ParentGraph, *NodeName);
-		ParentGraph->AddNode(NewNode, false);
+		static const FName ValueName = *URigVMVariableNode::ValueName;
 
-		NewNode->CreateNewGuid();
-		NewNode->PostPlacedNewNode();
+		TArray<FPinInfo> Pins;
 
-		UEdGraphPin* ValuePin = UEdGraphPin::CreatePin(NewNode);
-		NewNode->Pins.Add(ValuePin);
-
-		ValuePin->PinType = RigVMTypeUtils::PinTypeFromExternalVariable(ExternalVariable);
-		ValuePin->Direction = bIsGetter ? EGPD_Output : EGPD_Input;
-		NewNode->SetFlags(RF_Transactional);
-		return NewNode;
+		if(!bIsGetter)
+		{
+			static UScriptStruct* ExecuteScriptStruct = FRigVMExecuteContext::StaticStruct();
+			static const FName ExecuteStructName = *ExecuteScriptStruct->GetStructCPPName();
+			Pins.Emplace(FRigVMStruct::ExecuteName, ERigVMPinDirection::IO, ExecuteStructName, ExecuteScriptStruct);
+		}
+		
+		Pins.Emplace(
+			ValueName,
+			bIsGetter ? ERigVMPinDirection::Output : ERigVMPinDirection::Input,
+			ExternalVariable.TypeName,
+			ExternalVariable.TypeObject);
+		
+		return SpawnTemplateNode(ParentGraph, Pins, *NodeName);
 	}
 
-	if (URigVMNode* ModelNode = Controller->AddVariableNodeFromObjectPath(ExternalVariable.Name, TypeName, ObjectPath, bIsGetter, FString(), Location, NodeName, !bIsTemplateNode, !bIsTemplateNode))
+	URigVMController* Controller = RigBlueprint->GetController(ParentGraph);
+	Controller->OpenUndoBracket(TEXT("Add Variable"));
+
+	if (URigVMNode* ModelNode = Controller->AddVariableNodeFromObjectPath(ExternalVariable.Name, TypeName, ObjectPath, bIsGetter, FString(), Location, NodeName, true, true))
 	{
 		for (UEdGraphNode* Node : ParentGraph->Nodes)
 		{
@@ -193,28 +193,16 @@ UEdGraphNode* URigVMEdGraphVariableNodeSpawner::Invoke(UEdGraph* ParentGraph, FB
 			}
 		}
 
-		if (bIsUserFacingNode)
+		if (NewNode)
 		{
-			if (NewNode)
-			{
-				Controller->ClearNodeSelection(true);
-				Controller->SelectNode(ModelNode, true, true);
-			}
-			Controller->CloseUndoBracket();
+			Controller->ClearNodeSelection(true);
+			Controller->SelectNode(ModelNode, true, true);
 		}
-		else
-		{
-			// similar to UBlueprintNodeSpawner::Invoke -> UBlueprintNodeSpawner::SpawnEdGraphNode
-			// we simply want the node, but not actually adding it to a graph
-			Controller->RemoveNode(ModelNode, false);
-		}
+		Controller->CloseUndoBracket();
 	}
 	else
 	{
-		if (!bIsTemplateNode)
-		{
-			Controller->CancelUndoBracket();
-		}
+		Controller->CancelUndoBracket();
 	}
 
 

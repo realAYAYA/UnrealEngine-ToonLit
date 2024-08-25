@@ -185,7 +185,7 @@ string DwarfCFIToModule::RegisterName(int i) {
 
   reporter_->UnnamedRegister(entry_offset_, reg);
   char buf[30];
-  sprintf(buf, "unnamed_register%u", reg);
+  snprintf(buf, sizeof(buf), "unnamed_register%u", reg);
   return buf;
 }
 

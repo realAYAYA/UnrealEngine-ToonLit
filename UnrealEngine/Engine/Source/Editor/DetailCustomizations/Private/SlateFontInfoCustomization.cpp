@@ -123,6 +123,24 @@ void FSlateFontInfoStructCustomization::CustomizeChildren(TSharedRef<IPropertyHa
 	
 	InStructBuilder.AddProperty(InStructPropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FSlateFontInfo, SkewAmount)).ToSharedRef());
 
+	const TSharedRef<IPropertyHandle> MonospacingHandle = InStructPropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FSlateFontInfo, bForceMonospaced)).ToSharedRef();
+	InStructBuilder.AddProperty(MonospacingHandle);
+
+	const TSharedRef<IPropertyHandle> MonospacingWidthHandle = InStructPropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FSlateFontInfo, MonospacedWidth)).ToSharedRef();
+	InStructBuilder.AddProperty(MonospacingWidthHandle);
+	
+	// Set an initial "sensible" value based on the current font size. Won't run if value is already non-default/zero 
+	MonospacingHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([this, MonospacingWidthHandle]()
+	{
+		if (!MonospacingWidthHandle->DiffersFromDefault())
+		{
+			float FontSizeValue;
+			FontSizeProperty->GetValue(FontSizeValue);
+			
+			MonospacingWidthHandle->SetValue(static_cast<int32>(FontSizeValue));
+		}
+	}));
+
 	InStructBuilder.AddProperty(InStructPropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FSlateFontInfo, FontMaterial)).ToSharedRef());
 
 	InStructBuilder.AddProperty(InStructPropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FSlateFontInfo, OutlineSettings)).ToSharedRef());
@@ -175,12 +193,17 @@ void FSlateFontInfoStructCustomization::AddFontSizeProperty(IDetailChildrenBuild
 		.AllowWheel(true)
 		.WheelStep(1.0f)
 		.AllowSpin(FontSizePropertyRef->GetNumPerObjectValues() == 1) //Don't allow spin for multiple value select. Allowing it would result in the widget background not being displayed.
-		.IsEnabled(!FontSizePropertyRef->IsEditConst())
+		.IsEnabled(this, &FSlateFontInfoStructCustomization::IsFontSizeEnabled)
 		.ToolTip(IDocumentation::Get()->CreateToolTip(TAttribute<FText>(this, &FSlateFontInfoStructCustomization::GetFontSizeTooltipText),
 													  nullptr,
 													  TEXT("Shared/Types/FSlateFontInfo"),
 													  TEXT("Size")))
 	];
+}
+
+bool FSlateFontInfoStructCustomization::IsFontSizeEnabled() const
+{
+	return FontSizeProperty && !FontSizeProperty->IsEditConst();
 }
 
 FText FSlateFontInfoStructCustomization::GetFontSizeTooltipText() const

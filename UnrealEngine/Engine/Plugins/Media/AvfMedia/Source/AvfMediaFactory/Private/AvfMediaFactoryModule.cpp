@@ -21,7 +21,7 @@
 
 #include "AvfMediaSettings.h"
 
-#include "../../AvfMedia/Public/IAvfMediaModule.h"
+#include "IAvfMediaModule.h"
 
 
 DEFINE_LOG_CATEGORY(LogAvfMediaFactory);
@@ -155,7 +155,6 @@ public:
 		SupportedFileExtensions.Add(TEXT("m4a"));
 		SupportedFileExtensions.Add(TEXT("m4v"));
 		SupportedFileExtensions.Add(TEXT("mov"));
-		SupportedFileExtensions.Add(TEXT("mp3"));
 		SupportedFileExtensions.Add(TEXT("mp4"));
 		SupportedFileExtensions.Add(TEXT("qt"));
 		SupportedFileExtensions.Add(TEXT("sdv"));

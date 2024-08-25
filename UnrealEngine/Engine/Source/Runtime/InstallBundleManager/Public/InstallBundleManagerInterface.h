@@ -48,6 +48,7 @@ struct FInstallBundleRequestResultInfo
 	FName BundleName;
 	EInstallBundleResult Result = EInstallBundleResult::OK;
 	bool bIsStartup = false;
+	bool bContainsChunks = false;
 	bool bContentWasInstalled = false;
 
 	// Currently, these just forward BPT Error info
@@ -55,16 +56,29 @@ struct FInstallBundleRequestResultInfo
 	FString OptionalErrorCode;
 };
 
-struct FInstallBundlePauseInfo
-{
-	FName BundleName;
-	EInstallBundlePauseFlags PauseFlags = EInstallBundlePauseFlags::None;
-};
-
 struct FInstallBundleReleaseRequestResultInfo
 {
 	FName BundleName;
 	EInstallBundleReleaseResult Result = EInstallBundleReleaseResult::OK; 
+};
+
+struct FInstallBundleRequestInfo
+{
+	EInstallBundleRequestInfoFlags InfoFlags = EInstallBundleRequestInfoFlags::None;
+	TArray<FName> BundlesEnqueued;
+	TArray<FInstallBundleRequestResultInfo> BundleResults;
+};
+
+struct FInstallBundleReleaseRequestInfo
+{
+	EInstallBundleRequestInfoFlags InfoFlags = EInstallBundleRequestInfoFlags::None;
+	TArray<FName> BundlesEnqueued;
+};
+
+struct FInstallBundlePauseInfo
+{
+	FName BundleName;
+	EInstallBundlePauseFlags PauseFlags = EInstallBundlePauseFlags::None;
 };
 
 enum class EInstallBundleManagerInitErrorHandlerResult
@@ -136,8 +150,8 @@ public:
 	virtual void CancelAllGetInstallStateRequestsForTag(FName RequestTag) = 0;
 	virtual void CancelAllGetInstallStateRequests(FDelegateHandle Handle) = 0;
 
-	INSTALLBUNDLEMANAGER_API TValueOrError<FInstallBundleRequestInfo, EInstallBundleResult> RequestReleaseContent(FName ReleaseName, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging);
-	virtual TValueOrError<FInstallBundleRequestInfo, EInstallBundleResult> RequestReleaseContent(TArrayView<const FName> ReleaseNames, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) = 0;
+	INSTALLBUNDLEMANAGER_API TValueOrError<FInstallBundleReleaseRequestInfo, EInstallBundleResult> RequestReleaseContent(FName ReleaseName, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging);
+	virtual TValueOrError<FInstallBundleReleaseRequestInfo, EInstallBundleResult> RequestReleaseContent(TArrayView<const FName> ReleaseNames, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) = 0;
 
 	INSTALLBUNDLEMANAGER_API EInstallBundleResult FlushCache(FInstallBundleManagerFlushCacheCompleteDelegate Callback, ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging);
 	virtual EInstallBundleResult FlushCache(FInstallBundleSourceOrCache SourceOrCache, FInstallBundleManagerFlushCacheCompleteDelegate Callback, ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) = 0;
@@ -168,6 +182,8 @@ public:
 	INSTALLBUNDLEMANAGER_API void UpdateContentRequestFlags(FName BundleName, EInstallBundleRequestFlags AddFlags, EInstallBundleRequestFlags RemoveFlags);
 	virtual void UpdateContentRequestFlags(TArrayView<const FName> BundleNames, EInstallBundleRequestFlags AddFlags, EInstallBundleRequestFlags RemoveFlags) = 0;
 	
+	virtual void SetCacheSize(FName CacheName, uint64 CacheSize) = 0;
+
 	INSTALLBUNDLEMANAGER_API virtual void StartPatchCheck();
 	virtual void AddEnvironmentWantsPatchCheckBackCompatDelegate(FName Tag, FInstallBundleManagerEnvironmentWantsPatchCheck Delegate) {}
 	virtual void RemoveEnvironmentWantsPatchCheckBackCompatDelegate(FName Tag) {}

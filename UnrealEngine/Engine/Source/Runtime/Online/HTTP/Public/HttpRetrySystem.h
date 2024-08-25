@@ -27,14 +27,14 @@ namespace FHttpRetrySystem
 	typedef uint32 RetryLimitCountType;
 	typedef double RetryTimeoutRelativeSecondsType;
 
-	inline RetryLimitCountType             RetryLimitCount(uint32 Value)             { return Value; }
+	inline RetryLimitCountType             RetryLimitCount(uint32 Value) { return Value; }
 	inline RetryTimeoutRelativeSecondsType RetryTimeoutRelativeSeconds(double Value) { return Value; }
 
 	template <typename  IntrinsicType>
 	IntrinsicType TZero();
 
-	template <> inline float                           TZero<float>()                           { return 0.0f; }
-	template <> inline RetryLimitCountType             TZero<RetryLimitCountType>()             { return RetryLimitCount(0); }
+	template <> inline float                           TZero<float>() { return 0.0f; }
+	template <> inline RetryLimitCountType             TZero<RetryLimitCountType>() { return RetryLimitCount(0); }
 	template <> inline RetryTimeoutRelativeSecondsType TZero<RetryTimeoutRelativeSecondsType>() { return RetryTimeoutRelativeSeconds(0.0); }
 
 	typedef TOptional<float>                           FRandomFailureRateSetting;
@@ -45,7 +45,7 @@ namespace FHttpRetrySystem
 
 	struct FRetryDomains
 	{
-		FRetryDomains(TArray<FString>&& InDomains) 
+		FRetryDomains(TArray<FString>&& InDomains)
 			: Domains(MoveTemp(InDomains))
 			, ActiveIndex(0)
 		{}
@@ -60,6 +60,30 @@ namespace FHttpRetrySystem
 	};
 	typedef TSharedPtr<FRetryDomains, ESPMode::ThreadSafe> FRetryDomainsPtr;
 
+	/** 
+	 * Model for computing exponential backoff using the formula: Base**(CurrentRetryAttempt + Bias) 
+	 * Then applying jitter to the backoff. Jitter application is performed by selecting a random value in the [Min, Max] range and multiplying it against the computed backoff.
+	 * Half jitter can be implemented using { 0.5, 1.0 }, which becomes Backoff' = Backoff * Rand(0.5, 1.0) = Backoff/2 + Rand(0, Backoff/2)
+	 * Full jitter can be implemented using { 0.0, 1.0 }, which becomes Backoff' = Backoff * Rand(0.0, 1.0) = Rand(0.0, Backoff)
+	 * No jitter can be implemented using { 0.0, 0.0 } or any pair that where Min > Max. Backoff' = Backoff
+	*/
+	struct FExponentialBackoffCurve
+	{
+		/** Exponential backoff base */
+		float Base = 2.0f;
+		/** Exponential backoff bias added to the current retry number */
+		float ExponentBias = 1.0f;
+		/** Exponential backoff jitter coefficient minimum value. Defaults to half jitter */
+		float MinCoefficient = 0.5f;
+		/** Exponential backoff jitter coefficient maximum value. Defaults to half jitter */
+		float MaxCoefficient = 1.0f;
+		/** Max back off seconds */
+		float MaxBackoffSeconds = 60.0f;
+
+		bool IsValid() const;
+		float Compute(uint32 RetryNumber) const;
+	};
+
 	/**
 	 * Read the number of seconds a HTTP request is throttled for from the response
 	 * @param Response the HTTP response to read the value from
@@ -71,175 +95,215 @@ namespace FHttpRetrySystem
 
 namespace FHttpRetrySystem
 {
-    /**
-     * class FRequest is what the retry system accepts as inputs
-     */
-    class FRequest 
+	/**
+	 * class FRequest is what the retry system accepts as inputs
+	 */
+	class FRequest
 		: public FHttpRequestAdapterBase
-    {
-    public:
-        struct EStatus
-        {
-            enum Type
-            {
-                NotStarted = 0,
-                Processing,
-                ProcessingLockout,
-                Cancelled,
-                FailedRetry,
-                FailedTimeout,
-                Succeeded
-            };
-        };
+	{
+	public:
+		struct EStatus
+		{
+			enum Type
+			{
+				NotStarted = 0,
+				Processing,
+				ProcessingLockout,
+				Cancelled,
+				FailedRetry,
+				FailedTimeout,
+				Succeeded
+			};
+		};
 
-    public:
+	public:
 		// IHttpRequest interface
 		HTTP_API virtual bool ProcessRequest() override;
 		HTTP_API virtual void CancelRequest() override;
-		
-		// FRequest
-		EStatus::Type GetRetryStatus() const { return Status; }
 
-    protected:
+		// FRequest
+		EStatus::Type GetRetryStatus() const { return RetryStatus; }
+
+	protected:
 		friend class FManager;
 
 		HTTP_API FRequest(
-			class FManager& InManager,
-			const TSharedRef<IHttpRequest, ESPMode::ThreadSafe>& HttpRequest,
+			TSharedRef<FManager> InManager,
+			const TSharedRef<IHttpRequest>& HttpRequest,
 			const FRetryLimitCountSetting& InRetryLimitCountOverride = FRetryLimitCountSetting(),
 			const FRetryTimeoutRelativeSecondsSetting& InRetryTimeoutRelativeSecondsOverride = FRetryTimeoutRelativeSecondsSetting(),
-            const FRetryResponseCodes& InRetryResponseCodes = FRetryResponseCodes(),
-            const FRetryVerbs& InRetryVerbs = FRetryVerbs(),
-			const FRetryDomainsPtr& InRetryDomains = FRetryDomainsPtr()
-			);
+			const FRetryResponseCodes& InRetryResponseCodes = FRetryResponseCodes(),
+			const FRetryVerbs& InRetryVerbs = FRetryVerbs(),
+			const FRetryDomainsPtr& InRetryDomains = FRetryDomainsPtr(),
+			const FRetryLimitCountSetting& InRetryLimitCountForConnectionErrorOverride = FRetryLimitCountSetting(),
+			const FExponentialBackoffCurve& InExponentialBackoffCurve = FExponentialBackoffCurve()
+		);
 
-		void HttpOnRequestProgress(FHttpRequestPtr InHttpRequest, int32 BytesSent, int32 BytesRcv);
+		void HttpOnRequestProgress(FHttpRequestPtr InHttpRequest, uint64 BytesSent, uint64 BytesRcv);
+		void HttpOnProcessRequestComplete(FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded);
+		void HttpOnStatusCodeReceived(FHttpRequestPtr Request, int32 StatusCode);
+		void HttpOnHeaderReceived(FHttpRequestPtr Request, const FString& HeaderName, const FString& NewHeaderValue);
 
 		/** Update our HTTP request's URL's domain from our RetryDomains */
 		void SetUrlFromRetryDomains();
 		/** Move to the next retry domain from our RetryDomains */
 		void MoveToNextRetryDomain();
 
-		EStatus::Type                        Status;
+		EStatus::Type RetryStatus;
 
-        FRetryLimitCountSetting              RetryLimitCountOverride;
-        FRetryTimeoutRelativeSecondsSetting  RetryTimeoutRelativeSecondsOverride;
-		FRetryResponseCodes					 RetryResponseCodes;
-        FRetryVerbs                          RetryVerbs;
-		FRetryDomainsPtr					 RetryDomains;
+		FRetryLimitCountSetting RetryLimitCountOverride;
+		FRetryLimitCountSetting RetryLimitCountForConnectionErrorOverride;
+		FRetryTimeoutRelativeSecondsSetting  RetryTimeoutRelativeSecondsOverride;
+		FRetryResponseCodes RetryResponseCodes;
+		FRetryVerbs RetryVerbs;
+		FRetryDomainsPtr RetryDomains;
 		/** The current index in RetryDomains we are attempting */
-		int32								 RetryDomainsIndex = 0;
+		int32 RetryDomainsIndex = 0;
 		/** The original URL before replacing anything from RetryDomains */
-		FString								 OriginalUrl;
+		FString OriginalUrl;
 
-		FManager& RetryManager;
-    };
+		TWeakPtr<FManager> RetryManager;
+		/** Save the last response before the retry */
+		FHttpResponsePtr LastResponse;
+		bool bLastSucceeded = false;
+
+		/** Exponential backoff curve */
+		FExponentialBackoffCurve RetryExponentialBackoffCurve;
+	};
 }
 
 namespace FHttpRetrySystem
 {
-    class FManager
-    {
-    public:
-        // FManager
-		HTTP_API FManager(const FRetryLimitCountSetting& InRetryLimitCountDefault, const FRetryTimeoutRelativeSecondsSetting& InRetryTimeoutRelativeSecondsDefault);
 
-		/**
-		 * Create a new http request with retries
-		 */
-		HTTP_API TSharedRef<class FHttpRetrySystem::FRequest, ESPMode::ThreadSafe> CreateRequest(
-			const FRetryLimitCountSetting& InRetryLimitCountOverride = FRetryLimitCountSetting(),
-			const FRetryTimeoutRelativeSecondsSetting& InRetryTimeoutRelativeSecondsOverride = FRetryTimeoutRelativeSecondsSetting(),
-			const FRetryResponseCodes& InRetryResponseCodes = FRetryResponseCodes(),
-			const FRetryVerbs& InRetryVerbs = FRetryVerbs(),
-			const FRetryDomainsPtr& InRetryDomains = FRetryDomainsPtr()
-			);
+class FManager : public TSharedFromThis<FManager>
+{
+public:
+	// FManager
+	HTTP_API FManager(
+		const FRetryLimitCountSetting& InRetryLimitCountDefault, 
+		const FRetryTimeoutRelativeSecondsSetting& InRetryTimeoutRelativeSecondsDefault,
+		const FRetryLimitCountSetting& InRetryLimitCountForConnectionErrorDefault = FRetryLimitCountSetting()
+	);
 
-		HTTP_API virtual ~FManager();
+	/**
+	 * Create a new http request with retries
+	 */
+	HTTP_API TSharedRef<class FHttpRetrySystem::FRequest, ESPMode::ThreadSafe> CreateRequest(
+		const FRetryLimitCountSetting& InRetryLimitCountOverride = FRetryLimitCountSetting(),
+		const FRetryTimeoutRelativeSecondsSetting& InRetryTimeoutRelativeSecondsOverride = FRetryTimeoutRelativeSecondsSetting(),
+		const FRetryResponseCodes& InRetryResponseCodes = FRetryResponseCodes(),
+		const FRetryVerbs& InRetryVerbs = FRetryVerbs(),
+		const FRetryDomainsPtr& InRetryDomains = FRetryDomainsPtr(),
+		const FRetryLimitCountSetting& InRetryLimitCountForConnectionErrorOverride = FRetryLimitCountSetting()
+	);
 
-        /**
-         * Updates the entries in the list of retry requests. Optional parameters are for future connection health assessment
-         *
-         * @param FileCount       optional parameter that will be filled with the total files updated
-         * @param FailingCount    optional parameter that will be filled with the total files that have are in a retrying state
-         * @param FailedCount     optional parameter that will be filled with the total files that have failed
-         * @param CompletedCount  optional parameter that will be filled with the total files that have completed
-         *
-         * @return                true if there are no failures or retries
-         */
-        HTTP_API bool Update(uint32* FileCount = NULL, uint32* FailingCount = NULL, uint32* FailedCount = NULL, uint32* CompletedCount = NULL);
-		void SetRandomFailureRate(float Value) { RandomFailureRate = FRandomFailureRateSetting(Value); }
-		void SetDefaultRetryLimit(uint32 Value) { RetryLimitCountDefault = FRetryLimitCountSetting(Value); }
-		
-		// @return Block the current process until all requests are flushed, or timeout has elapsed
-		HTTP_API void BlockUntilFlushed(float TimeoutSec);
+	HTTP_API virtual ~FManager();
 
-    protected:
-		friend class FRequest;
+	/**
+	 * Updates the entries in the list of retry requests. Optional parameters are for future connection health assessment
+	 *
+	 * @param FileCount       optional parameter that will be filled with the total files updated
+	 * @param FailingCount    optional parameter that will be filled with the total files that have are in a retrying state
+	 * @param FailedCount     optional parameter that will be filled with the total files that have failed
+	 * @param CompletedCount  optional parameter that will be filled with the total files that have completed
+	 *
+	 * @return                true if there are no failures or retries
+	 */
+	UE_DEPRECATED(5.4, "HttpRetrySystem::Update has been deprecated, all logic will be processed in http thread instead")
+	HTTP_API bool Update(uint32* FileCount = NULL, uint32* FailingCount = NULL, uint32* FailedCount = NULL, uint32* CompletedCount = NULL);
 
-        struct FHttpRetryRequestEntry
-        {
-            FHttpRetryRequestEntry(TSharedRef<FRequest, ESPMode::ThreadSafe>& InRequest);
+	void SetRandomFailureRate(float Value) { RandomFailureRate = FRandomFailureRateSetting(Value); }
+	void SetDefaultRetryLimit(uint32 Value) { RetryLimitCountDefault = FRetryLimitCountSetting(Value); }
 
-            bool                    bShouldCancel;
-            uint32                  CurrentRetryCount;
-            double                  RequestStartTimeAbsoluteSeconds;
-            double                  LockoutEndTimeAbsoluteSeconds;
+	// @return Block the current process until all requests are flushed, or timeout has elapsed
+	HTTP_API void BlockUntilFlushed(float TimeoutSec);
 
-            TSharedRef<FRequest, ESPMode::ThreadSafe>	Request;
-        };
+protected:
+	friend class FRequest;
 
-		class FHttpLogVerbosityTracker
-		{
-		public:
-			FHttpLogVerbosityTracker();
-			~FHttpLogVerbosityTracker();
+	struct FHttpRetryRequestEntry
+	{
+		FHttpRetryRequestEntry(TSharedRef<FRequest, ESPMode::ThreadSafe>& InRequest);
 
-			/** Mark that a request is being retried */
-			void IncrementRetriedRequests();
-			/** Mark that a retried request is no longer being retried */
-			void DecrementRetriedRequests();
-			static FHttpLogVerbosityTracker& Get();
-		protected:
-			/** Update settings from config */
-			void UpdateSettingsFromConfig();
-			void OnConfigSectionsChanged(const FString& IniFilename, const TSet<FString>& SectionName);
+		bool bShouldCancel;
+		uint32 CurrentRetryCount;
+		uint32 CurrentRetryCountForConnectionError;
+		double RequestStartTimeAbsoluteSeconds;
+		double LockoutEndTimeAbsoluteSeconds;
 
-			/** Number of requests that are in a retried state.  When this is non-zero, verbosity will be adjusted. */
-			int32 NumRetriedRequests = 0;
-			/** Verbosity to restore to when there are no requests being retried */
-			ELogVerbosity::Type OriginalVerbosity = ELogVerbosity::Error;
-			/** Config driven target verbosity to set to when requests are being retried.  NoLogging means the verbosity will not be modified. */
-			ELogVerbosity::Type TargetVerbosity = ELogVerbosity::NoLogging;
-		};
+		TSharedRef<FRequest, ESPMode::ThreadSafe>	Request;
+	};
 
-		bool ProcessRequest(TSharedRef<FRequest, ESPMode::ThreadSafe>& HttpRequest);
-		void CancelRequest(TSharedRef<FRequest, ESPMode::ThreadSafe>& HttpRequest);
+	class FHttpLogVerbosityTracker
+	{
+	public:
+		FHttpLogVerbosityTracker();
+		~FHttpLogVerbosityTracker();
 
-        // @return true if there is a no formal response to the request
-        // @TODO return true if a variety of 5xx errors are the result of a formal response
-        bool ShouldRetry(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
+		/** Mark that a request is being retried */
+		void IncrementRetriedRequests();
+		/** Mark that a retried request is no longer being retried */
+		void DecrementRetriedRequests();
+		static FHttpLogVerbosityTracker& Get();
+	protected:
+		/** Update settings from config */
+		void UpdateSettingsFromConfig();
+		void OnConfigSectionsChanged(const FString& IniFilename, const TSet<FString>& SectionName);
 
-        // @return true if retry chances have not been exhausted
-        bool CanRetry(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
+		/** Number of requests that are in a retried state.  When this is non-zero, verbosity will be adjusted. */
+		int32 NumRetriedRequests = 0;
+		/** DecrementRetriedRequests can be called from game thread or http thread depends on the http request thread policy, make sure it's thread-safe */
+		FCriticalSection NumRetriedRequestsLock;
+		/** Verbosity to restore to when there are no requests being retried */
+		ELogVerbosity::Type OriginalVerbosity = ELogVerbosity::Error;
+		/** Config driven target verbosity to set to when requests are being retried.  NoLogging means the verbosity will not be modified. */
+		ELogVerbosity::Type TargetVerbosity = ELogVerbosity::NoLogging;
+	};
 
-        // @return true if the retry request has timed out
-        bool HasTimedOut(const FHttpRetryRequestEntry& HttpRetryRequestEntry, const double NowAbsoluteSeconds);
+	bool ProcessRequest(TSharedRef<FRequest, ESPMode::ThreadSafe>& HttpRequest);
+	void CancelRequest(TSharedRef<FRequest, ESPMode::ThreadSafe>& HttpRequest);
 
-		/**
-		 * Retry an HTTP request
-		 * @param RequestEntry request to retry
-		 */
-		void RetryHttpRequest(FHttpRetryRequestEntry& RequestEntry);
+	// @return true if there is a no formal response to the request
+	// @TODO return true if a variety of 5xx errors are the result of a formal response
+	bool ShouldRetry(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
 
-        // @return number of seconds to lockout for
-        float GetLockoutPeriodSeconds(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
+	// @return true if retry chances have not been exhausted
+	bool CanRetry(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
 
-        // Default configuration for the retry system
-        FRandomFailureRateSetting            RandomFailureRate;
-        FRetryLimitCountSetting              RetryLimitCountDefault;
-        FRetryTimeoutRelativeSecondsSetting  RetryTimeoutRelativeSecondsDefault;
+	// @return true if the retry request has timed out
+	bool HasTimedOut(const FHttpRetryRequestEntry& HttpRetryRequestEntry, const double NowAbsoluteSeconds);
 
-        TArray<FHttpRetryRequestEntry>       RequestList;
-    };
+	/**
+	 * Retry an HTTP request
+	 * @param RequestEntry request to retry
+	 */
+	void RetryHttpRequest(FHttpRetryRequestEntry& RequestEntry);
+
+	/**
+	 * Retry an HTTP request with delay
+	 * @param RequestEntry request retry
+	 * @param InDelay the delay to wait before retrying
+	 * @param bWasSucceeded was the request succeeded before retry
+	 */
+	void RetryHttpRequestWithDelay(FManager::FHttpRetryRequestEntry& RequestEntry, float InDelay, bool bWasSucceeded);
+
+	void HttpRequestTimeoutAfterDelay(FManager::FHttpRetryRequestEntry& RequestEntry, bool bWasSucceeded, float Delay);
+
+	// @return number of seconds to lockout for
+	float GetLockoutPeriodSeconds(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
+
+	bool RetryLimitForConnectionErrorIsSet(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
+	bool CanRetryForConnectionError(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
+	bool CanRetryInGeneral(const FHttpRetryRequestEntry& HttpRetryRequestEntry);
+
+	// Default configuration for the retry system
+	FRandomFailureRateSetting RandomFailureRate;
+	FRetryLimitCountSetting RetryLimitCountDefault;
+	FRetryLimitCountSetting RetryLimitCountForConnectionErrorDefault;
+	FRetryTimeoutRelativeSecondsSetting RetryTimeoutRelativeSecondsDefault;
+
+	TArray<FHttpRetryRequestEntry> RequestList;
+	FCriticalSection RequestListLock;
+};
+
 }

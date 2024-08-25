@@ -336,6 +336,9 @@ public:
 	/** @return arclength midpoint of edge, and optionally arclength info */
 	FVector3d GetEdgeMidpoint(int32 GroupEdgeID, double* ArcLengthOut = nullptr, TArray<double>* PerVertexLengthsOut = nullptr) const;
 
+	/** @return average position of edge (may not be on edge for curved edges) */
+	FVector3d GetEdgeAveragePosition(int32 GroupEdgeID) const;
+
 	/** Add all the groups connected to the given Corner to the GroupsOut list */
 	void FindCornerNbrGroups(int CornerID, TArray<int>& GroupsOut) const;
 	/** Add all the groups connected to the given Corners to the GroupsOut list */

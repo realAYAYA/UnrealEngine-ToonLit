@@ -7,10 +7,13 @@
 
 #include "XRCreativeToolset.generated.h"
 
+DECLARE_LOG_CATEGORY_EXTERN(LogXRCreativeToolset, Log, All);
 
+class UMVVMViewModelBase;
 class UCommonButtonStyle;
 class UCommonTextStyle;
 class UInputMappingContext;
+class AXRCreativeToolActor;
 
 
 UCLASS()
@@ -21,7 +24,7 @@ class UXRCreativePaletteTab : public UCommonActivatableWidget
 
 
 UCLASS()
-class UXRCreativePalette : public UCommonUserWidget
+class UXRCreativePalette : public UCommonActivatableWidget
 {
 	GENERATED_BODY()
 
@@ -32,7 +35,7 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category="XR Creative")
 	TArray<TObjectPtr<UXRCreativePaletteTab>> Tabs;
 
-	UPROPERTY(BlueprintReadOnly, Category="XR Creative")
+	UPROPERTY(BlueprintReadWrite, Category="XR Creative")
 	TObjectPtr<AXRCreativeAvatar> Owner;
 };
 
@@ -51,14 +54,16 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="XR Creative")
 	virtual FText GetDisplayName() const PURE_VIRTUAL( UXRCreativeTool::GetDisplayName, return FText::GetEmpty(); );
-
+	
 	UFUNCTION(BlueprintCallable, Category="XR Creative")
 	virtual TSubclassOf<class UXRCreativePaletteToolTab> GetPaletteTabClass() const PURE_VIRTUAL( UXRCreativeTool::GetPaletteTabClass, return nullptr; );
+
+
 };
 
 
 UCLASS(Abstract, Blueprintable)
-class UXRCreativeBlueprintableTool : public UXRCreativeTool
+class XRCREATIVE_API UXRCreativeBlueprintableTool : public UXRCreativeTool
 {
 	GENERATED_BODY()
 
@@ -66,6 +71,9 @@ public:
 	virtual FName GetToolName() const override { return ToolName; }
 	virtual FText GetDisplayName() const override { return DisplayName; }
 	virtual TSubclassOf<UXRCreativePaletteToolTab> GetPaletteTabClass() const override { return PaletteTabClass; }
+
+	UFUNCTION(BlueprintPure, Category="XR Creative")
+	UInputMappingContext* GetToolInputMappingContext();
 
 protected:
 	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category="XR Creative")
@@ -75,13 +83,20 @@ protected:
 	FText DisplayName;
 
 	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category="XR Creative")
+	TSubclassOf<UMVVMViewModelBase> ToolViewmodel;
+
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category="XR Creative")
 	TSubclassOf<UXRCreativePaletteToolTab> PaletteTabClass;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="XR Creative")
-	TSubclassOf<AActor> ToolActor;
+	TSubclassOf<AXRCreativeToolActor> ToolActor;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="XR Creative")
-	TObjectPtr<UInputMappingContext> ToolInputMappingContext;
+	TObjectPtr<UInputMappingContext> RightHandedInputMappingContext;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="XR Creative")
+	TObjectPtr<UInputMappingContext> LeftHandedInputMappingContext;
+
 	
 };
 
@@ -98,30 +113,6 @@ protected:
 
 
 //////////////////////////////////////////////////////////////////////////
-
-
-UCLASS(BlueprintType)
-class UXRCreativeStyle : public UPrimaryDataAsset
-{
-	GENERATED_BODY()
-
-public:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
-	TSubclassOf<UCommonTextStyle> RegularTextStyle;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
-	TSubclassOf<UCommonTextStyle> BoldTextStyle;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
-	TSubclassOf<UCommonTextStyle> ItalicTextStyle;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
-	TSubclassOf<UCommonButtonStyle> RegularButtonStyle;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
-	TSubclassOf<UCommonButtonStyle> LargeButtonStyle;
-};
-
 
 USTRUCT(BlueprintType)
 struct FXRCreativeToolEntry
@@ -142,15 +133,40 @@ class XRCREATIVE_API UXRCreativeToolset : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
+	// UXRCreativeToolset();
+	//
+	// ~UXRCreativeToolset();
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
+	FText ToolsetName;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
 	TSubclassOf<AXRCreativeAvatar> Avatar;
 
+	/** Default Input Mapping is used for Right-Handed users, or if no LeftInputMappingContext is provided. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
+	TObjectPtr<UInputMappingContext> RightHandedInputMappingContext;
+	
+	/** If Handedness is selected in XRCreative Settings, uses this entry in place of Default/Right  */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
+	TObjectPtr<UInputMappingContext> LeftHandedInputMappingContext;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
 	TArray<FXRCreativeToolEntry> Tools;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
 	TSubclassOf<UXRCreativePalette> Palette;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative")
-	TSoftObjectPtr<UXRCreativeStyle> Style;
+	UPROPERTY(EditAnywhere, Category="XR Creative")
+	bool bEnableUIMenuActor = false;
+
+	UFUNCTION(BlueprintCallable, Category="XR Creative")
+	bool GetEnableUIMenuActor() const { return bEnableUIMenuActor; };
+
+	/*Enable for legacy or custom menu actors.*/
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="XR Creative", meta=(EditCondition="bEnableUIMenuActor"))
+	TSubclassOf<AActor> UIMenuActor;
+	
+	UFUNCTION(BlueprintCallable, Category="XR Creative")
+	virtual TSubclassOf<AActor> GetUIMenuActor() const { return UIMenuActor; };
 };

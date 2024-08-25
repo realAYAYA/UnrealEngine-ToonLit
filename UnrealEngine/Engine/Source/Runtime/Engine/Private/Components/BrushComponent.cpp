@@ -14,6 +14,7 @@
 #include "Model.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialRenderProxy.h"
+#include "GameFramework/ActorPrimitiveColorHandler.h"
 #include "GameFramework/Volume.h"
 #include "Engine/Polys.h"
 #include "Engine/Engine.h"
@@ -126,24 +127,13 @@ public:
 			// the brush color as the level color.
 			if ( bBuilder )
 			{
-				LevelColor = BrushColor;
+				ActorColor = BrushColor;
 			}
 			else
 			{
-				// Try to find a color for level coloration.
-				ULevel* Level = Owner->GetLevel();
-				ULevelStreaming* LevelStreaming = FLevelUtils::FindStreamingLevel( Level );
-				if ( LevelStreaming )
-				{
-					LevelColor = LevelStreaming->LevelColor;
-				}
+				ActorColor = FActorPrimitiveColorHandler::Get().GetPrimitiveColor(Component);
 			}
 		}
-
-		// Get a color for property coloration.
-		FColor NewPropertyColor;
-		GEngine->GetPropertyColorationColor( (UObject*)Component, NewPropertyColor );
-		PropertyColor = NewPropertyColor;
 
 #if WITH_EDITORONLY_DATA
 		if (!Component->GetOutermost()->HasAnyPackageFlags(PKG_FilterEditorOnly))
@@ -230,13 +220,9 @@ public:
 					{
 						DrawColor = BrushColor;
 					}
-					else if(View->Family->EngineShowFlags.PropertyColoration)
+					else if(View->Family->EngineShowFlags.ActorColoration)
 					{
-						DrawColor = PropertyColor;
-					}
-					else if(View->Family->EngineShowFlags.LevelColoration)
-					{
-						DrawColor = LevelColor;
+						DrawColor = ActorColor;
 					}
 
 
@@ -387,10 +373,10 @@ public:
 		return Result;
 	}
 
-	virtual void CreateRenderThreadResources() override
+	virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override
 	{
 #if WITH_EDITORONLY_DATA
-		WireIndexBuffer.InitResource(FRHICommandListImmediate::Get());
+		WireIndexBuffer.InitResource(RHICmdList);
 #endif
 
 	}
@@ -411,8 +397,7 @@ private:
 	uint32 bInManipulation : 1;
 
 	FColor BrushColor;
-	FLinearColor LevelColor;
-	FColor PropertyColor;
+	FLinearColor ActorColor;
 
 	/** Collision Response of this component**/
 	UBodySetup* BodySetup;

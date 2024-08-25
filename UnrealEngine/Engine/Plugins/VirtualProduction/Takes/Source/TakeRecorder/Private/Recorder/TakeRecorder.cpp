@@ -8,6 +8,9 @@
 #include "CoreGlobals.h"
 #include "Engine/Engine.h"
 #include "Engine/EngineTypes.h"
+#include "EntitySystem/MovieSceneEntitySystemLinker.h"
+#include "EntitySystem/MovieSceneInstanceRegistry.h"
+#include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "ISequencer.h"
 #include "LevelSequence.h"
@@ -16,6 +19,7 @@
 #include "MovieSceneTimeHelpers.h"
 #include "ObjectTools.h"
 #include "Recorder/TakeRecorderBlueprintLibrary.h"
+#include "Recorder/TakeRecorderSubsystem.h"
 #include "TakeMetaData.h"
 #include "TakePreset.h"
 #include "TakeRecorderOverlayWidget.h"
@@ -453,6 +457,10 @@ bool UTakeRecorder::Initialize ( ULevelSequence* LevelSequenceBase, UTakeRecorde
 	OnRecordingPreInitializeEvent.Broadcast(this);
 
 	UTakeRecorderBlueprintLibrary::OnTakeRecorderPreInitialize();
+	if (UTakeRecorderSubsystem* TakeRecorderSubsystem = GEngine->GetEngineSubsystem<UTakeRecorderSubsystem>())
+	{
+		TakeRecorderSubsystem->TakeRecorderPreInitialize.Broadcast();
+	}
 
 	FTakeRecorderParameters FinalParameters = TakeInitHelper::AccumulateParamsOverride(InParameters);
 	if (FinalParameters.TakeRecorderMode == ETakeRecorderMode::RecordNewSequence)
@@ -746,7 +754,9 @@ FQualifiedFrameTime UTakeRecorder::GetRecordTime() const
 
 void UTakeRecorder::InternalTick(float DeltaTime)
 {
-	UE::MovieScene::FScopedSignedObjectModifyDefer FlushOnTick(true);
+	using namespace UE::MovieScene;
+
+	FScopedSignedObjectModifyDefer FlushOnTick(true);
 
 	TSharedPtr<ISequencer> Sequencer = WeakSequencer.Pin();
 	FQualifiedFrameTime RecordTime = GetRecordTime();
@@ -887,6 +897,8 @@ void UTakeRecorder::PreRecord()
 
 void UTakeRecorder::Start()
 {
+	using namespace UE::MovieScene;
+
 	FTimecode Timecode = FApp::GetTimecode();
 
 	State = ETakeRecorderState::Started;
@@ -969,6 +981,17 @@ void UTakeRecorder::Start()
 	OnRecordingStartedEvent.Broadcast(this);
 
 	UTakeRecorderBlueprintLibrary::OnTakeRecorderStarted();
+	if (UTakeRecorderSubsystem* TakeRecorderSubsystem = GEngine->GetEngineSubsystem<UTakeRecorderSubsystem>())
+	{
+		TakeRecorderSubsystem->TakeRecorderStarted.Broadcast();
+	}
+
+	if (Sequencer.IsValid())
+	{
+		FRootInstanceHandle RootInstanceHandle = Sequencer->GetEvaluationTemplate().GetRootInstanceHandle();
+		FInstanceRegistry* InstanceRegistry = Sequencer->GetEvaluationTemplate().GetEntitySystemLinker()->GetInstanceRegistry();
+		CompileSuppression = MakeUnique<FScopedVolatilityManagerSuppression>(InstanceRegistry, RootInstanceHandle);
+	}
 }
 
 void UTakeRecorder::Stop()
@@ -1030,6 +1053,8 @@ void UTakeRecorder::StopInternal(const bool bCancelled)
 		}
 	}
 
+	CompileSuppression.Reset();
+
 	if (bDidEverStartRecording)
 	{
 		if (!ShouldShowNotifications())
@@ -1046,7 +1071,12 @@ void UTakeRecorder::StopInternal(const bool bCancelled)
 		}
 
 		OnRecordingStoppedEvent.Broadcast(this);
+
 		UTakeRecorderBlueprintLibrary::OnTakeRecorderStopped();
+		if (UTakeRecorderSubsystem* TakeRecorderSubsystem = GEngine->GetEngineSubsystem<UTakeRecorderSubsystem>())
+		{
+			TakeRecorderSubsystem->TakeRecorderStopped.Broadcast();
+		}
 
 		if (MovieScene)
 		{
@@ -1082,6 +1112,10 @@ void UTakeRecorder::StopInternal(const bool bCancelled)
 			{
 				MovieScene->SetPlaybackRange(CachedPlaybackRange);
 			}
+		}
+		else
+		{
+			TakesUtils::ResetViewAndWorkRange(MovieScene);
 		}
 
 		if (bRecordingFinished)
@@ -1142,11 +1176,19 @@ void UTakeRecorder::StopInternal(const bool bCancelled)
 		{
 			OnRecordingFinishedEvent.Broadcast(this);
 			UTakeRecorderBlueprintLibrary::OnTakeRecorderFinished(SequenceAsset);
+			if (UTakeRecorderSubsystem* TakeRecorderSubsystem = GEngine->GetEngineSubsystem<UTakeRecorderSubsystem>())
+			{
+				TakeRecorderSubsystem->TakeRecorderFinished.Broadcast(SequenceAsset);
+			}
 		}
 		else
 		{
 			OnRecordingCancelledEvent.Broadcast(this);
 			UTakeRecorderBlueprintLibrary::OnTakeRecorderCancelled();
+			if (UTakeRecorderSubsystem* TakeRecorderSubsystem = GEngine->GetEngineSubsystem<UTakeRecorderSubsystem>())
+			{
+				TakeRecorderSubsystem->TakeRecorderCancelled.Broadcast();
+			}
 		}
 	}
 

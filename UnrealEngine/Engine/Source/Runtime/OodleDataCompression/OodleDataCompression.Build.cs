@@ -9,10 +9,10 @@ using UnrealBuildTool;
 //{
 	public class OodleDataCompression : ModuleRules
 	{
-		protected virtual string OodleVersion { get { return "2.9.10"; } }
+		protected virtual string OodleVersion { get { return "2.9.12"; } }
 
 		// Platform Extensions need to override these
-		protected virtual string LibRootDirectory { get { return ModuleDirectory; } }
+		protected virtual string LibRootDirectory { get { return PlatformModuleDirectory; } }
 		protected virtual string ReleaseLibraryName { get { return null; } }
 		protected virtual string DebugLibraryName { get { return null; } }
 
@@ -42,9 +42,9 @@ using UnrealBuildTool;
 
 			if (Target.IsInPlatformGroup(UnrealPlatformGroup.Windows))
 			{
-				ReleaseLib = "oo2core_win64.lib";
-				DebugLib = "oo2core_win64_debug.lib";
-				PlatformDir = "Win64";
+				ReleaseLib = Target.Architecture.bIsX64 ? "oo2core_win64.lib" : "oo2core_winuwparm64.lib";
+				DebugLib = Target.Architecture.bIsX64 ? "oo2core_win64_debug.lib" : "oo2core_winuwparm64_debug.lib";
+				PlatformDir = Target.Architecture.bIsX64 ? "Win64" : "WinArm64";
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Mac)
 			{

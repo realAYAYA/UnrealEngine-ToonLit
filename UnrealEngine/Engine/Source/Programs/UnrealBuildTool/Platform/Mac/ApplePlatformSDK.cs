@@ -3,6 +3,7 @@
 using System;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
+using UnrealBuildBase;
 
 ///////////////////////////////////////////////////////////////////
 // If you are looking for supported version numbers, look in the
@@ -35,7 +36,7 @@ namespace UnrealBuildTool
 
 			// iTunes is technically only need to deploy to and run on connected devices.
 			// This code removes requirement for Windows builders to have Xcode installed.
-			if (Status == SDKStatus.Invalid && !RuntimePlatform.IsMac && Environment.GetEnvironmentVariable("IsBuildMachine") == "1")
+			if (Status == SDKStatus.Invalid && !RuntimePlatform.IsMac && Unreal.IsBuildMachine())
 			{
 				Status = SDKStatus.Valid;
 			}

@@ -11,7 +11,8 @@
 #include "ARActor.h"
 #include "IOpenXRARModule.h"
 
-class FOpenXRHMD;
+class IOpenXRHMD;
+class IXRTrackingSystem;
 
 DECLARE_STATS_GROUP(TEXT("OpenXRAR"), STATGROUP_OPENXRAR, STATCAT_Advanced);
 
@@ -55,7 +56,7 @@ public:
 	FOpenXRARSystem();
 	virtual ~FOpenXRARSystem();
 
-	void SetTrackingSystem(TSharedPtr<FXRTrackingSystemBase, ESPMode::ThreadSafe> InTrackingSystem);
+	void SetTrackingSystem(IXRTrackingSystem& InTrackingSystem);
 
 	/** Invoked after the base AR system has been initialized. */
 	virtual void OnARSystemInitialized() {}
@@ -210,7 +211,8 @@ public:
 	}
 
 private:
-	FOpenXRHMD* TrackingSystem;
+	IXRTrackingSystem* TrackingSystem = nullptr;
+	IOpenXRHMD* OpenXRHMD = nullptr;
 
 	class IOpenXRCustomAnchorSupport* CustomAnchorSupport = nullptr;
 
@@ -301,7 +303,7 @@ class OpenXRARModuleImpl :
 public:
 	/** Used to init our AR system */
 	virtual IARSystemSupport* CreateARSystem();
-	virtual void SetTrackingSystem(TSharedPtr<FXRTrackingSystemBase, ESPMode::ThreadSafe> InTrackingSystem);
+	virtual void SetTrackingSystem(IXRTrackingSystem& InTrackingSystem);
 
 	virtual void StartupModule() override;
 

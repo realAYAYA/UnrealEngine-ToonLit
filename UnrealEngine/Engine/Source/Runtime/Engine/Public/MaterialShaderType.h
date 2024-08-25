@@ -51,6 +51,9 @@ extern ENGINE_API FString GetShadingModelFieldString(FMaterialShadingModelField 
 /** Converts an EBlendMode to a string description. */
 extern ENGINE_API FString GetBlendModeString(EBlendMode BlendMode);
 
+/** Creates a string key for the derived data cache given a shader map id. */
+extern ENGINE_API FString GetMaterialShaderMapKeyString(const FMaterialShaderMapId& ShaderMapId, EShaderPlatform Platform, bool bIncludeKeyStringShaderDependencies = true);
+
 /** Called for every material shader to update the appropriate stats. */
 extern void UpdateMaterialShaderCompilingStats(const FMaterial* Material);
 

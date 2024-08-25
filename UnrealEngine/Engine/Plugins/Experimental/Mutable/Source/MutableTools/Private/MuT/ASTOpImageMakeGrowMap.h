@@ -13,7 +13,7 @@ namespace mu
 {
 	struct FProgram;
 
-	class ASTOpImageMakeGrowMap : public ASTOp
+	class ASTOpImageMakeGrowMap final : public ASTOp
 	{
 	public:
 

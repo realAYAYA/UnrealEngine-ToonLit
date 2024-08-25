@@ -3,6 +3,7 @@
 #include "BehaviorTreeGraphNode_Root.h"
 
 #include "AISystem.h"
+#include "BehaviorTreeColors.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTreeEditorTypes.h"
@@ -90,9 +91,19 @@ FText UBehaviorTreeGraphNode_Root::GetDescription() const
 	return FText::FromString(GetNameSafe(BlackboardAsset));
 }
 
+FLinearColor UBehaviorTreeGraphNode_Root::GetBackgroundColor(bool bIsActiveForDebugger) const
+{
+	if (Pins.IsValidIndex(0) && Pins[0]->LinkedTo.Num() > 0)
+	{
+		return BehaviorTreeColors::NodeBody::Root;
+	}
+
+	return Super::GetBackgroundColor(bIsActiveForDebugger);
+}
+
 void UBehaviorTreeGraphNode_Root::UpdateBlackboard()
 {
-	UBehaviorTreeGraph* MyGraph = GetBehaviorTreeGraph();
+	UBehaviorTreeGraph* MyGraph = GetOwnerBehaviorTreeGraph();
 	UBehaviorTree* BTAsset = Cast<UBehaviorTree>(MyGraph->GetOuter());
 	if (BTAsset && BTAsset->BlackboardAsset != BlackboardAsset)
 	{

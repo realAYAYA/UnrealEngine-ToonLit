@@ -4,44 +4,46 @@
 
 #include "CoreMinimal.h"
 #include "OnlineAsyncTaskManager.h"
-#include "OnlineAsyncTaskGooglePlayAuthAction.h"
-#include "OnlineSubsystemGooglePlayPackage.h"
-
-THIRD_PARTY_INCLUDES_START
-#include "gpg/status.h"
-#include "gpg/types.h"
-THIRD_PARTY_INCLUDES_END
+#include "OnlineIdentityInterfaceGooglePlay.h"
 
 class FOnlineSubsystemGooglePlay;
 
-class FOnlineAsyncTaskGooglePlayLogin : public FOnlineAsyncTaskGooglePlayAuthAction
+/** Task object to keep track of writing achievement score data 
+ * Objects of this type are associated with a GooglePlayGamesWrapper method call that routes operations to the Java backend. 
+ * The GooglePlayGamesWrapper implementation will adapt and set the task result and mark the task as completed when the 
+ * Java operation is finished 
+ */
+class FOnlineAsyncTaskGooglePlayLogin : public FOnlineAsyncTaskBasic<FOnlineSubsystemGooglePlay>
 {
 public:
-	/** Delegate fired upon completion. */
-	DECLARE_DELEGATE(FOnCompletedDelegate);
-
 	/**
-	 * Constructor.
-	 *
-	 * @param InSubsystem a pointer to the owning subsysetm
-	 * @param InPlayerId index of the player who's logging in
+	 * @brief Construct a new FOnlineAsyncTaskGooglePlayLogin object
+	 * 
+	 * @param InSubsystem Owning subsystem
+	 * @param InAuthCodeClientId The client ID of the server that will perform the authorization code flow exchange. Won't request authorization code if empty
+	 * @param InForceRefreshToken If true a refresh token will be included in addition to the access token when the authorization code is exchanged
 	 */
-	FOnlineAsyncTaskGooglePlayLogin(FOnlineSubsystemGooglePlay* InSubsystem, int InPlayerId, const FOnCompletedDelegate& InDelegate);
+	FOnlineAsyncTaskGooglePlayLogin(
+		FOnlineSubsystemGooglePlay* InSubsystem, 
+		const FString& InAuthCodeClientId, 
+		bool InForceRefreshToken);
+
+	// FOnlineAsyncTask
+	virtual void Tick() override;
+	void Finalize() override;
+	void TriggerDelegates() override;
 
 	// FOnlineAsyncItem
 	virtual FString ToString() const override { return TEXT("Login"); }
-	virtual void Finalize() override;
-	virtual void TriggerDelegates() override;
 
+	// Set task result data. Accessed trhough GooglePlayGamesWrapper implementation
+	void SetLoginData(FString&& PlayerId, FString&& PlayerDisplayName, FString&& AuthCode);
 private:
-	/** The subsystem is the only class that should be calling OnAuthActionFinished */
-	friend class FOnlineSubsystemGooglePlay;
-
-	// FOnlineAsyncTaskGooglePlayAuthAction
-	virtual void OnAuthActionFinished(gpg::AuthOperation InOp, gpg::AuthStatus InStatus) override;
-	virtual void Start_OnTaskThread() override;
-
-	int PlayerId;
-	gpg::AuthStatus Status;
-	FOnCompletedDelegate Delegate;
+	FString AuthCodeClientId;
+	bool ForceRefreshToken;
+	bool bStarted = false;
+	bool bWasLoggedIn = false;
+	FUniqueNetIdGooglePlayPtr ReceivedPlayerNetId;
+	FString ReceivedDisplayName;
+	FString ReceivedAuthCode;
 };

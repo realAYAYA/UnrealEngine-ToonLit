@@ -15,15 +15,21 @@
 # 	include <sys/wait.h>
 #endif
 
-#if !defined(WITH_UNREAL_TRACE_LAUNCH)
-#	define WITH_UNREAL_TRACE_LAUNCH (PLATFORM_DESKTOP && !UE_BUILD_SHIPPING && !IS_PROGRAM)
+#if defined(WITH_UNREAL_TRACE_LAUNCH)
+  #define UE_TRACE_SERVER_LAUNCH_ENABLED WITH_UNREAL_TRACE_LAUNCH
+  UE_DEPRECATED_MACRO(5.4, "The WITH_UNREAL_TRACE_LAUNCH macro has been deprecated in favor of UE_TRACE_SERVER_LAUNCH_ENABLED.")
+#elif !defined(UE_TRACE_SERVER_LAUNCH_ENABLED)
+  #define UE_TRACE_SERVER_LAUNCH_ENABLED (PLATFORM_DESKTOP && !UE_BUILD_SHIPPING && !IS_PROGRAM)
+  #define WITH_UNREAL_TRACE_LAUNCH UE_DEPRECATED_MACRO(5.4, "The WITH_UNREAL_TRACE_LAUNCH macro has been deprecated in favor of UE_TRACE_SERVER_LAUNCH_ENABLED.") UE_TRACE_SERVER_LAUNCH_ENABLED
 #endif
 
 #if !defined(UE_TRACE_AUTOSTART)
 	#define UE_TRACE_AUTOSTART 1
 #endif
 
-#if WITH_UNREAL_TRACE_LAUNCH
+#if UE_TRACE_SERVER_LAUNCH_ENABLED
+#include "HAL/PlatformProcess.h"
+#include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #endif
@@ -100,12 +106,15 @@ public:
 	void AddCommandlineChannels(const TCHAR* ChannelList);
 	void ResetCommandlineChannels();
 	bool HasCommandlineChannels() const { return !CommandlineChannels.IsEmpty(); }
-	void EnableChannels(const TCHAR* ChannelList);
-	void DisableChannels(const TCHAR* ChannelList);
+	void EnableChannels(const TCHAR* ChannelList, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
+	void DisableChannels(const TCHAR* ChannelList, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
 	bool Connect(FTraceAuxiliary::EConnectionType Type, const TCHAR* Parameter, const FTraceAuxiliary::FLogCategoryAlias& LogCategory, uint16 SendFlags);
 	bool Stop();
+	void FreezeReadOnlyChannels();
+	static bool IsReadOnlyChannel(const TCHAR* Channel);
 	void ResumeChannels();
 	void PauseChannels();
+	bool IsPaused();
 	void EnableCommandlineChannels();
 	void EnableCommandlineChannelsPostInitialize();
 	void SetTruncateFile(bool bTruncateFile);
@@ -116,7 +125,7 @@ public:
 	bool SendSnapshot(const TCHAR* InHost, uint32 InPort, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
 
 	// True if this is parent process with forking requested before forking.
-	bool					IsParentProcessAndPreFork();
+	bool IsParentProcessAndPreFork();
 
 private:
 	enum class EState : uint8
@@ -131,12 +140,12 @@ private:
 		bool bActive = false;
 	};
 
-	void AddChannel(const TCHAR* Name);
-	void RemoveChannel(const TCHAR* Name);
-	template <class T> void ForEachChannel(const TCHAR* ChannelList, bool bResolvePresets, T Callable);
+	void AddChannel(const TCHAR* Name, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
+	void RemoveChannel(const TCHAR* Name, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
+	template <class T> void ForEachChannel(const TCHAR* ChannelList, bool bResolvePresets, const FTraceAuxiliary::FLogCategoryAlias& LogCategory, T Callable);
 	static uint32 HashChannelName(const TCHAR* Name);
-	bool EnableChannel(const TCHAR* Channel);
-	void DisableChannel(const TCHAR* Channel);
+	bool EnableChannel(const TCHAR* Channel, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
+	void DisableChannel(const TCHAR* Channel, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
 	bool SendToHost(const TCHAR* Host, const FTraceAuxiliary::FLogCategoryAlias& LogCategory, uint16 SendFlags);
 	bool WriteToFile(const TCHAR* Path, const FTraceAuxiliary::FLogCategoryAlias& LogCategory, uint16 SendFlags);
 	bool FinalizeFilePath(const TCHAR* InPath, FString& OutPath, const FTraceAuxiliary::FLogCategoryAlias& LogCategory);
@@ -145,8 +154,9 @@ private:
 	ChannelSet CommandlineChannels;
 	bool bWorkerThreadStarted = false;
 	bool bTruncateFile = false;
+	bool bReadOnlyChannelsFrozen = false;
 	FString PausedPreset;
-	
+
 	struct FCurrentTraceTarget
 	{
 		FString TraceDest;
@@ -173,7 +183,7 @@ bool FTraceAuxiliaryImpl::IsParentProcessAndPreFork()
 ////////////////////////////////////////////////////////////////////////////////
 void FTraceAuxiliaryImpl::AddCommandlineChannels(const TCHAR* ChannelList)
 {
-	ForEachChannel(ChannelList, true, &FTraceAuxiliaryImpl::AddChannel);
+	ForEachChannel(ChannelList, true, LogTrace, &FTraceAuxiliaryImpl::AddChannel);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -183,36 +193,36 @@ void FTraceAuxiliaryImpl::ResetCommandlineChannels()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void FTraceAuxiliaryImpl::EnableChannels(const TCHAR* ChannelList)
+void FTraceAuxiliaryImpl::EnableChannels(const TCHAR* ChannelList, const FTraceAuxiliary::FLogCategoryAlias& LogCategory)
 {
 	if (ChannelList)
 	{
-		ForEachChannel(ChannelList, true, &FTraceAuxiliaryImpl::EnableChannel);
+		ForEachChannel(ChannelList, true, LogCategory, &FTraceAuxiliaryImpl::EnableChannel);
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void FTraceAuxiliaryImpl::DisableChannels(const TCHAR* ChannelList)
+void FTraceAuxiliaryImpl::DisableChannels(const TCHAR* ChannelList, const FTraceAuxiliary::FLogCategoryAlias& LogCategory)
 {
 	if (ChannelList)
 	{
-		ForEachChannel(ChannelList, true, &FTraceAuxiliaryImpl::DisableChannel);
+		ForEachChannel(ChannelList, true, LogCategory, &FTraceAuxiliaryImpl::DisableChannel);
 	}
 	else
 	{
 		// Disable all channels.
 		TStringBuilder<128> EnabledChannels;
 		GetActiveChannelsString(EnabledChannels);
-		ForEachChannel(EnabledChannels.ToString(), true, &FTraceAuxiliaryImpl::DisableChannel);
+		ForEachChannel(EnabledChannels.ToString(), true, LogCategory, &FTraceAuxiliaryImpl::DisableChannel);
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 template<typename T>
-void FTraceAuxiliaryImpl::ForEachChannel(const TCHAR* ChannelList, bool bResolvePresets, T Callable)
+void FTraceAuxiliaryImpl::ForEachChannel(const TCHAR* ChannelList, bool bResolvePresets, const FTraceAuxiliary::FLogCategoryAlias& LogCategory, T Callable)
 {
 	check(ChannelList);
-	UE::String::ParseTokens(ChannelList, TEXT(","), [this, bResolvePresets, Callable] (const FStringView& Token)
+	UE::String::ParseTokens(ChannelList, TEXT(","), [this, bResolvePresets, Callable, &LogCategory] (const FStringView& Token)
 	{
 		TCHAR Name[80];
 		const size_t ChannelNameSize = Token.CopyString(Name, UE_ARRAY_COUNT(Name) - 1);
@@ -224,21 +234,21 @@ void FTraceAuxiliaryImpl::ForEachChannel(const TCHAR* ChannelList, bool bResolve
 			// Check against hard coded presets
 			if(FCString::Stricmp(Name, TEXT("default")) == 0)
 			{
-				ForEachChannel(GDefaultChannels, false, Callable);
+				ForEachChannel(GDefaultChannels, false, LogCategory, Callable);
 			}
 			else if(FCString::Stricmp(Name, TEXT("memory"))== 0)
 			{
-				ForEachChannel(GMemoryChannels, false, Callable);
+				ForEachChannel(GMemoryChannels, false, LogCategory, Callable);
 			}
 			// Check against data driven presets (if available)
 			else if (GConfig && GConfig->GetString(TEXT("Trace.ChannelPresets"), Name, Value, GEngineIni))
 			{
-				ForEachChannel(*Value, false, Callable);
+				ForEachChannel(*Value, false, LogCategory, Callable);
 				return;
 			}
 		}
 
-		Invoke(Callable, this, Name);
+		Invoke(Callable, this, Name, LogCategory);
 	});
 }
 
@@ -255,7 +265,7 @@ uint32 FTraceAuxiliaryImpl::HashChannelName(const TCHAR* Name)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void FTraceAuxiliaryImpl::AddChannel(const TCHAR* Name)
+void FTraceAuxiliaryImpl::AddChannel(const TCHAR* Name, const FTraceAuxiliary::FLogCategoryAlias& LogCategory)
 {
 	uint32 Hash = HashChannelName(Name);
 
@@ -269,12 +279,12 @@ void FTraceAuxiliaryImpl::AddChannel(const TCHAR* Name)
 
 	if (IsConnected() && !Value.bActive)
 	{
-		Value.bActive = EnableChannel(*Value.Name);
+		Value.bActive = EnableChannel(*Value.Name, LogCategory);
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void FTraceAuxiliaryImpl::RemoveChannel(const TCHAR* Name)
+void FTraceAuxiliaryImpl::RemoveChannel(const TCHAR* Name, const FTraceAuxiliary::FLogCategoryAlias& LogCategory)
 {
 	uint32 Hash = HashChannelName(Name);
 
@@ -286,7 +296,7 @@ void FTraceAuxiliaryImpl::RemoveChannel(const TCHAR* Name)
 
 	if (IsConnected() && Channel.bActive)
 	{
-		DisableChannel(*Channel.Name);
+		DisableChannel(*Channel.Name, LogCategory);
 		Channel.bActive = false;
 	}
 }
@@ -330,13 +340,13 @@ bool FTraceAuxiliaryImpl::Connect(FTraceAuxiliary::EConnectionType Type, const T
 		{
 			FString StartedDest;
 			FTraceAuxiliary::EConnectionType StartedType = FTraceAuxiliary::EConnectionType::None;
-			
+
 			{
 				FReadScopeLock _(CurrentTargetLock);
 				StartedDest = CurrentTraceTarget.TraceDest;
 				StartedType = CurrentTraceTarget.TraceType;
 			}
-			
+
 			FTraceAuxiliary::OnTraceStarted.Broadcast(StartedType, StartedDest);
 		}
 	}
@@ -363,7 +373,8 @@ bool FTraceAuxiliaryImpl::Stop()
 
 	FString StopedDest;
 	FTraceAuxiliary::EConnectionType StopedType = FTraceAuxiliary::EConnectionType::None;
-	
+	PausedPreset.Empty();
+
 	{
 		FWriteScopeLock _(CurrentTargetLock);
 		StopedDest = CurrentTraceTarget.TraceDest;
@@ -373,12 +384,43 @@ bool FTraceAuxiliaryImpl::Stop()
 	}
 
 	FTraceAuxiliary::OnTraceStopped.Broadcast(StopedType, StopedDest);
-	
+
 	return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-bool FTraceAuxiliaryImpl::EnableChannel(const TCHAR* Channel)
+void FTraceAuxiliaryImpl::FreezeReadOnlyChannels()
+{
+	bReadOnlyChannelsFrozen = true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+bool FTraceAuxiliaryImpl::IsReadOnlyChannel(const TCHAR* InChannel)
+{
+	const auto ChannelA = StringCast<ANSICHAR, 80>(InChannel);
+	struct FUserData
+	{
+		FAnsiStringView Channel;
+		bool bIsReadOnlyChannel = false;
+	} UserData = { FAnsiStringView(ChannelA.Get(), ChannelA.Length()), false};
+	
+	UE::Trace::EnumerateChannels([](const UE::Trace::FChannelInfo& Info, void* User)
+	{
+		FAnsiStringView NameView = FAnsiStringView(Info.Name).LeftChop(7); // Remove "Channel" suffix
+		FUserData* UserData = (FUserData*) User;
+		if (NameView.Equals(UserData->Channel, ESearchCase::IgnoreCase))
+		{
+			UserData->bIsReadOnlyChannel = Info.bIsReadOnly;
+			return false;
+		}
+		return true;
+	}, &UserData);
+
+	return UserData.bIsReadOnlyChannel;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+bool FTraceAuxiliaryImpl::EnableChannel(const TCHAR* Channel, const FTraceAuxiliary::FLogCategoryAlias& LogCategory)
 {
 	// Channel names have been provided by the user and may not exist yet. As
 	// we want to maintain bActive accurately (channels toggles are reference
@@ -388,17 +430,26 @@ bool FTraceAuxiliaryImpl::EnableChannel(const TCHAR* Channel)
 		return false;
 	}
 
-	EPlatformEvent Event = PlatformEvents_GetEvent(Channel);
-	if (Event != EPlatformEvent::None)
+	// It is not possible to change read only channels once trace is
+	// initialized.
+	if(bReadOnlyChannelsFrozen && IsReadOnlyChannel(Channel))
 	{
-		PlatformEvents_Enable(Event);
+		UE_LOG_REF(
+			LogCategory,
+			Error,
+			TEXT("Channel '%s' is a read only channel. It is only possible to enable on startup using command line parameters."),
+			Channel
+		);
+		return false;
 	}
+
+	FPlatformEventsTrace::OnTraceChannelUpdated(Channel, true);
 
 	return UE::Trace::ToggleChannel(Channel, true);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void FTraceAuxiliaryImpl::DisableChannel(const TCHAR* Channel)
+void FTraceAuxiliaryImpl::DisableChannel(const TCHAR* Channel, const FTraceAuxiliary::FLogCategoryAlias& LogCategory)
 {
 	// Channel names have been provided by the user and may not exist yet. As
 	// we want to maintain bActive accurately (channels toggles are reference
@@ -407,12 +458,20 @@ void FTraceAuxiliaryImpl::DisableChannel(const TCHAR* Channel)
 	{
 		return;
 	}
-
-	EPlatformEvent Event = PlatformEvents_GetEvent(Channel);
-	if (Event != EPlatformEvent::None)
+	
+	// Warn when disabling a read-only channel after init, it will not be possible
+	// to enable again.
+	if(bReadOnlyChannelsFrozen && IsReadOnlyChannel(Channel))
 	{
-		PlatformEvents_Disable(Event);
+		UE_LOG_REF(
+			LogCategory,
+			Warning,
+			TEXT("Channel '%s' is a read only channel. It has been disabled, but cannot be enabled again."),
+			Channel
+		);
 	}
+
+	FPlatformEventsTrace::OnTraceChannelUpdated(Channel, false);
 
 	UE::Trace::ToggleChannel(Channel, false);
 }
@@ -421,7 +480,9 @@ void FTraceAuxiliaryImpl::DisableChannel(const TCHAR* Channel)
 void FTraceAuxiliaryImpl::ResumeChannels()
 {
 	// Enable channels from the "paused" preset.
-	ForEachChannel(*PausedPreset, false, &FTraceAuxiliaryImpl::EnableChannel);
+	ForEachChannel(*PausedPreset, false, LogTrace, &FTraceAuxiliaryImpl::EnableChannel);
+
+	PausedPreset.Empty();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -435,7 +496,13 @@ void FTraceAuxiliaryImpl::PauseChannels()
 	PausedPreset = EnabledChannels.ToString();
 
 	// Disable all "paused" channels.
-	ForEachChannel(*PausedPreset, true, &FTraceAuxiliaryImpl::DisableChannel);
+	ForEachChannel(*PausedPreset, true, LogTrace, &FTraceAuxiliaryImpl::DisableChannel);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+bool FTraceAuxiliaryImpl::IsPaused()
+{
+	return !PausedPreset.IsEmpty();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -450,7 +517,7 @@ void FTraceAuxiliaryImpl::EnableCommandlineChannels()
 	{
 		if (!ChannelPair.Value.bActive)
 		{
-			ChannelPair.Value.bActive = EnableChannel(*ChannelPair.Value.Name);
+			ChannelPair.Value.bActive = EnableChannel(*ChannelPair.Value.Name, LogTrace);
 		}
 	}
 }
@@ -461,7 +528,7 @@ void FTraceAuxiliaryImpl::EnableCommandlineChannelsPostInitialize()
 	for (auto& ChannelPair : CommandlineChannels)
 	{
 		// Intentionally enable channel without checking current state.
-		ChannelPair.Value.bActive = EnableChannel(*ChannelPair.Value.Name);
+		ChannelPair.Value.bActive = EnableChannel(*ChannelPair.Value.Name, LogTrace);
 	}
 }
 
@@ -784,6 +851,9 @@ static void SetupInitFromConfig(UE::Trace::FInitializeDesc& OutDesc)
 		return;
 	}
 
+	// Note that these options can only be used when tracing from a forked process (e.g. server).
+	// For a regular process use command line argument -TraceThreadSleepTime and -TraceTailSizeMb
+	
 	int32 SleepTimeConfig = 0;
 	if (GConfig->GetInt(GTraceConfigSection, TEXT("SleepTimeInMS"), SleepTimeConfig, GEngineIni))
 	{
@@ -983,7 +1053,7 @@ static void TraceAuxiliaryEnableChannels(const TArray<FString>& Args)
 		UE_LOG(LogConsoleResponse, Warning, TEXT("Need to provide at least one channel."));
 		return;
 	}
-	GTraceAuxiliary.EnableChannels(*Args[0]);
+	GTraceAuxiliary.EnableChannels(*Args[0], LogConsoleResponse);
 
 	TStringBuilder<128> EnabledChannels;
 	GTraceAuxiliary.GetActiveChannelsString(EnabledChannels);
@@ -995,11 +1065,11 @@ static void TraceAuxiliaryDisableChannels(const TArray<FString>& Args)
 {
 	if (Args.Num() == 0)
 	{
-		GTraceAuxiliary.DisableChannels(nullptr);
+		GTraceAuxiliary.DisableChannels(nullptr, LogConsoleResponse);
 	}
 	else
 	{
-		GTraceAuxiliary.DisableChannels(*Args[0]);
+		GTraceAuxiliary.DisableChannels(*Args[0], LogConsoleResponse);
 	}
 
 	TStringBuilder<128> EnabledChannels;
@@ -1157,145 +1227,6 @@ static FAutoConsoleCommand TraceBookmarkCmd(
 #endif // UE_TRACE_ENABLED
 
 
-
-#if WITH_UNREAL_TRACE_LAUNCH
-////////////////////////////////////////////////////////////////////////////////
-static std::atomic<int32> GUnrealTraceLaunched; // = 0;
-
-////////////////////////////////////////////////////////////////////////////////
-#if PLATFORM_WINDOWS
-static void LaunchUnrealTraceInternal(const TCHAR* CommandLine)
-{
-	if (GUnrealTraceLaunched.load(std::memory_order_relaxed))
-	{
-		UE_LOG(LogCore, Log, TEXT("UnrealTraceServer: Trace store already started"));
-		return;
-	}
-
-	TWideStringBuilder<MAX_PATH + 32> CreateProcArgs;
-	CreateProcArgs << "\"";
-	CreateProcArgs << FPaths::EngineDir();
-	CreateProcArgs << TEXT("/Binaries/Win64/UnrealTraceServer.exe\"");
-	CreateProcArgs << TEXT(" fork");
-
-	uint32 CreateProcFlags = CREATE_BREAKAWAY_FROM_JOB;
-	if (FParse::Param(CommandLine, TEXT("traceshowstore")))
-	{
-		CreateProcFlags |= CREATE_NEW_CONSOLE;
-	}
-	else
-	{
-		CreateProcFlags |= CREATE_NO_WINDOW;
-	}
-	STARTUPINFOW StartupInfo = { sizeof(STARTUPINFOW) };
-	PROCESS_INFORMATION ProcessInfo = {};
-	BOOL bOk = CreateProcessW(nullptr, LPWSTR(*CreateProcArgs), nullptr, nullptr,
-		false, CreateProcFlags, nullptr, nullptr, &StartupInfo, &ProcessInfo);
-
-	if (!bOk)
-	{
-		UE_LOG(LogCore, Display, TEXT("UnrealTraceServer: Unable to launch the trace store with '%s' (%08x)"), *CreateProcArgs, GetLastError());
-		return;
-	}
-
-	if (WaitForSingleObject(ProcessInfo.hProcess, 5000) == WAIT_TIMEOUT)
-	{
-		UE_LOG(LogCore, Warning, TEXT("UnrealTraceServer: Timed out waiting for the trace store to start"));
-	}
-	else
-	{
-		DWORD ExitCode = 0x0000'a9e0;
-		GetExitCodeProcess(ProcessInfo.hProcess, &ExitCode);
-		if (ExitCode)
-		{
-			UE_LOG(LogCore, Warning, TEXT("UnrealTraceServer: Trace store returned an error (0x%08x)"), ExitCode);
-		}
-		else
-		{
-			UE_LOG(LogCore, Log, TEXT("UnrealTraceServer: Trace store launch successful"));
-			GUnrealTraceLaunched.fetch_add(1, std::memory_order_relaxed);
-		}
-	}
-
-	CloseHandle(ProcessInfo.hProcess);
-	CloseHandle(ProcessInfo.hThread);
-}
-#endif // PLATFORM_WINDOWS
-
-////////////////////////////////////////////////////////////////////////////////
-#if PLATFORM_UNIX || PLATFORM_MAC
-static void LaunchUnrealTraceInternal(const TCHAR* CommandLine)
-{
-// TSAN doesn't like fork(), so disable this for now.
-#if !USING_THREAD_SANITISER 
-	if (GUnrealTraceLaunched.load(std::memory_order_relaxed))
-	{
-		UE_LOG(LogCore, Log, TEXT("UnrealTraceServer: Trace store already started"));
-		return;
-	}
-
-	TAnsiStringBuilder<320> BinPath;
-	BinPath << TCHAR_TO_UTF8(*FPaths::EngineDir());
-#if PLATFORM_UNIX
-	BinPath << "Binaries/Linux/UnrealTraceServer";
-#elif PLATFORM_MAC
-	BinPath << "Binaries/Mac/UnrealTraceServer";
-#endif
-	BinPath.ToString(); //Ensure zero termination
-
-	if (access(*BinPath, F_OK) < 0)
-	{
-		UE_LOG(LogCore, Display, TEXT("UnrealTraceServer: Binary not found (%s)"), ANSI_TO_TCHAR(*BinPath));
-		return;
-	}
-
-	TAnsiStringBuilder<64> ForkArg;
-	ForkArg << "fork";
-	ForkArg.ToString(); //Ensure zero termination
-
-	pid_t UtsPid = fork();
-	if (UtsPid < 0)
-	{
-		UE_LOG(LogCore, Display, TEXT("UnrealTraceServer: Unable to fork (errno: %d)"), errno);
-		return;
-	}
-	else if (UtsPid == 0)
-	{
-		char* Args[] = { BinPath.GetData(), ForkArg.GetData(), nullptr };
-		extern char** environ;
-		execve(*BinPath, Args, environ);
-		_exit(0x80 | (errno & 0x7f));
-	}
-
-	int32 WaitStatus = 0;
-	do
-	{
-		int32 WaitRet = waitpid(UtsPid, &WaitStatus, 0);
-		if (WaitRet < 0)
-		{
-			UE_LOG(LogCore, Display, TEXT("UnrealTraceServer: waitpid() error; (errno: %d)"), errno);
-			return;
-		}
-	}
-	while (!WIFEXITED(WaitStatus));
-
-	int32 UtsRet = WEXITSTATUS(WaitStatus);
-	if (UtsRet)
-	{
-		UE_LOG(LogCore, Display, TEXT("UnrealTraceServer: Trace store returned an error (0x%08x)"), UtsRet);
-	}
-	else
-	{
-		UE_LOG(LogCore, Log, TEXT("UnrealTraceServer: Trace store launch successful"));
-		GUnrealTraceLaunched.fetch_add(1, std::memory_order_relaxed);
-	}
-#endif // #if !USING_THREAD_SANITISER
-}
-#endif // PLATFORM_UNIX/MAC
-#endif // WITH_UNREAL_TRACE_LAUNCH
-
-
-
 ////////////////////////////////////////////////////////////////////////////////
 UE_TRACE_EVENT_BEGIN(Diagnostics, Session2, NoSync|Important)
 	UE_TRACE_EVENT_FIELD(UE::Trace::AnsiString, Platform)
@@ -1450,8 +1381,9 @@ bool FTraceAuxiliary::Start(EConnectionType Type, const TCHAR* Target, const TCH
 	uint16 SendFlags = (Options && Options->bExcludeTail) ? UE::Trace::FSendFlags::ExcludeTail : 0;
 
 	return GTraceAuxiliary.Connect(Type, Target, LogCategory, SendFlags);
-#endif
+#else
 	return false;
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1471,6 +1403,16 @@ bool FTraceAuxiliary::Pause()
 	GTraceAuxiliary.PauseChannels();
 #endif
 	return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+bool FTraceAuxiliary::IsPaused()
+{
+#if UE_TRACE_ENABLED
+	return GTraceAuxiliary.IsPaused();
+#else
+	return false;
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1536,11 +1478,12 @@ void FTraceAuxiliary::Initialize(const TCHAR* CommandLine)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FTraceAux_Init);
 
-#if WITH_UNREAL_TRACE_LAUNCH
+#if UE_TRACE_SERVER_LAUNCH_ENABLED && UE_TRACE_SERVER_CONTROLS_ENABLED
+	// Auto launch Unreal Trace Server for certain configurations
 	if (!(FParse::Param(CommandLine, TEXT("notraceserver")) || FParse::Param(CommandLine, TEXT("buildmachine"))))
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(FTraceAux_LaunchUnrealTrace);
-		LaunchUnrealTraceInternal(CommandLine);
+		FTraceServerControls::Start();
 	}
 #endif
 
@@ -1557,7 +1500,7 @@ void FTraceAuxiliary::Initialize(const TCHAR* CommandLine)
 	{
 		UE_LOG(LogTrace, Log, TEXT("Trace initialization skipped for parent process (pre fork)."));
 
-		GTraceAuxiliary.DisableChannels(nullptr);
+		GTraceAuxiliary.DisableChannels(nullptr, LogTrace);
 
 		// Set our post fork callback up and return - children will pass through and Initialize when they're created.
 		TraceAuxiliaryAddPostForkCallback(CommandLine);
@@ -1624,7 +1567,7 @@ void FTraceAuxiliary::Initialize(const TCHAR* CommandLine)
 		SessionGuid = FApp::GetInstanceId();
 	}
 	FMemory::Memcpy((FGuid&)Desc.SessionGuid, SessionGuid);
-	
+
 	if (FParse::Value(CommandLine, TEXT("-tracetailmb="), Desc.TailSizeBytes))
 	{
 		Desc.TailSizeBytes <<= 20;
@@ -1668,8 +1611,8 @@ void FTraceAuxiliary::Initialize(const TCHAR* CommandLine)
 	// By default use 1 msec for stack sampling interval.
 	uint32 Microseconds = 1000;
 	FParse::Value(CommandLine, TEXT("-samplinginterval="), Microseconds);
-	PlatformEvents_Init(Microseconds);
-	PlatformEvents_PostInit();
+	FPlatformEventsTrace::Init(Microseconds);
+	FPlatformEventsTrace::PostInit();
 
 #if CSV_PROFILER
 	FCoreDelegates::OnEndFrame.AddRaw(&GTraceAuxiliary, &FTraceAuxiliaryImpl::UpdateCsvStats);
@@ -1688,6 +1631,7 @@ void FTraceAuxiliary::Initialize(const TCHAR* CommandLine)
 
 	UE::Trace::ThreadRegister(TEXT("GameThread"), FPlatformTLS::GetCurrentThreadId(), -1);
 
+	GTraceAuxiliary.FreezeReadOnlyChannels();
 	UE_LOG(LogTrace, Log, TEXT("Finished trace initialization."));
 #endif //UE_TRACE_ENABLED
 }
@@ -1723,7 +1667,7 @@ void FTraceAuxiliary::Shutdown()
 
 	// Make sure all platform event functionality has shut down as on some
 	// platforms it impacts whole system, even if application has terminated.
-	PlatformEvents_Stop();
+	FPlatformEventsTrace::Stop();
 #endif
 }
 
@@ -1738,7 +1682,7 @@ void FTraceAuxiliary::EnableChannels()
 void FTraceAuxiliary::DisableChannels(const TCHAR* Channels)
 {
 #if UE_TRACE_ENABLED
-	GTraceAuxiliary.DisableChannels(Channels);
+	GTraceAuxiliary.DisableChannels(Channels, LogTrace);
 #endif
 }
 
@@ -1747,24 +1691,27 @@ const TCHAR* FTraceAuxiliary::GetTraceDestination()
 #if UE_TRACE_ENABLED
 	static FString TempUnsafe = GTraceAuxiliary.GetDest();
 	return *TempUnsafe;
-#endif
+#else
 	return nullptr;
+#endif
 }
 
 FString FTraceAuxiliary::GetTraceDestinationString()
 {
 #if UE_TRACE_ENABLED
 	return GTraceAuxiliary.GetDest();
-#endif
+#else
 	return FString();
+#endif
 }
 
 bool FTraceAuxiliary::IsConnected()
 {
 #if UE_TRACE_ENABLED
 	return GTraceAuxiliary.IsConnected();
-#endif
+#else
 	return false;
+#endif
 }
 
 bool FTraceAuxiliary::IsConnected(FGuid& OutSessionGuid, FGuid& OutTraceGuid)
@@ -1780,8 +1727,9 @@ FTraceAuxiliary::EConnectionType FTraceAuxiliary::GetConnectionType()
 {
 #if UE_TRACE_ENABLED
 	return GTraceAuxiliary.GetConnectionType();
-#endif
+#else
 	return FTraceAuxiliary::EConnectionType::None;
+#endif
 }
 
 void FTraceAuxiliary::GetActiveChannelsString(FStringBuilderBase& String)
@@ -1801,11 +1749,11 @@ void FTraceAuxiliary::TryAutoConnect()
 {
 #if UE_TRACE_ENABLED
 #if PLATFORM_WINDOWS
-	if (GTraceAutoStart)
+	if (GTraceAutoStart && !IsConnected())
 	{
 		// If we can detect a named event it means UnrealInsights (Browser Mode) is running.
 		// In this case, we try to auto-connect with the Trace Server.
-		HANDLE KnownEvent = ::OpenEvent(EVENT_ALL_ACCESS, false, TEXT("Local\\UnrealInsightsBrowser"));
+		HANDLE KnownEvent = ::OpenEvent(EVENT_ALL_ACCESS, false, TEXT("Local\\UnrealInsightsAutoConnect"));
 		if (KnownEvent != nullptr)
 		{
 			UE_LOG(LogTrace, Display, TEXT("Unreal Insights instance detected, auto-connecting to local trace server..."));
@@ -1816,3 +1764,200 @@ void FTraceAuxiliary::TryAutoConnect()
 #endif // PLATFORM_WINDOWS
 #endif // UE_TRACE_ENABLED
 }
+
+////////////////////////////////////////////////////////////////////////////////
+#if UE_TRACE_SERVER_CONTROLS_ENABLED
+
+enum class ELaunchTraceServerCommand
+{
+	Fork,
+	Kill
+};
+
+#if PLATFORM_WINDOWS
+bool LaunchTraceServerCommand(ELaunchTraceServerCommand Command, bool bAddSponsor)
+{
+	FString FilePath = FPaths::Combine(FPaths::EngineDir(), TEXT("Binaries/Win64/UnrealTraceServer.exe"));
+	if (!FPaths::FileExists(FilePath))
+	{
+		UE_LOG(LogCore, Display, TEXT("UTS: The Unreal Trace Server binary is not available ('%s')"), *FilePath);
+		return false;
+	}
+
+	TWideStringBuilder<MAX_PATH + 32> CreateProcArgs;
+	CreateProcArgs << TEXT("\"") << FilePath << TEXT("\"");
+	if (Command == ELaunchTraceServerCommand::Fork)
+	{
+		CreateProcArgs << TEXT(" fork");
+	}
+	else if (Command == ELaunchTraceServerCommand::Kill)
+	{
+		CreateProcArgs << TEXT(" kill");
+	}
+	if (bAddSponsor)
+	{
+		CreateProcArgs << TEXT(" --sponsor ") << FPlatformProcess::GetCurrentProcessId();
+	}
+
+	uint32 CreateProcFlags = CREATE_BREAKAWAY_FROM_JOB;
+	if (FParse::Param(FCommandLine::Get(), TEXT("traceshowstore")))
+	{
+		CreateProcFlags |= CREATE_NEW_CONSOLE;
+	}
+	else
+	{
+		CreateProcFlags |= CREATE_NO_WINDOW;
+	}
+
+	STARTUPINFOW StartupInfo = { sizeof(STARTUPINFOW) };
+	PROCESS_INFORMATION ProcessInfo = {};
+
+	const BOOL bOk = CreateProcessW(nullptr, LPWSTR(*CreateProcArgs), nullptr, nullptr,
+									false, CreateProcFlags, nullptr, nullptr, &StartupInfo, &ProcessInfo);
+
+	if (!bOk)
+	{
+		DWORD LastError = GetLastError();
+		TCHAR ErrorBuffer[1024];
+		FWindowsPlatformMisc::GetSystemErrorMessage(ErrorBuffer, UE_ARRAY_COUNT(ErrorBuffer), LastError);
+		UE_LOG(LogCore, Warning, TEXT("UTS: Unable to launch the Unreal Trace Server with '%s'. %s Error: 0x%X (%u)"), *CreateProcArgs, ErrorBuffer, LastError, LastError);
+		return false;
+	}
+
+	bool bSuccess = false;
+	if (WaitForSingleObject(ProcessInfo.hProcess, 5000) == WAIT_TIMEOUT)
+	{
+		UE_LOG(LogCore, Warning, TEXT("UTS: Timed out waiting for the Unreal Trace Server process to start"));
+	}
+	else
+	{
+		DWORD ExitCode = 0x0000'a9e0;
+		GetExitCodeProcess(ProcessInfo.hProcess, &ExitCode);
+		if (ExitCode)
+		{
+			UE_LOG(LogCore, Warning, TEXT("UTS: Unreal Trace Server process returned an error (0x%08x)"), ExitCode);
+		}
+		else
+		{
+			if (Command == ELaunchTraceServerCommand::Kill)
+			{
+				UE_LOG(LogCore, Log, TEXT("UTS: Unreal Trace Server was stopped"));
+			}
+			else
+			{
+				UE_LOG(LogCore, Log, TEXT("UTS: Unreal Trace Server launched successfully"));
+			}
+			bSuccess = true;
+		}
+	}
+
+	CloseHandle(ProcessInfo.hProcess);
+	CloseHandle(ProcessInfo.hThread);
+
+	return bSuccess;
+}
+#endif // PLATFORM_WINDOWS
+
+#if PLATFORM_LINUX || PLATFORM_MAC
+static bool LaunchTraceServerCommand(ELaunchTraceServerCommand Command, bool bAddSponsor)
+{
+#if USING_THREAD_SANITISER
+	// TSAN doesn't like fork(), so disable this for now.
+	return false;
+#else // !USING_THREAD_SANITISER
+
+	TAnsiStringBuilder<320> BinPath;
+	BinPath << TCHAR_TO_UTF8(*FPaths::EngineDir());
+#if PLATFORM_UNIX
+	BinPath << "Binaries/Linux/UnrealTraceServer";
+#elif PLATFORM_MAC
+	BinPath << "Binaries/Mac/UnrealTraceServer";
+#endif
+	BinPath.ToString(); //Ensure zero termination
+
+	if (access(*BinPath, F_OK) < 0)
+	{
+		UE_LOG(LogCore, Display, TEXT("UTS: The Unreal Trace Server binary is not available ('%s')"), ANSI_TO_TCHAR(*BinPath));
+		return false;
+	}
+
+	TAnsiStringBuilder<64> ForkArg;
+	TAnsiStringBuilder<64> SponsorArg;
+	if (Command == ELaunchTraceServerCommand::Fork)
+	{
+		ForkArg << "fork";
+	}
+	else if (Command == ELaunchTraceServerCommand::Kill)
+	{
+		ForkArg << "kill";
+	}
+	if (bAddSponsor)
+	{
+		SponsorArg  << "--sponsor=" << FPlatformProcess::GetCurrentProcessId();
+	}
+	ForkArg.ToString(); //Ensure zero termination
+	SponsorArg.ToString();
+
+	pid_t UtsPid = fork();
+	if (UtsPid < 0)
+	{
+		UE_LOG(LogCore, Warning, TEXT("UTS: Unable to fork (errno: %d)"), errno);
+		return false;
+	}
+	else if (UtsPid == 0)
+	{
+		// Launch UTS from the child process.
+		char* Args[] = { BinPath.GetData(), ForkArg.GetData(), SponsorArg.GetData(), nullptr };
+		extern char** environ;
+		execve(*BinPath, Args, environ);
+		_exit(0x80 | (errno & 0x7f));
+	}
+
+	// Wait until the child process finishes.
+	int32 WaitStatus = 0;
+	do
+	{
+		int32 WaitRet = waitpid(UtsPid, &WaitStatus, 0);
+		if (WaitRet < 0)
+		{
+			UE_LOG(LogCore, Warning, TEXT("UTS: waitpid() error (errno: %d)"), errno);
+			return false;
+		}
+	}
+	while (!WIFEXITED(WaitStatus));
+
+	int32 UtsRet = WEXITSTATUS(WaitStatus);
+	if (UtsRet)
+	{
+		UE_LOG(LogCore, Warning, TEXT("UTS: Unreal Trace Server process returned an error (0x%08x)"), UtsRet);
+		return false;
+	}
+	else
+	{
+		if (Command == ELaunchTraceServerCommand::Kill)
+		{
+			UE_LOG(LogCore, Log, TEXT("UTS: Unreal Trace Server was stopped"));
+		}
+		else
+		{
+			UE_LOG(LogCore, Log, TEXT("UTS: Unreal Trace Server launched successfully"));
+		}
+		return true;
+	}
+#endif // !USING_THREAD_SANITISER
+}
+#endif // PLATFORM_LINUX || PLATFORM_MAC
+
+////////////////////////////////////////////////////////////////////////////////
+bool FTraceServerControls::Start()
+{
+	return LaunchTraceServerCommand(ELaunchTraceServerCommand::Fork, true);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+bool FTraceServerControls::Stop()
+{
+	return LaunchTraceServerCommand(ELaunchTraceServerCommand::Kill, false);
+}
+
+#endif // UE_TRACE_SERVER_CONTROLS_ENABLED

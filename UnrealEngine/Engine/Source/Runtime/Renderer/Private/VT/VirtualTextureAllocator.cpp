@@ -627,8 +627,8 @@ void FVirtualTextureAllocator::FreeAddressBlock(uint32 Index, bool bTopLevelBloc
 		const uint32 SortedIndexRangeStart = SortedIndexRangeEnd + 1 - NumSiblings;
 
 		// Remove all but one siblings because...
-		SortedAddresses.RemoveAt(SortedIndexRangeStart, NumSiblings - 1, false);
-		SortedIndices.RemoveAt(SortedIndexRangeStart, NumSiblings - 1, false);
+		SortedAddresses.RemoveAt(SortedIndexRangeStart, NumSiblings - 1, EAllowShrinking::No);
+		SortedIndices.RemoveAt(SortedIndexRangeStart, NumSiblings - 1, EAllowShrinking::No);
 		// ... we replace first sibling with parent
 		SortedIndices[SortedIndexRangeStart] = AddressBlock.Parent;
 		check(SortedAddresses[SortedIndexRangeStart] == AddressBlocks[AddressBlock.Parent].vAddress);

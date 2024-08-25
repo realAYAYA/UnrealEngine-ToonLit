@@ -9,6 +9,7 @@
 #include "AnimBoneCompressionCodec.generated.h"
 
 class UAnimBoneCompressionCodec;
+class UAnimSequence;
 struct FBlendedCurve;
 class FBoneData;
 
@@ -38,6 +39,19 @@ class UAnimBoneCompressionCodec : public UObject
 
 	/** Compresses the curve data from an animation sequence. */
 	ENGINE_API virtual bool Compress(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult) PURE_VIRTUAL(UAnimCurveCompressionCodec::Compress, return false;);
+
+	/**
+	 * Estimates the peak memory usage in bytes needed to compress the given data with this codec.
+	 * This is used to make informed scheduling decisions during asset cooking. Estimates that are too low may cause
+	 * out-of-memory conditions. Estimates that are too high can unnecessarily limit the number of concurrent cook
+	 * processes.
+	 * 
+	 * Values below zero indicate that no estimate has been given and high memory usage is hence assumed.
+	 * 
+	 * @param AnimSequence	The Animation Sequence to estimate the memory usage for.
+	 * @returns Estimated peak memory usage in bytes. Values < 0 indicate maximum memory usage.
+	 */
+	ENGINE_API virtual int64 EstimateCompressionMemoryUsage(const UAnimSequence& AnimSequence) const;
 
 	/*
 	 * Called to generate a unique DDC key for this codec instance and input anim sequence and TargetPlatform

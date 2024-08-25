@@ -32,6 +32,10 @@ public:
 	bool IsAtlasPageResourceAlphaOnly(const int32 InIndex) const { return false; }
 	const FSlateTextureAtlas* GetAtlas(const int32 InIndex) const { return Atlases[InIndex].Get(); }
 
+#if WITH_ATLAS_DEBUGGING
+	FName GetAtlasDebugData(const FAtlasedTextureSlot* InSlot) const { return AtlasDebugData.FindRef(InSlot);  }
+#endif
+
 private:
 	void FlushCache();
 
@@ -73,6 +77,9 @@ private:
 		{}
 	};
 
+#if WITH_ATLAS_DEBUGGING
+	TMap<const FAtlasedTextureSlot*, FName> AtlasDebugData;
+#endif
 	TMap<FVectorCacheKey, TUniquePtr<FSlateShaderResourceProxy>> ResourceMap;
 	TArray<TUniquePtr<FSlateTextureAtlas>> Atlases;
 	TArray<TUniquePtr<FSlateShaderResource>> NonAtlasedTextures;

@@ -180,11 +180,19 @@ void UAnimAssetFindReplaceProcessor::Initialize(TSharedRef<SAnimAssetFindReplace
 	Widget = InWidget;
 }
 
-void UAnimAssetFindReplaceProcessor::RequestUIRefresh()
+void UAnimAssetFindReplaceProcessor::RequestRefreshUI()
 {
 	if(TSharedPtr<SAnimAssetFindReplace> PinnedWidget = Widget.Pin())
 	{
-		PinnedWidget->RequestRefresh();
+		PinnedWidget->RequestRefreshUI();
+	}
+}
+
+void UAnimAssetFindReplaceProcessor::RequestRefreshCachedData()
+{
+	if(TSharedPtr<SAnimAssetFindReplace> PinnedWidget = Widget.Pin())
+	{
+		PinnedWidget->RequestRefreshCachedData();
 	}
 }
 
@@ -267,6 +275,8 @@ void UAnimAssetFindReplaceProcessor_StringBase::ExtendToolbar(FToolMenuSection& 
 			LOCTEXT("MatchWholeWordCheckboxTooltip", "Whether to match the whole word or just part of the word when searching."),
 			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Use"),
 			EUserInterfaceActionType::ToggleButton));
+
+	InSection.AddSeparator(NAME_None);
 
 	InSection.AddDynamicEntry("SkeletonFilter", FNewToolMenuSectionDelegate::CreateLambda([this](FToolMenuSection& InSection)
 	{
@@ -403,18 +413,21 @@ void UAnimAssetFindReplaceProcessor_StringBase::RefreshCachedData()
 
 bool UAnimAssetFindReplaceProcessor_StringBase::NameMatches(FStringView InNameStringView) const
 {
-	if(bFindWholeWord)
+	if(!FindString.IsEmpty())
 	{
-		if(InNameStringView.Compare(FindString, SearchCase) == 0)
+		if(bFindWholeWord)
 		{
-			return true;
+			if(InNameStringView.Compare(FindString, SearchCase) == 0)
+			{
+				return true;
+			}
 		}
-	}
-	else
-	{
-		if(UE::String::FindFirst(InNameStringView, FindString, SearchCase) != INDEX_NONE)
+		else
 		{
-			return true;
+			if(UE::String::FindFirst(InNameStringView, FindString, SearchCase) != INDEX_NONE)
+			{
+				return true;
+			}
 		}
 	}
 

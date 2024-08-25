@@ -4,7 +4,7 @@
 
 #include "DatasmithSceneFactory.h"
 #include "DatasmithMaxTexmapParser.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxSceneExporter.h"
 
 #include "DatasmithMaterialsUtils.h"

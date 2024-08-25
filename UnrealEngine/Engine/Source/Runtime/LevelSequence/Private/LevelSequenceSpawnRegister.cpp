@@ -14,14 +14,13 @@ FLevelSequenceSpawnRegister::FLevelSequenceSpawnRegister()
 	LevelSequenceModule.GenerateObjectSpawners(MovieSceneObjectSpawners);
 }
 
-UObject* FLevelSequenceSpawnRegister::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player)
+UObject* FLevelSequenceSpawnRegister::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
 	for (TSharedRef<IMovieSceneObjectSpawner> MovieSceneObjectSpawner : MovieSceneObjectSpawners)
 	{
 		if (Spawnable.GetObjectTemplate() != nullptr && Spawnable.GetObjectTemplate()->IsA(MovieSceneObjectSpawner->GetSupportedTemplateType()))
 		{
-			
-			UObject* SpawnedObject = MovieSceneObjectSpawner->SpawnObject(Spawnable, TemplateID, Player);
+			UObject* SpawnedObject = MovieSceneObjectSpawner->SpawnObject(Spawnable, TemplateID, SharedPlaybackState);
 			if (SpawnedObject)
 			{
 				return SpawnedObject;
@@ -43,7 +42,10 @@ void FLevelSequenceSpawnRegister::DestroySpawnedObject(UObject& Object)
 		}
 	}
 
-	checkf(false, TEXT("No valid object spawner found to destroy spawned object of type %s"), *Object.GetClass()->GetName());
+	UE_LOG(
+		LogMovieScene, Error,
+		TEXT("No valid object spawner found to destroy spawned object '%s' of type '%s'."),
+		*Object.GetPathName(), *Object.GetClass()->GetName());
 }
 
 #if WITH_EDITOR

@@ -15,18 +15,25 @@ public class AVCodecsCoreRHI : ModuleRules
 			"Engine",
 			"AVCodecsCore",
 			"RHI",
-			"VulkanRHI",
+			"RHICore",
 			"ColorManagement"
 		});
 
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"RenderCore",
 			"Core",
-			"CoreUObject",
+			"CoreUObject"
 		});
 		
-		PrivateDependencyModuleNames.Add("Vulkan");
-		AddEngineThirdPartyPrivateStaticDependencies(Target, "Vulkan");
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Windows) || Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))
+		{
+			PrivateDependencyModuleNames.AddRange(new string[] {
+				"Vulkan",
+				"VulkanRHI"
+			});
+			
+			AddEngineThirdPartyPrivateStaticDependencies(Target, "Vulkan");
+		}
 
 		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Windows))
 		{
@@ -38,6 +45,20 @@ public class AVCodecsCoreRHI : ModuleRules
 			
 			AddEngineThirdPartyPrivateStaticDependencies(Target, "DX11");
 			AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
+		}
+
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
+		{
+			PrivateDependencyModuleNames.AddRange(new string[] {
+        	    "MetalRHI",
+        	});
+	
+        	PublicFrameworks.AddRange(new string[]{
+        	    "AVFoundation",
+        	    "VideoToolbox"
+        	});
+	
+        	AddEngineThirdPartyPrivateStaticDependencies(Target, "MetalCPP");	
 		}
 	}
 }

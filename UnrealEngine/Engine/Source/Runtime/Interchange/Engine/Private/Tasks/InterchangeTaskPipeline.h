@@ -39,7 +39,7 @@ namespace UE
 					return ENamedThreads::GameThread;
 				}
 
-				return PipelineBase.Get()->ScriptedCanExecuteOnAnyThread(EInterchangePipelineTask::PostTranslator) ? ENamedThreads::AnyBackgroundThreadNormalTask : ENamedThreads::GameThread;
+				return PipelineBase.Get()->CanExecuteOnAnyThread(EInterchangePipelineTask::PostTranslator) ? ENamedThreads::AnyBackgroundThreadNormalTask : ENamedThreads::GameThread;
 			}
 
 			static ESubsequentsMode::Type GetSubsequentsMode()
@@ -55,46 +55,53 @@ namespace UE
 			void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent);
 		};
 
-		class FTaskPipelinePostImport
+		//We want to be sure any asset compilation is finish before calling FTaskPostImport, we use a async task to wait until they are done
+		class FTaskWaitAssetCompilation
 		{
 		private:
 			int32 SourceIndex;
-			int32 PipelineIndex;
 			TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> WeakAsyncHelper;
 
 		public:
-			FTaskPipelinePostImport(int32 InSourceIndex, int32 InPipelineIndex, TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> InAsyncHelper)
+			FTaskWaitAssetCompilation(int32 InSourceIndex, TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> InAsyncHelper)
 				: SourceIndex(InSourceIndex)
-				, PipelineIndex(InPipelineIndex)
 				, WeakAsyncHelper(InAsyncHelper)
 			{
 			}
 
 			ENamedThreads::Type GetDesiredThread()
 			{
-				TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
-				//Always use the game thread if there is some error
-				if (!ensure(AsyncHelper.IsValid()))
-				{
-					return ENamedThreads::GameThread;
-				}
-				if (!AsyncHelper->Pipelines.IsValidIndex(PipelineIndex))
-				{
-					return ENamedThreads::GameThread;
-				}
+				return ENamedThreads::AnyBackgroundThreadNormalTask;
+			}
 
-				//Scripted (python) cannot run outside of the game thread, it will lock forever if we do this
-				if (AsyncHelper->Pipelines[PipelineIndex]->IsScripted())
-				{
-					return ENamedThreads::GameThread;
-				}
+			static ESubsequentsMode::Type GetSubsequentsMode()
+			{
+				return ESubsequentsMode::TrackSubsequents;
+			}
 
-				//Ask the pipeline implementation
-				if (AsyncHelper->Pipelines[PipelineIndex]->ScriptedCanExecuteOnAnyThread(EInterchangePipelineTask::PostImport))
-				{
-					return ENamedThreads::AnyBackgroundThreadNormalTask;
-				}
+			FORCEINLINE TStatId GetStatId() const
+			{
+				RETURN_QUICK_DECLARE_CYCLE_STAT(FTaskWaitAssetCompilation, STATGROUP_TaskGraphTasks);
+			}
 
+			void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent);
+		};
+
+		class FTaskPostImport
+		{
+		private:
+			int32 SourceIndex;
+			TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> WeakAsyncHelper;
+
+		public:
+			FTaskPostImport(int32 InSourceIndex, TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> InAsyncHelper)
+				: SourceIndex(InSourceIndex)
+				, WeakAsyncHelper(InAsyncHelper)
+			{
+			}
+
+			ENamedThreads::Type GetDesiredThread()
+			{
 				return ENamedThreads::GameThread;
 			}
 
@@ -105,12 +112,10 @@ namespace UE
 
 			FORCEINLINE TStatId GetStatId() const
 			{
-				RETURN_QUICK_DECLARE_CYCLE_STAT(FTaskPipelinePostImport, STATGROUP_TaskGraphTasks);
+				RETURN_QUICK_DECLARE_CYCLE_STAT(FTaskPostImport, STATGROUP_TaskGraphTasks);
 			}
 
 			void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent);
 		};
-
-
 	} //ns Interchange
 }//ns UE

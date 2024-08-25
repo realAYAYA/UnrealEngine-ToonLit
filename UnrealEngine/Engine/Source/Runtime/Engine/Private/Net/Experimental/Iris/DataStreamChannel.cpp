@@ -18,7 +18,12 @@
 #include "Iris/Serialization/NetSerializationContext.h"
 #include "Iris/Core/IrisProfiler.h"
 #include "Iris/Core/IrisMemoryTracker.h"
+#include "Iris/Core/IrisLog.h"
+
 #include "Net/Core/Trace/NetTrace.h"
+#include "Net/Core/Connection/NetResult.h"
+#include "Net/DataChannel.h"
+
 #include "PacketHandler.h"
 #include "ProfilingDebugging/CsvProfiler.h"
 // IWYU pragma: end_keep
@@ -31,6 +36,13 @@ namespace UE::Net::Private
 		TEXT("net.Iris.SaturateBandwidth"),
 		bIrisSaturateBandwidth,
 		TEXT("Whether to saturate the bandwidth or not. Default is false."
+		));
+
+	static int32 IrisPacketSequenceSafetyMargin = 4;
+	static FAutoConsoleVariableRef CVarIrisPacketSequenceSafetyMargin(
+		TEXT("net.Iris.PacketSequenceSafetyMargin"),
+		IrisPacketSequenceSafetyMargin,
+		TEXT("How many packets to spare before considering packet sequence full. This allows a few non-DataStreamChannel packets to be sent without messing up packet acking."
 		));
 }
 
@@ -119,6 +131,15 @@ void UDataStreamChannel::ReceivedBunch(FInBunch& Bunch)
 	// If receiving was unsuccessful set bunch in error
 	if (SerializationContext.HasErrorOrOverflow())
 	{
+		if (SerializationContext.GetErrorHandleContext().IsValid())
+		{
+			TNetResult<ENetCloseResult> NetResult(ENetCloseResult::IrisNetRefHandleError, FString::Printf(TEXT("IrisNetRefHandleError=%s"), *SerializationContext.GetErrorHandleContext().ToString()));
+			AddToChainResultPtr(Bunch.ExtendedError, MoveTemp(NetResult));
+
+			uint32 ErrorType = 0; //TBD
+			uint64 RawHandleId = SerializationContext.GetErrorHandleContext().GetId();
+			FNetControlMessage<NMT_IrisNetRefHandleError>::Send(Connection, ErrorType, RawHandleId);
+		}
 		Bunch.SetError();
 	}
 
@@ -154,6 +175,39 @@ void UDataStreamChannel::SendOpenBunch()
 #endif // UE_WITH_IRIS
 }
 
+void UDataStreamChannel::PostTickDispatch()
+{
+#if UE_WITH_IRIS
+	using namespace UE::Net;
+
+	if (!Connection->Driver->IsUsingIrisReplication() || !bHandshakeComplete)
+	{
+		return;
+	}
+
+	if (IsPacketWindowFull() || !Connection->HasReceivedClientPacket() || (Connection->Handler != nullptr && !Connection->Handler->IsFullyInitialized()))
+	{
+		return;
+	}
+
+	// We probably want separate bandwidth management for iris as we are not pre-filling sendbuffer before call to NetReady.
+	if (!IsNetReady(UE::Net::Private::bIrisSaturateBandwidth))
+	{
+		return;
+	}
+
+#if UE_NET_IRIS_CSV_STATS
+	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(UDataStreamChannel_PostTickDispatch_Write);
+#endif
+
+	IRIS_PROFILER_SCOPE(UDataStreamChannel_PostTickDispatch);
+	LLM_SCOPE_BYTAG(Iris);
+
+	WriteData(EDataStreamWriteMode::PostTickDispatch);
+
+#endif
+}
+
 void UDataStreamChannel::Tick()
 {
 #if UE_WITH_IRIS
@@ -164,8 +218,15 @@ void UDataStreamChannel::Tick()
 		return;
 	}
 
-	if (!IsNetReady(UE::Net::Private::bIrisSaturateBandwidth) || IsPacketWindowFull() || !Connection->HasReceivedClientPacket() || (Connection->Handler != nullptr && !Connection->Handler->IsFullyInitialized()))
+	if (IsPacketWindowFull() || !Connection->HasReceivedClientPacket() || (Connection->Handler != nullptr && !Connection->Handler->IsFullyInitialized()))
 	{
+		return;
+	}
+
+	// We probably want separate bandwidth management for iris as we are not pre-filling sendbuffer before call to NetReady.
+	if (!IsNetReady(UE::Net::Private::bIrisSaturateBandwidth))
+	{
+		UE_CLOG(bHandshakeComplete, LogIris, Log, TEXT("Disallowed to write first packet in batch, with Iris this is not good!"))
 		return;
 	}
 
@@ -177,16 +238,47 @@ void UDataStreamChannel::Tick()
 	}
 
 #if UE_NET_IRIS_CSV_STATS
-	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(UDataStreamChannel_Tick);
+	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(UDataStreamChannel_Tick_Write);
 #endif
 
 	IRIS_PROFILER_SCOPE(UDataStreamChannel_Tick);
 	LLM_SCOPE_BYTAG(Iris);
 
+	WriteData(EDataStreamWriteMode::Full);
+
+#endif
+}
+
+void UDataStreamChannel::WriteData(UE::Net::EDataStreamWriteMode WriteMode)
+{
+#if UE_WITH_IRIS
+	using namespace UE::Net;
+
+	// Limit the amount of bits to minimum of a bunch and our buffer. NetBitStreamWriter requires the number of bytes to be a multiple of 4.
+	const uint32 MaxBitCount = uint32(Connection->GetMaxSingleBunchSizeBits());
+	const uint32 MaxBytes = FPlatformMath::Min((MaxBitCount/32U)*4U, (uint32)sizeof(BitStreamBuffer));
+	const int64 MaxBunchBits = MaxBytes*8;
+
+	// Try to determine if we have headroom to write more than a single packet if needed.
+	UDataStream::FBeginWriteParameters BeginWriteParams;
+	BeginWriteParams.WriteMode = WriteMode;
+
+	if (WriteMode == EDataStreamWriteMode::Full)
+	{
+		int32 CurrentQueuedBits = Connection->QueuedBits + Connection->SendBuffer.GetNumBits();
+		if (CurrentQueuedBits < 0)
+		{
+			const int32 NumBunchesThatMightBeWritten = (-CurrentQueuedBits) / MaxBunchBits;
+
+			// Indicate that DataStream can request more data
+			BeginWriteParams.bCanWriteMoreData = NumBunchesThatMightBeWritten > 1;
+		}
+	}
+
 	// Currently we want to use a full bunch so we flush if we have to
 	bool bNeedsPreSendFlush = Connection->SendBuffer.GetNumBits() > MAX_PACKET_HEADER_BITS;
 
-	auto WriteDataFunction = [this, &bNeedsPreSendFlush]()
+	auto WriteDataFunction = [this, &bNeedsPreSendFlush, &BeginWriteParams, MaxBunchBits, MaxBytes]()
 	{
 		if (bNeedsPreSendFlush)
 		{
@@ -200,10 +292,6 @@ void UDataStreamChannel::Tick()
 		{
 			Connection->WriteBitsToSendBuffer(nullptr, 0);
 		}
-
-		// Limit the amount of bits to minimum of a bunch and our buffer. NetBitStreamWriter requires the number of bytes to be a multiple of 4.
-		const uint32 MaxBitCount = uint32(Connection->GetMaxSingleBunchSizeBits());
-		const uint32 MaxBytes = FPlatformMath::Min((MaxBitCount/32U)*4U, (uint32)sizeof(BitStreamBuffer));
 
 		FNetBitStreamWriter BitWriter;
 		BitWriter.InitBytes(BitStreamBuffer, MaxBytes);
@@ -222,8 +310,18 @@ void UDataStreamChannel::Tick()
 		UDataStream::EWriteResult WriteResult = DataStreamManager->WriteData(SerializationContext, Record);
 		if (WriteResult == UDataStream::EWriteResult::NoData || SerializationContext.HasError())
 		{
+			IRIS_PROFILER_SCOPE(UDataStreamChannel_NoDataSent);
 			// Do not report the bunch
 			UE_NET_TRACE_DISCARD_BUNCH(Collector);
+
+			if (SerializationContext.HasError())
+			{
+				FString ErrorMsg = NSLOCTEXT("NetworkErrors", "DataStreamChannelWriteData", "DataStreamChannel failed to write data.").ToString();
+				Connection->SendCloseReason(ENetCloseResult::HostClosedConnection);
+				FNetControlMessage<NMT_Failure>::Send(Connection, ErrorMsg);
+				Connection->FlushNet(true);
+				Connection->Close(ENetCloseResult::HostClosedConnection);
+			}
 			
 			return UDataStream::EWriteResult::NoData;
 		}
@@ -233,7 +331,6 @@ void UDataStreamChannel::Tick()
 
 		IRIS_PROFILER_SCOPE(UDataStreamChannel_SendBunchAndFlushNet);
 
-		const int64 MaxBunchBits = MaxBytes*8;
 		FOutBunch OutBunch(MaxBunchBits);
 #if UE_NET_TRACE_ENABLED
 		SetTraceCollector(OutBunch, Collector);
@@ -274,7 +371,7 @@ void UDataStreamChannel::Tick()
 	};
 
 	// Begin the write, if we have nothing todo, just return
-	if (DataStreamManager->BeginWrite() == UDataStream::EWriteResult::NoData)
+	if (DataStreamManager->BeginWrite(BeginWriteParams) == UDataStream::EWriteResult::NoData)
 	{
 		return;
 	}
@@ -287,6 +384,13 @@ void UDataStreamChannel::Tick()
 
 	// call end write to cleanup data initialized in BeginWrite	
 	DataStreamManager->EndWrite();
+
+	// If we did write data and the current WriteMode is PostTickDispatch we flush the packet here.
+	if (WriteMode == EDataStreamWriteMode::PostTickDispatch && bNeedsPreSendFlush)
+	{
+		IRIS_PROFILER_SCOPE(UDataStreamChannel_FlushNet);
+		Connection->FlushNet();	
+	}
 
 #endif // UE_WITH_IRIS
 }
@@ -315,11 +419,11 @@ void UDataStreamChannel::ReceivedAck(int32 PacketId)
 	}
 
 	const FDataStreamChannelRecord& ChannelRecord = WriteRecords.Peek();
-	ensureMsgf((uint32)PacketId == ChannelRecord.PacketId, TEXT("PacketId %d != ChannelRecord.PacketId %d, WriteRecords.Num %d"), PacketId, ChannelRecord.PacketId, (int32)WriteRecords.Count());
-
-	DataStreamManager->ProcessPacketDeliveryStatus(UE::Net::EPacketDeliveryStatus::Delivered, static_cast<const FDataStreamRecord*>(ChannelRecord.Record));
-
-	WriteRecords.Pop();
+	if (ensureMsgf((uint32)PacketId == ChannelRecord.PacketId, TEXT("PacketId %d != ChannelRecord.PacketId %d, WriteRecords.Num %d"), PacketId, ChannelRecord.PacketId, (int32)WriteRecords.Count()))
+	{
+		DataStreamManager->ProcessPacketDeliveryStatus(UE::Net::EPacketDeliveryStatus::Delivered, static_cast<const FDataStreamRecord*>(ChannelRecord.Record));
+		WriteRecords.Pop();
+	}
 
 #endif // UE_WITH_IRIS
 }
@@ -337,22 +441,26 @@ void UDataStreamChannel::ReceivedNak(int32 PacketId)
 
 	const FDataStreamChannelRecord& ChannelRecord = WriteRecords.Peek();
 
-	check((uint32)PacketId == ChannelRecord.PacketId);
-
-	DataStreamManager->ProcessPacketDeliveryStatus(UE::Net::EPacketDeliveryStatus::Lost, static_cast<const FDataStreamRecord*>(ChannelRecord.Record));
-	WriteRecords.Pop();
+	if (ensureMsgf((uint32)PacketId == ChannelRecord.PacketId, TEXT("PacketId %d != ChannelRecord.PacketId %d, WriteRecords.Num %d"), PacketId, ChannelRecord.PacketId, (int32)WriteRecords.Count()))
+	{
+		DataStreamManager->ProcessPacketDeliveryStatus(UE::Net::EPacketDeliveryStatus::Lost, static_cast<const FDataStreamRecord*>(ChannelRecord.Record));
+		WriteRecords.Pop();
+	}
 
 #endif // UE_WITH_IRIS
 }
 
-//
+// Some DataStreams require perfect acking. If the ack sequence window is full we would get NAKs for packets thay may have been received.
 bool UDataStreamChannel::IsPacketWindowFull() const
 {
-#if UE_WITH_IRIS
-	return WriteRecords.Count() == WriteRecords.AllocatedCapacity();
-#else
-	return false;
-#endif // UE_WITH_IRIS
+	const uint32 IrisPacketSequenceSafetyMarginUnsigned = static_cast<uint32>(FPlatformMath::Max(0, UE::Net::Private::IrisPacketSequenceSafetyMargin));
+	if (Connection->IsPacketSequenceWindowFull(IrisPacketSequenceSafetyMarginUnsigned))
+	{
+		UE_LOG(LogIris, Verbose, TEXT("Packet window full."));
+		return true;
+	}
+
+	return WriteRecords.Count() >= WriteRecords.AllocatedCapacity();
 }
 
 void UDataStreamChannel::AddReferencedObjects(UObject* Object, FReferenceCollector& Collector)
@@ -364,4 +472,12 @@ void UDataStreamChannel::AddReferencedObjects(UObject* Object, FReferenceCollect
 	}
 
 	Super::AddReferencedObjects(Channel, Collector);
+}
+
+void UDataStreamChannel::AppendExportBunches(TArray<FOutBunch*>& OutExportBunches)
+{
+}
+
+void UDataStreamChannel::AppendMustBeMappedGuids(FOutBunch* Bunch)
+{
 }

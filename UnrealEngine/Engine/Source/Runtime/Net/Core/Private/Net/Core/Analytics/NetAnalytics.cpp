@@ -142,3 +142,16 @@ void FNetAnalyticsAggregator::SendAnalytics()
 		bSentAnalytics = true;
 	}
 }
+
+void FNetAnalyticsAggregator::SetAnalyticsAppender(FAnalyticsAppender AppenderFunction)
+{
+	AnalyticsAppender = AppenderFunction;
+}
+
+void FNetAnalyticsAggregator::AppendGameInstanceAttributes(TArray<FAnalyticsEventAttribute>& OutAttributes)
+{
+	if (AnalyticsAppender)
+	{
+		AnalyticsAppender(OutAttributes);
+	}
+}

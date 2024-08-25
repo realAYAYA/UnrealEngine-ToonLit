@@ -43,7 +43,6 @@
 #include "DeviceProfiles/DeviceProfile.h"
 #include "Curves/CurveLinearColorAtlas.h"
 #include "TextureEditorSettings.h"
-#include "TextureCompiler.h"
 #include "Widgets/Input/SSlider.h"
 #include "Widgets/Input/STextComboBox.h"
 #include "Widgets/Layout/SSpacer.h"
@@ -134,7 +133,10 @@ FTextureEditorToolkit::~FTextureEditorToolkit( )
 	if (Texture2D && Texture2D->IsCurrentlyVirtualTextured())
 	{
 		FVirtualTexture2DResource* Resource = (FVirtualTexture2DResource*)Texture2D->GetResource();
-		Resource->ReleaseAllocatedVT();
+		if (Resource)
+		{
+			Resource->ReleaseAllocatedVT();
+		}
 	}
 
 	FReimportManager::Instance()->OnPreReimport().RemoveAll(this);
@@ -171,12 +173,14 @@ void FTextureEditorToolkit::RegisterTabSpawners( const TSharedRef<class FTabMana
 	InTabManager->RegisterTabSpawner(ViewportTabId, FOnSpawnTab::CreateSP(this, &FTextureEditorToolkit::HandleTabSpawnerSpawnViewport))
 		.SetDisplayName(LOCTEXT("ViewportTab", "Viewport"))
 		.SetGroup(WorkspaceMenuCategoryRef)
-		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Tabs.Viewports"));
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Tabs.Viewports"))
+		.SetReadOnlyBehavior(ETabReadOnlyBehavior::Custom);
 
 	InTabManager->RegisterTabSpawner(PropertiesTabId, FOnSpawnTab::CreateSP(this, &FTextureEditorToolkit::HandleTabSpawnerSpawnProperties))
 		.SetDisplayName(LOCTEXT("PropertiesTab", "Details") )
 		.SetGroup(WorkspaceMenuCategoryRef)
-		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Tabs.Details"));
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Tabs.Details"))
+		.SetReadOnlyBehavior(ETabReadOnlyBehavior::Custom);
 
 	InTabManager->RegisterTabSpawner(OodleTabId, FOnSpawnTab::CreateSP(this, &FTextureEditorToolkit::HandleTabSpawnerSpawnOodle))
 		.SetDisplayName(LOCTEXT("OodleTab", "Oodle"))
@@ -205,7 +209,7 @@ void FTextureEditorToolkit::InitTextureEditor( const EToolkitMode::Type Mode, co
 
 	// The texture being edited might still be compiling, wait till it finishes then.
 	// FinishCompilation is nice enough to provide a progress for us while we're waiting.
-	FTextureCompilingManager::Get().FinishCompilation({Texture});
+	Texture->BlockOnAnyAsyncBuild();
 
 	// Support undo/redo
 	Texture->SetFlags(RF_Transactional);
@@ -313,6 +317,11 @@ void FTextureEditorToolkit::InitTextureEditor( const EToolkitMode::Type Mode, co
 	ITextureEditorModule* TextureEditorModule = &FModuleManager::LoadModuleChecked<ITextureEditorModule>("TextureEditor");
 	AddMenuExtender(TextureEditorModule->GetMenuExtensibilityManager()->GetAllExtenders(GetToolkitCommands(), GetEditingObjects()));
 
+	TexturePropertiesWidget->SetIsPropertyEditingEnabledDelegate(FIsPropertyEditingEnabled::CreateLambda([this]
+	{
+		return GetOpenMethod() == EAssetOpenMethod::Edit;
+	}));
+	
 	ExtendToolBar();
 
 	RegenerateMenusAndToolbars();
@@ -326,7 +335,17 @@ void FTextureEditorToolkit::InitTextureEditor( const EToolkitMode::Type Mode, co
 	{
 		Texture->CompressFinal = true;
 	}
-	PostTextureRecode();
+
+	// We don't want to post recodes for render targets because that clears them to black and
+	// we don't care about CompressFinal for them anyway as they aren't encoded. While we are
+	// here, don't bother with other dynamic textures as well.
+	ETextureClass TextureClass = Texture->GetTextureClass();
+	if (TextureClass != ETextureClass::RenderTarget &&
+		TextureClass != ETextureClass::Other2DNoSource &&
+		TextureClass != ETextureClass::TwoDDynamic)
+	{
+		PostTextureRecode();
+	}
 
 	// @todo toolkit world centric editing
 	/*if(IsWorldCentricAssetEditor())
@@ -348,6 +367,18 @@ void FTextureEditorToolkit::CalculateTextureDimensions(int32& OutWidth, int32& O
 	OutDepth = static_cast<int32>(Texture->GetSurfaceDepth());
 	OutArraySize = IsArrayTexture() ? (IsCubeTexture() ? Texture->GetSurfaceArraySize() / 6 : Texture->GetSurfaceArraySize()) : 0;
 	const int32 BorderSize = GetDefault<UTextureEditorSettings>()->TextureBorderEnabled ? 1 : 0;
+
+	
+	if (UTexture2D* Texture2D = Cast<UTexture2D>(Texture))
+	{
+		if (UTexture2D* CpuTexture = Texture2D->GetCPUCopyTexture())
+		{
+			OutWidth = CpuTexture->GetSurfaceWidth();
+			OutHeight = CpuTexture->GetSurfaceHeight();
+			OutDepth = 1;
+			OutArraySize = 0;
+		}
+	}
 
 	if (!PreviewEffectiveTextureWidth || !PreviewEffectiveTextureHeight)
 	{
@@ -714,11 +745,25 @@ void FTextureEditorToolkit::PopulateQuickInfo( )
 			} // end if encode speed supported
 		} // end if results metadata valid
 
-		SourceMipsAlphaDetectedText->SetText(FText::Format(NSLOCTEXT("TextureEditor", "QuickInfo_SourceAlphaDetected", "Source Alpha Detected: {0}"),
-			PlatformData->bSourceMipsAlphaDetectedValid ? (PlatformData->bSourceMipsAlphaDetected ? NSLOCTEXT("TextureEditor", "True", "True") : NSLOCTEXT("TextureEditor", "False", "False")) : NSLOCTEXT("TextureEditor", "Unknown", "Unknown")));
+		if (Texture->Source.IsValid() &&
+			Texture->Source.GetLayerColorInfo().Num())
+		{
+			// Make a 1x1 image with our max colors to use for alpha detection.
+			FImageView View(&Texture->Source.GetLayerColorInfo()[0].ColorMin, 1, 1);
+
+			bool bSourceAlphaDetected = FImageCore::DetectAlphaChannel(View);
+			SourceMipsAlphaDetectedText->SetText(FText::Format(NSLOCTEXT("TextureEditor", "QuickInfo_SourceAlphaDetected", "Source Alpha Detected: {0}"),
+				bSourceAlphaDetected ? NSLOCTEXT("TextureEditor", "True", "True") : NSLOCTEXT("TextureEditor", "False", "False")));
+		}
+		else
+		{
+			SourceMipsAlphaDetectedText->SetText(FText::Format(NSLOCTEXT("TextureEditor", "QuickInfo_SourceAlphaDetected", "Source Alpha Detected: {0}"),
+				NSLOCTEXT("TextureEditor", "Unknown", "Unknown")));
+		}
 	} // end if valid platform data
 
 	UTexture2D* Texture2D = Cast<UTexture2D>(Texture);
+
 
 	const bool bIsVolume = IsVolumeTexture();
 	const bool bIsArray = IsArrayTexture();
@@ -730,9 +775,14 @@ void FTextureEditorToolkit::PopulateQuickInfo( )
 	const int32 NumSurfaces = Texture->GetSurfaceArraySize();
 	const int32 ArraySize = bIsArray ? (bIsCube ? NumSurfaces / 6 : NumSurfaces) : 0;
 
+	// this is the size of just one block :
+	//	use GetLogicalSize for all blocks
 	const int32 ImportedWidth = Texture->Source.IsValid() ? Texture->Source.GetSizeX() : SurfaceWidth;
 	const int32 ImportedHeight = Texture->Source.IsValid() ? Texture->Source.GetSizeY() : SurfaceHeight;
 	const int32 ImportedDepth = Texture->Source.IsValid() ? (bIsVolume ? Texture->Source.GetNumSlices() : 0) : SurfaceDepth;
+
+	const int32 ImportedNumBlocks = Texture->Source.GetNumBlocks();
+	const FIntPoint ImportedSizeInBlocks = Texture->Source.GetSizeInBlocks();
 
 	const FStreamableRenderResourceState SRRState = Texture->GetStreamableResourceState();
 	const int32 ActualMipBias = SRRState.IsValid() ? (SRRState.ResidentFirstLODIdx() + SRRState.AssetLODBias) : Texture->GetCachedLODBias();
@@ -804,9 +854,28 @@ void FTextureEditorToolkit::PopulateQuickInfo( )
 	}
 	else
 	{
-	    ImportedText->SetText(FText::Format( NSLOCTEXT("TextureEditor", "QuickInfo_Imported_2x", "Imported: {0}x{1}{2}"), FText::AsNumber(ImportedWidth, &FormatOptions), FText::AsNumber(ImportedHeight, &FormatOptions), ImportedCubemapInfo));
+		if ( ImportedNumBlocks > 1 )
+		{
+		    ImportedText->SetText(FText::Format( NSLOCTEXT("TextureEditor", "QuickInfo_Imported_Blocks", "Imported: {0}x{1}x{2}x{3}"), 
+				FText::AsNumber(ImportedWidth, &FormatOptions), FText::AsNumber(ImportedHeight, &FormatOptions), 
+				FText::AsNumber(ImportedSizeInBlocks.X, &FormatOptions), FText::AsNumber(ImportedSizeInBlocks.Y, &FormatOptions)));
+		}
+		else
+		{
+		    ImportedText->SetText(FText::Format( NSLOCTEXT("TextureEditor", "QuickInfo_Imported_2x", "Imported: {0}x{1}{2}"), FText::AsNumber(ImportedWidth, &FormatOptions), FText::AsNumber(ImportedHeight, &FormatOptions), ImportedCubemapInfo));
+		}
+
 		CurrentText->SetText(FText::Format( NSLOCTEXT("TextureEditor", "QuickInfo_Displayed_2x", "Displayed: {0}x{1}{2}"), FText::AsNumber(PreviewEffectiveTextureWidth, &FormatOptions ), FText::AsNumber(PreviewEffectiveTextureHeight, &FormatOptions), DisplayedCubemapInfo));
 		MaxInGameText->SetText(FText::Format( NSLOCTEXT("TextureEditor", "QuickInfo_MaxInGame_2x", "Max In-Game: {0}x{1}{2}"), FText::AsNumber(MaxInGameWidth, &FormatOptions), FText::AsNumber(MaxInGameHeight, &FormatOptions), InGameCubemapInfo));
+	}
+
+	if (Texture2D)
+	{
+		if (UTexture2D* CpuTexture = Texture2D->GetCPUCopyTexture(); CpuTexture)
+		{
+			PreviewEffectiveTextureWidth = CpuTexture->GetSurfaceWidth();
+			PreviewEffectiveTextureHeight = CpuTexture->GetSurfaceHeight();
+		}
 	}
 
 	SizeText->SetText(FText::Format(NSLOCTEXT("TextureEditor", "QuickInfo_ResourceSize", "Resource Size: {0} KB"), FText::AsNumber(FMath::DivideAndRoundNearest(ResourceSize, (int64)1024), &FormatOptions)));
@@ -824,6 +893,8 @@ void FTextureEditorToolkit::PopulateQuickInfo( )
 		FormatText->SetText(FText::Format(NSLOCTEXT("TextureEditor", "QuickInfo_Format", "Format: {0}"), FText::FromString(GPixelFormats[(uint8)TextureFormat].Name)));
 	}
 
+	// This "Has Alpha Channel" is whether the GPU format can represent alpha in the format (eg. is it DXT1 vs DXT5)
+	//	it does not tell you if the texture actually has non-opaque alpha
 	EPixelFormatChannelFlags ValidTextureChannels = GetPixelFormatValidChannels(TextureFormat);
 	HasAlphaChannelText->SetText(FText::Format(NSLOCTEXT("TextureEditor", "QuickInfo_HasAlphaChannel", "Has Alpha Channel: {0}"),
 		EnumHasAnyFlags(ValidTextureChannels, EPixelFormatChannelFlags::A) ? NSLOCTEXT("TextureEditor", "True", "True") : NSLOCTEXT("TextureEditor", "False", "False")));
@@ -1804,8 +1875,12 @@ void FTextureEditorToolkit::ExtendToolBar()
 
 	AddToolbarExtender(ToolbarExtender);
 
-	ITextureEditorModule* TextureEditorModule = &FModuleManager::LoadModuleChecked<ITextureEditorModule>("TextureEditor");
-	AddToolbarExtender(TextureEditorModule->GetToolBarExtensibilityManager()->GetAllExtenders(GetToolkitCommands(), GetEditingObjects()));
+	// Extensions are currently disabled in read-only mode, if they are desired to be added in the future we should move this code to the individual extensions
+	if(GetOpenMethod() == EAssetOpenMethod::Edit)
+	{
+		ITextureEditorModule* TextureEditorModule = &FModuleManager::LoadModuleChecked<ITextureEditorModule>("TextureEditor");
+		AddToolbarExtender(TextureEditorModule->GetToolBarExtensibilityManager()->GetAllExtenders(GetToolkitCommands(), GetEditingObjects()));
+	}
 }
 
 void FTextureEditorToolkit::FillToolbar(FToolBarBuilder& ToolbarBuilder)
@@ -1823,12 +1898,17 @@ void FTextureEditorToolkit::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 	UCurveLinearColorAtlas* Atlas = Cast<UCurveLinearColorAtlas>(GetTexture());
 	if (!Atlas)
 	{
-		ToolbarBuilder.BeginSection("TextureMisc");
+		// These actions don't make sense in read-only mode
+		if(GetOpenMethod() == EAssetOpenMethod::Edit)
 		{
-			ToolbarBuilder.AddToolBarButton(FTextureEditorCommands::Get().CompressNow);
-			ToolbarBuilder.AddToolBarButton(FTextureEditorCommands::Get().Reimport);
+			ToolbarBuilder.BeginSection("TextureMisc");
+			{
+				ToolbarBuilder.AddToolBarButton(FTextureEditorCommands::Get().CompressNow);
+				ToolbarBuilder.AddToolBarButton(FTextureEditorCommands::Get().Reimport);
+			}
+			ToolbarBuilder.EndSection();
 		}
-		ToolbarBuilder.EndSection();
+		
 
 		ToolbarBuilder.BeginSection("Channels");
 		{
@@ -2480,7 +2560,7 @@ void FTextureEditorToolkit::HandleReimportManagerPreReimport( UObject* InObject 
 
 void FTextureEditorToolkit::HandleAssetPostImport(UFactory* InFactory, UObject* InObject)
 {
-	if (Cast<UTexture>(InObject) != nullptr && InObject == Texture)
+	if (Cast<UTexture>(InObject) != nullptr && InObject == Texture && TexturePropertiesWidget != nullptr )
 	{
 		// Refresh this object within the details panel
 		TexturePropertiesWidget->SetObject(InObject);

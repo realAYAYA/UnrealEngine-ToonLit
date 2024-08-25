@@ -4,6 +4,7 @@
 
 #include "MassLODLogic.h"
 #include "MassLODUtils.h"
+#include "MassCommonUtils.h"
 #include "MassCommandBuffer.h"
 
 /**
@@ -14,6 +15,9 @@ template <typename TVariableTickChunkFragment, typename FLODLogic = FLODDefaultL
 struct TMassLODTickRateController : public FMassLODBaseLogic
 {
 public:
+	TMassLODTickRateController()
+		: FMassLODBaseLogic(/*bShouldBuildFrustumData=*/false)
+	{}
 
 	/**
 	 * Initializes the LOD trick rate controller, needed to be called once at initialization time (Only when FLODLogic::bDoVariableTickRate is enabled)
@@ -122,12 +126,14 @@ bool TMassLODTickRateController<TVariableTickChunkFragment, FLODLogic>::UpdateTi
 		const float TickRate = TickRates[ChunkLOD];
 		if (bFirstUpdate)
 		{
-			TimeUntilNextTick = FMath::RandRange(0.0f, TickRate);
+			// @todo: Add some randomization for deterministic runs too. The randomization is used to distribute the infrequent ticks evenly on different frames.
+			TimeUntilNextTick = UE::Mass::Utils::IsDeterministic() ? TickRate * 0.5f : FMath::RandRange(0.0f, TickRate);
 		}
 		else if(bWasChunkTicked)
 		{
 			// Reset DeltaTime if we ticked last frame and start tracking chunk modifications
-			TimeUntilNextTick = TickRate * (1.0f + FMath::RandRange(-0.1f, 0.1f));
+			// @todo: Add some randomization for deterministic runs too. The randomization is used to distribute the infrequent ticks evenly on different frames.
+			TimeUntilNextTick = UE::Mass::Utils::IsDeterministic() ? TickRate : (TickRate * (1.0f + FMath::RandRange(-0.1f, 0.1f)));
 			NewChunkSerialModificationNumber = ChunkSerialModificationNumber;
 		}
 		else

@@ -39,5 +39,4 @@ private:
 
 	ICompressedAudioInfo* GetNewDecompressorForFile(const FString& InPath);
 
-	FString GetExtensionForFile(const FString& InPath);
 };

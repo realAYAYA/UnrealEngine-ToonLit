@@ -1,0 +1,91 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Public/Platform.ush"
+
+#define TILE_SIZE 8
+#define MAX_SAMPLES 127
+#define HALF_MAX_SAMPLES MAX_SAMPLES / 2
+
+DECLARE_SCALAR_ARRAY(int, SampleCount, 4);
+float4 WeightsAndOffsets[4 * HALF_MAX_SAMPLES];
+float4 BufferSizeAndDirection[4];
+
+uint2 InputDimensions;
+Texture2D InputTexture;
+SamplerState InputSampler;
+RWTexture2D<float4> OutputTexture;
+
+static const float4 ChannelMasks[4] = { float4(1,0,0,1), float4(0,1,0,1), float4(0,0,1,1), float4(0,0,0,1) };
+
+float4 GetSample(int ChannelIdx, float Weight, float Offset, float2 UV)
+{
+	const float2 MinUV = float2(0, 0);
+	const float2 MaxUV = float2(1.0, 1.0);
+	const float2 Direction = BufferSizeAndDirection[ChannelIdx].zw;
+	const float2 BufferSize = BufferSizeAndDirection[ChannelIdx].xy;
+	UV *= BufferSize;
+	
+	const float2 UVOffset = float2(Offset * BufferSize.x * Direction.x, Offset * BufferSize.y * Direction.y);
+	float4 ChannelMask = ChannelMasks[ChannelIdx];
+
+	return (InputTexture.SampleLevel(InputSampler, clamp(UV + UVOffset, MinUV, MaxUV), 0) * Weight
+		 + InputTexture.SampleLevel(InputSampler, clamp(UV - UVOffset, MinUV, MaxUV), 0) * Weight);
+}
+
+// Loosely based on Engine/Shaders/Private/SlatePostProcessPixelShader.usf
+[numthreads(TILE_SIZE, TILE_SIZE, 1)]
+void MainCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 GroupId : SV_GroupID)
+{
+	uint2 PixelCoord = DispatchThreadId.xy;
+
+	float X = (float)PixelCoord.x + 0.5;
+	float Y = (float)PixelCoord.y + 0.5;
+	float2 UV = float2(X, Y);
+
+	const float2 MinUV = float2(0, 0);
+	const float2 MaxUV = float2(1.0, 1.0);
+
+	float4 Color = InputTexture.SampleLevel(InputSampler, clamp(UV, MinUV, MaxUV), 0);
+
+    // Perform on each of R,G,B,A
+    [unroll]
+    for (int ChannelIdx = 0; ChannelIdx < 4; ++ChannelIdx)
+    {
+    	int WeightsAndOffsetsIdx = ChannelIdx * HALF_MAX_SAMPLES;
+    	
+    	// First offset is in zw
+	    {
+	    	const float Weight = WeightsAndOffsets[WeightsAndOffsetsIdx].z;
+	    	const float Offset = WeightsAndOffsets[WeightsAndOffsetsIdx].w;
+
+	    	Color += GetSample(ChannelIdx, Weight, Offset, UV);
+	    }
+
+    	int ChannelSampleCount = GET_SCALAR_ARRAY_ELEMENT(SampleCount, ChannelIdx);
+    	for (int SampleIdx = 2; SampleIdx < ChannelSampleCount; SampleIdx += 2)
+    	{
+    		int ParamIdx = SampleIdx / 2;
+    		{
+    			const float Weight = WeightsAndOffsets[WeightsAndOffsetsIdx + ParamIdx].x;
+    			const float Offset = WeightsAndOffsets[WeightsAndOffsetsIdx + ParamIdx].y;
+
+    			Color += GetSample(ChannelIdx, Weight, Offset, UV);
+    		}
+
+    		{
+    			const float Weight = WeightsAndOffsets[WeightsAndOffsetsIdx + ParamIdx].z;
+    			const float Offset = WeightsAndOffsets[WeightsAndOffsetsIdx + ParamIdx].w;
+
+    			Color += GetSample(ChannelIdx, Weight, Offset, UV);
+    		}
+    	}
+    }
+
+	Color.a = 1.0;
+
+	OutputTexture[PixelCoord] = Color;
+}

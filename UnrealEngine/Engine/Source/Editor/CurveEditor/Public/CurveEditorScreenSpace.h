@@ -19,8 +19,8 @@ struct FCurveEditorScreenSpaceH
 	/**
 	 * Construction from a physical size, and input/output range
 	 */
-	FCurveEditorScreenSpaceH(float InPixelWidth, double InInputMin, double InInputMax)
-		: PixelWidth(FMath::Max(InPixelWidth, 1.f))
+	FCurveEditorScreenSpaceH(double InPixelWidth, double InInputMin, double InInputMax)
+		: PixelWidth(FMath::Max(InPixelWidth, 1.0))
 		, InputMin(InInputMin), InputMax(InInputMax)
 	{
 		if (InputMax <= InputMin)
@@ -32,13 +32,13 @@ struct FCurveEditorScreenSpaceH
 public:
 
 	/** Convert a horizontal screen position in slate units to a value in seconds */
-	FORCEINLINE double ScreenToSeconds(float ScreenPosition) const
+	FORCEINLINE double ScreenToSeconds(double ScreenPosition) const
 	{
 		return InputMin + ScreenPosition / PixelsPerInput();
 	}
 
 	/** Convert a value in seconds to a horizontal screen position in slate units */
-	FORCEINLINE float SecondsToScreen(double InSeconds) const
+	FORCEINLINE double SecondsToScreen(double InSeconds) const
 	{
 		return (InSeconds - InputMin) * PixelsPerInput();
 	}
@@ -46,9 +46,9 @@ public:
 public:
 
 	/** Retrieve the number of slate units per input value */
-	FORCEINLINE float PixelsPerInput() const
+	FORCEINLINE double PixelsPerInput() const
 	{
-		float InputDiff = FMath::Max(InputMax - InputMin, 1e-10);
+		double InputDiff = FMath::Max(InputMax - InputMin, 1e-10);
 		return PixelWidth / InputDiff;
 	}
 
@@ -59,7 +59,7 @@ public:
 	/** Get the maximum input value displayed on the screen */
 	FORCEINLINE double GetInputMax() const { return InputMax; }
 	/** Get the physical width of the screen */
-	FORCEINLINE float GetPhysicalWidth() const { return PixelWidth; }
+	FORCEINLINE double GetPhysicalWidth() const { return PixelWidth; }
 
 public:
 
@@ -70,7 +70,7 @@ public:
 	{
 		const FVector2D& T = CurveTransform.GetTranslation();
 
-		float m00, m01, m10, m11;
+		double m00, m01, m10, m11;
 		CurveTransform.GetMatrix().GetMatrix(m00, m01, m10, m11);
 
 		double NewInputMin  = InputMin * m00 + T.X;
@@ -81,7 +81,7 @@ public:
 
 private:
 
-	float PixelWidth;
+	double PixelWidth;
 	double InputMin, InputMax;
 };
 
@@ -94,8 +94,8 @@ struct FCurveEditorScreenSpaceV
 	/**
 	 * Construction from a physical size, and input/output range
 	 */
-	FCurveEditorScreenSpaceV(float InPixelHeight, double InOutputMin, double InOutputMax)
-		: PixelHeight(FMath::Max(InPixelHeight, 1.f))
+	FCurveEditorScreenSpaceV(double InPixelHeight, double InOutputMin, double InOutputMax)
+		: PixelHeight(FMath::Max(InPixelHeight, 1.0))
 		, OutputMin(InOutputMin), OutputMax(InOutputMax)
 	{
 		if (!ensure(OutputMax > OutputMin))
@@ -107,13 +107,13 @@ struct FCurveEditorScreenSpaceV
 public:
 
 	/** Convert a vertical screen position in slate units to a value */
-	FORCEINLINE double ScreenToValue(float ScreenPosition) const
+	FORCEINLINE double ScreenToValue(double ScreenPosition) const
 	{
 		return OutputMin + (PixelHeight - ScreenPosition) / PixelsPerOutput();
 	}
 
 	/** Convert a value to a vertical screen position in slate units */
-	float ValueToScreen(double InValue) const
+	double ValueToScreen(double InValue) const
 	{
 		return (PixelHeight - (InValue - OutputMin) * PixelsPerOutput());
 	}
@@ -121,9 +121,9 @@ public:
 public:
 
 	/** Retrieve the number of slate units per output value */
-	FORCEINLINE float PixelsPerOutput() const
+	FORCEINLINE double PixelsPerOutput() const
 	{
-		float OutputDiff = FMath::Max(OutputMax - OutputMin, 1e-10);
+		double OutputDiff = FMath::Max(OutputMax - OutputMin, 1e-10);
 		return PixelHeight / OutputDiff;
 	}
 
@@ -134,7 +134,7 @@ public:
 	/** Get the maximum output value displayed on the screen */
 	FORCEINLINE double GetOutputMax() const { return OutputMax; }
 	/** Get the physical height of the screen */
-	FORCEINLINE float GetPhysicalHeight() const { return PixelHeight; }
+	FORCEINLINE double GetPhysicalHeight() const { return PixelHeight; }
 
 public:
 
@@ -145,7 +145,7 @@ public:
 	{
 		const FVector2D& T = CurveTransform.GetTranslation();
 
-		float m00, m01, m10, m11;
+		double m00, m01, m10, m11;
 		CurveTransform.GetMatrix().GetMatrix(m00, m01, m10, m11);
 
 		double NewOutputMin = OutputMin * m11 + T.Y;
@@ -156,7 +156,7 @@ public:
 
 private:
 
-	float PixelHeight;
+	double PixelHeight;
 	double OutputMin, OutputMax;
 };
 

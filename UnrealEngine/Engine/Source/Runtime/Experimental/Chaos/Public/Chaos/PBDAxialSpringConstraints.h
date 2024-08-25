@@ -16,6 +16,22 @@ class FPBDAxialSpringConstraints : public FPBDAxialSpringConstraintsBase
 
 public:
 	FPBDAxialSpringConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVec3<int32>>& InConstraints,
+		const TConstArrayView<FRealSingle>& StiffnessMultipliers,
+		const FSolverVec2& InStiffness,
+		bool bTrimKinematicConstraints)
+		: Base(
+			Particles,
+			InConstraints,
+			StiffnessMultipliers,
+			InStiffness,
+			bTrimKinematicConstraints)
+	{
+		InitColor(Particles);
+	}
+
+	FPBDAxialSpringConstraints(
 		const FSolverParticles& Particles,
 		int32 InParticleOffset,
 		int32 InParticleCount,
@@ -37,7 +53,8 @@ public:
 
 	virtual ~FPBDAxialSpringConstraints() override {}
 
-	CHAOS_API void Apply(FSolverParticles& InParticles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void Apply(SolverParticlesOrRange& InParticles, const FSolverReal Dt) const;
 
 protected:
 	using Base::Constraints;
@@ -46,8 +63,10 @@ protected:
 	using Base::ParticleCount;
 
 private:
-	CHAOS_API void InitColor(const FSolverParticles& InParticles);
-	CHAOS_API void ApplyHelper(FSolverParticles& InParticles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void InitColor(const SolverParticlesOrRange& InParticles);
+	template<typename SolverParticlesOrRange>
+	void ApplyHelper(SolverParticlesOrRange& InParticles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const;
 
 	TArray<int32> ConstraintsPerColorStartIndex; // Constraints are ordered so each batch is contiguous. This is ColorNum + 1 length so it can be used as start and end.
 };
@@ -59,6 +78,21 @@ public:
 	{
 		return IsAreaSpringStiffnessEnabled(PropertyCollection, false);
 	}
+
+	FPBDAreaSpringConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVec3<int32>>& InConstraints,
+		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+		const FCollectionPropertyConstFacade& PropertyCollection,
+		bool bTrimKinematicConstraints)
+		: FPBDAxialSpringConstraints(
+			Particles,
+			InConstraints,
+			WeightMaps.FindRef(GetAreaSpringStiffnessString(PropertyCollection, AreaSpringStiffnessName.ToString())),
+			FSolverVec2(GetWeightedFloatAreaSpringStiffness(PropertyCollection, 1.f)),
+			bTrimKinematicConstraints)
+		, AreaSpringStiffnessIndex(PropertyCollection)
+	{}
 
 	FPBDAreaSpringConstraints(
 		const FSolverParticles& Particles,

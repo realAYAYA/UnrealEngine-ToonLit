@@ -233,3 +233,12 @@ FString UBTTask_RotateToFaceBBEntry::GetStaticDescription() const
 	return FString::Printf(TEXT("%s: %s"), *Super::GetStaticDescription(), *KeyDesc);
 }
 
+void UBTTask_RotateToFaceBBEntry::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTFocusMemory>(NodeMemory, InitType);
+}
+
+void UBTTask_RotateToFaceBBEntry::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTFocusMemory>(NodeMemory, CleanupType);
+}

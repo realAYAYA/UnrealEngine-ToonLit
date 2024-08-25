@@ -23,6 +23,9 @@
 #if !defined(PLATFORM_TVOS)
 	#define PLATFORM_TVOS 0
 #endif
+#if !defined(PLATFORM_VISIONOS)
+	#define PLATFORM_VISIONOS 0
+#endif
 #if !defined(PLATFORM_ANDROID)
 	#define PLATFORM_ANDROID 0
 #endif
@@ -105,14 +108,18 @@
 #endif // defined(__clang__)
 #endif
 
-#if PLATFORM_WINDOWS
-	#include "Windows/WindowsPlatformCodeAnalysis.h"
-#elif PLATFORM_COMPILER_CLANG
+#if PLATFORM_COMPILER_CLANG
 	#include "Clang/ClangPlatformCodeAnalysis.h"
+#elif PLATFORM_WINDOWS
+	#include "Windows/WindowsPlatformCodeAnalysis.h"
 #endif
 
 #ifndef USING_ADDRESS_SANITISER
 	#define USING_ADDRESS_SANITISER 0
+#endif
+
+#ifndef USING_HW_ADDRESS_SANITISER
+	#define USING_HW_ADDRESS_SANITISER 0
 #endif
 
 #ifndef PLATFORM_HAS_ASAN_INCLUDE
@@ -230,22 +237,14 @@
 #ifndef PLATFORM_COMPILER_HAS_TCHAR_WMAIN
 	#define PLATFORM_COMPILER_HAS_TCHAR_WMAIN 0
 #endif
-#ifndef PLATFORM_COMPILER_HAS_DECLTYPE_AUTO
-	#define PLATFORM_COMPILER_HAS_DECLTYPE_AUTO 1
-#endif
-#ifdef _MSC_VER
-	#define PLATFORM_COMPILER_HAS_IF_CONSTEXPR 1
-	#ifndef __clang__
-		#pragma deprecated("PLATFORM_COMPILER_HAS_IF_CONSTEXPR")
-	#endif
-#else
-	#define PLATFORM_COMPILER_HAS_IF_CONSTEXPR 1 UE_DEPRECATED_MACRO(5.1, "PLATFORM_COMPILER_HAS_IF_CONSTEXPR has been deprecated and should be replaced with 1.")
-#endif
-#ifndef PLATFORM_COMPILER_HAS_FOLD_EXPRESSIONS
-	#define PLATFORM_COMPILER_HAS_FOLD_EXPRESSIONS 0
-#endif
+#define PLATFORM_COMPILER_HAS_DECLTYPE_AUTO 1 UE_DEPRECATED_MACRO(5.4, "PLATFORM_COMPILER_HAS_DECLTYPE_AUTO has been deprecated and should be replaced with 1.")
+#define PLATFORM_COMPILER_HAS_FOLD_EXPRESSIONS 1 UE_DEPRECATED_MACRO(5.4, "PLATFORM_COMPILER_HAS_FOLD_EXPRESSIONS has been deprecated and should be replaced with 1.")
 #ifndef PLATFORM_COMPILER_HAS_GENERATED_COMPARISON_OPERATORS
 	#define PLATFORM_COMPILER_HAS_GENERATED_COMPARISON_OPERATORS (__cplusplus >= 202002L)
+#endif
+// Feature test macro for constexpr __builtin_FILE() and __builtin_LINE()
+#ifndef PLATFORM_COMPILER_SUPPORTS_CONSTEXPR_BUILTIN_FILE_AND_LINE
+	#define PLATFORM_COMPILER_SUPPORTS_CONSTEXPR_BUILTIN_FILE_AND_LINE 1
 #endif
 #ifndef PLATFORM_TCHAR_IS_4_BYTES
 	#define PLATFORM_TCHAR_IS_4_BYTES			0
@@ -282,6 +281,13 @@
 #endif
 #ifndef PLATFORM_USE_PTHREADS
 	#define PLATFORM_USE_PTHREADS				1
+#endif
+#ifndef PLATFORM_HAS_MULTITHREADED_PREMAIN
+	/**
+	 * If true, the platform uses multiple threads in c++ static initialization before main is called, and systems
+	 * accessible from multiple threads during premain static initialization must handle multithreaded synchronization.
+	 */
+	#define PLATFORM_HAS_MULTITHREADED_PREMAIN 0
 #endif
 #ifndef PLATFORM_MAX_FILEPATH_LENGTH_DEPRECATED
 	#define PLATFORM_MAX_FILEPATH_LENGTH_DEPRECATED		128			// Deprecated - prefer FPlatformMisc::GetMaxPathLength() instead.
@@ -535,10 +541,6 @@
 	#define	PLATFORM_USE_SHOWFLAGS_ALWAYS_BITFIELD				1
 #endif
 
-#ifndef PLATFORM_USE_CACHED_SLACK_MEMORY_IN_MEMORY_STATS
-	#define	PLATFORM_USE_CACHED_SLACK_MEMORY_IN_MEMORY_STATS	0
-#endif
-
 #ifndef PLATFORM_SUPPORTS_LANDSCAPE_VISUAL_MESH_LOD_STREAMING
 	#define PLATFORM_SUPPORTS_LANDSCAPE_VISUAL_MESH_LOD_STREAMING 0 UE_DEPRECATED_MACRO(5.1, "PLATFORM_SUPPORTS_LANDSCAPE_VISUAL_MESH_LOD_STREAMING has been deprecated and should be replaced with 0.")
 #endif
@@ -579,6 +581,10 @@
 	#define PLATFORM_USE_FALLBACK_PSO 0
 #endif
 
+#ifndef PLATFORM_SUPPORTS_PSO_PRECACHING
+	#define PLATFORM_SUPPORTS_PSO_PRECACHING (!UE_SERVER)
+#endif
+
 #ifndef PLATFORM_USES_UNFAIR_LOCKS
 	#define PLATFORM_USES_UNFAIR_LOCKS 0
 #endif
@@ -593,6 +599,18 @@
 
 #ifndef PLATFORM_CONSOLE_DYNAMIC_LINK
 	#define PLATFORM_CONSOLE_DYNAMIC_LINK 0
+#endif
+
+#ifndef PLATFORM_MAX_UNIFORM_BUFFER_RANGE
+	#define PLATFORM_MAX_UNIFORM_BUFFER_RANGE (16u*1024u)
+#endif
+
+#ifndef PLATFORM_IMPLEMENTS_BATCH_FILE_DELETE
+	#define PLATFORM_IMPLEMENTS_BATCH_FILE_DELETE 0
+#endif
+
+#ifndef PLATFORM_WRITES_ARE_SLOW
+	#define PLATFORM_WRITES_ARE_SLOW 0
 #endif
 
 // deprecated, do not use
@@ -633,13 +651,22 @@
 #endif
 
 /* Use before a function declaration to warn that callers should not ignore the return value */
-#if !defined(UE_NODISCARD) && defined(__has_cpp_attribute)
+#ifdef __has_cpp_attribute
 	#if __has_cpp_attribute(nodiscard)
-		#define UE_NODISCARD [[nodiscard]]
+		// Define this in when all UE_NODISCARD usage has been replaced and we are ready to deprecate
+		#ifdef _MSC_VER
+			#define UE_NODISCARD [[nodiscard]]
+			#ifndef __clang__
+				#pragma deprecated("UE_NODISCARD")
+			#endif
+		#else
+			#define UE_NODISCARD [[nodiscard]] UE_DEPRECATED_MACRO(5.4, "UE_NODISCARD has been deprecated and should be replaced with [[nodiscard]].")
+		#endif
+	#else
+		#error "Compiler is expected to support [[nodiscard]]"
 	#endif
-#endif
-#ifndef UE_NODISCARD
-	#define UE_NODISCARD
+#else
+	#error "Compiler is expected to support [[nodiscard]]"
 #endif
 
 // Use before a constructor declaration to warn when an unnamed temporary object is ignored, e.g. FScopeLock(CS); instead of FScopeLock Lock(CS);
@@ -657,13 +684,21 @@
 #endif
 
 /* Use before a function declaration to indicate that the function never returns */
-#if !defined(UE_NORETURN) && defined(__has_cpp_attribute)
+#ifdef __has_cpp_attribute
 	#if __has_cpp_attribute(noreturn)
-		#define UE_NORETURN [[noreturn]]
+		#ifdef _MSC_VER
+			#define UE_NORETURN [[noreturn]]
+			#ifndef __clang__
+				#pragma deprecated("UE_NORETURN")
+			#endif
+		#else
+			#define UE_NORETURN [[noreturn]] UE_DEPRECATED_MACRO(5.4, "UE_NORETURN has been deprecated and should be replaced with [[noreturn]].")
+		#endif
+	#else
+		#error "Compiler is expected to support [[noreturn]]"
 	#endif
-#endif
-#ifndef UE_NORETURN
-	#define UE_NORETURN
+#else
+	#error "Compiler is expected to support [[noreturn]]"
 #endif
 
 /* Macro wrapper for the consteval keyword which isn't yet present on all compilers - constexpr
@@ -697,6 +732,12 @@
 	#define UE_LIFETIMEBOUND
 #endif
 
+/* Annotate functions that allocate new memory to ensure the compiler can optimize them accordingly.
+   The arguments to this macro specify the 1-based arguments of the annotated function that specify the size of the allocation. */
+#ifndef UE_ALLOCATION_FUNCTION
+	#define UE_ALLOCATION_FUNCTION(...)
+#endif
+
 /** Promise expression is true. Compiler can optimize accordingly with undefined behavior if wrong. Static analyzers understand this.  */
 #ifndef UE_ASSUME
 	#if defined(__clang__)
@@ -706,6 +747,11 @@
 	#else
 		#define UE_ASSUME(x)
 	#endif
+#endif
+
+/** Improves the debugging of functions which act as pure reference casts, eliding the call and doing a direct cast from the argument to the return type */
+#ifndef UE_INTRINSIC_CAST
+	#define UE_INTRINSIC_CAST
 #endif
 
 /** Branch prediction hints */
@@ -759,9 +805,7 @@
 #ifndef ABSTRACT
 	#define ABSTRACT
 #endif
-#ifndef CONSTEXPR
-	#define CONSTEXPR constexpr
-#endif
+#define CONSTEXPR constexpr UE_DEPRECATED_MACRO(5.4, "CONSTEXPR has been deprecated and should be replaced with constexpr.")
 #ifndef IN
 	#define IN
 #endif
@@ -1122,10 +1166,44 @@ namespace UE::Core::Private
 	{
 		return (UTF8CHAR)Ch;
 	}
+
+	template <typename CharType>
+	void CharTextStaticAssert()
+	{
+		static_assert(sizeof(CharType) == 0, "Unsupported char type passed to CHARTEXT");
+	}
 }
 
 #define UTF8TEXT(x) (UE::Core::Private::ToUTF8Literal(UTF8TEXT_PASTE(x)))
 #define UTF16TEXT(x) UTF16TEXT_PASTE(x)
 #define WIDETEXT(str) WIDETEXT_PASTE(str)
+
+// Expands out to x, TEXT(x) or UTF8TEXT(x) depending on CharType
+#define CHARTEXT(CharType, x) \
+	( \
+		[]() -> decltype(auto) \
+		{ \
+			/* We expect <type_traits> to already have been included any time the CHARTEXT macro is used */ \
+			using UnqualifiedCharType = std::remove_cv_t<CharType>; \
+			if constexpr (std::is_same_v<UnqualifiedCharType, ANSICHAR>) \
+			{ \
+				return x; \
+			} \
+			else if constexpr (std::is_same_v<UnqualifiedCharType, TCHAR>) \
+			{ \
+				return TEXT(x); \
+			} \
+			else if constexpr (std::is_same_v<UnqualifiedCharType, UTF8CHAR>) \
+			{ \
+				return UTF8TEXT(x); \
+			} \
+			else \
+			{ \
+				/* We want a compile error, so forward to a templated function because of the static_assert(false) problem */ \
+				UE::Core::Private::CharTextStaticAssert<CharType>(); \
+				return x; \
+			} \
+		}() \
+	)
 
 // IWYU pragma: end_exports

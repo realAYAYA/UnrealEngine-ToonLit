@@ -105,11 +105,6 @@ struct CORE_API FMacPlatformMisc : public FApplePlatformMisc
 	static IPlatformChunkInstall* GetPlatformChunkInstall();
 
 	/**
-	 * Returns whether the Mac OS X version is 10.9.x or not.
-	 */
-	static bool IsRunningOnMavericks();
-
-	/**
 	 * Returns if current < target returns 1, if current > target returns 1, else current == target and returns 0.
 	 */
 	static int32 MacOSXVersionCompare(uint8 Major, uint8 Minor, uint8 Revision);

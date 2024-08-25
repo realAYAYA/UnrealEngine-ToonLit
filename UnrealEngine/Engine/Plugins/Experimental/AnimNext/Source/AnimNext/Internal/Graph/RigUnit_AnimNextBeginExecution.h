@@ -3,7 +3,7 @@
 #pragma once
 
 #include "Units/RigUnit.h"
-#include "GraphExecuteContext.h"
+#include "AnimNextExecuteContext.h"
 #include "RigUnit_AnimNextBeginExecution.generated.h"
 
 /**
@@ -22,7 +22,7 @@ struct ANIMNEXT_API FRigUnit_AnimNextBeginExecution : public FRigUnit_AnimNextBa
 
 	// The execution result
 	UPROPERTY(EditAnywhere, DisplayName = "Execute", Category = "BeginExecution", meta = (Output))
-	FAnimNextGraphExecuteContext ExecuteContext;
+	FAnimNextExecuteContext ExecuteContext;
 
 	static FName EventName;
 };

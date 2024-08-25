@@ -2,7 +2,7 @@ Availability: NoPublish
 Title: Build Configuration Properties Page
 Crumbs:
 Description: This is a procedurally generated markdown page.
-Version: 5.3
+Version: 5.4
 
 ### BuildConfiguration
 
@@ -10,13 +10,19 @@ $ bIgnoreOutdatedImportLibraries : Whether to ignore import library files that a
 
 $ bPrintDebugInfo : Whether debug info should be written to the console.
 
-$ bAllowHybridExecutor : Whether the hybrid executor will be used (a remote executor and local executor).
+$ bAllowHybridExecutor : Whether the hybrid executor will be used (a remote executor and local executor). No longer supported.
 
-$ bAllowXGE : Whether XGE may be used.
+$ RemoteExecutorPriority : Priority order for remote executors (XGE, SNDBS, FASTBuild, UBA)
 
-$ bAllowFASTBuild : Whether FASTBuild may be used.
+$ bAllowUBAExecutor : Whether the UnrealBuildAccelerator executor will be used.
 
-$ bAllowSNDBS : Whether SN-DBS may be used.
+$ bAllowUBALocalExecutor : Whether the UnrealBuildAccelerator (local only) executor will be used.
+
+$ bAllowXGE : Whether XGE may be used if available, default is true.
+
+$ bAllowFASTBuild : Whether FASTBuild may be used if available, default is true.
+
+$ bAllowSNDBS : Whether SN-DBS may be used if available, default is true.
 
 $ bUseUBTMakefiles : Enables support for very fast iterative builds by caching target data. Turning this on causes Unreal Build Tool to emit 'UBT Makefiles' for targets when they are built the first time. Subsequent builds will load these Makefiles and begin outdatedness checking and build invocation very quickly. The caveat is that if source files are added or removed to the project, UBT will need to gather information about those in order for your build to complete successfully. Currently, you must run the project file generator after adding/removing source files to tell UBT to re-gather this information. 
     * Events that can invalidate the 'UBT Makefile':
@@ -46,11 +52,15 @@ $ bUseUnityBuild : Whether to unify C++ code into larger files for faster compil
 
 $ bForceUnityBuild : Whether to force C++ source files to be combined into larger files for faster compilation.
 
+$ DefaultWarningLevel : Default treatment of uncategorized warnings
+
+$ DeprecationWarningLevel : Level to report deprecation warnings as errors
+
 $ bDebugBuildsActuallyUseDebugCRT : Enables the debug C++ runtime (CRT) for debug builds. By default we always use the release runtime, since the debug version isn't particularly useful when debugging Unreal Engine projects, and linking against the debug CRT libraries forces our third party library dependencies to also be compiled using the debug CRT (and often perform more slowly). Often it can be inconvenient to require a separate copy of the debug versions of third party static libraries simply so that you can debug your program's code.
 
 $ bLegalToDistributeBinary : Whether the output from this target can be publicly distributed, even if it has dependencies on modules that are in folders with special restrictions (eg. CarefullyRedist, NotForLicensees, NoRedist).
 
-$ bUseVerse : Whether to use the verse script interface.
+$ bUseVerseBPVM : Whether to use the BPVM to run Verse.
 
 $ bUseAutoRTFMCompiler : Whether to use the AutoRTFM Clang compiler.
 
@@ -59,8 +69,6 @@ $ bUseInlining : Enable inlining for all modules.
 $ bUseDebugLiveCodingConsole : Whether to enable support for live coding
 
 $ bUseXGEController : Whether the XGE controller worker and modules should be included in the engine build. These are required for distributed shader compilation using the XGE interception interface.
-
-$ bMergeModuleAndGeneratedUnityFiles : Whether to merge module and generated unity files for faster compilation.
 
 $ bUseAdaptiveUnityBuild : Use a heuristic to determine which files are currently being iterated on and exclude them from unity blobs, result in faster incremental compile times. The current implementation uses the read-only flag to distinguish the working set, assuming that files will be made writable by the source control system if they are being modified. This is true for Perforce, but not for Git.
 
@@ -78,9 +86,9 @@ $ bAdaptiveUnityCompilesHeaderFiles : Creates a dedicated source file for each h
 
 $ MinGameModuleSourceFilesForUnityBuild : The number of source files in a game module before unity build will be activated for that module.  This allows small game modules to have faster iterative compile times for single files, at the expense of slower full rebuild times.  This setting can be overridden by the bFasterWithoutUnity option in a module's Build.cs file.
 
-$ DefaultWarningLevel : Default treatment of uncategorized warnings
+$ bRequireObjectPtrForAddReferencedObjects : Require TObjectPtr for FReferenceCollector API's. (Needed for compatibility with incremental GC.)
 
-$ DeprecationWarningLevel : Level to report deprecation warnings as errors
+$ bValidateFormatStrings : Emits compilation errors for incorrect UE_LOG format strings.
 
 $ bWarningsAsErrors : Whether to enable all warnings as errors. UE enables most warnings as errors already, but disables a few (such as deprecation warnings).
 
@@ -108,15 +116,21 @@ $ bStressTestUnity : Whether to stress test the C++ unity build robustness by in
 
 $ bDetailedUnityFiles : Whether to add additional information to the unity files, such as '_of_X' in the file name. Not recommended.
 
-$ bDisableDebugInfo : Whether to globally disable debug info generation; see DebugInfoHeuristics.cs for per-config and per-platform options.
+$ bDisableDebugInfo : Whether to globally disable debug info generation; Obsolete, please use TargetRules.DebugInfoMode instead
 
-$ bDisableDebugInfoForGeneratedCode : Whether to disable debug info generation for generated files. This improves link times for modules that have a lot of generated glue code.
+$ DebugInfo : How much debug info should be generated. See DebugInfoMode enum for more details
+
+$ DebugInfoLineTablesOnly : True if only debug line number tables should be emitted in debug information for compilers that support doing so. Overrides TargetRules.DebugInfo See https://clang.llvm.org/docs/UsersManual.html#cmdoption-gline-tables-only for more information
+
+$ bDisableDebugInfoForGeneratedCode : Whether to disable debug info generation for generated files. This improves link times and reduces pdb size for modules that have a lot of generated glue code.
 
 $ bOmitPCDebugInfoInDevelopment : Whether to disable debug info on PC/Mac in development builds (for faster developer iteration, as link times are extremely fast with debug info disabled).
 
 $ bUsePDBFiles : Whether PDB files should be used for Visual C++ builds.
 
 $ bUsePCHFiles : Whether PCH files should be used.
+
+$ bDeterministic : Set flags require for deterministic compiling and linking. Enabling deterministic mode for msvc disables codegen multithreading so compiling will be slower
 
 $ bChainPCHs : Whether PCHs should be chained when compiling with clang.
 
@@ -129,6 +143,12 @@ $ StaticAnalyzer : Whether static code analysis should be enabled.
 $ StaticAnalyzerOutputType : The output type to use for the static analyzer. This is only supported for Clang.
 
 $ StaticAnalyzerMode : The mode to use for the static analyzer. This is only supported for Clang. Shallow mode completes quicker but is generally not recommended.
+
+$ StaticAnalyzerPVSPrintLevel : The level of warnings to print when analyzing using PVS-Studio
+
+$ bStaticAnalyzerProjectOnly : Only run static analysis against project modules, skipping engine modules
+
+$ bStaticAnalyzerIncludeGenerated : When enabled, generated source files will be analyzed
 
 $ MinFilesUsingPrecompiledHeader : The minimum number of files that must use a pre-compiled header before it will be created and used.
 
@@ -153,8 +173,6 @@ $ bCodeCoverage : Whether the target requires code coverage compilation and link
 $ bSupportEditAndContinue : Whether to support edit and continue.
 
 $ bOmitFramePointers : Whether to omit frame pointers or not. Disabling is useful for e.g. memory profiling on the PC.
-
-$ bUseMallocProfiler : If true, then enable memory profiling in the build (defines USE_MALLOC_PROFILER=1 and forces bOmitFramePointers=false).
 
 $ bShaderCompilerWorkerTrace : If true, then enable Unreal Insights (utrace) profiling in the build for the Shader Compiler Worker (defines USE_SHADER_COMPILER_WORKER_TRACE=1).
 
@@ -192,15 +210,15 @@ $ MSVCCompileActionWeight : The weight(cpu/memory utilization) of a MSVC compile
 
 $ ClangCompileActionWeight : The weight(cpu/memory utilization) of a clang compile action
 
+$ CppStandardEngine : Which C++ standard to use for compiling this target (for engine modules)
+
+$ CppStandard : Which C++ standard to use for compiling this target (for non-engine modules)
+
 $ CStandard : Which C standard to use for compiling this target
 
 $ MinCpuArchX64 : Direct the compiler to generate AVX instructions wherever SSE or AVX intrinsics are used, on the x64 platforms that support it. Note that by enabling this you are changing the minspec for the PC platform, and the resultant executable will crash on machines without AVX support.
 
-$ bDeterministic : Set flags require for deterministic compiling and linking. Enabling deterministic mode for msvc disables codegen multithreading so compiling will be slower
-
-$ CppStandardEngine : Which C++ standard to use for compiling this target (for engine modules)
-
-$ CppStandard : Which C++ standard to use for compiling this target (for non-engine modules)
+$ ActionStallReportTime : Number of second of no completed actions to trigger an action stall report. If zero, stall reports will not be enabled.
 
 $ bStopSNDBSCompilationAfterErrors : When enabled, SN-DBS will stop compiling targets after a compile error occurs.  Recommended, as it saves computing resources for others.
 
@@ -211,6 +229,8 @@ $ bShowXGEMonitor : Whether to display the XGE build monitor.
 $ bStopXGECompilationAfterErrors : When enabled, XGE will stop compiling targets after a compile error occurs.  Recommended, as it saves computing resources for others.
 
 $ BaseLogFileName : Specifies the file to use for logging.
+
+$ IWYUBaseLogFileName : Specifies the file to use for logging.
 
 $ bStripSymbols : Whether to strip iOS symbols or not (implied by Shipping config).
 
@@ -268,13 +288,15 @@ $ bWarnOnCppUnrealHeaderTool : If true, generate warnings when C++ UHT is used
 
 $ MaxRootPathLength : Maximum recommended root path length.
 
-$ MaxNestedPathLength : Maximum length of a path relative to the root directory. Used on Windows to ensure paths are portable between machines. Defaults to off.
+$ MaxNestedPathLength : Maximum length of a path relative to the root directory. Used on Windows to ensure paths are portable between machines.
 
 $ bIgnoreStalePGOData : If -PGOOptimize is specified but the linker flags have changed since the last -PGOProfile, this will emit a warning and build without PGO instead of failing during link with LNK1268.
 
 $ bUseFastGenProfile : If specified along with -PGOProfile, then /FASTGENPROFILE will be used instead of /GENPROFILE. This usually means that the PGO data is generated faster, but the resulting data may not yield as efficient optimizations during -PGOOptimize
 
 $ bPGONoExtraCounters : If specified along with -PGOProfile, prevent the usage of extra counters. Please note that by default /FASTGENPROFILE doesnt use extra counters
+
+$ bSampleBasedPGO : If specified along with -PGOProfile, use sample-based PGO instead of instrumented. Currently Intel oneAPI 2024.0+ only.
 
 $ Compiler : Version of the compiler toolchain to use on Windows platform. A value of "default" will be changed to a specific version at UBT start up.
 
@@ -284,7 +306,11 @@ $ ToolchainVersion : The specific msvc toolchain version to use if the compiler 
 
 $ bVCFastFail : True if /fastfail should be passed to the msvc compiler and linker
 
-$ bAllowClangLinker : True if we should use the Clang linker (LLD) when we are compiling with Clang, or Intel linker (xilink\xilib) when we are compiling with Intel oneAPI, otherwise we use the MSVC linker.
+$ bVCExtendedWarningInfo : True if /d2ExtendedWarningInfo should be passed to the compiler and /d2:-ExtendedWarningInfo to the linker
+
+$ bClangStandaloneDebug : True if optimizations to reduce the size of debug information should be disabled See https://clang.llvm.org/docs/UsersManual.html#cmdoption-fstandalone-debug for more information
+
+$ bAllowClangLinker : True if we should use the Clang linker (LLD) when we are compiling with Clang or Intel oneAPI, otherwise we use the MSVC linker.
 
 $ WindowsSdkVersion : The specific Windows SDK version to use. This may be a specific version number (for example, "8.1", "10.0" or "10.0.10150.0"), or the string "Latest", to select the newest available version. By default, and if it is available, we use the Windows SDK version indicated by WindowsPlatform.DefaultWindowsSdkVersion (otherwise, we use the latest version).
 
@@ -292,9 +318,11 @@ $ bUpdatedCPPMacro : Enables updated __cplusplus macro (/Zc:__cplusplus).
 
 $ bStrictInlineConformance : Enables inline conformance (Remove unreferenced COMDAT) (/Zc:inline).
 
-$ bStrictPreprocessorConformance : Enables new preprocessor conformance (/Zc:preprocessor).
+$ bStrictPreprocessorConformance : Enables new preprocessor conformance (/Zc:preprocessor). This is always enabled for C++20 modules.
 
 $ bStrictEnumTypesConformance : Enables enum types conformance (/Zc:enumTypes) in VS2022 17.4 Preview 4.0+.
+
+$ bStripPrivateSymbols : Whether to request the linker create a stripped pdb file as part of the build. If enabled the full debug pdb will have the extension .full.pdb
 
 $ PCHMemoryAllocationFactor : Determines the amount of memory that the compiler allocates to construct precompiled headers (/Zm).
 
@@ -306,17 +334,15 @@ $ bCompilerTrace : Outputs compile timing information so that it can be analyzed
 
 $ bShowIncludes : Print out files that are included by each source file
 
+$ bSetResourceVersions : If enabled will set the ProductVersion embeded in windows executables and dlls to contain BUILT_FROM_CHANGELIST and BuildVersion Enabled by default for all precompiled and Shipping configurations. Regardless of this setting, the versions from Build.version will be available via the BuildSettings module Note: Embedding these versions will cause resource files to be recompiled whenever changelist is updated which will cause binaries to relink
+
 $ InlineFunctionExpansionLevel : Which level to use for Inline Function Expansion when TargetRules.bUseInlining is enabled
 
 $ ToolChain : Version of the toolchain to use on Windows platform when a non-msvc Compiler is in use, to locate include paths etc.
 
+$ ToolchainVersionWarningLevel : Warning level when reporting toolchains that are not in the preferred version list
+
 $ bStrictConformanceMode : Enables strict standard conformance mode (/permissive-).
-
-### TargetRules
-
-$ bCompileChaosVisualDebuggerSupport : Whether to compile in Chaos Visual Debugger (CVD) support features to record the state of the physics simulation
-
-$ bDisableInliningGenCpps : Disable supports for inlining gen.cpps
 
 ### ModuleConfiguration
 
@@ -332,11 +358,13 @@ $ OptimizeForSize : List of modules to optimize for size. This allows the target
 
 $ OptimizeForSizeAndSpeed : List of modules to optimize for size and speed. This allows the target to override module optimization level Note that this may disable PCH usage if a private PCH is not provided
 
-### TestTargetRules
+### TargetRules
 
 $ bCompileChaosVisualDebuggerSupport : Whether to compile in Chaos Visual Debugger (CVD) support features to record the state of the physics simulation
 
-$ bDisableInliningGenCpps : Disable supports for inlining gen.cpps
+### TestTargetRules
+
+$ bCompileChaosVisualDebuggerSupport : Whether to compile in Chaos Visual Debugger (CVD) support features to record the state of the physics simulation
 
 ### FASTBuild
 
@@ -391,6 +419,100 @@ $ bShowCPUUtilization : Whether to show CPU utilization after the work is comple
 $ bAllowOverVpn : When set to false, SNDBS will not be enabled when running connected to the coordinator over VPN. Configure VPN-assigned subnets via the VpnSubnets parameter.
 
 $ VpnSubnets : List of subnets containing IP addresses assigned by VPN
+
+### UnrealBuildAccelerator
+
+$ bDisableRemote : When set to true, UBA will not use any remote help
+
+$ bForceBuildAllRemote : When set to true, UBA will force all actions that can be built remotely to be built remotely. This will hang if there are no remote agents available
+
+$ bForcedRetry : When set to true, actions that fail locally with UBA will be retried without UBA.
+
+$ bStrict : When set to true, all errors and warnings from UBA will be output at the appropriate severity level to the log (rather than being output as 'information' and attempting to continue regardless).
+
+$ bStoreRaw : If UBA should store cas compressed or raw
+
+$ bLinkRemote : If UBA should distribute linking to remote workers. This needs bandwidth but can be an optimization
+
+$ StoreCapacityGb : The amount of gigabytes UBA is allowed to use to store workset and cached data. It is a good idea to have this >10gb
+
+$ MaxWorkers : Max number of worker threads that can handle messages from remotes.
+
+$ SendSize : Max size of each message sent from server to client
+
+$ Host : Which ip UBA server should listen to for connections
+
+$ Port : Which port UBA server should listen to for connections.
+
+$ RootDir : Which directory to store files for UBA.
+
+$ bUseQuic : Use Quic protocol instead of Tcp (experimental)
+
+$ bLogEnabled : Enable logging of UBA processes
+
+$ bPrintSummary : Prints summary of UBA stats at end of build
+
+$ bLaunchVisualizer : Launch visualizer application which shows build progress
+
+$ bResetCas : Resets the cas cache
+
+$ TraceFile : Provide custom path for trace output file
+
+$ bDetailedTrace : Add verbose details to the UBA trace
+
+$ bDisableWaitOnMem : Disable UBA waiting on available memory before spawning new processes
+
+$ bAllowKillOnMem : Let UBA kill running processes when close to out of memory
+
+$ OutputStatsThresholdMs : Threshold for when executor should output logging for the process. Defaults to never
+
+$ bWriteToDisk : Skip writing intermediate and output files to disk. Useful for validation builds where we don't need the output
+
+$ bDisableCustomAlloc : Set to true to disable mimalloc and detouring of memory allocations.
+
+$ Zone : The zone to use for UBA.
+
+$ bUseCrypto : Set to true to enable encryption when transferring files over the network.
+
+$ bUseKnownInputs : Set to true to provide known inputs to processes that are run remote. This is an experimental feature to speed up build times when ping is higher
+
+$ ActionsOutputFile : Write yaml file with all actions that are queued for build. This can be used to replay using "UbaCli.exe local file.yaml"
+
+$ bDetailedLog : Set to true to see more info about what is happening inside uba and also log output from agents
+
+$ HordeMaxCores : Max cores allowed to be used by build session
+
+$ HordeDelay : How long UBT should wait to ask for help. Useful in build configs where machine can delay remote work and still get same wall time results (pch dependencies etc)
+
+$ bHordeAllowWine : Allow use of Wine. Only applicable to Horde agents running Linux. Can still be ignored if Wine executable is not set on agent.
+
+$ bDisableHorde : Disable horde all together
+
+### Horde
+
+$ Server : Uri of the Horde server
+
+$ Token : Uri of the Horde server
+
+$ OidcProvider : OIDC id for the login to use
+
+$ Pool : Pool for the Horde agent to assign if no override current platform doesn't have it set
+
+$ LinuxPool : Pool for the Horde agent to assign when on Linux
+
+$ MacPool : Pool for the Horde agent to assign when on Mac
+
+$ WindowsPool : Pool for the Horde agent to assign when on Windows
+
+$ Requirements : Requirements for the Horde agent to assign
+
+$ LocalHost : Which ip UBA server should give to agents. This will invert so host listens and agents connect
+
+$ ConnectionMode : Connection mode for agent/compute communication for valid modes.
+
+$ Encryption : Encryption to use for agent/compute communication. Note that UBA agent uses its own encryption. for valid modes.
+
+$ UBASentryUrl : Sentry URL to send box data to. Optional.
 
 ### XGE
 
@@ -462,11 +584,9 @@ $ bIncludeDebugConfigs : Whether we should include configurations for "Debug" an
 
 $ bIncludeDevelopmentConfigs : Whether we should include configurations for "Development" in generated projects. Pass "-NoDevelopmentConfigs" to disable this.
 
+$ bVisualStudioLinux : True if visual studio project should be generated in linux mode.
+
 ### IOSToolChain
-
-$ IOSSDKVersion : The version of the iOS SDK to target at build time.
-
-$ BuildIOSVersion : The version of the iOS to allow at build time.
 
 $ bUseDangerouslyFastMode : If this is set, then we do not do any post-compile steps -- except moving the executable into the proper spot on Mac.
 
@@ -744,6 +864,32 @@ $ PrimaryProjectName : Name of the primary project file -- for example, the base
 
 $ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
 
+### VSWorkspaceProjectFileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ bIncludeTempTargets : Whether to include temporary targets generated by UAT to support content only projects with non-default settings.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
 ### VCProjectFileGenerator
 
 $ Version : The version of Visual Studio to generate project files for.
@@ -757,6 +903,8 @@ $ ExcludedFilePaths : Semi-colon separated list of paths that should not be adde
 $ bBuildUBTInDebug : Forces UBT to be built in debug configuration, regardless of the solution configuration
 
 $ bBuildLiveCodingConsole : Whether to include a dependency on LiveCodingConsole when building targets that support live coding.
+
+$ bMakeProjectPerTarget : Whether to generate a project file for each individual target, and not include e.g. Editor/Client/Server in the Configuration.
 
 $ bIncludeDocumentation : True if we should include documentation in the generated projects.
 

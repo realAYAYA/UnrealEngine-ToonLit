@@ -19,8 +19,6 @@
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "PhysicsProxy/SkeletalMeshPhysicsProxy.h"
 
-#include "PhysXIncludes.h"
-
 #include "DrawDebugHelpers.h"
 #include "Async/ParallelFor.h"
 #include "Math/Box.h"

@@ -680,7 +680,7 @@ void FVoiceEngineImpl::GenerateVoiceData(USoundWaveProcedural* InProceduralWave,
 				UE_LOG_ONLINE_VOICEENGINE(Verbose, TEXT("GenerateVoiceData %d / %d"), AvailableSamples, SamplesRequired);
 				const int32 SamplesBytesTaken = AvailableSamples * SampleSize;
 				InProceduralWave->QueueAudio(QueuedData->UncompressedDataQueue.GetData(), SamplesBytesTaken);
-				QueuedData->UncompressedDataQueue.RemoveAt(0, SamplesBytesTaken, false);
+				QueuedData->UncompressedDataQueue.RemoveAt(0, SamplesBytesTaken, EAllowShrinking::No);
 				QueuedData->CurrentUncompressedDataQueueSize -= (SamplesBytesTaken);
 			}
 			else

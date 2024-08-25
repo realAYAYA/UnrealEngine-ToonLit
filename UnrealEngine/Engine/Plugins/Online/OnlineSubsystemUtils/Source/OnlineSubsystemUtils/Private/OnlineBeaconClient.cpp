@@ -58,7 +58,11 @@ class UNetConnection* AOnlineBeaconClient::GetNetConnection() const
 
 bool AOnlineBeaconClient::DestroyNetworkActorHandled()
 {
-	if (BeaconConnection && BeaconConnection->GetConnectionState() != USOCK_Closed)
+	// AOnlineBeacon::NetDriver may have already been nulled out in AOnlineBeacon::CleanupNetDriver
+	const UNetDriver* LocalNetDriver = BeaconConnection ? BeaconConnection->Driver : nullptr;
+
+	if (BeaconConnection && BeaconConnection->GetConnectionState() != USOCK_Closed &&
+		LocalNetDriver && !LocalNetDriver->GetPendingDestruction())
 	{
 		// This will be cleaned up in ~2 sec by UNetConnection Tick
 		BeaconConnection->bPendingDestroy = true;

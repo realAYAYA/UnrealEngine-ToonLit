@@ -100,7 +100,7 @@ public:
 	virtual bool CanHaveChildren() { return false; }
 
 	// @return The object that will act as a parent to more items in the tree, or nullptr if this is a leaf node
-	virtual UObject* GetParentObject() { return nullptr; }
+	virtual UObject* GetParentObject() const { return nullptr; }
 
 	virtual EDebugLineType GetType() const
 	{

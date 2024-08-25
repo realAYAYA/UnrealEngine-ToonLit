@@ -5,13 +5,14 @@
 #include "CoreMinimal.h"
 
 class FDisplayClusterViewport;
-class ADisplayClusterRootActor;
-
 class UDisplayClusterConfigurationViewport;
-class UDisplayClusterICVFXCameraComponent;
 
+struct FDisplayClusterConfigurationICVFX_CameraSettings;
 struct FOpenColorIOColorConversionSettings;
 
+/**
+* OCIO configuration helper class.
+*/
 class FDisplayClusterViewportConfigurationHelpers_OpenColorIO
 {
 public:
@@ -23,7 +24,7 @@ public:
 	 *
 	 * @return - true if success.
 	 */
-	static bool UpdateBaseViewport(FDisplayClusterViewport& DstViewport, ADisplayClusterRootActor& RootActor, const UDisplayClusterConfigurationViewport& InViewportConfiguration);
+	static bool UpdateBaseViewportOCIO(FDisplayClusterViewport& DstViewport, const UDisplayClusterConfigurationViewport& InViewportConfiguration);
 
 	/** Update OCIO for LightCard viewport.
 	 *
@@ -33,7 +34,7 @@ public:
 	 *
 	 * @return - true if success.
 	 */
-	static bool UpdateLightcardViewport(FDisplayClusterViewport& DstViewport, FDisplayClusterViewport& BaseViewport, ADisplayClusterRootActor& RootActor);
+	static bool UpdateLightcardViewportOCIO(FDisplayClusterViewport& DstViewport, FDisplayClusterViewport& BaseViewport);
 
 	/** Update OCIO for InnerFrustum(InCamera) viewport.
 	 *
@@ -43,7 +44,7 @@ public:
 	 *
 	 * @return - true if success
 	 */
-	static bool UpdateCameraViewport(FDisplayClusterViewport& DstViewport, ADisplayClusterRootActor& RootActor, UDisplayClusterICVFXCameraComponent& InCameraComponent);
+	static bool UpdateCameraViewportOCIO(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings);
 
 	/** Update OCIO for Chromakey viewport.
 	 *
@@ -53,9 +54,8 @@ public:
 	 *
 	 * @return - true if success
 	 */
-	static bool UpdateChromakeyViewport(FDisplayClusterViewport& DstViewport, ADisplayClusterRootActor& RootActor, UDisplayClusterICVFXCameraComponent& InCameraComponent);
+	static bool UpdateChromakeyViewportOCIO(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings);
 
-#if WITH_EDITOR
 	/** Compare InnerFrustum OCIO configuration for input viewports
 	 *
 	 * @param InViewport1       - Viewport #1
@@ -64,7 +64,7 @@ public:
 	 *
 	 * @return - true if OCIO is equals
 	 */
-	static bool IsInnerFrustumViewportSettingsEqual_Editor(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, UDisplayClusterICVFXCameraComponent& InCameraComponent);
+	static bool IsInnerFrustumViewportOCIOSettingsEqual(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings);
 
 	/** Compare Chromakey OCIO configuration for input viewports
 	 *
@@ -74,8 +74,7 @@ public:
 	 *
 	 * @return - true if OCIO is equals
 	 */
-	static bool IsChromakeyViewportSettingsEqual_Editor(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, UDisplayClusterICVFXCameraComponent& InCameraComponent);
-#endif
+	static bool IsChromakeyViewportOCIOSettingsEqual(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings);
 
 private:
 	/** Apply OCIO to viewport.

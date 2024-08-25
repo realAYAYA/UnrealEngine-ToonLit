@@ -4,10 +4,6 @@
 
 #include "Capture/DisplayClusterMediaCaptureViewport.h"
 
-class FRDGBuilder;
-class FSceneViewFamily;
-class IDisplayClusterViewportProxy;
-
 
 /**
  * Viewport media capture
@@ -19,10 +15,11 @@ public:
 	FDisplayClusterMediaCaptureCamera(const FString& MediaId, const FString& ClusterNodeId, const FString& CameraId, const FString& ViewportId, UMediaOutput* MediaOutput, UDisplayClusterMediaOutputSynchronizationPolicy* SyncPolicy = nullptr);
 
 protected:
-	
-	virtual FIntPoint GetCaptureSize() const override;
+	//~ Begin FDisplayClusterMediaCaptureViewport
+	virtual bool GetCaptureSizeFromConfig(FIntPoint& OutSize) const override;
+	//~ End FDisplayClusterMediaCaptureViewport
 
 private:
+	/** ICVFX camera name */
 	const FString CameraId;
-	FIntPoint CameraResolution = FIntPoint::ZeroValue;
 };

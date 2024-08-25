@@ -12,9 +12,6 @@
 #include "AbilitySystemGlobals.h"
 #include "NativeGameplayTags.h"
 
-// I'm worried about mismatch between Editor/NonEditor builds for NetSerialization, so I've defined this globally.
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TestsDotGenericTag, "Tests.GenericTag");
-
 #if WITH_EDITOR
 
 /** 

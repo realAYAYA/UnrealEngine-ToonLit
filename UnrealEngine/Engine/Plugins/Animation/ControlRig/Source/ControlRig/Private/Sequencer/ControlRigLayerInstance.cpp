@@ -7,6 +7,7 @@
 
 #include "Sequencer/ControlRigLayerInstance.h"
 #include "Sequencer/ControlRigLayerInstanceProxy.h"
+#include "ControlRig.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigLayerInstance)
 
@@ -25,6 +26,22 @@ UControlRigLayerInstance::UControlRigLayerInstance(const FObjectInitializer& Obj
 FAnimInstanceProxy* UControlRigLayerInstance::CreateAnimInstanceProxy()
 {
 	return new FControlRigLayerInstanceProxy(this);
+}
+
+void UControlRigLayerInstance::NativeUpdateAnimation(float DeltaSeconds)
+{
+	Super::NativeUpdateAnimation(DeltaSeconds);
+	
+	if (UAnimInstance* SourceAnimInstance = GetSourceAnimInstance())
+	{
+		if (UControlRig* ControlRig = GetFirstAvailableControlRig())
+		{
+			if (ControlRig->IsAdditive())
+			{
+				SourceAnimInstance->UpdateAnimation(DeltaSeconds, true, EUpdateAnimationFlag::Default);
+			}
+		}
+	}
 }
 
 void UControlRigLayerInstance::UpdateAnimTrack(UAnimSequenceBase* InAnimSequence, int32 SequenceId, float InPosition, float Weight, bool bFireNotifies)
@@ -85,6 +102,13 @@ void UControlRigLayerInstance::SetSourceAnimInstance(UAnimInstance* SourceAnimIn
 /** ControlRig related support */
 void UControlRigLayerInstance::AddControlRigTrack(int32 ControlRigID, UControlRig* InControlRig)
 {
+	if (InControlRig->IsAdditive())
+	{
+		if (UAnimInstance* SourceAnimInstance = GetSourceAnimInstance())
+		{
+			SourceAnimInstance->bUseMultiThreadedAnimationUpdate = false;
+		}
+	}
 	GetProxyOnGameThread<FControlRigLayerInstanceProxy>().AddControlRigTrack(ControlRigID, InControlRig);
 }
 
@@ -101,6 +125,17 @@ void UControlRigLayerInstance::UpdateControlRigTrack(int32 ControlRigID, float W
 void UControlRigLayerInstance::RemoveControlRigTrack(int32 ControlRigID)
 {
 	GetProxyOnGameThread<FControlRigLayerInstanceProxy>().RemoveControlRigTrack(ControlRigID);
+	if (UAnimInstance* SourceAnimInstance = GetSourceAnimInstance())
+	{
+		if (UControlRig* ControlRig = GetFirstAvailableControlRig())
+		{
+			SourceAnimInstance->bUseMultiThreadedAnimationUpdate = !ControlRig->IsAdditive();
+		}
+		else
+		{
+			SourceAnimInstance->bUseMultiThreadedAnimationUpdate = true;
+		}
+	}
 }
 
 void UControlRigLayerInstance::ResetControlRigTracks()
@@ -135,4 +170,24 @@ UAnimInstance* UControlRigLayerInstance::GetSourceAnimInstance()
 	return GetProxyOnGameThread<FControlRigLayerInstanceProxy>().GetSourceAnimInstance();
 }
 
+#if WITH_EDITOR
+void UControlRigLayerInstance::HandleObjectsReinstanced(const TMap<UObject*, UObject*>& OldToNewInstanceMap)
+{
+	Super::HandleObjectsReinstanced(OldToNewInstanceMap);
+
+	static IConsoleVariable* UseLegacyAnimInstanceReinstancingBehavior = IConsoleManager::Get().FindConsoleVariable(TEXT("bp.UseLegacyAnimInstanceReinstancingBehavior"));
+	if(UseLegacyAnimInstanceReinstancingBehavior == nullptr || !UseLegacyAnimInstanceReinstancingBehavior->GetBool())
+	{
+		// Forward to control rig nodes
+		FControlRigLayerInstanceProxy& Proxy = GetProxyOnGameThread<FControlRigLayerInstanceProxy>();
+		for(TSharedPtr<FAnimNode_ControlRig_ExternalSource>& ControlRigNode : Proxy.ControlRigNodes)
+		{
+			if(ControlRigNode.IsValid())
+			{
+				ControlRigNode->HandleObjectsReinstanced(OldToNewInstanceMap);
+			}
+		}
+	}
+}
+#endif
 

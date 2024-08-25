@@ -152,6 +152,10 @@ public:
 		return NameToMinimalName(GetName(MappedName));
 	}
 
+	using RangedForConstIteratorType = TArray<FDisplayNameEntryId>::RangedForConstIteratorType;
+	RangedForConstIteratorType begin() const { return NameEntries.begin(); }
+	RangedForConstIteratorType end() const { return NameEntries.end(); }
+
 private:
 	TArray<FDisplayNameEntryId> NameEntries;
 	FMappedName::EType NameMapType = FMappedName::EType::Global;

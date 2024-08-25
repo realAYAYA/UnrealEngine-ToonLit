@@ -48,6 +48,9 @@ FScopedMovementUpdate::FScopedMovementUpdate( class USceneComponent* Component, 
 	else
 	{
 		Owner = nullptr;
+		// Having no owner should be a no-op on all moves, but if someone requests deferred updates on a null component
+		// we should not return true for IsDeferringUpdates() so force it off here.
+		bDeferUpdates = false;
 	}
 }
 

@@ -25,7 +25,6 @@
 #include "Misc/TrackedActivity.h"
 #include "String/Find.h"
 #include "Templates/UnrealTemplate.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/WindowsPlatformApplicationMisc.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -1367,6 +1366,7 @@ public:
 
 			case 103:
 				ClearLog();
+				bAutoScrollLog = true;
 				break;
 
 			case 104:
@@ -1712,7 +1712,7 @@ public:
 					int32 Len = UE_PTRDIFF_TO_INT32(LineBreak - SearchStr);
 					if (LineBreak > SearchStr && *(LineBreak - 1) == '\r')
 						--Len;
-					Log.Add({ FString(Len, SearchStr), E.Verbosity, E.Category, E.Time, E.TextAttribute, 1 });
+					Log.Add({ FString::ConstructFromPtrSize(SearchStr, Len), E.Verbosity, E.Category, E.Time, E.TextAttribute, 1 });
 					SearchStr = LineBreak + 1;
 				}
 				else
@@ -2173,6 +2173,7 @@ public:
 			else if (LOWORD(wParam) == ID_CLEARLOGBUTTON)
 			{
 				ClearLog();
+				bAutoScrollLog = true;
 			}
 			else if (LOWORD(wParam) == ID_ADDCHECKPOINTBUTTON)
 			{

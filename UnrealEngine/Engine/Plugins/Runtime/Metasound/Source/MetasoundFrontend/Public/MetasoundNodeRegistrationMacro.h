@@ -82,7 +82,7 @@ namespace Metasound
 
 			virtual TUniquePtr<INodeRegistryEntry> Clone() const override = 0;
 
-			virtual TSet<FMetasoundFrontendVersion>* GetImplementedInterfaces() const override
+			virtual const TSet<FMetasoundFrontendVersion>* GetImplementedInterfaces() const override
 			{
 				return nullptr;
 			}
@@ -119,7 +119,7 @@ namespace Metasound
 
 
 		Frontend::FNodeRegistryKey Key = FMetasoundFrontendRegistryContainer::Get()->RegisterNode(MakeUnique<FNodeRegistryEntry>(InMetadata));
-		const bool bSuccessfullyRegisteredNode = Frontend::NodeRegistryKey::IsValid(Key);
+		const bool bSuccessfullyRegisteredNode = Key.IsValid();
 		ensureAlwaysMsgf(bSuccessfullyRegisteredNode, TEXT("Registering node class failed. Please check the logs."));
 
 		return bSuccessfullyRegisteredNode;

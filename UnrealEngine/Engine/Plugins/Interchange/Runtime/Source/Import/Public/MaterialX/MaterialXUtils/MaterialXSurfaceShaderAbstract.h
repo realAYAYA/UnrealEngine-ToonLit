@@ -16,23 +16,23 @@ protected:
 
 	static FString EmptyString;
 
-	// MaterialX states the default output name of the different nodes is 'out'
+	// MaterialX states the default output name of the different nodes is 'out'.
 	static FString DefaultOutput;
 
 	friend class FMaterialXSurfaceMaterial;
 
 	struct FConnectNode
 	{
-		// The MaterialX node of a given type used to create the appropriate shader node
+		// The MaterialX node of a given type used to create the appropriate shader node.
 		MaterialX::NodePtr UpstreamNode;
 
-		// The shader node to connect to
+		// The shader node to connect to.
 		UInterchangeShaderNode* ParentShaderNode;
 
-		// The input of the ParentShaderNode to connect to
+		// The input of the ParentShaderNode to connect to.
 		FString InputChannelName;
 
-		// The output name of the MaterialX node, default name is 'out' as stated by the standard library
+		// The output name of the MaterialX node. The default name is 'out' as stated by the standard library.
 		FString OutputName{ DefaultOutput };
 	};
 		
@@ -41,79 +41,91 @@ protected:
 	FMaterialXSurfaceShaderAbstract(UInterchangeBaseNodeContainer & BaseNodeContainer);
 
 	/**
-	 * Add an attribute to a shader node from the given MaterialX input, only floats and linear colors are supported for the moment
+	 * Add an attribute to a shader node from the given MaterialX input. Only floats and linear colors are supported.
 	 *
-	 * @param Input - The MaterialX input to retrieve and add the value from, must be of type float/color/vector
-	 * @param InputChannelName - The name of the shader node's input to add the attribute
-	 * @param ShaderNode - The shader node to which we want to add the attribute
+	 * @param Input - The MaterialX input to retrieve and add the value from. Must be of type float/color/vector.
+	 * @param InputChannelName - The name of the shader node's input to add the attribute.
+	 * @param ShaderNode - The shader node to which we want to add the attribute.
 	 *
-	 * @return true if the attribute was successfully added
+	 * @return true if the attribute was successfully added.
 	 */
-	bool AddAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode) const;
+	bool AddAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode);
 
 	/**
-	 * Add an attribute to a shader node from the given MaterialX input if that input has either a value or an interface name
+	 * Add an attribute to a shader node from the given MaterialX input if that input has either a value or an interface name.
 	 *
-	 * @param Input - The MaterialX input to retrieve and add the value from, must be of type float/color/vector
+	 * @param Input - The MaterialX input to retrieve and add the value from. Must be of type float/color/vector.
+	 * @param InputChannelName - The name of the shader node's input to add the attribute.
+	 * @param ShaderNode - The shader node to which we want to add the attribute.
+	 *
+	 * @return true if the attribute was successfully added.
+	 */
+	bool AddAttributeFromValueOrInterface(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode);
+
+	/**
+	 * Add a bool attribute to a shader node only if its value taken from the input is not equal to its default value. Return false if the attribute does not exist or if we cannot add it
+	 *
+	 * @param Input - The MaterialX input to retrieve and add the value from, must be of type bool
 	 * @param InputChannelName - The name of the shader node's input to add the attribute
 	 * @param ShaderNode - The shader node to which we want to add the attribute
+	 * @param DefaultValue - the default value to test the input against
 	 *
 	 * @return true if the attribute was successfully added
 	 */
-	bool AddAttributeFromValueOrInterface(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode) const;
+	bool AddBooleanAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode);
 
 	/**
 	 * Add a float attribute to a shader node only if its value taken from the input is not equal to its default value. Return false if the attribute does not exist or if we cannot add it
 	 *
-	 * @param Input - The MaterialX input to retrieve and add the value from, must be of type float
-	 * @param InputChannelName - The name of the shader node's input to add the attribute
-	 * @param ShaderNode - The shader node to which we want to add the attribute
-	 * @param DefaultValue - the default value to test the input against
+	 * @param Input - The MaterialX input to retrieve and add the value from. Must be of type float.
+	 * @param InputChannelName - The name of the shader node's input to add the attribute.
+	 * @param ShaderNode - The shader node to which we want to add the attribute.
+	 * @param DefaultValue - the default value to test the input against.
 	 *
-	 * @return true if the attribute was successfully added
+	 * @return true if the attribute was successfully added.
 	 */
-	bool AddFloatAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, float DefaultValue) const;
+	bool AddFloatAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, float DefaultValue = std::numeric_limits<float>::max());
 
 	/**
-	 * Add a FLinearColor attribute to a shader node only if its value taken from the input is not equal to its default value. Return false if the attribute does not exist or if we cannot add it
+	 * Add an FLinearColor attribute to a shader node only if its value taken from the input is not equal to its default value. Return false if the attribute does not exist or if we cannot add it.
 	 *
-	 * @param Input - The MaterialX input to retrieve and add the value from, must be of type color
-	 * @param InputChannelName - The name of the shader node's input to add the attribute
-	 * @param ShaderNode - The shader node to which we want to add the attribute
-	 * @param DefaultValue - the default value to test the input against
+	 * @param Input - The MaterialX input to retrieve and add the value from. Must be of type color.
+	 * @param InputChannelName - The name of the shader node's input to add the attribute.
+	 * @param ShaderNode - The shader node to which we want to add the attribute.
+	 * @param DefaultValue - the default value to test the input against.
 	 *
-	 * @return true if the attribute was successfully added
+	 * @return true if the attribute was successfully added.
 	 */
-	bool AddLinearColorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FLinearColor& DefaultValue) const;
+	bool AddLinearColorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FLinearColor& DefaultValue = FLinearColor{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()});
 
 	/**
-	 * Add a FLinearColor attribute to a shader node only if its value taken from the input is not equal to its default value. Return false if the attribute does not exist or if we cannot add it
+	 * Add an FLinearColor attribute to a shader node only if its value taken from the input is not equal to its default value. Return false if the attribute does not exist or if we cannot add it.
 	 *
-	 * @param Input - The MaterialX input to retrieve and add the value from, must be of type vector
-	 * @param InputChannelName - The name of the shader node's input to add the attribute
-	 * @param ShaderNode - The shader node to which we want to add the attribute
-	 * @param DefaultValue - the default value to test the input against
+	 * @param Input - The MaterialX input to retrieve and add the value from. Must be of type vector.
+	 * @param InputChannelName - The name of the shader node's input to add the attribute.
+	 * @param ShaderNode - The shader node to which we want to add the attribute.
+	 * @param DefaultValue - the default value to test the input against.
 	 *
-	 * @return true if the attribute was successfully added
+	 * @return true if the attribute was successfully added.
 	 */
-	bool AddVectorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FVector4f& DefaultValue) const;
+	bool AddVectorAttribute(MaterialX::InputPtr Input, const FString& InputChannelName, UInterchangeShaderNode* ShaderNode, const FVector4f& DefaultValue = FVector4f{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() });
 
 	/**
-	 * Connect an output either from a node name or a node graph from a MaterialX input to the ShaderNode
+	 * Connect an output either from a node name or a node graph from a MaterialX input to the shader node.
 	 * 
 	 * @param InputName - The name of the input of the SurfaceShaderNode to retrieve
 	 * @param ShaderNode - The Interchange shader node to connect the MaterialX's node or node graph to
 	 * @param InputShaderName - The name of the input of the shader node to connect to
 	 * @param DefaultValue - The default value of the MaterialX input
-	 * @param OptionalTextureCompression - Set the texture compression for all textures along the path of an input
+	 * @param bIsTangentSpaceInput - Set the tangent space along the path of an input
 	 */
 	template<typename T>
-	bool ConnectNodeOutputToInput(const char* InputName, UInterchangeShaderNode* ShaderNode, const FString& InputShaderName, T DefaultValue, const TOptional<TextureCompressionSettings>& OptionalTextureCompression = TOptional<TextureCompressionSettings>{})
+	bool ConnectNodeOutputToInput(const char* InputName, UInterchangeShaderNode* ShaderNode, const FString& InputShaderName, T DefaultValue, bool bIsTangentSpaceInput = false)
 	{
 		MaterialX::DocumentPtr Document = SurfaceShaderNode->getDocument();
 		MaterialX::InputPtr Input = GetInput(SurfaceShaderNode, InputName);
 
-		TGuardValue<TOptional<TextureCompressionSettings>> InputTypeBeingProcessedGuard(TextureCompression, OptionalTextureCompression);
+		TGuardValue<bool>InputTypeBeingProcessedGuard(bTangentSpaceInput, bIsTangentSpaceInput);
 
 		bool bIsConnected = ConnectNodeGraphOutputToInput(Input, ShaderNode, InputShaderName);
 
@@ -142,47 +154,47 @@ protected:
 	};
 
 	/**
-	 * Connect an ouput in the NodeGraph to the ShaderGraph
+	 * Connect an ouput in the NodeGraph to the ShaderGraph.
 	 *
-	 * @param InputToNodeGraph - The input from the standard surface to retrieve the output in the NodeGraph
-	 * @param ShaderNode - The Interchange shader node to connect the MaterialX's node graph to
-	 * @param ParentInputName - The name of the input of the shader node to which we want the node graph to be connected to
+	 * @param InputToNodeGraph - The input from the standard surface to retrieve the output in the NodeGraph.
+	 * @param ShaderNode - The Interchange shader node to connect the MaterialX's node graph to.
+	 * @param ParentInputName - The name of the input of the shader node that we want the node graph to be connected to.
 	 *
-	 * @return true if the given input is attached to one of the outputs of a node graph
+	 * @return true if the given input is attached to one of the outputs of a node graph.
 	 */
 	bool ConnectNodeGraphOutputToInput(MaterialX::InputPtr InputToNodeGraph, UInterchangeShaderNode* ShaderNode, const FString& ParentInputName);
 
 	/**
-	 * Create and Connect the output of a MaterialX node that has already a matching in UE to a shader node,
-	 * If not search for a registered delegate
+	 * Create and connect the output of a MaterialX node that has already a matching in UE to a shader node.
+	 * If not, search for a registered delegate.
 	 *
-	 * @param Node - The MaterialX node of a given type used to create the appropriate shader node
-	 * @param ParentShaderNode - The shader node to connect to
-	 * @param InputChannelName - The input of the ParentShaderNode to connect to
+	 * @param Node - The MaterialX node of a given type used to create the appropriate shader node.
+	 * @param ParentShaderNode - The shader node to connect to.
+	 * @param InputChannelName - The input of the ParentShaderNode to connect to.
 	 *
-	 * @return true if a shader node has been successfully created and is connected to the given input
+	 * @return true if a shader node has been successfully created and is connected to the given input.
 	 */
 	bool ConnectMatchingNodeOutputToInput(const FConnectNode& Connect);
 
 	/**
-	 * Create and Connect manually the output of a MaterialX node to a shader node
+	 * Create and connect manually the output of a MaterialX node to a shader node.
 	 *
-	 * @param Edge - The MaterialX edge that has the current node, its parent and the input bridge between the two
-	 * @param ParentShaderNode - The shader node to connect to
-	 * @param InputChannelName - The input of the ParentShaderNode to connect to
+	 * @param Edge - The MaterialX edge that has the current node, its parent and the input bridge between the two.
+	 * @param ParentShaderNode - The shader node to connect to.
+	 * @param InputChannelName - The input of the ParentShaderNode to connect to.
 	 *
-	 * @return true if a shader node has been successfully created and is connected to the given input
+	 * @return true if a shader node has been successfully created and is connected to the given input.
 	 */
-	void ConnectNodeCategoryOutputToInput(const MaterialX::Edge& Edge, UInterchangeShaderNode* ParentShaderNode, const FString& InputChannelName);
+	void ConnectNodeCategoryOutputToInput(const MaterialX::Edge& Edge, UInterchangeShaderNode* ParentShaderNode, const FString& InputChannelName, const FString& OutputName = TEXT("out"));
 
 	/**
-	 * Create and Connect a node name directly connected from an input to a shader node
+	 * Create and connect a node name directly connected from an input to a shader node.
 	 *
-	 * @param Node - The MaterialX node of a given type used to create the appropriate shader node
-	 * @param ParentShaderNode - The shader node to connect to
-	 * @param InputChannelName - The input of the ParentShaderNode to connect to
+	 * @param Node - The MaterialX node of a given type used to create the appropriate shader node.
+	 * @param ParentShaderNode - The shader node to connect to.
+	 * @param InputChannelName - The input of the ParentShaderNode to connect to.
 	 *
-	 * @return true if a shader node has been successfully created and is connected to the given input
+	 * @return true if a shader node has been successfully created and is connected to the given input.
 	 */
 	bool ConnectNodeNameOutputToInput(MaterialX::InputPtr Input, UInterchangeShaderNode* ShaderNode, const FString& ParentInputName);
 
@@ -268,30 +280,42 @@ protected:
 	/**
 	 * Create a ComponentMask shader node.
 	 *
-	 * @param RGBA - The mask component, e.g: 0b1011 -> Only RBA are toggled
-	 * @param NodeName - the name of the shader node
-	 * @param OutputName - the name of the output of the MaterialX node, default name is 'out' as stated by the standard library
-	 * @return The ComponentMask node
+	 * @param RGBA - The mask component. For example: 0b1011 -> Only RBA are toggled
+	 * @param NodeName - the name of the shader node.
+	 * @param OutputName - the name of the output of the MaterialX node. The default name is 'out' as stated by the standard library.
+	 * @return The ComponentMask node.
 	 */
 	UInterchangeShaderNode* CreateMaskShaderNode(uint8 RGBA, const FString& NodeName, const FString& OutputName = TEXT("out"));
 
 	/**
-	 * Helper function to create an InterchangeShaderNode
+	 * Helper function to create an InterchangeShaderNode.
 	 *
-	 * @param NodeName - The name of the shader node
-	 * @param ShaderType - The shader node's type we want to create
-	 * @param OutputName - The output name of the MaterialX node, default name is 'out' as stated by the standard library
+	 * @param NodeName - The name of the shader node.
+	 * @param ShaderType - The type of shader node we want to create.
+	 * @param OutputName - The output name of the MaterialX node. The default name is 'out' as stated by the standard library.
 	 *
-	 * @return The shader node that was created
+	 * @return The shader node that was created.
 	 */
 	UInterchangeShaderNode* CreateShaderNode(const FString& NodeName, const FString& ShaderType, const FString& OutputName = TEXT("out"));
 
 	/**
-	 * Helper function to create an InterchangeTextureNode
+	 * Helper function to create an InterchangeFunctionCallShaderNode.
 	 *
-	 * @param Node - The MaterialX node, it should be of the category <image> no test is done on it
+	 * @param NodeName - The name of the shader node.
+	 * @param FunctionPath - The path to the Material Function we want to create.
+	 * @param OutputName - The output name of the MaterialX node. The default name is 'out' as stated by the standard library.
 	 *
-	 * @return The texture node that was created
+	 * @return The shader node that was created.
+	 */
+	UInterchangeFunctionCallShaderNode* CreateFunctionCallShaderNode(const FString& NodeName, const FString& FunctionPath, const FString& OutputName = TEXT("out"));
+	UInterchangeFunctionCallShaderNode* CreateFunctionCallShaderNode(const FString& NodeName, uint8 EnumType, uint8 EnumValue, const FString& OutputName = TEXT("out"));
+
+	/**
+	 * Helper function to create an InterchangeTextureNode.
+	 *
+	 * @param Node - The MaterialX node. This should be of the category <image>. No test is done on it.
+	 *
+	 * @return The texture node that was created.
 	 */
 	template<typename TextureTypeNode>
 	UInterchangeTextureNode* CreateTextureNode(MaterialX::NodePtr Node) const
@@ -359,9 +383,9 @@ protected:
 					TextureNode->SetCustomWrapV(WrapModeV);
 
 					// Encode the compression in the payloadKey
-					if(TextureCompression.IsSet())
+					if(bTangentSpaceInput)
 					{
-						TextureNode->SetPayLoadKey(TextureNode->GetPayLoadKey().GetValue() + FMaterialXManager::TexturePayloadSeparator + FString::FromInt(TextureCompression.GetValue()));
+						TextureNode->SetPayLoadKey(TextureNode->GetPayLoadKey().GetValue() + FMaterialXManager::TexturePayloadSeparator + FString::FromInt(TextureCompressionSettings::TC_Normalmap));
 					}
 				}
 			}
@@ -371,67 +395,70 @@ protected:
 	}
 
 	/**
-	 * Get the UE corresponding name of a MaterialX Node category and input for a material
+	 * Get the UE corresponding name of a MaterialX Node category and input for a material.
 	 *
-	 * @param Input - MaterialX input
+	 * @param Input - MaterialX input.
 	 *
-	 * @return The matched name of the Node/Input else empty string
+	 * @return The matched name of the Node/Input, or an empty string.
 	 */
 	const FString& GetMatchedInputName(MaterialX::NodePtr Node, MaterialX::InputPtr Input) const;
 
 	/**
-	 * Get the input name, use this function instead of getName, because a renaming may have occured and we ensure to have the proper name that will be used by UE inputs
+	 * Get the input name. Use this function instead of getName() because this returns the name that will be used by UE inputs even if a renaming has occurred.
 	 *
-	 * @param Input - The input to retrieve the name from
+	 * @param Input - The input to retrieve the name from.
 	 *
-	 * @return The input name
+	 * @return The input name.
 	 */
 	FString GetInputName(MaterialX::InputPtr Input) const;
 
 	/**
-	 * Return the innermost file prefix of an element in the current scope, if it has none, it will take the one from its parents
+	 * Return the innermost file prefix of an element in the current scope. If it has none, it will take the one from its parents.
 	 *
-	 * @param Element - the Element to retrieve the file prefix from (can be anything, an input, a node, a nodegraph, etc.)
+	 * @param Element - the Element to retrieve the file prefix from. This can be anything: an input, a node, a nodegraph, and so on.
 	 *
-	 * @return a file prefix or an empty string
+	 * @return a file prefix or an empty string.
 	 *
 	 */
 	FString GetFilePrefix(MaterialX::ElementPtr Element) const;
 
 	/**
-	 * Helper function that returns a vector, the function makes no assumption on the input, and it should have a value of vectorN type
+	 * Helper function that returns a vector. The function makes no assumption on the input, and it should have a value of vectorN type.
 	 *
-	 * @param Input - The input that has a vectorN value in it
+	 * @param Input - The input that has a vectorN value in it.
 	 *
-	 * @return The vector
+	 * @return The vector.
 	 */
 	FLinearColor GetVector(MaterialX::InputPtr Input) const;
 
 	/**
-	 * Retrieve the interchange parent name of a MaterialX node, useful when a node is a combination of several nodes connected to different inputs (look for example Noise3D)
+	 * Retrieve the Interchange parent name of a MaterialX node. Useful when a node is a combination of several nodes connected to different inputs, such as Noise3D.
 	 *
-	 * @param Node - The node to retrieve the parent name
-	 * @return The node of the parent
+	 * @param Node - The node whose parent name is retrieved.
+	 * @return The node of the parent.
 	 */
 	FString GetAttributeParentName(MaterialX::NodePtr Node) const;
 
 	virtual void RegisterConnectNodeOutputToInputDelegates();
 
 	/**
-	 * Set the matching inputs names of a node to correspond to the one used by UE, the matching name is stored under the attribute UE::NewName
+	 * Set the matching inputs names of a node to correspond to the one used by UE. The matching name is stored under the attribute UE::NewName.
 	 *
-	 * @param Node - Look up to all inputs of Node and set the matching name attribute
+	 * @param Node - Look up to all inputs of Node and set the matching name attribute.
 	 */
 	void SetMatchingInputsNames(MaterialX::NodePtr Node) const;
 
 	/**
 	 * Add the input new name under the attribute UE::NewName.
 	 *
-	 * @param Input - The input to add the proper attribute
-	 * @param NewName - the new name of the input
+	 * @param Input - The input to add the proper attribute.
+	 * @param NewName - the new name of the input.
 	 */
 	void SetAttributeNewName(MaterialX::InputPtr Input, const char* NewName) const;
 
+private:
+	
+	UInterchangeShaderNode* ConnectGeometryInputToOutput(const FConnectNode& Connect, const FString& ShaderType, const FString& TransformShaderType, const FString& TransformInput, const FString& TransformSourceType, int32 TransformSource, const FString& TransformType, int32 TransformSDestination, bool bIsVector = true);
 
 protected:
 
@@ -453,6 +480,7 @@ protected:
 	/** Initialized by the material shader (e.g: surfacematerial), the derived class should only set the ShaderType */
 	UInterchangeShaderGraphNode* ShaderGraphNode;
 
-	TOptional<TextureCompressionSettings> TextureCompression;
+	/** Used for texture compression and transform to tangent space nodes coming from inputs such as coat_normal  */
+	bool bTangentSpaceInput;
 };
 #endif

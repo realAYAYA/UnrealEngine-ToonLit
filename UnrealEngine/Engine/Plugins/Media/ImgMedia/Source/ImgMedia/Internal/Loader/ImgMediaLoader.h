@@ -136,6 +136,7 @@ public:
 	 * @param Time The time of the image frame to get (relative to the beginning of the sequence).
 	 * @return The frame, or nullptr if the frame wasn't available yet.
 	 */
+	UE_DEPRECATED(5.4, "This method will be removed.")
 	TSharedPtr<FImgMediaTextureSample, ESPMode::ThreadSafe> GetFrameSample(FTimespan Time);
 
 	/**
@@ -354,7 +355,7 @@ public:
 	 * @param Frame The frame that was read, or nullptr if reading failed.
 	 * @param WorkTime How long to read this frame (in seconds).
 	 */
-	void NotifyWorkComplete(FImgMediaLoaderWork& CompletedWork, int32 FrameNumber,
+	void NotifyWorkComplete(FImgMediaLoaderWork& CompletedWork, int32 JobID, int32 FrameNumber,
 		const TSharedPtr<FImgMediaFrame, ESPMode::ThreadSafe>& Frame, float WorkTime);
 
 	/**
@@ -368,9 +369,9 @@ public:
 	bool RequestFrame(FTimespan Time, float PlayRate, bool Loop);
 
 	/**
-	 * Reset "queued fetch" related state used to emulate player output queue behavior
+	 * Flush state if queue emulation
 	 */
-	void ResetFetchLogic();
+	void Flush();
 
 	/**
 	 * Tell the loader if playback is blocking.
@@ -389,6 +390,15 @@ public:
 	bool IsFrameLast(const FTimespan& TimeStamp) const;
 
 protected:
+	struct FFrameNumberJobInfo
+	{
+		FFrameNumberJobInfo() = default;
+		FFrameNumberJobInfo(int32 InFrame, int32 InJobID) : Frame(InFrame), JobID(InJobID) {}
+
+		int32 Frame;
+		int32 JobID;
+		bool operator==(const FFrameNumberJobInfo& Other) const { return JobID == Other.JobID && Frame == Other.Frame; }
+	};
 
 	/**
 	 * Convert a collection of frame numbers to corresponding time ranges.
@@ -466,6 +476,15 @@ protected:
 	uint32 TimeToFrameNumber(FTimespan Time) const;
 
 	/**
+	 * Get the frame number corresponding to the specified play head time without any checks for media range bounds.
+	 *
+	 * @param Time The play head time.
+	 * @return The corresponding frame number, or INDEX_NONE.
+	 * @see FrameNumberToTime
+	 */
+	int64 TimeToFrameNumberUnbound(FTimespan Time) const;
+
+	/**
 	 * Update the loader based on the current play position.
 	 *
 	 * @param PlayHeadFrame Current play head frame number.
@@ -540,6 +559,16 @@ protected:
 	 * Updates how we throttle bandwidth depending on current settings.
 	 */
 	void UpdateBandwidthThrottling();
+
+	/**
+	 * Get frame from either the local or global cache, nullptr if not found.
+	 */
+	const TSharedPtr<FImgMediaFrame, ESPMode::ThreadSafe>* GetCachedFrame(int32 InFrameNumber);
+
+	/**
+	 * Reset "queued fetch" related state used to emulate player output queue behavior
+	 */
+	void ResetFetchLogic();
 
 private:
 
@@ -621,7 +650,8 @@ private:
 	TArray<int32> PendingFrameNumbers;
 
 	/** Collection of frame numbers that are being read. */
-	TArray<int32> QueuedFrameNumbers;
+	TArray<FFrameNumberJobInfo> QueuedFrameNumbers;
+	int32 NextFrameNumberJobID;
 
 	/** Object pool for reusable work items. */
 	TArray<FImgMediaLoaderWork*> WorkPool;
@@ -632,10 +662,9 @@ private:
 	/** State related to "queue style" frame access functions */
 	struct
 	{
-		int32 LastFrameIndex;
-		FMediaTimeStamp LastTimeStamp;
-		FTimespan LastDuration;
-		int32 LoopIndex;
+		FMediaTimeStamp LastTimeStamp;	// Current playhead / last delivered sample PTS
+		FTimespan LastDuration;			// Duration of a frame / zero after seek or playback start
+		int32 LoopIndex;				// Current loop index to be encoded into sequence index of timestamp
 	} QueuedSampleFetch;
 
 private:

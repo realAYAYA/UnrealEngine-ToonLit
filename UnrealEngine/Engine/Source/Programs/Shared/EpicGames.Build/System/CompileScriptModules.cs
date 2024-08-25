@@ -7,10 +7,10 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Build.Shared;
 using EpicGames.MsBuild;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.FileSystemGlobbing;
 
 namespace UnrealBuildBase
 {
@@ -99,9 +99,16 @@ namespace UnrealBuildBase
 				CompileScriptModule.ValidateBuildRecordRecursively(BuildRecords, ProjectPath, this, Logger);
 			}
 
+			private static readonly char[] s_wildcardCharacters = { '*', '?' };
 			public bool HasWildcards(string FileSpec)
 			{
-				return FileMatcher.HasWildcards(FileSpec);
+				// Perf Note: Doing a [Last]IndexOfAny(...) is much faster than compiling a
+				// regular expression that does the same thing, regardless of whether
+				// filespec contains one of the characters.
+				// Choose LastIndexOfAny instead of IndexOfAny because it seems more likely
+				// that wildcards will tend to be towards the right side.
+
+				return -1 != FileSpec.LastIndexOfAny(s_wildcardCharacters);
 			}
 			DirectoryReference CsProjBuildHook.EngineDirectory => Unreal.EngineDirectory;
 
@@ -349,7 +356,6 @@ namespace UnrealBuildBase
 							// when the engine is installed, expect to find a built target assembly for every record that was found
 							throw new Exception($"Script module \"{TargetPath}\" not found for record \"{Record.Value.BuildRecordFile}\"");
 						}
-
 					}
 				}
 				bBuildSuccess = true;
@@ -466,17 +472,25 @@ namespace UnrealBuildBase
 					TypedFiles = new HashSet<string>();
 					Files.Add(Glob.ItemType!, TypedFiles);
 				}
-				
-				foreach (string IncludePath in Glob.Include!)
-				{
-					TypedFiles.UnionWith(FileMatcher.Default.GetFiles(ProjectDirectory.FullName, IncludePath, Glob.Exclude));
-				}
 
-				foreach (string Remove in Glob.Remove!)
+				Matcher matcher = new Matcher();
+				if (Glob.Include?.Any() == true)
 				{
-					// FileMatcher.IsMatch() doesn't handle inconsistent path separators correctly - which is why globs
+					matcher.AddIncludePatterns(Glob.Include);
+				}
+				if (Glob.Exclude?.Any() == true)
+				{
+					matcher.AddExcludePatterns(Glob.Exclude);
+				}
+				TypedFiles.UnionWith(matcher.GetResultsInFullPath(ProjectDirectory.FullName).Select(x => Path.GetRelativePath(ProjectDirectory.FullName, x)));
+
+				if (Glob.Remove?.Any() == true)
+				{
+					// Matcher.Match() doesn't handle inconsistent path separators correctly - which is why globs
 					// are normalized when they are added to CsProjBuildRecord
-					TypedFiles.RemoveWhere(F => FileMatcher.IsMatch(F, Remove));
+					Matcher removeMatcher = new Matcher();
+					removeMatcher.AddIncludePatterns(Glob.Remove);
+					TypedFiles.RemoveWhere(F => removeMatcher.Match(F).HasMatches);
 				}
 			}
 

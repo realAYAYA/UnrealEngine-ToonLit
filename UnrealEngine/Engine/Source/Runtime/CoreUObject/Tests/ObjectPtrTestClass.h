@@ -5,6 +5,7 @@
 
 #include "UObject/Object.h"
 #include "UObject/ObjectPtr.h"
+#include "Templates/SubclassOf.h"
 
 //simple test class for testing TObjectPtr resolve behavior
 class UObjectPtrTestClass : public UObject
@@ -34,6 +35,8 @@ class UObjectWithClassProperty : public UObject
 
 public:
 	TObjectPtr<UClass> ClassPtr;
+	TSubclassOf<UObjectPtrTestClass> SubClass;
+	UClass* ClassRaw;
 };
 
 //test class with raw pointer
@@ -64,6 +67,16 @@ class UObjectPtrNotLazyTestClass : public UObject
 
 public:
 
+};
+
+
+//stress testing class
+class UObjectPtrStressTestClass : public UObject
+{
+	DECLARE_CLASS_INTRINSIC(UObjectPtrStressTestClass, UObject, CLASS_MatchedSerializers, TEXT("/Script/CoreUObject"))
+
+public:
+	uint8 Data[PLATFORM_CACHE_LINE_SIZE];
 };
 
 

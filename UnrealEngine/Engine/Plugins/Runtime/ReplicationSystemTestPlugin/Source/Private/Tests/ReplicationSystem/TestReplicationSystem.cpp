@@ -4,9 +4,9 @@
 #include "Iris/Serialization/NetBitStreamReader.h"
 #include "Iris/Serialization/NetBitStreamWriter.h"
 #include "Iris/ReplicationSystem/ReplicationSystem.h"
-
 #include "Iris/ReplicationSystem/ReplicationSystemInternal.h"
 #include "Iris/ReplicationSystem/NetTokenStore.h"
+#include "Iris/Core/IrisLog.h"
 
 namespace UE::Net::Private
 {
@@ -715,7 +715,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, AddRemoveFromConn
 	FNetObjectGroupHandle Group = ReplicationSystem->CreateGroup();
 	ReplicationSystem->AddToGroup(Group, ServerObject->NetRefHandle);
 
-	ReplicationSystem->AddGroupFilter(Group);
+	ReplicationSystem->AddExclusionFilterGroup(Group);
 	ReplicationSystem->SetGroupFilterStatus(Group, ENetFilterStatus::Allow);
 
 	// Start replicating object
@@ -732,35 +732,31 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, AddRemoveFromConn
 	// Disallow group to trigger state change from PendingCreateConfirmation->PendingDestroy
 	ReplicationSystem->SetGroupFilterStatus(Group, ENetFilterStatus::Disallow);	
 
+	// Expect client to create object
+	Server->DeliverTo(Client, true);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
 	// Send packet
-	// Expected state to be WaitOnDestroyConfirmation
 	Server->PreSendUpdate();
 	Server->SendTo(Client);
 	Server->PostSendUpdate();
 
-	// Allow group to trigger state to ensure that we restart replication since we have not actually created the object on the client
+	// Allow group to trigger state to ensure that we restart replication
 	ReplicationSystem->SetGroupFilterStatus(Group, ENetFilterStatus::Allow);
 
-	// Expect client to create object
+	// Expect client to destroy object
 	Server->DeliverTo(Client, true);
-	UE_NET_ASSERT_TRUE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle) != nullptr);
-
-	// Expect client to destroy object and server to move to Destroyed state
-	Server->DeliverTo(Client, true);
-	UE_NET_ASSERT_TRUE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle) == nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
 
 	// Trigger replication
 	++ServerObject->IntA;
 
 	// Send packet
-	// Invalid -> PendingCreate
-	// PendingCreate->WaitOnCreateConfirmation
-	Server->PreSendUpdate();
-	Server->SendAndDeliverTo(Client, true);
-	Server->PostSendUpdate();
+	// WaitOnDestroyConfirmation -> WaitOnCreateConfirmation
+	Server->UpdateAndSend({ Client });
 
 	// Verify that the object got created again
-	UE_NET_ASSERT_TRUE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle) != nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
 }
 
 UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestNetTemporary)
@@ -1590,6 +1586,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestTearOffNextUp
 
 	// Trigger presend without send to add the objects to scope
 	Server->PreSendUpdate();
+	Server->PostSendUpdate();
 
 	UE_NET_ASSERT_EQ(uint16(1), NetRefHandleManager->GetNetObjectRefCount(ServerObjectInternalIndex));
 	UE_NET_ASSERT_EQ(uint16(1), NetRefHandleManager->GetNetObjectRefCount(SubObjectObjectInternalIndex));
@@ -1599,9 +1596,14 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestTearOffNextUp
 
 	// Update logic, object should be removed from scope but still exist as pending create in
 	Server->PreSendUpdate();
+	Server->PostSendUpdate();
 
 	UE_NET_ASSERT_EQ(uint16(1), NetRefHandleManager->GetNetObjectRefCount(ServerObjectInternalIndex));
 	UE_NET_ASSERT_EQ(uint16(1), NetRefHandleManager->GetNetObjectRefCount(SubObjectObjectInternalIndex));
+
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
 
 	// Destroy the object
 	Server->DestroyObject(ServerObject);
@@ -1609,9 +1611,6 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestTearOffNextUp
 	// Verify that we no longer have any references to the object
 	UE_NET_ASSERT_EQ(uint16(0), NetRefHandleManager->GetNetObjectRefCount(ServerObjectInternalIndex));
 	UE_NET_ASSERT_EQ(uint16(0), NetRefHandleManager->GetNetObjectRefCount(SubObjectObjectInternalIndex));
-	
-	Server->SendAndDeliverTo(Client, true);
-	Server->PostSendUpdate();
 }
 
 // Test that we can replicate an object with no replicated properties
@@ -1711,5 +1710,194 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestObjectPollFra
 	UE_NET_ASSERT_TRUE(SlowPollObjectHasBeenEqual);
 	UE_NET_ASSERT_TRUE(SlowPollObjectHasBeenInequal);
 }
+
+// Test that broken objects can be skipped by client
+UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestClientCanSkipBrokenObject)
+{
+	UReplicationSystem* ReplicationSystem = Server->ReplicationSystem;
+
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn objects on server
+	UTestReplicatedIrisObject* ServerObjectA = Server->CreateObject(0,0);
+	UTestReplicatedIrisObject* ServerObjectB = Server->CreateObject(0,0);
+
+	{
+		// Setup client to fail to create next remote object
+		ServerObjectA->bForceFailToInstantiateOnRemote = true;
+
+		// Suppress ensure that will occur due to failing to instantiate the object
+		UReplicatedTestObjectBridge::FSupressCreateInstanceFailedEnsureScope SuppressEnsureScope(*Client->GetReplicationBridge());
+
+		// Disable error logging as we know we will fail.
+		auto IrisLogVerbosity = UE_GET_LOG_VERBOSITY(LogIris);
+		LogIris.SetVerbosity(ELogVerbosity::NoLogging);
+
+		// Send and deliver packet
+		Server->PreSendUpdate();
+		Server->SendAndDeliverTo(Client, true);
+		Server->PostSendUpdate();
+
+		// Restore LogVerbosity
+		LogIris.SetVerbosity(IrisLogVerbosity);
+	}
+
+	// We expect replication of ObjectA to have failed
+	{
+		UTestReplicatedIrisObject* ClientObjectA = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjectA->NetRefHandle));
+		UE_NET_ASSERT_TRUE(ClientObjectA == nullptr);
+	}
+
+	// ObjectB should have been replicated ok
+	{
+		UTestReplicatedIrisObject* ClientObjectB = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjectB->NetRefHandle));
+		UE_NET_ASSERT_TRUE(ClientObjectB != nullptr);
+	}
+
+	// Modify both objects to make them replicate again
+	++ServerObjectA->IntA;
+	++ServerObjectB->IntA;
+
+	// Send and deliver packet to verify that client ignores the broken object
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
+
+	// We expect replication of ObjectA to have failed
+	{
+		UTestReplicatedIrisObject* ClientObjectA = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjectA->NetRefHandle));
+		UE_NET_ASSERT_TRUE(ClientObjectA == nullptr);
+	}
+
+	// Filter out ObjectA to tell the client that the object has gone out of scope
+	ReplicationSystem->AddToGroup(ReplicationSystem->GetNotReplicatedNetObjectGroup(), ServerObjectA->NetRefHandle);
+
+	// Send and deliver packet, the client should now remove the broken object from the list of broken objects
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
+
+	// Enable replication of ObjectA again to try to replicate it to server now that it should succeed
+	ReplicationSystem->RemoveFromGroup(ReplicationSystem->GetNotReplicatedNetObjectGroup(), ServerObjectA->NetRefHandle);
+
+	// Set ObjectA to be able instantiate on client again
+	ServerObjectA->bForceFailToInstantiateOnRemote = false;
+
+	// Client should now be able to instantiate the object
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
+
+	// We expect replication of ObjectA to have succeeded this time
+	{
+		UTestReplicatedIrisObject* ClientObjectA = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjectA->NetRefHandle));
+		UE_NET_ASSERT_TRUE(ClientObjectA == nullptr);
+	}
+}
+
+
+// Test that PropertyReplication properly handles partial states during Apply
+UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPartialDequantize)
+{
+	// Enable cvars to exercise path that store previous state for OnReps to make sure we exercise path that accumulate dirty changes so that we have a complete state.
+	IConsoleVariable* CVarUsePrevReceivedStateForOnReps = IConsoleManager::Get().FindConsoleVariable(TEXT("net.Iris.UsePrevReceivedStateForOnReps"));
+	check(CVarUsePrevReceivedStateForOnReps != nullptr && CVarUsePrevReceivedStateForOnReps->IsVariableBool());
+	const bool bUsePrevReceivedStateForOnReps = CVarUsePrevReceivedStateForOnReps->GetBool();
+	CVarUsePrevReceivedStateForOnReps->Set(true, ECVF_SetByCode);
+
+	// Make sure we allow partial dequantize
+	IConsoleVariable* CVarForceFullDequantizeAndApply = IConsoleManager::Get().FindConsoleVariable(TEXT("net.iris.ForceFullDequantizeAndApply"));
+	check(CVarForceFullDequantizeAndApply != nullptr && CVarForceFullDequantizeAndApply->IsVariableBool());
+	const bool bForceFullDequantizeAndApply = CVarForceFullDequantizeAndApply->GetBool();
+	CVarForceFullDequantizeAndApply->Set(false, ECVF_SetByCode);
+
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn objects on server
+	UTestReplicatedObjectWithRepNotifies* ServerObjectA = Server->CreateObject<UTestReplicatedObjectWithRepNotifies>();
+	
+	// Send and deliver packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
+
+	// Verify assumptions
+	// Object should exist on client and have default state
+	UTestReplicatedObjectWithRepNotifies* ClientObjectA = Cast<UTestReplicatedObjectWithRepNotifies>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjectA->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientObjectA, nullptr);
+
+	UE_NET_ASSERT_EQ(ServerObjectA->IntA, ClientObjectA->IntA);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntAStoredInOnRep, -1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntB, ClientObjectA->IntB);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntBStoredInOnRep, -1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntC, ClientObjectA->IntC);
+
+	// Modify only IntA
+	ServerObjectA->IntA = 1;
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client});
+
+	// Verify assumptions
+	// Only IntA should have been modified
+	UE_NET_ASSERT_EQ(ServerObjectA->IntA, ClientObjectA->IntA);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntAStoredInOnRep, -1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntB, ClientObjectA->IntB);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntBStoredInOnRep, -1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntC, ClientObjectA->IntC);
+
+	// Modify only IntB
+	ServerObjectA->IntB = 1;
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client});
+
+	// Verify assumptions
+	// Only IntA should have been modified
+	UE_NET_ASSERT_EQ(ServerObjectA->IntA, ClientObjectA->IntA);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntAStoredInOnRep, -1);
+
+	UE_NET_ASSERT_EQ(ServerObjectA->IntB, ClientObjectA->IntB);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntBStoredInOnRep, -1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntC, ClientObjectA->IntC);
+
+	// Modify only IntA
+	ServerObjectA->IntA = 2;
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client});
+
+	// Verify assumptions
+	// IntA should have been modified, and if everything works correctly PrevIntAStoredInOnRep should be 1
+	UE_NET_ASSERT_EQ(ServerObjectA->IntA, ClientObjectA->IntA);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntAStoredInOnRep, 1);
+
+	UE_NET_ASSERT_EQ(ServerObjectA->IntB, ClientObjectA->IntB);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntBStoredInOnRep, -1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntC, ClientObjectA->IntC);
+
+	// Verify that we do not apply repnotifies if we do not receive data from server by modifying values on the client and verifying that they do not get overwritten
+	ServerObjectA->IntB = 2;
+	ClientObjectA->IntA = -1;
+	ClientObjectA->PrevIntAStoredInOnRep = -1;
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client});
+
+	// Verify assumptions, since we messed with IntA and PrevIntAStoredInOnRep locally they have the value we set but IntB should be updated according to replicated state
+	UE_NET_ASSERT_NE(ServerObjectA->IntA, ClientObjectA->IntA);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntAStoredInOnRep, -1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntB, ClientObjectA->IntB);
+	UE_NET_ASSERT_EQ(ClientObjectA->PrevIntBStoredInOnRep, 1);
+	UE_NET_ASSERT_EQ(ServerObjectA->IntC, ClientObjectA->IntC);
+
+	// Restore cvars
+	CVarUsePrevReceivedStateForOnReps->Set(bUsePrevReceivedStateForOnReps, ECVF_SetByCode);
+	CVarForceFullDequantizeAndApply->Set(bForceFullDequantizeAndApply, ECVF_SetByCode);
+}
+
+
 
 }

@@ -24,7 +24,7 @@ private:
 	virtual ~UReplicationDataStream();
 
 	// UDataStream interface
-	virtual EWriteResult BeginWrite() override;
+	virtual EWriteResult BeginWrite(const FBeginWriteParameters& Params) override;
 	virtual EWriteResult WriteData(UE::Net::FNetSerializationContext& Context, FDataStreamRecord const*& OutRecord) override;
 	virtual void EndWrite() override;
 	virtual void ReadData(UE::Net::FNetSerializationContext& Context) override;

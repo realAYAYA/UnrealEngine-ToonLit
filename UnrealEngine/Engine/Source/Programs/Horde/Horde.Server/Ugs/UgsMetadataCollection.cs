@@ -4,9 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
@@ -68,7 +70,7 @@ namespace Horde.Server.Ugs
 			public int UpdateIndex { get; set; }
 			public long UpdateTicks { get; set; }
 
-			IReadOnlyList<IUgsUserData>? IUgsMetadata.Users => (Users.Count > 0)? Users : null;
+			IReadOnlyList<IUgsUserData>? IUgsMetadata.Users => (Users.Count > 0) ? Users : null;
 			IReadOnlyList<IUgsBadgeData>? IUgsMetadata.Badges => (Badges.Count > 0) ? Badges : null;
 
 			[BsonConstructor]
@@ -87,17 +89,18 @@ namespace Horde.Server.Ugs
 		}
 
 		readonly IMongoCollection<UgsMetadataDocument> _collection;
+		readonly ILogger<UgsMetadataCollection> _logger;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		/// <param name="mongoService">Database service instance</param>
-		public UgsMetadataCollection(MongoService mongoService)
+		public UgsMetadataCollection(MongoService mongoService, ILogger<UgsMetadataCollection> logger)
 		{
 			List<MongoIndex<UgsMetadataDocument>> indexes = new List<MongoIndex<UgsMetadataDocument>>();
 			indexes.Add(keys => keys.Ascending(x => x.Stream).Descending(x => x.Change).Ascending(x => x.Project), unique: true);
 			indexes.Add(keys => keys.Ascending(x => x.Stream).Descending(x => x.Change).Descending(x => x.UpdateTicks));
 			_collection = mongoService.GetCollection<UgsMetadataDocument>("UgsMetadata", indexes);
+			_logger = logger;
 		}
 
 		/// <summary>
@@ -106,15 +109,16 @@ namespace Horde.Server.Ugs
 		/// <param name="stream">Stream containing the change</param>
 		/// <param name="change">The changelist number to add a document for</param>
 		/// <param name="project">Arbitrary identifier for this project</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The metadata document</returns>
-		public async Task<IUgsMetadata> FindOrAddAsync(string stream, int change, string? project)
+		public async Task<IUgsMetadata> FindOrAddAsync(string stream, int change, string? project, CancellationToken cancellationToken)
 		{
 			string normalizedStream = GetNormalizedStream(stream);
 			string normalizedProject = GetNormalizedProject(project);
 			for (; ; )
 			{
 				// Find an existing document
-				UgsMetadataDocument? existing = await _collection.Find(x => x.Stream == normalizedStream && x.Change == change && x.Project == normalizedProject).FirstOrDefaultAsync();
+				UgsMetadataDocument? existing = await _collection.Find(x => x.Stream == normalizedStream && x.Change == change && x.Project == normalizedProject).FirstOrDefaultAsync(cancellationToken);
 				if (existing != null)
 				{
 					return existing;
@@ -124,7 +128,7 @@ namespace Horde.Server.Ugs
 				try
 				{
 					UgsMetadataDocument newDocument = new UgsMetadataDocument(normalizedStream, change, normalizedProject);
-					await _collection.InsertOneAsync(newDocument);
+					await _collection.InsertOneAsync(newDocument, null, cancellationToken);
 					return newDocument;
 				}
 				catch (MongoWriteException ex)
@@ -138,12 +142,18 @@ namespace Horde.Server.Ugs
 		}
 
 		/// <inheritdoc/>
-		public async Task<IUgsMetadata> UpdateUserAsync(IUgsMetadata metadata, string userName, bool? synced, UgsUserVote? vote, bool? investigating, bool? starred, string? comment)
+		public async Task<IUgsMetadata> UpdateUserAsync(IUgsMetadata metadata, string userName, bool? synced, UgsUserVote? vote, bool? investigating, bool? starred, string? comment, CancellationToken cancellationToken)
 		{
 			UpdateDefinitionBuilder<UgsMetadataDocument> updateBuilder = Builders<UgsMetadataDocument>.Update;
 			for (; ; )
 			{
 				UgsMetadataDocument document = (UgsMetadataDocument)metadata;
+
+				if (document.Users == null)
+				{
+					_logger.LogWarning("Empty users collection in UGS metadata: {Contents}", document.ToBsonDocument().ToJson());
+					document.Users ??= new();
+				}
 
 				int userIdx = document.Users.FindIndex(x => x.User != null && x.User.Equals(userName, StringComparison.OrdinalIgnoreCase));
 				if (userIdx == -1)
@@ -156,7 +166,7 @@ namespace Horde.Server.Ugs
 					userData.Starred = (starred == true) ? starred : null;
 					userData.Comment = comment;
 
-					if (await TryUpdateAsync(document, updateBuilder.Push(x => x.Users, userData)))
+					if (await TryUpdateAsync(document, updateBuilder.Push(x => x.Users, userData), cancellationToken))
 					{
 						document.Users.Add(userData);
 						return metadata;
@@ -194,7 +204,7 @@ namespace Horde.Server.Ugs
 						updates.Add(updateBuilder.Set(x => x.Users![userIdx].Comment, comment));
 					}
 
-					if (updates.Count == 0 || await TryUpdateAsync(document, updateBuilder.Combine(updates)))
+					if (updates.Count == 0 || await TryUpdateAsync(document, updateBuilder.Combine(updates), cancellationToken))
 					{
 						userData.SyncTime = newSyncTime;
 						userData.Vote = vote;
@@ -206,12 +216,12 @@ namespace Horde.Server.Ugs
 				}
 
 				// Update the document and try again
-				metadata = await FindOrAddAsync(metadata.Stream, metadata.Change, metadata.Project);
+				metadata = await FindOrAddAsync(metadata.Stream, metadata.Change, metadata.Project, cancellationToken);
 			}
 		}
 
 		/// <inheritdoc/>
-		public async Task<IUgsMetadata> UpdateBadgeAsync(IUgsMetadata metadata, string name, Uri? url, UgsBadgeState state)
+		public async Task<IUgsMetadata> UpdateBadgeAsync(IUgsMetadata metadata, string name, Uri? url, UgsBadgeState state, CancellationToken cancellationToken)
 		{
 			UpdateDefinitionBuilder<UgsMetadataDocument> updateBuilder = Builders<UgsMetadataDocument>.Update;
 			for (; ; )
@@ -228,7 +238,7 @@ namespace Horde.Server.Ugs
 					newBadge.Url = url;
 					newBadge.State = state;
 
-					if (await TryUpdateAsync(document, updateBuilder.Push(x => x.Badges, newBadge)))
+					if (await TryUpdateAsync(document, updateBuilder.Push(x => x.Badges, newBadge), cancellationToken))
 					{
 						document.Badges.Add(newBadge);
 						return metadata;
@@ -249,7 +259,7 @@ namespace Horde.Server.Ugs
 						updates.Add(updateBuilder.Set(x => x.Badges![badgeIdx].State, state));
 					}
 
-					if (updates.Count == 0 || await TryUpdateAsync(document, updateBuilder.Combine(updates)))
+					if (updates.Count == 0 || await TryUpdateAsync(document, updateBuilder.Combine(updates), cancellationToken))
 					{
 						badgeData.Url = url;
 						badgeData.State = state;
@@ -258,18 +268,26 @@ namespace Horde.Server.Ugs
 				}
 
 				// Update the document and try again
-				metadata = await FindOrAddAsync(metadata.Stream, metadata.Change, metadata.Project);
+				metadata = await FindOrAddAsync(metadata.Stream, metadata.Change, metadata.Project, cancellationToken);
 			}
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IUgsMetadata>> FindAsync(string stream, int minChange, int? maxChange = null, long? minTime = null)
+		public async Task<List<IUgsMetadata>> FindAsync(string stream, IReadOnlyList<int>? changes = null, int? minChange = null, int? maxChange = null, long? minTime = null, CancellationToken cancellationToken = default)
 		{
 			FilterDefinitionBuilder<UgsMetadataDocument> filterBuilder = Builders<UgsMetadataDocument>.Filter;
 
 			string normalizedStream = GetNormalizedStream(stream);
 
-			FilterDefinition<UgsMetadataDocument> filter = filterBuilder.Eq(x => x.Stream, normalizedStream) & filterBuilder.Gte(x => x.Change, minChange);
+			FilterDefinition<UgsMetadataDocument> filter = filterBuilder.Eq(x => x.Stream, normalizedStream);
+			if (changes != null && changes.Count > 0)
+			{
+				filter &= filterBuilder.In(x => x.Change, changes);
+			}
+			if (minChange != null)
+			{
+				filter &= filterBuilder.Gte(x => x.Change, minChange.Value);
+			}
 			if (maxChange != null)
 			{
 				filter &= filterBuilder.Lte(x => x.Change, maxChange.Value);
@@ -279,7 +297,7 @@ namespace Horde.Server.Ugs
 				filter &= filterBuilder.Gt(x => x.UpdateTicks, minTime.Value);
 			}
 
-			List<UgsMetadataDocument> documents = await _collection.Find(filter).ToListAsync();
+			List<UgsMetadataDocument> documents = await _collection.Find(filter).ToListAsync(cancellationToken);
 			return documents.ConvertAll<IUgsMetadata>(x =>
 			{
 				// Remove polluting null entries. Need to find the source of these.
@@ -308,7 +326,7 @@ namespace Horde.Server.Ugs
 		[SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase")]
 		private static string GetNormalizedProject(string? project)
 		{
-			if(project == null)
+			if (project == null)
 			{
 				return String.Empty;
 			}
@@ -323,8 +341,9 @@ namespace Horde.Server.Ugs
 		/// </summary>
 		/// <param name="document">The document to update</param>
 		/// <param name="update">Update definition</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the update succeeded</returns>
-		private async Task<bool> TryUpdateAsync(UgsMetadataDocument document, UpdateDefinition<UgsMetadataDocument> update)
+		private async Task<bool> TryUpdateAsync(UgsMetadataDocument document, UpdateDefinition<UgsMetadataDocument> update, CancellationToken cancellationToken)
 		{
 			int newUpdateIndex = document.UpdateIndex + 1;
 			update = update.Set(x => x.UpdateIndex, newUpdateIndex);
@@ -332,14 +351,23 @@ namespace Horde.Server.Ugs
 			long newUpdateTicks = DateTime.UtcNow.Ticks;
 			update = update.Set(x => x.UpdateTicks, newUpdateTicks);
 
-			UpdateResult result = await _collection.UpdateOneAsync(x => x.Change == document.Change && x.UpdateIndex == document.UpdateIndex, update);
-			if (result.ModifiedCount > 0)
+			FilterDefinition<UgsMetadataDocument> filter = Builders<UgsMetadataDocument>.Filter.Expr(x => x.Id == document.Id && x.UpdateIndex == document.UpdateIndex);
+			try
 			{
-				document.UpdateIndex = newUpdateIndex;
-				document.UpdateTicks = newUpdateTicks;
-				return true;
+				UpdateResult result = await _collection.UpdateOneAsync(filter, update, null, cancellationToken);
+				if (result.ModifiedCount > 0)
+				{
+					document.UpdateIndex = newUpdateIndex;
+					document.UpdateTicks = newUpdateTicks;
+					return true;
+				}
+				return false;
 			}
-			return false;
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Failed to update UGS metadata document. State: {State}, Filter: {Filter}, Update: {Update}", document.ToBsonDocument().ToJson(), filter.Render(), update.Render());
+				throw;
+			}
 		}
 	}
 }

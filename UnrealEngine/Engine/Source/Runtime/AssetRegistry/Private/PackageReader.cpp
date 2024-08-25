@@ -7,6 +7,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "HAL/FileManager.h"
 #include "Internationalization/Internationalization.h"
+#include "Internationalization/GatherableTextData.h"
 #include "Logging/MessageLog.h"
 #include "Misc/Guid.h"
 #include "Misc/PackageName.h"
@@ -14,9 +15,26 @@
 #include "Misc/ScopeExit.h"
 #include "UObject/Class.h"
 #include "UObject/Linker.h"
+#include "UObject/LinkerLoad.h"
 #include "UObject/PackageRelocation.h"
 #include "UObject/PackageTrailer.h"
 
+const TCHAR* LexToString(FPackageReader::EOpenPackageResult Result)
+{
+	switch(Result)
+	{
+		case FPackageReader::EOpenPackageResult::Success: return TEXT("Success");
+		case FPackageReader::EOpenPackageResult::NoLoader: return TEXT("NoLoader");
+		case FPackageReader::EOpenPackageResult::MalformedTag: return TEXT("MalformedTag");
+		case FPackageReader::EOpenPackageResult::VersionTooOld: return TEXT("VersionTooOld");
+		case FPackageReader::EOpenPackageResult::VersionTooNew: return TEXT("VersionTooNew");
+		case FPackageReader::EOpenPackageResult::CustomVersionMissing: return TEXT("CustomVersionMissing");
+		case FPackageReader::EOpenPackageResult::CustomVersionInvalid: return TEXT("CustomVersionInvalid");
+		case FPackageReader::EOpenPackageResult::Unversioned: return TEXT("Unversioned");
+	}
+	checkf(false, TEXT("LexToString unimplemented for EOpenPackageResult %d"), (int32)Result);
+	return TEXT("UNKNOWN");
+}
 
 FPackageReader::FPackageReader()
 	: Loader(nullptr)
@@ -48,7 +66,8 @@ bool FPackageReader::OpenPackageFile(FStringView InLongPackageName, FStringView 
 	PackageFilename = InPackageFilename;
 	Loader = IFileManager::Get().CreateFileReader(*PackageFilename);
 	bLoaderOwner = true;
-	return OpenPackageFile(OutErrorCode);
+	EOpenPackageResult Tmp = EOpenPackageResult::Success;
+	return OpenPackageFile(OutErrorCode ? *OutErrorCode : Tmp); 
 }
 
 bool FPackageReader::OpenPackageFile(FArchive* InLoader, EOpenPackageResult* OutErrorCode)
@@ -58,23 +77,28 @@ bool FPackageReader::OpenPackageFile(FArchive* InLoader, EOpenPackageResult* Out
 	bLoaderOwner = false;
 	LongPackageName.Empty();
 	PackageFilename = Loader->GetArchiveName();
-	return OpenPackageFile(OutErrorCode);
+	EOpenPackageResult Tmp = EOpenPackageResult::Success;
+	return OpenPackageFile(OutErrorCode ? *OutErrorCode : Tmp); 
 }
 
-bool FPackageReader::OpenPackageFile(EOpenPackageResult* OutErrorCode)
+bool FPackageReader::OpenPackageFile(TUniquePtr<FArchive> InLoader, EOpenPackageResult* OutErrorCode)
 {
-	auto SetPackageErrorCode = [&](const EOpenPackageResult InErrorCode)
-	{
-		if (OutErrorCode)
-		{
-			*OutErrorCode = InErrorCode;
-		}
-	};
+	check(!Loader);
+	Loader = InLoader.Release();
+	bLoaderOwner = true;
+	LongPackageName.Empty();
+	PackageFilename = Loader->GetArchiveName();
+	EOpenPackageResult Tmp = EOpenPackageResult::Success;
+	return OpenPackageFile(OutErrorCode ? *OutErrorCode : Tmp); 
+}
 
+bool FPackageReader::OpenPackageFile(EOpenPackageResult& OutErrorCode)
+{
+	OutErrorCode = EOpenPackageResult::Success;
 	if( Loader == nullptr )
 	{
 		// Couldn't open the file
-		SetPackageErrorCode(EOpenPackageResult::NoLoader);
+		OutErrorCode = EOpenPackageResult::NoLoader;
 		return false;
 	}
 
@@ -88,71 +112,88 @@ bool FPackageReader::OpenPackageFile(EOpenPackageResult* OutErrorCode)
 	{
 		// Unrecognized or malformed package file
 		UE_LOG(LogAssetRegistry, Error, TEXT("Package %s has malformed tag"), *PackageFilename);
-		SetPackageErrorCode(EOpenPackageResult::MalformedTag);
+		OutErrorCode = EOpenPackageResult::MalformedTag;
 		return false;
 	}
 
-	if (!PackageFileSummary.IsFileVersionValid())
+	// IsEnforcePackageCompatibleVersionCheck(): If LinkerLoad is not validating, PackageReader should not either.
+	// Optimize the IsEnforcePackageCompatibleVersionCheck==true but no errors case; only test
+	// IsEnforcePackageCompatibleVersionCheck after finding a version mismatch.
+	if (!PackageFileSummary.IsFileVersionValid() &&
+		IsEnforcePackageCompatibleVersionCheck())
 	{
 		// Log a warning rather than an error. Linkerload gracefully handles this case.
-		UE_LOG(LogAssetRegistry, Warning, TEXT("Package %s is unversioned which cannot be opened by the current process"), *PackageFilename);
-		SetPackageErrorCode(EOpenPackageResult::Unversioned);
+		UE_LOG(LogAssetRegistry, Warning,
+			TEXT("Package %s is unversioned which cannot be opened by the current process"), *PackageFilename);
+		OutErrorCode = EOpenPackageResult::Unversioned;
 		return false;
 	}
 
 	// Don't read packages that are too old
-	if (PackageFileSummary.IsFileVersionTooOld())
+	if (PackageFileSummary.IsFileVersionTooOld() &&
+		IsEnforcePackageCompatibleVersionCheck())
 	{
 		// Log a warning rather than an error. Linkerload gracefully handles this case.
-		UE_LOG(	LogAssetRegistry, Warning, TEXT("Package %s is too old. Min Version: %i  Package Version: %i"),
-				*PackageFilename, (int32)VER_UE4_OLDEST_LOADABLE_PACKAGE, PackageFileSummary.GetFileVersionUE().FileVersionUE4);
+		UE_LOG(LogAssetRegistry, Warning, TEXT("Package %s is too old. Min Version: %i  Package Version: %i"),
+			*PackageFilename, (int32)VER_UE4_OLDEST_LOADABLE_PACKAGE,
+			PackageFileSummary.GetFileVersionUE().FileVersionUE4);
 
-		SetPackageErrorCode(EOpenPackageResult::Unversioned);
+		OutErrorCode = EOpenPackageResult::VersionTooOld;
 		return false;
 	}
 
 	// Don't read packages that were saved with a package version newer than the current one.
-	if (PackageFileSummary.IsFileVersionTooNew())
+	if (PackageFileSummary.IsFileVersionTooNew() &&
+		IsEnforcePackageCompatibleVersionCheck())
 	{
 		// Log a warning rather than an error. Linkerload gracefully handles this case.
-		UE_LOG(	LogAssetRegistry, Warning, TEXT("Package %s is too new. Engine Version: %i  Package Version: %i"),
-				*PackageFilename, GPackageFileUEVersion.ToValue(), PackageFileSummary.GetFileVersionUE().ToValue());
+		UE_LOG(LogAssetRegistry, Warning, TEXT("Package %s is too new. Engine Version: %i  Package Version: %i"),
+			*PackageFilename, GPackageFileUEVersion.ToValue(), PackageFileSummary.GetFileVersionUE().ToValue());
 
-		SetPackageErrorCode(EOpenPackageResult::VersionTooNew);
+		OutErrorCode = EOpenPackageResult::VersionTooNew;
 		return false;
 	}
 
-	if (PackageFileSummary.GetFileVersionLicenseeUE() > GPackageFileLicenseeUEVersion)
+	if (PackageFileSummary.GetFileVersionLicenseeUE() > GPackageFileLicenseeUEVersion &&
+		IsEnforcePackageCompatibleVersionCheck())
 	{
 		// Log a warning rather than an error. Linkerload gracefully handles this case.
 		UE_LOG(LogAssetRegistry, Warning, TEXT("Package %s is too new. Licensee Version: %i Package Licensee Version: %i"),
 			*PackageFilename, GPackageFileLicenseeUEVersion, PackageFileSummary.GetFileVersionLicenseeUE());
 
-		SetPackageErrorCode(EOpenPackageResult::VersionTooNew);
+		OutErrorCode = EOpenPackageResult::VersionTooNew;
 		return false;
 	}
 
 	// Check serialized custom versions against latest custom versions.
-	TArray<FCustomVersionDifference> Diffs = FCurrentCustomVersions::Compare(PackageFileSummary.GetCustomVersionContainer().GetAllVersions(), *PackageFilename);
+	TArray<FCustomVersionDifference> Diffs = FCurrentCustomVersions::Compare(
+		PackageFileSummary.GetCustomVersionContainer().GetAllVersions(), *PackageFilename);
 	for (FCustomVersionDifference Diff : Diffs)
 	{
 		if (Diff.Type == ECustomVersionDifference::Missing)
 		{
-			SetPackageErrorCode(EOpenPackageResult::CustomVersionMissing);
-			return false;
+			if (IsEnforcePackageCompatibleVersionCheck())
+			{
+				OutErrorCode = EOpenPackageResult::CustomVersionMissing;
+			}
 		}
 		else if (Diff.Type == ECustomVersionDifference::Invalid)
 		{
-			SetPackageErrorCode(EOpenPackageResult::CustomVersionInvalid);
-			return false;
+			if (IsEnforcePackageCompatibleVersionCheck())
+			{
+				OutErrorCode = EOpenPackageResult::CustomVersionInvalid;
+			}
 		}
 		else if (Diff.Type == ECustomVersionDifference::Newer)
 		{
-			UE_LOG(LogAssetRegistry, Error, TEXT("Package %s has newer custom version of %s"), *PackageFilename, *Diff.Version->GetFriendlyName().ToString());
-
-			SetPackageErrorCode(EOpenPackageResult::VersionTooNew);
-			return false;
+			if (IsEnforcePackageCompatibleVersionCheck())
+			{
+				UE_LOG(LogAssetRegistry, Error, TEXT("Package %s has newer custom version of %s"),
+					*PackageFilename, *Diff.Version->GetFriendlyName().ToString());
+				OutErrorCode = EOpenPackageResult::VersionTooNew;
+			}
 		}
+		// else ECustomVersionDifference::Older, which is not a problem
 	}
 
 	//make sure the filereader gets the correct version number (it defaults to latest version)
@@ -162,11 +203,17 @@ bool FPackageReader::OpenPackageFile(EOpenPackageResult* OutErrorCode)
 
 	const FCustomVersionContainer& PackageFileSummaryVersions = PackageFileSummary.GetCustomVersionContainer();
 	SetCustomVersions(PackageFileSummaryVersions);
+	
+	SetUseUnversionedPropertySerialization((PackageFileSummary.GetPackageFlags() & EPackageFlags::PKG_UnversionedProperties) != 0);
 
 	PackageFileSize = Loader->TotalSize();
+	
+	if (LongPackageName.IsEmpty())
+	{
+		LongPackageName = PackageFileSummary.PackageName;
+	}
 
-	SetPackageErrorCode(EOpenPackageResult::Success);
-	return true;
+	return OutErrorCode == EOpenPackageResult::Success;
 }
 
 bool FPackageReader::TryGetLongPackageName(FString& OutLongPackageName) const
@@ -219,6 +266,16 @@ const FPackageFileSummary& FPackageReader::GetPackageFileSummary() const
 	return PackageFileSummary;
 }
 
+bool FPackageReader::GetNames(TArray<FName>& OutNames)
+{
+	if (!SerializeNameMap())
+	{
+		return false;
+	}	
+	OutNames = NameMap;
+	return true;
+}
+
 bool FPackageReader::GetImports(TArray<FObjectImport>& OutImportMap)
 {
 	if (!SerializeNameMap() || !SerializeImportMap())
@@ -239,6 +296,16 @@ bool FPackageReader::GetExports(TArray<FObjectExport>& OutExportMap)
 	return true;
 }
 
+bool FPackageReader::GetDependsMap(TArray<TArray<FPackageIndex>>& OutDependsMap)
+{
+	if (!SerializeDependsMap())
+	{
+		return false;
+	}
+	OutDependsMap = DependsMap;
+	return true;
+}
+
 bool FPackageReader::GetSoftPackageReferenceList(TArray<FName>& OutSoftPackageReferenceList)
 {
 	if (!SerializeNameMap() || !SerializeSoftPackageReferenceList())
@@ -246,6 +313,37 @@ bool FPackageReader::GetSoftPackageReferenceList(TArray<FName>& OutSoftPackageRe
 		return false;
 	}
 	OutSoftPackageReferenceList = SoftPackageReferenceList;
+	return true;
+}
+
+bool FPackageReader::GetSoftObjectPaths(TArray<FSoftObjectPath>& OutSoftObjectPaths)
+{
+	if (!SerializeNameMap() || !SerializeSoftObjectPathMap())
+	{
+		return false;
+	}
+	OutSoftObjectPaths = SoftObjectPathMap;
+	return true;
+}
+
+bool FPackageReader::GetGatherableTextData(TArray<FGatherableTextData>& OutText)
+{
+	if (!SerializeGatherableTextDataMap())
+	{
+		return false;
+	}
+	OutText = GatherableTextDataMap;
+	return true;
+}
+
+bool FPackageReader::GetThumbnails(TArray<FObjectFullNameAndThumbnail>& OutThumbnails)
+{
+	if (!SerializeThumbnailMap())
+	{
+		return false;
+	}	
+	
+	OutThumbnails = ThumbnailMap;
 	return true;
 }
 
@@ -463,60 +561,31 @@ void FPackageReader::ApplyRelocationToImportMapAndSoftPackageReferenceList(FStri
 
 bool FPackageReader::ReadAssetDataFromThumbnailCache(TArray<FAssetData*>& AssetDataList)
 {
-	if (!StartSerializeSection(PackageFileSummary.ThumbnailTableOffset))
+	if (!SerializeThumbnailMap())
 	{
-		return false;
-	}
-
-	// Determine the package name and path
-	FString PackageName;
-	if (!TryGetLongPackageName(PackageName))
-	{
-		return false;
-	}
-	FString PackagePath = FPackageName::GetLongPackagePath(PackageName);
-
-	// Load the thumbnail count
-	int32 ObjectCount = 0;
-	*this << ObjectCount;
-	const int32 MinBytesPerObject = 1;
-	if (IsError() || ObjectCount < 0 || PackageFileSize < Tell() + ObjectCount * MinBytesPerObject)
-	{
-		UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("ReadAssetDataFromThumbnailCacheInvalidObjectCount", PackageFilename);
 		return false;
 	}
 
 	// Iterate over every thumbnail entry and harvest the objects classnames
-	for(int32 ObjectIdx = 0; ObjectIdx < ObjectCount; ++ObjectIdx)
+	for(const FObjectFullNameAndThumbnail& Thumbnail : ThumbnailMap)
 	{
-		// Serialize the classname
-		FString AssetClassName;
-		*this << AssetClassName;
-
-		// Serialize the object path.
-		FString ObjectPathWithoutPackageName;
-		*this << ObjectPathWithoutPackageName;
-
-		// Serialize the rest of the data to get at the next object
-		int32 FileOffset = 0;
-		*this << FileOffset;
-
-		if (IsError())
-		{
-			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("ReadAssetDataFromThumbnailCacheInvalidObject", PackageFilename);
-			return false;
-		}
-
-		FString GroupNames;
-		FString AssetName;
-
-		if (!ensureMsgf(!ObjectPathWithoutPackageName.Contains(TEXT("."), ESearchCase::CaseSensitive), TEXT("Cannot make FAssetData for sub object %s!"), *ObjectPathWithoutPackageName))
-		{
-			continue;
-		}
+		FString ClassName;
+		FString PackageName;
+		FString ObjectName;
+		FString SubobjectName;
+		FPackageName::SplitFullObjectPath(Thumbnail.ObjectFullName.ToString(), ClassName, PackageName, ObjectName, SubobjectName);
+		FString PackagePath = FPackageName::GetLongPackagePath(PackageName);
 
 		// Create a new FAssetData for this asset and update it with the gathered data
-		AssetDataList.Add(new FAssetData(FName(*PackageName), FName(*PackagePath), FName(*ObjectPathWithoutPackageName), FTopLevelAssetPath(AssetClassName), FAssetDataTagMap(), PackageFileSummary.ChunkIDs, PackageFileSummary.GetPackageFlags()));
+		AssetDataList.Add(new FAssetData(
+			FName(PackageName),
+			FName(PackagePath), 
+			FName(ObjectName), // AssetName
+			FTopLevelAssetPath(ClassName), 
+			FAssetDataTagMap(), 
+			PackageFileSummary.ChunkIDs, 
+			PackageFileSummary.GetPackageFlags())
+		);
 	}
 
 	return true;
@@ -604,9 +673,9 @@ bool FPackageReader::ReadDependencyData(FPackageDependencyData& OutDependencyDat
 		OutDependencyData.bHasPackageData = true;
 		FAssetPackageData& PackageData = OutDependencyData.PackageData;
 		PackageData.DiskSize = PackageFileSize;
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-		PackageData.PackageGuid = PackageFileSummary.Guid;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+#if WITH_EDITORONLY_DATA
+		PackageData.SetPackageSavedHash(PackageFileSummary.GetSavedHash());
+#endif
 		PackageData.SetCustomVersions(PackageFileSummary.GetCustomVersionContainer().GetAllVersions());
 		PackageData.FileVersionUE = PackageFileSummary.GetFileVersionUE();
 		PackageData.FileVersionLicenseeUE = PackageFileSummary.GetFileVersionLicenseeUE();
@@ -883,6 +952,43 @@ bool FPackageReader::SerializeExportMap()
 	return true;
 }
 
+bool FPackageReader::SerializeDependsMap()
+{
+	if (DependsMap.Num() > 0)
+	{
+		return true;
+	}
+
+	if (PackageFileSummary.DependsOffset > 0 && PackageFileSummary.ExportCount > 0)
+	{
+		if (!StartSerializeSection(PackageFileSummary.DependsOffset))
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeDependsMapInvalidOffset", PackageFilename);
+			return false;
+		}
+
+		const int MinSizePerExport = 1;
+		if (PackageFileSize < Tell() + PackageFileSummary.ExportCount * MinSizePerExport)
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeDependsMapInvalidExportCount", PackageFilename);
+			return false;
+		}
+		DependsMap.Reserve(PackageFileSummary.ExportCount);
+		for (int32 DependsMapIdx = 0; DependsMapIdx < PackageFileSummary.ExportCount; ++DependsMapIdx)
+		{
+			*this << DependsMap.Emplace_GetRef();
+			if (IsError())
+			{
+				UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeDependsMapInvalidEntry", PackageFilename);
+				DependsMap.Reset();
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
 bool FPackageReader::SerializeSoftPackageReferenceList()
 {
 	if (SoftPackageReferenceList.Num() > 0)
@@ -946,6 +1052,163 @@ bool FPackageReader::SerializeSoftPackageReferenceList()
 
 				SoftPackageReferenceList.Add(PackageName);
 			}
+		}
+	}
+
+	return true;
+}
+
+bool FPackageReader::SerializeSoftObjectPathMap()
+{
+	if (SoftObjectPathMap.Num() > 0)
+	{
+		return true;
+	}
+
+	if (PackageFileSummary.SoftObjectPathsOffset > 0 && PackageFileSummary.SoftObjectPathsCount > 0)
+	{
+		if (!StartSerializeSection(PackageFileSummary.SoftObjectPathsOffset))
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeSoftObjectPathMapListInvalidOffset", PackageFilename);
+			return false;
+		}
+		
+		int32 MinSizePerSoftObjectPath = 0; 
+		if (UEVer() < VER_UE4_ADDED_SOFT_OBJECT_PATH)
+		{
+			MinSizePerSoftObjectPath = 8; // FString
+		}
+		else if (UEVer() < EUnrealEngineObjectUE5Version::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES)
+		{
+			MinSizePerSoftObjectPath = 8 + 8; // FName + FString 
+		}
+		else
+		{
+			MinSizePerSoftObjectPath = 8 + 8 + 8; // 2xFName + FString
+		}
+
+		if (PackageFileSize < Tell() + PackageFileSummary.SoftObjectPathsCount * MinSizePerSoftObjectPath)
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeSoftObjectPathMapInvalidCount", PackageFilename);
+			return false;
+		}
+
+		SoftObjectPathMap.Reserve(PackageFileSummary.SoftObjectPathsCount);
+		for (int32 PathIdx = 0; PathIdx < PackageFileSummary.SoftObjectPathsCount; ++PathIdx)
+		{
+			FSoftObjectPath Path;
+			Path.SerializePath(*this);
+			if (IsError())
+			{
+				UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeSoftObjectPathMapInvalidPath", PackageFilename);
+				SoftObjectPathMap.Reset();
+				return false;
+			}
+
+			SoftObjectPathMap.Add(Path);
+		}
+	}
+
+	return true;
+}
+
+bool FPackageReader::SerializeGatherableTextDataMap()
+{
+	if (GatherableTextDataMap.Num() > 0)
+	{
+		return true;
+	}
+	
+	if (PackageFileSummary.GatherableTextDataCount > 0 && PackageFileSummary.GatherableTextDataOffset > 0)
+	{
+		if (!StartSerializeSection(PackageFileSummary.GatherableTextDataOffset))
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeGatherableTextDataMapInvalidOffset", PackageFilename);
+			return false;
+		}
+
+		int32 MinSizePerText = 8 + 8 + 4;  // Two FStrings and as an empty array as a lower bound
+		if (PackageFileSize < Tell() + PackageFileSummary.GatherableTextDataCount * MinSizePerText)
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeGatherableTextDataMapInvalidCount", PackageFilename);
+			return false;
+		}
+
+		GatherableTextDataMap.Reset(PackageFileSummary.GatherableTextDataCount);	
+		for (int32 Index = 0; Index < PackageFileSummary.GatherableTextDataCount; ++Index)
+		{
+			FGatherableTextData Data;
+			*this << Data;	
+			if (IsError())
+			{
+				UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeGatherableTextDataMapInvalidEntry", PackageFilename);
+				GatherableTextDataMap.Reset();
+				return false;
+			}
+			GatherableTextDataMap.Emplace(MoveTemp(Data));	
+		}
+	}
+
+	return true;
+}
+
+bool FPackageReader::SerializeThumbnailMap()
+{
+	if (ThumbnailMap.Num() > 0)
+	{
+		return true;
+	}
+	
+	if (PackageFileSummary.ThumbnailTableOffset > 0)
+	{
+		if (!StartSerializeSection(PackageFileSummary.ThumbnailTableOffset))
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeThumbnailMapInvalidOffset", PackageFilename);
+			return false;
+		}
+
+		FString PackageName;
+		if (!TryGetLongPackageName(PackageName))
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeThumbnailMapNoPackageName", PackageFilename);
+			return false;
+		}
+
+		int32 NumThumbnails = 0;
+		*this << NumThumbnails;
+		if (IsError() || NumThumbnails < 0)
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeThumbnailMapInvalidCount", PackageFilename);
+			return false;
+		}	
+
+		int32 MinSizePerThumbnail = 8 + 8 + 4;  // Two FStrings and an offset 
+		if (PackageFileSize < Tell() + PackageFileSummary.GatherableTextDataCount * MinSizePerThumbnail)
+		{
+			UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeThumbnailMapInvalidCount", PackageFilename);
+			return false;
+		}
+		ThumbnailMap.Reset(NumThumbnails);
+		
+		for (int32 Index=0; Index < NumThumbnails; ++Index)
+		{
+			FString ObjectClassName;
+			*this << ObjectClassName;
+			FString ObjectPathWithoutPackageName;
+			*this << ObjectPathWithoutPackageName;
+			int32 Offset = 0;
+			*this << Offset;
+
+			if (IsError())
+			{
+				UE_PACKAGEREADER_CORRUPTPACKAGE_WARNING("SerializeThumbnailMapInvalidEntry", PackageFilename);
+				return false;
+			}
+			
+			FObjectFullNameAndThumbnail Thumbnail;
+			Thumbnail.ObjectFullName = FName(WriteToString<FName::StringBufferSize>(ObjectClassName, TEXT(" "), PackageName, TEXT("."), ObjectPathWithoutPackageName));
+			Thumbnail.FileOffset = Offset;
+			ThumbnailMap.Emplace(MoveTemp(Thumbnail));
 		}
 	}
 

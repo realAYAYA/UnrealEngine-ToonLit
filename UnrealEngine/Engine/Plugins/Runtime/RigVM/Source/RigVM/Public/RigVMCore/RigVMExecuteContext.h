@@ -6,28 +6,30 @@
 #include "Containers/ArrayView.h"
 #include "Containers/UnrealString.h"
 #include "CoreMinimal.h"
+#include "Components/SceneComponent.h"
+#include "GameFramework/Actor.h"
 #include "Logging/LogCategory.h"
 #include "Logging/LogMacros.h"
 #include "Logging/TokenizedMessage.h"
 #include "Math/UnrealMathSSE.h"
 #include "Misc/AssertionMacros.h"
 #include "RigVMDefines.h"
-#include "RigVMExternalVariable.h"
 #include "RigVMModule.h"
+#include "RigVMCore/RigVMDebugInfo.h"
+#include "RigVMCore/RigVMProfilingInfo.h"
+#include "RigVMCore/RigVMNameCache.h"
+#include "RigVMCore/RigVMMemoryStorageStruct.h"
+#include "RigVMLog.h"
+#include "RigVMDrawInterface.h"
+#include "RigVMDrawContainer.h"
+#include "RigVMMemoryStorage.h"
 #include "Templates/SharedPointer.h"
 #include "Trace/Detail/Channel.h"
 #include "UObject/NameTypes.h"
 #include "UObject/ObjectMacros.h"
+#include "UObject/StructOnScope.h"
 #include "UObject/UnrealNames.h"
 #include "UObject/UnrealType.h"
-#include "RigVMCore/RigVMDebugInfo.h"
-#include "RigVMCore/RigVMNameCache.h"
-#include "UObject/StructOnScope.h"
-#include "RigVMLog.h"
-#include "RigVMDrawInterface.h"
-#include "RigVMDrawContainer.h"
-#include "GameFramework/Actor.h"
-#include "Components/SceneComponent.h"
 
 #include "RigVMExecuteContext.generated.h"
 
@@ -35,6 +37,7 @@ class URigVM;
 struct FRigVMDispatchFactory;
 struct FRigVMExecuteContext;
 struct FRigVMExtendedExecuteContext;
+struct FRigVMLogSettings;
 
 USTRUCT()
 struct RIGVM_API FRigVMSlice
@@ -179,6 +182,11 @@ public:
 		}
 	}
 
+	uint32 GetHash() const
+	{
+		return HashCombine(GetTypeHash(LowerBound), GetTypeHash(Index));
+	}
+
 private:
 
 	int32 LowerBound;
@@ -206,6 +214,9 @@ struct RIGVM_API FRigVMRuntimeSettings
 	// Keep in mind when looking at nodes in a function the duration
 	// represents the accumulated duration of all invocations
 	// of the function currently running.
+	// 
+	// Note: This can only be used when in Debug Mode. Click the "Release" button
+	// in the top toolbar to switch to Debug mode.
 	UPROPERTY(EditAnywhere, Category = "VM")
 	bool bEnableProfiling = false;
 #endif
@@ -213,7 +224,7 @@ struct RIGVM_API FRigVMRuntimeSettings
 	/*
 	 * The function to use for logging anything from the VM to the host
 	 */
-	using LogFunctionType = TFunction<void(EMessageSeverity::Type,const FRigVMExecuteContext*,const FString&)>;
+	using LogFunctionType = TFunction<void(const FRigVMLogSettings&,const FRigVMExecuteContext*,const FString&)>;
 	TSharedPtr<LogFunctionType> LogFunction = nullptr;
 
 	void SetLogFunction(LogFunctionType InLogFunction)
@@ -243,6 +254,7 @@ struct FRigVMExecuteContext
 		: EventName(NAME_None)
 		, FunctionName(NAME_None)
 		, InstructionIndex(0)
+		, NumExecutions(0)
 		, DeltaTime(0.0)
 		, AbsoluteTime(0.0)
 		, FramesPerSecond(1.0 / 60.0)
@@ -262,19 +274,19 @@ struct FRigVMExecuteContext
 
 	virtual ~FRigVMExecuteContext() {}
 
-	void Log(EMessageSeverity::Type InSeverity, const FString& InMessage) const
+	void Log(const FRigVMLogSettings& InLogSettings, const FString& InMessage) const
 	{
 		if(RuntimeSettings.LogFunction.IsValid())
 		{
-			(*RuntimeSettings.LogFunction)(InSeverity, this, InMessage);
+			(*RuntimeSettings.LogFunction)(InLogSettings, this, InMessage);
 		}
 		else
 		{
-			if(InSeverity == EMessageSeverity::Error)
+			if(InLogSettings.Severity == EMessageSeverity::Error)
 			{
 				UE_LOG(LogRigVM, Error, TEXT("Instruction %d: %s"), InstructionIndex, *InMessage);
 			}
-			else if(InSeverity == EMessageSeverity::Warning)
+			else if(InLogSettings.Severity == EMessageSeverity::Warning)
 			{
 				UE_LOG(LogRigVM, Warning, TEXT("Instruction %d: %s"), InstructionIndex, *InMessage);
 			}
@@ -286,12 +298,14 @@ struct FRigVMExecuteContext
 	}
 
 	template <typename FmtType, typename... Types>
-	void Logf(EMessageSeverity::Type InSeverity, const FmtType& Fmt, Types... Args) const
+	void Logf(const FRigVMLogSettings& InLogSettings, const FmtType& Fmt, Types... Args) const
 	{
-		Log(InSeverity, FString::Printf(Fmt, Args...));
+		Log(InLogSettings, FString::Printf(Fmt, Args...));
 	}
 
 	uint16 GetInstructionIndex() const { return InstructionIndex; }
+
+	uint32 GetNumExecutions() const { return NumExecutions; }
 
 	FName GetFunctionName() const { return FunctionName; }
 	
@@ -380,6 +394,13 @@ struct FRigVMExecuteContext
 #if WITH_EDITOR
 	FRigVMLog* GetLog() const { return LogPtr; }
 	void SetLog(FRigVMLog* InLog) { LogPtr = InLog; }
+	virtual void Report(const FRigVMLogSettings& InLogSettings, const FName& InFunctionName, int32 InInstructionIndex, const FString& InMessage) const
+	{
+		if (FRigVMLog* Log = GetLog())
+		{
+			Log->Report(InLogSettings, InFunctionName, InInstructionIndex, InMessage);
+		}
+	}
 #endif
 
 	FRigVMDrawInterface* GetDrawInterface() const { return DrawInterfacePtr; }
@@ -403,6 +424,7 @@ struct FRigVMExecuteContext
 		EventName = InOtherContext->EventName;
 		FunctionName = InOtherContext->FunctionName;
 		InstructionIndex = InOtherContext->InstructionIndex;
+		NumExecutions = InOtherContext->NumExecutions;
 		RuntimeSettings = InOtherContext->RuntimeSettings;
 		NameCache = InOtherContext->NameCache;
 	}
@@ -424,6 +446,8 @@ protected:
 	FName FunctionName;
 	
 	uint16 InstructionIndex;
+
+	uint32 NumExecutions;
 
 	double DeltaTime;
 
@@ -484,14 +508,6 @@ struct TStructOpsTypeTraits<FRigVMExecuteContext> : public TStructOpsTypeTraitsB
 	};
 };
 
-/**
- * Lazy branch data required by each instance of the VM
- */
-struct RIGVM_API FRigVMLazyBranchInstanceData
-{
-	TArray<int32> LastVMNumExecutions;
-};
-
 struct RIGVM_API FRigVMExternalVariableRuntimeData
 {
 	explicit FRigVMExternalVariableRuntimeData(uint8* InMemory)
@@ -534,16 +550,20 @@ struct RIGVM_API FRigVMExtendedExecuteContext
 		*this = InOther;
 	}
 
-	virtual ~FRigVMExtendedExecuteContext()
-	{
-		Reset();
-	}
+	virtual ~FRigVMExtendedExecuteContext();
 
 	// /** Full context reset */
 	void Reset();
 
 	/** Resets VM execution state */
 	void ResetExecutionState();
+
+	void CopyMemoryStorage(const FRigVMExtendedExecuteContext& Other);
+
+	UE_DEPRECATED(5.4, "This function has been deprecated. Please, use CopyMemoryStorage with Context param.")
+	void CopyMemoryStorage(const FRigVMExtendedExecuteContext& Other, UObject* Outer) {}
+	UE_DEPRECATED(5.4, "This function has been deprecated. Please, use CopyMemoryStorage with Context param.")
+	static void CopyMemoryStorage(TObjectPtr<URigVMMemoryStorage>& TargetMemory, const TObjectPtr <URigVMMemoryStorage>& SourceMemory, UObject* Outer) {}
 
 	FRigVMExtendedExecuteContext& operator =(const FRigVMExtendedExecuteContext& Other);
 
@@ -631,6 +651,16 @@ struct RIGVM_API FRigVMExtendedExecuteContext
 		return GetSlice().IsComplete();
 	}
 
+	uint32 GetSliceHash() const
+	{
+		uint32 Hash = 0;
+		for(const FRigVMSlice& Slice : Slices)
+		{
+			Hash = HashCombine(Hash, Slice.GetHash());
+		}
+		return Hash;
+	}
+
 	bool IsValidArrayIndex(int32& InOutIndex, const FScriptArrayHelper& InArrayHelper) const
 	{
 		return IsValidArrayIndex(InOutIndex, InArrayHelper.Num());
@@ -684,34 +714,46 @@ struct RIGVM_API FRigVMExtendedExecuteContext
 
 	void InvalidateCachedMemory()
 	{
-		CachedMemory.Reset();
 		CachedMemoryHandles.Reset();
-		LazyBranchInstanceData.Reset();
+		LazyBranchExecuteState.Reset();
 	}
 
 	uint32 GetNumExecutions() const
 	{
-		return NumExecutions;
+		if(PublicDataScope.IsValid())
+		{
+			return GetPublicData<>().GetNumExecutions();
+		}
+		return 0;
 	}
 
-	UPROPERTY(transient)
-	uint32 VMHash = MAX_uint32;
+	uint32 VMHash = 0;
+
+	FRigVMMemoryStorageStruct WorkMemoryStorage;
+
+	FRigVMMemoryStorageStruct DebugMemoryStorage;
+
+#if WITH_EDITORONLY_DATA
+	// Deprecated 5.4
+	UPROPERTY(transient, meta = (DeprecatedProperty, DeprecationMessage = "Please, use WorkMemoryStorage"))
+	TObjectPtr<URigVMMemoryStorage> WorkMemoryStorageObject_DEPRECATED;
+#endif
+
+#if WITH_EDITORONLY_DATA
+	// Deprecated 5.4
+	UPROPERTY(transient, meta = (DeprecatedProperty, DeprecationMessage = "Please, use DebugMemoryStorage"))
+	TObjectPtr<URigVMMemoryStorage> DebugMemoryStorageObject_DEPRECATED;
+#endif
 
 	FStructOnScope PublicDataScope;
 	URigVM* VM = nullptr;
 	TArray<FRigVMSlice> Slices;
 	TArray<uint16> SliceOffsets;
-	double LastExecutionMicroSeconds = 0.0;
 	const FRigVMDispatchFactory* Factory = nullptr;
 	FRigVMNameCache NameCache;
 
-	UPROPERTY(transient)
-	uint32 NumExecutions = 0;
-
 	TArray<FRigVMMemoryHandle> CachedMemoryHandles;
-	// changes to the layout of cached memory array should be reflected in GetContainerIndex()
-	TArray<URigVMMemoryStorage*> CachedMemory;
-
+	
 	int32 ExecutingThreadId = INDEX_NONE;
 
 	TArray<int32> EntriesBeingExecuted;
@@ -719,48 +761,43 @@ struct RIGVM_API FRigVMExtendedExecuteContext
 	ERigVMExecuteResult CurrentExecuteResult = ERigVMExecuteResult::Failed;
 	FName CurrentEntryName = NAME_None;
 	bool bCurrentlyRunningRootEntry = false;
-	TArrayView<URigVMMemoryStorage*> CurrentMemory;
 
-	UPROPERTY(transient)
+	TArrayView<FRigVMMemoryStorageStruct*> CurrentVMMemory;
+
+#if WITH_EDITORONLY_DATA
+	// changes to the layout of cached memory array should be reflected in GetContainerIndex()
+	UE_DEPRECATED(5.4, "CachedMemory has been deprecated.")
+	TArray<URigVMMemoryStorage*> CachedMemory;
+	UE_DEPRECATED(5.4, "CurrentMemory has been deprecated, please use CurrentVMMemory with FRigVMMemoryStorageStruct.")
+	TArrayView<URigVMMemoryStorage*> CurrentMemory;
+	UE_DEPRECATED(5.4, "DeferredVMToCopy has been deprecated.")
 	TObjectPtr<URigVM> DeferredVMToCopy = nullptr;
+	UE_DEPRECATED(5.4, "DeferredVMContextToCopy has been deprecated.")
 	const FRigVMExtendedExecuteContext* DeferredVMContextToCopy = nullptr;
+#endif
 
 	/** Bindable event for external objects to be notified when the VM reaches an Exit Operation */
 	DECLARE_EVENT_OneParam(URigVM, FExecutionReachedExitEvent, const FName&);
 	FExecutionReachedExitEvent OnExecutionReachedExit;
 	FExecutionReachedExitEvent& ExecutionReachedExit() { return OnExecutionReachedExit; }
 
-	TArray<FRigVMLazyBranchInstanceData> LazyBranchInstanceData;
+	TArray<FRigVMInstructionSetExecuteState> LazyBranchExecuteState;
 	TArray<FRigVMExternalVariableRuntimeData> ExternalVariableRuntimeData;
 
 #if WITH_EDITOR
 
 	FRigVMDebugInfo* DebugInfo = nullptr;
-	FRigVMBreakpoint HaltedAtBreakpoint;
-	int32 HaltedAtBreakpointHit = INDEX_NONE;
-	ERigVMBreakpointAction CurrentBreakpointAction = ERigVMBreakpointAction::None;
 
-	// stores the number of times each instruction was visited
-	TArray<int32> InstructionVisitedDuringLastRun;
-	TArray<uint64> InstructionCyclesDuringLastRun;
-	TArray<int32> InstructionVisitOrder;
+	FRigVMInstructionVisitInfo* InstructionVisitInfo = nullptr;
 
-	const void SetFirstEntryEventInEventQueue(const FName& InFirstEventName) { FirstEntryEventInQueue = InFirstEventName; }
-	const FName& GetFirstEntryEventInEventQueue() { return FirstEntryEventInQueue; }
-
-	// A RigVMHost can run multiple events per evaluation, such as the Backward&Forward Solve Mode,
-	// store the first event such that we know when to reset data for a new round of rig evaluation
-	FName FirstEntryEventInQueue = NAME_None;
-
-	uint64 StartCycles = 0;
-	uint64 OverallCycles = 0;
-
-	DECLARE_EVENT_ThreeParams(URigVM, FExecutionHaltedEvent, int32, UObject*, const FName&);
-	FExecutionHaltedEvent OnExecutionHalted;
-
-	FExecutionHaltedEvent& ExecutionHalted()
+	void SetInstructionVisitInfo(FRigVMInstructionVisitInfo* InInstructionVisitInfo)
 	{
-		return OnExecutionHalted;
+		InstructionVisitInfo = InInstructionVisitInfo;
+	}
+
+	FRigVMInstructionVisitInfo* GetRigVMInstructionVisitInfo() const
+	{
+		return InstructionVisitInfo;
 	}
 
 	void SetDebugInfo(FRigVMDebugInfo* InDebugInfo)
@@ -768,6 +805,24 @@ struct RIGVM_API FRigVMExtendedExecuteContext
 		DebugInfo = InDebugInfo;
 	}
 
-#endif // WITH_EDITOR
+	FRigVMDebugInfo* GetRigVMDebugInfo() const
+	{
+		return DebugInfo;
+	}
 
+	FRigVMProfilingInfo* ProfilingInfo = nullptr;
+
+	void SetProfilingInfo(FRigVMProfilingInfo* InProfilingInfo)
+	{
+		ProfilingInfo = InProfilingInfo;
+	}
+
+	FRigVMProfilingInfo* GetRigVMProfilingInfo() const
+	{
+		return ProfilingInfo;
+	}
+
+	TArray<TTuple<int32, int32>> InstructionBrackets;
+
+#endif // WITH_EDITOR
 };

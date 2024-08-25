@@ -3,6 +3,8 @@ Unreal Engine
 
 Welcome to the Unreal Engine source code!
 
+UE 5.4 introduced a new EULA that will govern this and subsequent releases. Depending on the work you create with Unreal Engine, you might be subject to new or different fees. Please review the [EULA here](https://www.unrealengine.com/eula) and make sure you understand how these changes apply to you. By downloading or using the UE 5.4 or later, or by otherwise indicating your acceptance of the EULA, you are agreeing to be bound by its terms. If you do not or cannot agree to the terms of the EULA, please do not download or use Unreal Engine 5.4 or later. 
+
 With the code in this repository, you can build the Unreal Editor for Windows, Mac, and Linux; compile Unreal Engine games for a variety of target platforms, including desktop, consoles, mobile, and embedded devices; and build tools like Unreal Lightmass and Unreal Frontend. Modify the code in any way you can imagine, and share your changes with others!
 
 We have a vast amount of [official documentation](https://docs.unrealengine.com) available for the engine. If you're looking for the answer to something, you may want to start in one of these places:
@@ -50,9 +52,9 @@ The steps below take you through cloning your own private fork, then compiling a
 
     -   If you'd prefer not to use Git, you can get the source with the **Download ZIP** button on the right. Note that the zip utility built in to Windows marks the contents of .zip files downloaded from the Internet as unsafe to execute, so right-click the .zip file and select **Properties…** and **Unblock** before decompressing it.
 
-1.  Install **Visual Studio 2022** or **Visual Studion 2019**.
+1.  Install **Visual Studio 2022**.
 
-    All desktop editions of Visual Studio 2022 and 2019 can build UE5, including [Visual Studio Community](https://www.visualstudio.com/products/visual-studio-community-vs), which is free for small teams and individual developers.
+    All desktop editions of Visual Studio 2022, **17.4** or later, **17.8** recommended, can build UE5, including [Visual Studio Community](https://www.visualstudio.com/products/visual-studio-community-vs), which is free for small teams and individual developers.
 
     To install the correct components for UE5 development, please see [Setting Up Visual Studio](https://docs.unrealengine.com/en-US/setting-up-visual-studio-development-environment-for-cplusplus-projects-in-unreal-engine/).
 
@@ -60,7 +62,7 @@ The steps below take you through cloning your own private fork, then compiling a
 
     On Windows 8, a warning from SmartScreen may appear. Click **More info**, then **Run anyway** to continue.
 
-    A clean download of the engine binaries is currently 20-21 GiB, which may take some time to complete. Subsequent runs will be much faster, as they only download new and updated content.
+    A clean download of the engine binaries is currently 18+ GiB, which may take some time to complete. Subsequent runs will be much faster, as they only download new and updated content.
 
 1.  Run **GenerateProjectFiles.bat** to create project files for the engine. It should take less than a minute to complete.  
 

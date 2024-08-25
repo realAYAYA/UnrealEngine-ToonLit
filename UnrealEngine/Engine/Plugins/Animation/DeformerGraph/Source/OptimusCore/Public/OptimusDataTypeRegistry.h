@@ -7,13 +7,17 @@
 #include "Containers/Array.h"
 #include "Containers/Map.h"
 #include "Misc/Optional.h"
+#include "UObject/GCObject.h"
+
 
 class FFieldClass;
 class UScriptStruct;
 struct FShaderValueTypeHandle;
 class UUserDefinedStruct;
 
-class FOptimusDataTypeRegistry
+
+class FOptimusDataTypeRegistry :
+	public FGCObject
 {
 public:
 	DECLARE_EVENT_OneParam(FOptimusDataTypeRegistry, FOnDataTypeChanged, FName /* InTypeName */);
@@ -33,7 +37,7 @@ public:
 		int32 ShaderValueOffset;
 	};
 	
-	~FOptimusDataTypeRegistry();
+	virtual ~FOptimusDataTypeRegistry() override;
 
 	/** Get the singleton registry object */
 	OPTIMUSCORE_API static FOptimusDataTypeRegistry &Get();
@@ -170,8 +174,16 @@ public:
 	/** A helper function to return the corresponding animation attribute type. */
 	UScriptStruct* FindAttributeType(FName InTypeName) const;
 
+	TArray<FOptimusDataTypeHandle> GetAllTypesWithAtomicSupport() const;
+
+	bool DoesTypeSupportAtomic(FOptimusDataTypeHandle InType);
+	
 	OPTIMUSCORE_API	FOnDataTypeChanged& GetOnDataTypeChanged();
 
+	// -- FGCObject overrides
+	FString GetReferencerName() const override { return TEXT("FOptimusDataTypeRegistry"); }
+	void AddReferencedObjects(FReferenceCollector& InCollector) override;
+	
 protected:
 	friend class FOptimusCoreModule;
 	friend struct FOptimusDataType;
@@ -219,7 +231,7 @@ private:
 
 	struct FTypeInfo
 	{
-		FOptimusDataTypeHandle Handle;
+		TSharedPtr<FOptimusDataType> DataType;
 		PropertyCreateFuncT PropertyCreateFunc;
 		PropertyValueConvertFuncT PropertyValueConvertFunc;
 		TArray<FArrayMetadata> ArrayMetadata;
@@ -228,5 +240,7 @@ private:
 	TMap<FName /* TypeName */, FTypeInfo> RegisteredTypes;
 	TArray<FName> RegistrationOrder;
 
+	TSet<FName> TypeWithAtomicSupport;
+	
 	FOnDataTypeChanged OnDataTypeChanged;
 };

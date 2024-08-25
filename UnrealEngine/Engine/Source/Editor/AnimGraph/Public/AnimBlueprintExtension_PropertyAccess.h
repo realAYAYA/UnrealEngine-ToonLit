@@ -62,7 +62,7 @@ public:
 	
 public:
 	// Add a copy to the property access library we are compiling
-	// @return an integer handle to the pending copy. This can be resolved to a true copy index by calling MapCopyIndex
+	// @return an integer handle to the pending copy. This can be resolved to a true copy index by calling GetCompiledHandle
 	FPropertyAccessHandle AddCopy(TArrayView<FString> InSourcePath, TArrayView<FString> InDestPath, const FName& InContextId, UObject* InObject = nullptr);
 	
 	UE_DEPRECATED(5.0, "Please use AddCopy with a context ID")
@@ -71,6 +71,10 @@ public:
 		FPropertyAccessHandle Handle = AddCopy(InSourcePath, InDestPath, FName(NAME_None), InObject);
 		return Handle.GetId();
 	}
+
+	// Add an access to the property access library we are compiling
+	// @return an integer handle to the pending access. This can be resolved to a true access index by calling GetCompiledHandle
+	FPropertyAccessHandle AddAccess(TArrayView<FString> InPath, UObject* InObject = nullptr);
 
 	// Delegate called when the library is compiled (whether successfully or not)
 	FSimpleMulticastDelegate& OnPreLibraryCompiled() { return OnPreLibraryCompiledDelegate; }
@@ -81,12 +85,8 @@ public:
 	// Maps the initial copy handle to a true handle, post compilation
 	FCompiledPropertyAccessHandle GetCompiledHandle(FPropertyAccessHandle InHandle) const;
 
-	UE_DEPRECATED(5.0, "Please use GetCompiledHandle")
-	int32 MapCopyIndex(int32 InIndex) const
-	{
-		FCompiledPropertyAccessHandle CompiledHandle = GetCompiledHandle(FPropertyAccessHandle(InIndex));
-		return CompiledHandle.GetId();
-	}
+	// Get the access type for the specified handle
+	EPropertyAccessCopyType GetCompiledHandleAccessType(FPropertyAccessHandle InHandle) const;
 
 	// Expands a property access path to a pure chain of BP nodes
 	void ExpandPropertyAccess(FKismetCompilerContext& InCompilerContext, TArrayView<FString> InSourcePath, UEdGraph* InParentGraph, UEdGraphPin* InTargetPin) const;

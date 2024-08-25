@@ -19,6 +19,12 @@
 
 struct FPropertyChangedEvent;
 
+namespace PhysicalMaterialCVars
+{
+	extern bool bShowExperimentalProperties;
+}
+
+
 /**
  * Defines the directional strengths of a physical material in term of force per surface area
  */
@@ -33,22 +39,60 @@ struct FPhysicalMaterialStrength
 	* Tensile strength of the material in MegaPascal ( 10^6 N/m2 )
 	* This amount of tension force per area the material can withstand before it fractures
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PhysicalMaterial", meta = (ClampMin = 0, ForceUnits = "MPa"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PhysicalMaterial|Strength", meta = (ClampMin = 0, ForceUnits = "MPa"))
 	float TensileStrength;
 
 	/**
 	* Compression strength of the material in MegaPascal ( 10^6 N/m2 )
 	* This amount of compression force per area the material can withstand before it fractures, crumbles or buckles
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PhysicalMaterial", meta = (ClampMin = 0, ForceUnits = "MPa"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PhysicalMaterial|Strength", meta = (ClampMin = 0, ForceUnits = "MPa"))
 	float CompressionStrength;
 
 	/**
 	* Shear strength of the material in MegaPascal ( 10^6 N/m2 )
 	* This amount of shear force per area the material can withstand before it fractures
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PhysicalMaterial", meta = (ClampMin = 0, ForceUnits = "MPa"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PhysicalMaterial|Strength", meta = (ClampMin = 0, ForceUnits = "MPa"))
 	float ShearStrength;
+};
+
+
+/**
+ * Damage threshold modifiers, used by the Chaos destruction system
+ */
+USTRUCT(BlueprintType)
+struct FPhysicalMaterialDamageModifier
+{
+	GENERATED_USTRUCT_BODY()
+
+	FPhysicalMaterialDamageModifier();
+
+	/**
+	* Multiplier for the geometry collection damage thresholds/ internal strain
+	* this allows for setting up unit damage threshold and use the material to scale them to the desired range of values
+	* Note that the geometry collection asset needs to opt-in for the material modifer to be able to use it 
+	*/
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PhysicalMaterial|DamageModifier", meta = (ClampMin = 0))
+	float DamageThresholdMultiplier;
+};
+
+/**
+* Soft collision mode for a physical material.
+* 
+* NOTE: Must match EChaosPhysicsMaterialSoftCollisionMode
+*/
+UENUM()
+enum class EPhysicalMaterialSoftCollisionMode : uint8
+{
+	// No soft collisionss
+	None,
+
+	// SoftCollisionThickess is a fraction of the bounds (minimum axis). Should be less than 0.5
+	RelativeThickness,
+
+	// SoftCollisionThickess is an absolute value in cm
+	AbsoluteThickess,
 };
 
 
@@ -99,7 +143,7 @@ class UPhysicalMaterial : public UObject
 	//
 	
 	/** Used with the shape of the object to calculate its mass properties. The higher the number, the heavier the object. g per cubic cm. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = PhysicalMaterial, meta=(ClampMin=0))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = PhysicalMaterial, meta = (ClampMin = 0, ForceUnits = "g/cm3"))
 	float Density;
 
 	/**  How low the linear velocity can be before solver puts body to sleep. */
@@ -138,6 +182,33 @@ class UPhysicalMaterial : public UObject
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = PhysicalProperties)
 	FPhysicalMaterialStrength Strength;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = PhysicalProperties)
+	FPhysicalMaterialDamageModifier DamageModifier;
+
+	//
+	// Experimental properties
+	//
+
+	/** Experimental material properties are enabled via the p.PhysicalMaterial.ShowExperimentalProperties console variable.
+		NOTE: These are _experimental_ properties which may change. Use at your own risk! */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Experimental")
+	bool bShowExperimentalProperties = PhysicalMaterialCVars::bShowExperimentalProperties;
+
+	/** For enable soft collision shell thickness mode */
+	UPROPERTY(EditAnywhere, Category = "Experimental|Softness", meta = (EditCondition = "bShowExperimentalProperties"))
+	EPhysicalMaterialSoftCollisionMode SoftCollisionMode;
+
+	/** Thickness of the layer just inside the collision shape in which contact is considered "soft".
+		The units depend on SoftCollisionMode */
+	UPROPERTY(EditAnywhere, Category = "Experimental|Softness", meta = (ClampMin = 0, EditCondition = "bShowExperimentalProperties"))
+	float SoftCollisionThickness;
+
+	/** A friction (positional) impulse of at least this magnitude may be applied,
+		regardless the normal force. This is analogous to adding only the lateral part of a
+		"stickiness" to a material */
+	UPROPERTY(EditAnywhere, Category = "Experimental|Stickiness", meta = (ClampMin = 0, Units = kgcm, EditCondition = "bShowExperimentalProperties"))
+	float BaseFrictionImpulse;
 
 public:
 

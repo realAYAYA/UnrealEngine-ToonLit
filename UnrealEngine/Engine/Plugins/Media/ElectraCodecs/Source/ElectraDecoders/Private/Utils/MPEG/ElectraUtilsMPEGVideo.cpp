@@ -4,7 +4,6 @@
 #include "Utils/ElectraBitstreamReader.h"
 #include "ElectraDecodersUtils.h"
 
-
 namespace ElectraDecodersUtil
 {
 	namespace MPEG
@@ -503,8 +502,6 @@ namespace ElectraDecodersUtil
 		};
 
 
-
-
 		bool ParseH264SPS(FISO14496_10_seq_parameter_set_data& OutSPS, const void* Data, int32 Size)
 		{
 			struct FSyntaxElement
@@ -553,7 +550,8 @@ namespace ElectraDecodersUtil
 			OutSPS.level_idc = (uint8)BitReader.GetBits(8);
 			OutSPS.seq_parameter_set_id = FSyntaxElement::ue_v(BitReader);
 			if (OutSPS.profile_idc == 100 || OutSPS.profile_idc == 110 || OutSPS.profile_idc == 122 || OutSPS.profile_idc == 244 ||
-				OutSPS.profile_idc == 44 || OutSPS.profile_idc == 83 || OutSPS.profile_idc == 86 || OutSPS.profile_idc == 118 || OutSPS.profile_idc == 128)
+				OutSPS.profile_idc == 44 || OutSPS.profile_idc == 83 || OutSPS.profile_idc == 86 || OutSPS.profile_idc == 118 || OutSPS.profile_idc == 128 ||
+				OutSPS.profile_idc == 138 || OutSPS.profile_idc == 139 || OutSPS.profile_idc == 134 || OutSPS.profile_idc == 135)
 			{
 				OutSPS.chroma_format_idc = FSyntaxElement::ue_v(BitReader);
 				if (OutSPS.chroma_format_idc == 3)
@@ -721,9 +719,13 @@ namespace ElectraDecodersUtil
 			FMemory::Memzero(OutSPS);
 
 			if (BitReader.GetBits(1) != 0)	// forbidden_zero_bit
+			{
 				return false;
+			}
 			if (BitReader.GetBits(6) != 33)	// sps_nut ?
+			{
 				return false;
+			}
 			BitReader.SkipBits(6);			// nuh_layer_id
 			BitReader.SkipBits(3);			// nuh_temporal_id_plus1
 
@@ -1006,9 +1008,8 @@ namespace ElectraDecodersUtil
 // None of the following is of interest to us now, so we stop parsing at this point.
 					}
 				}
-			return true;
 			}
-		return false;
+			return true;
 		}
 
 
@@ -1178,5 +1179,4 @@ namespace ElectraDecodersUtil
 		}
 
 	} // namespace MPEG
-
 } // namespace ElectraDecodersUtil

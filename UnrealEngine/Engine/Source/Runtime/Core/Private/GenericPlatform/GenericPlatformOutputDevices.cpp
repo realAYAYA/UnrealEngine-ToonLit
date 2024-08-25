@@ -55,7 +55,9 @@ void FGenericPlatformOutputDevices::SetupOutputDevices()
 #endif // USE_DEBUG_LOGGING
 #endif
 
+#if USE_EVENT_LOGGING
 	GLog->AddOutputDevice(FPlatformOutputDevices::GetEventLog());
+#endif // USE_EVENT_LOGGING
 };
 
 void FGenericPlatformOutputDevices::ResetCachedAbsoluteFilename()

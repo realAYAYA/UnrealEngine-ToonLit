@@ -62,7 +62,7 @@ void UDisplayClusterConfiguratorGraph::RebuildGraph()
 		UDisplayClusterConfiguratorCanvasNode* CanvasNode = BuildCanvasNode(Config->Cluster);
 
 		TMap<FString, TMap<FString, UDisplayClusterConfigurationClusterNode*>> SortedClusterNodes;
-		FDisplayClusterConfiguratorClusterUtils::SortClusterNodesByHost(Config->Cluster->Nodes, SortedClusterNodes);
+		UE::DisplayClusterConfiguratorClusterUtils::SortClusterNodesByHost(Config->Cluster->Nodes, SortedClusterNodes);
 
 		// Keep track of the count of each cluster item to use as a z-index for the node.
 		int HostIndex = 0;
@@ -71,7 +71,7 @@ void UDisplayClusterConfiguratorGraph::RebuildGraph()
 
 		for (const TPair<FString, TMap<FString, UDisplayClusterConfigurationClusterNode*>>& SortedPair : SortedClusterNodes)
 		{
-			UDisplayClusterConfigurationHostDisplayData* DisplayData = FDisplayClusterConfiguratorClusterUtils::FindOrCreateHostDisplayData(Config->Cluster, SortedPair.Key);
+			UDisplayClusterConfigurationHostDisplayData* DisplayData = UE::DisplayClusterConfiguratorClusterUtils::FindOrCreateHostDisplayData(Config->Cluster, SortedPair.Key);
 			UDisplayClusterConfiguratorHostNode* HostNode = BuildHostNode(CanvasNode, SortedPair.Key, HostIndex, DisplayData);
 			++HostIndex;
 

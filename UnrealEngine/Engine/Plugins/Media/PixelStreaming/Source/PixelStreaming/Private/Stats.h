@@ -8,8 +8,9 @@
 #include "UnrealEngine.h"
 #include "ConsoleSettings.h"
 #include "DebugGraph.h"
-
+#include "Misc/Optional.h"
 #include "PixelCaptureFrameMetadata.h"
+#include "IPixelStreamingStats.h"
 
 namespace UE::PixelStreaming
 {
@@ -23,6 +24,13 @@ namespace UE::PixelStreaming
 
 	struct FStatData
 	{
+	public:
+		enum EDisplayFlags: uint8
+		{
+			HIDDEN	   = 0,
+			TEXT	   = 1 << 0,
+			GRAPH	   = 1 << 1,
+		};
 	public:
 		FStatData(FName InStatName, double InStatValue, int InNDecimalPlacesToPrint, bool bInSmooth = false)
 			: StatName(InStatName)
@@ -42,12 +50,18 @@ namespace UE::PixelStreaming
 			return StatName == Other.StatName;
 		}
 
+		bool IsHidden() { return DisplayFlags == EDisplayFlags::HIDDEN; }
+		bool ShouldGraph() { return DisplayFlags & EDisplayFlags::GRAPH; }
+		bool ShouldDisplayText() { return DisplayFlags & EDisplayFlags::TEXT; }
+
 		FName StatName;
 		double StatValue;
 		int NDecimalPlacesToPrint;
 		bool bSmooth;
 		double LastEMA = 0;
 		int NumSamples = 0;
+		uint8 DisplayFlags = EDisplayFlags::TEXT; /* Some stats we only wish to store or broadcast, but not display */
+		TOptional<FName> Alias; /* Some stats need an alias that they are stored by/queried by to disambiguate them from other stats */
 	};
 
 	FORCEINLINE uint32 GetTypeHash(const FStatData& Obj)
@@ -56,10 +70,35 @@ namespace UE::PixelStreaming
 		return GetTypeHash(Obj.StatName);
 	}
 
-	struct FRenderableStat
+	// Stat that can be optionally rendered
+	struct FStoredStat
 	{
+	public:
 		FStatData Stat;
-		FCanvasTextItem CanvasItem;
+		TOptional<FCanvasTextItem> Renderable;
+	public:
+		FStoredStat(FStatData& InStat) : Stat(InStat) {}
+	};
+
+	// A grouping of stats by some category name
+	class FStatGroup
+	{
+	public:
+		FStatGroup(FName CategoryName)
+			: GroupName(CategoryName)
+			, CategoryCanvasItem(FVector2D(0, 0), FText::FromString(FString::Printf(TEXT("---%s---"), *CategoryName.ToString())), FSlateFontInfo(FSlateFontInfo(UEngine::GetSmallFont(), 15)), FLinearColor(0, 0.9, 0.1))
+		{
+			CategoryCanvasItem.EnableShadow(FLinearColor::Black);
+		}
+
+		virtual ~FStatGroup() = default;
+		bool StoreStat(FStatData& StatToStore);
+		const TMap<FName, FStoredStat>& GetStoredStats() const { return StoredStats; }
+	private:
+		FName GroupName;
+		TMap<FName, FStoredStat> StoredStats;
+	public:
+		FCanvasTextItem CategoryCanvasItem;
 	};
 
 	// Pixel Streaming stats that are associated with a specific peer.
@@ -69,24 +108,29 @@ namespace UE::PixelStreaming
 	public:
 		FPeerStats(FPixelStreamingPlayerId InAssociatedPlayer)
 			: AssociatedPlayer(InAssociatedPlayer)
-			, PlayerIdCanvasItem(FVector2D(0, 0), FText::FromString(FString::Printf(TEXT("[Peer Stats(%s)]"), *AssociatedPlayer)), FSlateFontInfo(FSlateFontInfo(UEngine::GetSmallFont(), 12)), FLinearColor(0, 1, 0))
+			, PlayerIdCanvasItem(FVector2D(0, 0), FText::FromString(FString::Printf(TEXT("[Peer Stats(%s)]"), *AssociatedPlayer)), FSlateFontInfo(FSlateFontInfo(UEngine::GetSmallFont(), 15)), FLinearColor(0, 1, 0))
 		{
 			PlayerIdCanvasItem.EnableShadow(FLinearColor::Black);
 		};
 
-		bool StoreStat(FStatData StatToStore);
+		bool StoreStat(FName StatCategory, FStatData& StatToStore);
+		bool GetStat(FName StatCategory, FName StatToQuery, double& OutValue) const;
+		const TMap<FName, FStatGroup>& GetStatGroups() const { return StatGroups; }
 
 	private:
 		int DisplayId = 0;
 		FPixelStreamingPlayerId AssociatedPlayer;
+		TMap<FName, FStatGroup> StatGroups;
 
 	public:
-		TMap<FName, FRenderableStat> StoredStats;
 		FCanvasTextItem PlayerIdCanvasItem;
 	};
 
 	// Stats about Pixel Streaming that can displayed either in the in-application HUD, in the log, or simply reported to some subscriber.
-	class FStats : FTickableGameObject
+	// Stats can be enabled to draw on screen with:
+	// `stat pixelstreaming`
+	// `stat pixelstreaminggraphs`
+	class FStats : public FTickableGameObject, public IPixelStreamingStats
 	{
 	public:
 		virtual bool IsTickableInEditor() const override { return true; }
@@ -95,31 +139,36 @@ namespace UE::PixelStreaming
 		static constexpr double SmoothingFactor = 10.0 / 100.0;
 		static FStats* Get();
 
-		void AddWebRTCStatsSource(IStatsSource* InSource);
-		void RemoveWebRTCStatsSource(IStatsSource* InSource);
-
 		FStats(const FStats&) = delete;
-		bool QueryPeerStat(FPixelStreamingPlayerId PlayerId, FName StatToQuery, double& OutValue) const;
+		bool QueryPeerStat(FPixelStreamingPlayerId PlayerId, FName StatCategory, FName StatToQuery, double& OutValue) const;
 		void RemovePeerStats(FPixelStreamingPlayerId PlayerId);
-		void StorePeerStat(FPixelStreamingPlayerId PlayerId, FStatData Stat);
+		void RemoveAllPeerStats();
+		void StorePeerStat(FPixelStreamingPlayerId PlayerId, FName StatCategory, FStatData Stat);
 		void StoreApplicationStat(FStatData PeerStat);
 		void Tick(float DeltaTime);
 
+		DECLARE_MULTICAST_DELEGATE(FOnStatsPolled);
+		FOnStatsPolled OnStatsPolled;
+
+		void ExecStatPS();
 		bool OnToggleStats(UWorld* World, FCommonViewportClient* ViewportClient, const TCHAR* Stream);
 		int32 OnRenderStats(UWorld* World, FViewport* Viewport, FCanvas* Canvas, int32 X, int32 Y, const FVector* ViewLocation, const FRotator* ViewRotation);
 
+		void ExecStatPSGraphs();
 		bool OnToggleGraphs(UWorld* World, FCommonViewportClient* ViewportClient, const TCHAR* Stream);
 		int32 OnRenderGraphs(UWorld* World, FViewport* Viewport, FCanvas* Canvas, int32 X, int32 Y, const FVector* ViewLocation, const FRotator* ViewRotation);
 
 		FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(PixelStreamingStats, STATGROUP_Tickables); }
 
-		void GraphValue(FName InName, float Value, int InSamples, float InMinRange, float InMaxRange, float InRefValue = 0.0f);
-
 		double AddTimeStat(uint64 Cycles1, const FString& Label);
 		double AddTimeDeltaStat(uint64 Cycles1, uint64 Cycles2, const FString& Label);
 		void AddFrameTimingStats(const FPixelCaptureFrameMetadata& FrameMetadata);
-
 		void AddCanvasTile(FName Name, const FCanvasTileItem& Tile);
+
+		// Begin IPixelStreamingStats interface
+		friend class IPixelStreamingStats;
+		void GraphValue(FName InName, float Value, int InSamples, float InMinRange, float InMaxRange, float InRefValue = 0.0f) override;
+		// End IPixelStreamingStats interface
 
 	private:
 		FStats();
@@ -128,12 +177,11 @@ namespace UE::PixelStreaming
 		void RemovePeerStat(FPixelStreamingPlayerId PlayerId);
 		void FireStatChanged(FPixelStreamingPlayerId PlayerId, FName StatName, float StatValue);
 		void UpdateConsoleAutoComplete(TArray<FAutoCompleteCommand>& AutoCompleteList);
+		void GraphValue_GameThread(FName InName, float Value, int InSamples, float InMinRange, float InMaxRange, float InRefValue);
+		void AddCanvasTile_GameThread(FName Name, const FCanvasTileItem& Tile);
 
 	private:
 		static FStats* Instance;
-
-		FCriticalSection WebRTCStatsSourceListCS;
-		TArray<IStatsSource*> WebRTCStatsSourceList;
 
 		bool bRegisterEngineStats = false;
 
@@ -141,9 +189,10 @@ namespace UE::PixelStreaming
 		TMap<FPixelStreamingPlayerId, FPeerStats> PeerStats;
 
 		mutable FCriticalSection ApplicationStatsCS;
-		TMap<FName, FRenderableStat> ApplicationStats;
+		TMap<FName, FStoredStat> ApplicationStats;
 
 		int64 LastTimeSettingsPolledCycles = 0;
+		float RTCStatsPolledDelta = 0.0f;
 
 		TMap<FName, FDebugGraph> Graphs;
 		TMap<FName, FCanvasTileItem> Tiles;

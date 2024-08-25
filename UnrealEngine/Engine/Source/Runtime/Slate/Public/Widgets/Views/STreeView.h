@@ -95,7 +95,7 @@ public:
 	using MapKeyFuncsSparse = typename TListTypeTraits< ItemType >::MapKeyFuncsSparse;
 
 	using TSparseItemMap    = TMap< ItemType, FSparseItemInfo, FDefaultSetAllocator, MapKeyFuncsSparse >;
-	using TItemSet          = TSet< ItemType, typename TListTypeTraits< ItemType >::SetKeyFuncs >;
+	using TItemSet          = TSet< TObjectPtrWrapTypeOf<ItemType>, typename TListTypeTraits< TObjectPtrWrapTypeOf<ItemType> >::SetKeyFuncs >;
 
 	using FOnGetChildren            = typename TSlateDelegates< ItemType >::FOnGetChildren;
 	using FOnGenerateRow            = typename TSlateDelegates< ItemType >::FOnGenerateRow;
@@ -470,7 +470,7 @@ private:
 
 	virtual bool Private_DoesItemHaveChildren( int32 ItemIndexInList ) const override
 	{
-		bool bHasChildren = false;
+		bool bHasChildren = false;
 		if (DenseItemInfos.IsValidIndex(ItemIndexInList))
 		{
 			bHasChildren = DenseItemInfos[ItemIndexInList].bHasChildren;

@@ -197,7 +197,7 @@ uint32 FContentBrowserFileDataDiscovery::Run()
 
 				// Pop off the first path to search
 				LocalScanPath = PendingScanPaths[0];
-				PendingScanPaths.RemoveAt(0, 1, false);
+				PendingScanPaths.RemoveAt(0, 1, EAllowShrinking::No);
 			}
 		}
 

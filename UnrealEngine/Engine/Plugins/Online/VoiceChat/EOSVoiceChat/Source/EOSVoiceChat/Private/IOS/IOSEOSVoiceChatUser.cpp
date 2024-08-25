@@ -2,7 +2,7 @@
 
 #include "IOSEOSVoiceChatUser.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 FIOSEOSVoiceChatUser::FIOSEOSVoiceChatUser(FEOSVoiceChat& InEOSVoiceChat)
 	: FEOSVoiceChatUser(InEOSVoiceChat)
@@ -53,4 +53,4 @@ void FIOSEOSVoiceChatUser::HandleVoiceChatChannelExited(const FString& ChannelNa
 	GetIOSVoiceChat().EnableVoiceChat(false);
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

@@ -17,7 +17,6 @@ public class AudioMixerCoreAudio : ModuleRules
 				"Core",
 				"CoreUObject",
 				"AudioMixerCore",
-				"BinkAudioDecoder"
 			}
 		);
 

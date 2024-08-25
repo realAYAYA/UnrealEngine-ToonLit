@@ -75,6 +75,8 @@ public:
 		LAYER_FLAG_TEX_EXTERNAL = 0x00000010,
 		// When set, this layer will not be rendered.
 		LAYER_FLAG_HIDDEN = 0x00000020,
+		// Max flag value, update this when new flags are added!
+		LAYER_FLAG_MAX_VALUE = LAYER_FLAG_HIDDEN << 1,
 	};
 
 

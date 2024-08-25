@@ -811,7 +811,7 @@ bool USoundscapeSubsystem::RemoveColorPointHashMapCollection(USoundscapeColorPoi
 {
 	if (ColorPointHashMapCollection)
 	{
-		ColorPointHashMapCollections.RemoveSingleSwap(ColorPointHashMapCollection, true);
+		ColorPointHashMapCollections.RemoveSingleSwap(ColorPointHashMapCollection, EAllowShrinking::Yes);
 
 		return true;
 	}
@@ -907,7 +907,7 @@ void USoundscapeSubsystem::RemoveActiveColorPoint(const USoundscapeColorPointCom
 {
 	if (SoundscapeColorPointComponent)
 	{
-		ActiveSoundscapeColorPointComponents.RemoveSingleSwap(SoundscapeColorPointComponent, true);
+		ActiveSoundscapeColorPointComponents.RemoveSingleSwap(SoundscapeColorPointComponent, EAllowShrinking::Yes);
 	}
 }
 

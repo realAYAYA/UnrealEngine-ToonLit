@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "/Engine/Private/HashTable.ush"
 
 #ifndef IC_BACKFACE_DETECTION

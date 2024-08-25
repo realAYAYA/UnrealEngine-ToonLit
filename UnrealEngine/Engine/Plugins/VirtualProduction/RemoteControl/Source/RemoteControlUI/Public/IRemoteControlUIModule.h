@@ -259,5 +259,5 @@ public:
 	/**
 	 * Tries to retrieve a Custom Controller Widget for the specified Controller
 	 */
-	virtual TSharedPtr<SWidget> CreateCustomControllerWidget(URCVirtualPropertyBase* InController) const = 0;
+	virtual TSharedPtr<SWidget> CreateCustomControllerWidget(URCVirtualPropertyBase* InController, TSharedPtr<IPropertyHandle> InOriginalPropertyHandle) const = 0;
 };

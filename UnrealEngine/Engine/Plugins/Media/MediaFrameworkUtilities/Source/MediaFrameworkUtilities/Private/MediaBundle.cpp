@@ -63,7 +63,7 @@ namespace MediaBundlePrivate
 
 		void RemoveBundle(UMediaBundle* Bundle)
 		{
-			BundlesToClose.RemoveSingleSwap(Bundle, false);
+			BundlesToClose.RemoveSingleSwap(Bundle, EAllowShrinking::No);
 		}
 
 	private:

@@ -37,13 +37,6 @@ public class AudioModulationEditor : ModuleRules
 			}
 		);
 
-		PrivateIncludePaths.AddRange(
-			new string[]
-			{
-				"AudioModulation/Private"
-			}
-		);
-
 		if (bIncludeMetaSoundSupport)
 		{
 			PrivateDependencyModuleNames.AddRange(

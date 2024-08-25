@@ -76,12 +76,6 @@ const FString& FTextInspector::GetDisplayString(const FText& Text)
 	return Text.TextData->GetDisplayString();
 }
 
-FTextConstDisplayStringPtr FTextInspector::GetSharedDisplayString(const FText& Text)
-{
-	Text.Rebuild();
-	return Text.TextData->GetLocalizedString();
-}
-
 bool FTextInspector::GetTableIdAndKey(const FText& Text, FName& OutTableId, FString& OutKey)
 {
 	FTextKey TmpKey;
@@ -122,7 +116,7 @@ bool FTextInspector::GetHistoricNumericData(const FText& Text, FHistoricTextNume
 
 const void* FTextInspector::GetSharedDataId(const FText& Text)
 {
-	return &Text.TextData.Get();
+	return Text.TextData.GetReference();
 }
 
 // These default values have been duplicated to the KismetTextLibrary functions for Blueprints. Please replicate any changes there!
@@ -250,40 +244,51 @@ FText::FText()
 {
 }
 
-FText::FText( EInitToEmptyString )
-	: TextData(MakeShared<FTextHistory_Base, ESPMode::ThreadSafe>())
-	, Flags(0)
-{
-}
-
 const FText& FText::GetEmpty()
 {
-	static const FText StaticEmptyText = FText(FText::EInitToEmptyString::Value);
+	static const FText StaticEmptyText = FText(MakeRefCount<FTextHistory_Base>());
 	return StaticEmptyText;
 }
 
-FText::FText( TSharedRef<ITextData, ESPMode::ThreadSafe> InTextData )
-	: TextData(MoveTemp(InTextData))
-	, Flags(0)
-{
-}
-
 FText::FText( FString&& InSourceString )
-	: TextData(MakeShared<FTextHistory_Base, ESPMode::ThreadSafe>(FTextId(), MoveTemp(InSourceString)))
+	: TextData(MakeRefCount<FTextHistory_Base>(FTextId(), MoveTemp(InSourceString)))
 	, Flags(0)
 {
 }
 
 FText::FText( FName InTableId, FString InKey, const EStringTableLoadingPolicy InLoadingPolicy )
-	: TextData(MakeShared<FTextHistory_StringTableEntry, ESPMode::ThreadSafe>(InTableId, MoveTemp(InKey), InLoadingPolicy))
+	: TextData(MakeRefCount<FTextHistory_StringTableEntry>(InTableId, MoveTemp(InKey), InLoadingPolicy))
 	, Flags(0)
 {
 }
 
 FText::FText( FString&& InSourceString, const FTextKey& InNamespace, const FTextKey& InKey, uint32 InFlags )
-	: TextData(MakeShared<FTextHistory_Base, ESPMode::ThreadSafe>(FTextId(InNamespace, InKey), MoveTemp(InSourceString)))
+	: TextData(MakeRefCount<FTextHistory_Base>(FTextId(InNamespace, InKey), MoveTemp(InSourceString)))
 	, Flags(InFlags)
 {
+}
+
+FText::FText(FText&& Other)
+	: TextData(MoveTemp(Other.TextData))
+	, Flags(Other.Flags)
+{
+	// TextData must always point to something valid
+	Other.TextData = FText::GetEmpty().TextData;
+	Other.Flags = 0;
+}
+
+FText& FText::operator=(FText&& Other)
+{
+	if (this != &Other)
+	{
+		TextData = MoveTemp(Other.TextData);
+		Flags = Other.Flags;
+
+		// TextData must always point to something valid
+		Other.TextData = FText::GetEmpty().TextData;
+		Other.Flags = 0;
+	}
+	return *this;
 }
 
 bool FText::IsEmpty() const
@@ -314,7 +319,7 @@ FText FText::ToLower() const
 {
 	FString ResultString = FTextTransformer::ToLower(ToString());
 
-	FText Result = FText(MakeShared<FTextHistory_Transform, ESPMode::ThreadSafe>(MoveTemp(ResultString), *this, FTextHistory_Transform::ETransformType::ToLower));
+	FText Result = FText(MakeRefCount<FTextHistory_Transform>(MoveTemp(ResultString), *this, FTextHistory_Transform::ETransformType::ToLower));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -326,7 +331,7 @@ FText FText::ToUpper() const
 {
 	FString ResultString = FTextTransformer::ToUpper(ToString());
 
-	FText Result = FText(MakeShared<FTextHistory_Transform, ESPMode::ThreadSafe>(MoveTemp(ResultString), *this, FTextHistory_Transform::ETransformType::ToUpper));
+	FText Result = FText(MakeRefCount<FTextHistory_Transform>(MoveTemp(ResultString), *this, FTextHistory_Transform::ETransformType::ToUpper));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -514,7 +519,7 @@ FText FText::FromTextGenerator(const TSharedRef<ITextGenerator>& TextGenerator)
 {
 	FString ResultString = TextGenerator->BuildLocalizedDisplayString();
 
-	FText Result = FText(MakeShared<FTextHistory_TextGenerator, ESPMode::ThreadSafe>(MoveTemp(ResultString), TextGenerator));
+	FText Result = FText(MakeRefCount<FTextHistory_TextGenerator>(MoveTemp(ResultString), TextGenerator));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -570,7 +575,7 @@ FText FText::AsNumberTemplate(T1 Val, const FNumberFormattingOptions* const Opti
 	const FNumberFormattingOptions& FormattingOptions = (Options) ? *Options : FormattingRules.CultureDefaultFormattingOptions;
 	FString NativeString = FastDecimalFormat::NumberToString(Val, FormattingRules, FormattingOptions);
 
-	FText Result = FText(MakeShared<FTextHistory_AsNumber, ESPMode::ThreadSafe>(MoveTemp(NativeString), Val, Options, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsNumber>(MoveTemp(NativeString), Val, Options, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -607,7 +612,7 @@ FText FText::AsCurrencyTemplate(T1 Val, const FString& CurrencyCode, const FNumb
 	const FNumberFormattingOptions& FormattingOptions = (Options) ? *Options : FormattingRules.CultureDefaultFormattingOptions;
 	FString NativeString = FastDecimalFormat::NumberToString(Val, FormattingRules, FormattingOptions);
 
-	FText Result = FText(MakeShared<FTextHistory_AsCurrency, ESPMode::ThreadSafe>(MoveTemp(NativeString), Val, CurrencyCode, Options, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsCurrency>(MoveTemp(NativeString), Val, CurrencyCode, Options, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -627,7 +632,7 @@ FText FText::AsCurrencyBase(int64 BaseVal, const FString& CurrencyCode, const FC
 	double Val = static_cast<double>(BaseVal) / static_cast<double>(FastDecimalFormat::Pow10(DecimalPlaces));
 	FString NativeString = FastDecimalFormat::NumberToString(Val, FormattingRules, FormattingOptions);
 
-	FText Result = FText(MakeShared<FTextHistory_AsCurrency, ESPMode::ThreadSafe>(MoveTemp(NativeString), Val, CurrencyCode, nullptr, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsCurrency>(MoveTemp(NativeString), Val, CurrencyCode, nullptr, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -657,7 +662,7 @@ FText FText::AsPercentTemplate(T1 Val, const FNumberFormattingOptions* const Opt
 	const FNumberFormattingOptions& FormattingOptions = (Options) ? *Options : FormattingRules.CultureDefaultFormattingOptions;
 	FString NativeString = FastDecimalFormat::NumberToString(Val * static_cast<T1>(100), FormattingRules, FormattingOptions);
 
-	FText Result = FText(MakeShared<FTextHistory_AsPercent, ESPMode::ThreadSafe>(MoveTemp(NativeString), Val, Options, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsPercent>(MoveTemp(NativeString), Val, Options, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -672,7 +677,7 @@ FText FText::AsDate(const FDateTime& DateTime, const EDateTimeStyle::Type DateSt
 	const FCulture& Culture = TargetCulture.IsValid() ? *TargetCulture : *I18N.GetCurrentLocale();
 
 	FString ChronoSting = FTextChronoFormatter::AsDate(DateTime, DateStyle, TimeZone, Culture);
-	FText Result = FText(MakeShared<FTextHistory_AsDate, ESPMode::ThreadSafe>(MoveTemp(ChronoSting), DateTime, DateStyle, TimeZone, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsDate>(MoveTemp(ChronoSting), DateTime, DateStyle, TimeZone, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -687,7 +692,7 @@ FText FText::AsDateTime(const FDateTime& DateTime, const EDateTimeStyle::Type Da
 	const FCulture& Culture = TargetCulture.IsValid() ? *TargetCulture : *I18N.GetCurrentLocale();
 
 	FString ChronoString = FTextChronoFormatter::AsDateTime(DateTime, DateStyle, TimeStyle, TimeZone, Culture);
-	FText Result = FText(MakeShared<FTextHistory_AsDateTime, ESPMode::ThreadSafe>(MoveTemp(ChronoString), DateTime, DateStyle, TimeStyle, TimeZone, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsDateTime>(MoveTemp(ChronoString), DateTime, DateStyle, TimeStyle, TimeZone, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -702,7 +707,7 @@ FText FText::AsDateTime(const FDateTime& DateTime, const FString& CustomPattern,
 	const FCulture& Culture = TargetCulture.IsValid() ? *TargetCulture : *I18N.GetCurrentLocale();
 
 	FString ChronoString = FTextChronoFormatter::AsDateTime(DateTime, CustomPattern, TimeZone, Culture);
-	FText Result = FText(MakeShared<FTextHistory_AsDateTime, ESPMode::ThreadSafe>(MoveTemp(ChronoString), DateTime, CustomPattern, TimeZone, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsDateTime>(MoveTemp(ChronoString), DateTime, CustomPattern, TimeZone, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -717,7 +722,7 @@ FText FText::AsTime(const FDateTime& DateTime, const EDateTimeStyle::Type TimeSt
 	const FCulture& Culture = TargetCulture.IsValid() ? *TargetCulture : *I18N.GetCurrentLocale();
 
 	FString ChronoString = FTextChronoFormatter::AsTime(DateTime, TimeStyle, TimeZone, Culture);
-	FText Result = FText(MakeShared<FTextHistory_AsTime, ESPMode::ThreadSafe>(MoveTemp(ChronoString), DateTime, TimeStyle, TimeZone, TargetCulture));
+	FText Result = FText(MakeRefCount<FTextHistory_AsTime>(MoveTemp(ChronoString), DateTime, TimeStyle, TimeZone, TargetCulture));
 	if (!GIsEditor)
 	{
 		Result.Flags |= ETextFlag::Transient;
@@ -790,7 +795,7 @@ FText FText::AsMemory(uint64 NumBytes, const FNumberFormattingOptions* const Opt
 
 	const double MemorySizeAsDouble = (double)NumBytes / (double)Unit;
 	Args.Add( TEXT("Number"), FText::AsNumber( MemorySizeAsDouble, Options, TargetCulture) );
-	Args.Add( TEXT("Unit"), FText::FromString( FString( 1, &Prefixes[Prefix] ) + Suffix) );
+	Args.Add( TEXT("Unit"), FText::FromString( FString::ConstructFromPtrSize( &Prefixes[Prefix], 1 ) + Suffix) );
 	return FText::Format( NSLOCTEXT("Internationalization", "ComputerMemoryFormatting", "{Number} {Unit}"), Args);
 }
 
@@ -810,7 +815,7 @@ bool FText::FindText(const FTextKey& Namespace, const FTextKey& Key, FText& OutT
 
 	if ( FoundString.IsValid() )
 	{
-		OutText = FText(MakeShared<FTextHistory_Base, ESPMode::ThreadSafe>(FTextId(Namespace, Key), SourceString ? FString(*SourceString) : FString(), FoundString.ToSharedRef()));
+		OutText = FText(MakeRefCount<FTextHistory_Base>(FTextId(Namespace, Key), SourceString ? FString(*SourceString) : FString(), FoundString.ToSharedRef()));
 		return true;
 	}
 
@@ -853,7 +858,7 @@ void FText::SerializeText(FStructuredArchive::FSlot Slot, FText& Value)
 			TextId = FTextId(Namespace, Key);
 		}
 
-		Value.TextData = MakeShared<FTextHistory_Base, ESPMode::ThreadSafe>(TextId, MoveTemp(SourceStringToImplantIntoHistory));
+		Value.TextData = MakeRefCount<FTextHistory_Base>(TextId, MoveTemp(SourceStringToImplantIntoHistory));
 	}
 
 #if WITH_EDITOR
@@ -929,67 +934,67 @@ void FText::SerializeText(FStructuredArchive::FSlot Slot, FText& Value)
 			{
 			case ETextHistoryType::Base:
 				{
-					Value.TextData = MakeShared<FTextHistory_Base, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_Base>();
 					break;
 				}
 			case ETextHistoryType::NamedFormat:
 				{
-					Value.TextData = MakeShared<FTextHistory_NamedFormat, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_NamedFormat>();
 					break;
 				}
 			case ETextHistoryType::OrderedFormat:
 				{
-					Value.TextData = MakeShared<FTextHistory_OrderedFormat, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_OrderedFormat>();
 					break;
 				}
 			case ETextHistoryType::ArgumentFormat:
 				{
-					Value.TextData = MakeShared<FTextHistory_ArgumentDataFormat, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_ArgumentDataFormat>();
 					break;
 				}
 			case ETextHistoryType::AsNumber:
 				{
-					Value.TextData = MakeShared<FTextHistory_AsNumber, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_AsNumber>();
 					break;
 				}
 			case ETextHistoryType::AsPercent:
 				{
-					Value.TextData = MakeShared<FTextHistory_AsPercent, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_AsPercent>();
 					break;
 				}
 			case ETextHistoryType::AsCurrency:
 				{
-					Value.TextData = MakeShared<FTextHistory_AsCurrency, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_AsCurrency>();
 					break;
 				}
 			case ETextHistoryType::AsDate:
 				{
-					Value.TextData = MakeShared<FTextHistory_AsDate, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_AsDate>();
 					break;
 				}
 			case ETextHistoryType::AsTime:
 				{
-					Value.TextData = MakeShared<FTextHistory_AsTime, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_AsTime>();
 					break;
 				}
 			case ETextHistoryType::AsDateTime:
 				{
-					Value.TextData = MakeShared<FTextHistory_AsDateTime, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_AsDateTime>();
 					break;
 				}
 			case ETextHistoryType::Transform:
 				{
-					Value.TextData = MakeShared<FTextHistory_Transform, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_Transform>();
 					break;
 				}
 			case ETextHistoryType::StringTableEntry:
 				{
-					Value.TextData = MakeShared<FTextHistory_StringTableEntry, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_StringTableEntry>();
 					break;
 				}
 			case ETextHistoryType::TextGenerator:
 				{
-					Value.TextData = MakeShared<FTextHistory_TextGenerator, ESPMode::ThreadSafe>();
+					Value.TextData = MakeRefCount<FTextHistory_TextGenerator>();
 					break;
 				}
 			default:
@@ -1714,11 +1719,11 @@ const TCHAR* FTextStringHelper::ReadFromBuffer_ComplexText(const TCHAR* Buffer, 
 	{
 		auto CreateTextHistory = [&](FText& InOutTmpText) -> bool
 		{
-			#define CONDITIONAL_CREATE_TEXT_HISTORY(HistoryClass)								\
-				if (HistoryClass::StaticShouldReadFromBuffer(Buffer))							\
-				{																				\
-					InOutTmpText.TextData = MakeShared<HistoryClass, ESPMode::ThreadSafe>();	\
-					return true;																\
+			#define CONDITIONAL_CREATE_TEXT_HISTORY(HistoryClass)			\
+				if (HistoryClass::StaticShouldReadFromBuffer(Buffer))		\
+				{															\
+					InOutTmpText.TextData = MakeRefCount<HistoryClass>();	\
+					return true;											\
 				}
 			CONDITIONAL_CREATE_TEXT_HISTORY(FTextHistory_Base);
 			CONDITIONAL_CREATE_TEXT_HISTORY(FTextHistory_NamedFormat);
@@ -1921,9 +1926,14 @@ void FTextBuilder::Clear()
 	Lines.Reset();
 }
 
-bool FTextBuilder::IsEmpty()
+bool FTextBuilder::IsEmpty() const
 {
 	return Lines.Num() == 0;
+}
+
+int32 FTextBuilder::GetNumLines() const
+{
+	return Lines.Num();
 }
 
 FText FTextBuilder::ToText() const

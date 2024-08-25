@@ -251,9 +251,7 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 		Style->Set("NoBorder.Pressed", new FSlateNoResource());
 
 		Style->Set("NoBorder", NoBorder);
-
 	}
-
 
 	// Demo Recording
 	{
@@ -315,6 +313,7 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 		Style->Set("Icons.WarningWithColor.Thumbnail", new IMAGE_BRUSH_SVG("Starship/Common/alert-triangle-64", Icon64x64));
 
 		Style->Set("Icons.Info", new IMAGE_BRUSH_SVG("Starship/Common/Info", Icon16x16));
+		Style->Set("Icons.Info.Small", new IMAGE_BRUSH_SVG("Starship/Common/Info", Icon14x14));
 		Style->Set("Icons.Info.Large", new IMAGE_BRUSH_SVG("Starship/Common/Info", Icon32x32));
 		Style->Set("Icons.InfoWithColor", new IMAGE_BRUSH_SVG("Starship/Common/Info", Icon16x16, FStyleColors::Foreground));
 		Style->Set("Icons.InfoWithColor.Large", new IMAGE_BRUSH_SVG("Starship/Common/Info", Icon32x32, FStyleColors::Foreground));
@@ -351,6 +350,8 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 
 		Style->Set("Icons.Lock", new IMAGE_BRUSH_SVG("Starship/Common/lock", Icon16x16));
 		Style->Set("Icons.Unlock", new IMAGE_BRUSH_SVG("Starship/Common/lock-unlocked", Icon16x16));
+
+		Style->Set("Icons.Normalize", new IMAGE_BRUSH("Starship/Common/normalize", Icon16x16));
 
 		Style->Set("Icons.CircleArrowLeft", new IMAGE_BRUSH_SVG("Starship/Common/circle-arrow-left", Icon16x16));
 		Style->Set("Icons.CircleArrowRight", new IMAGE_BRUSH_SVG("Starship/Common/circle-arrow-right", Icon16x16));
@@ -422,6 +423,7 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 		Style->Set("Icons.Role", new IMAGE_BRUSH_SVG("Starship/Common/Role", Icon16x16));
 		Style->Set("Icons.Merge", new IMAGE_BRUSH_SVG("Starship/Common/Merge", Icon16x16));
 
+		Style->Set("Icons.Calendar", new IMAGE_BRUSH_SVG("Starship/Common/Calendar", Icon16x16));
 	}
 
 	// Tool panels
@@ -564,10 +566,12 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 	// SSlider and SVolumeControl defaults...
 	{
 		FSliderStyle SliderStyle = FSliderStyle()
-			.SetNormalBarImage(   FSlateRoundedBoxBrush(FStyleColors::Input, 2.0f, FStyleColors::Input, 1.0f))
-			.SetHoveredBarImage(  FSlateRoundedBoxBrush(FStyleColors::Input, 2.0f, FStyleColors::Input, 1.0f))
-			.SetNormalThumbImage(  FSlateRoundedBoxBrush(FStyleColors::Foreground, Icon8x8) )
-			.SetHoveredThumbImage( FSlateRoundedBoxBrush(FStyleColors::ForegroundHover, Icon8x8) )
+			.SetNormalBarImage(FSlateRoundedBoxBrush(FStyleColors::Input, 2.0f, FStyleColors::Input, 1.0f))
+			.SetHoveredBarImage(FSlateRoundedBoxBrush(FStyleColors::Input, 2.0f, FStyleColors::Input, 1.0f))
+			.SetDisabledBarImage(FSlateRoundedBoxBrush(FStyleColors::Input, 2.0f, FStyleColors::Recessed, 1.0f))
+			.SetNormalThumbImage(FSlateRoundedBoxBrush(FStyleColors::Foreground, Icon8x8))
+			.SetHoveredThumbImage(FSlateRoundedBoxBrush(FStyleColors::ForegroundHover, Icon8x8))
+			.SetDisabledThumbImage(FSlateRoundedBoxBrush(FStyleColors::Foreground, Icon8x8))
 			.SetBarThickness(4.0f);
 		Style->Set("Slider", SliderStyle);
 
@@ -733,34 +737,31 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 		);
 	}
 
-
-
 	// SWindow defaults...
 	{
 #if !PLATFORM_MAC
 		const FButtonStyle MinimizeButtonStyle = FButtonStyle(NoBorder)
-			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/minimize", FVector2f(42.0f, 34.0f), FStyleColors::Foreground))
-			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/minimize", FVector2f(42.0f, 34.0f), FStyleColors::ForegroundHover))
-			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/minimize", FVector2f(42.0f, 34.0f), FStyleColors::Foreground));
+			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/minimize", FVector2f(42.0f, 23.0f), FStyleColors::Foreground))
+			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/minimize", FVector2f(42.0f, 23.0f), FStyleColors::ForegroundHover))
+			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/minimize", FVector2f(42.0f, 23.0f), FStyleColors::Foreground));
 
 		const FButtonStyle MaximizeButtonStyle = FButtonStyle(NoBorder)
-			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/maximize", FVector2f(42.0f, 34.0f), FStyleColors::Foreground))
-			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/maximize", FVector2f(42.0f, 34.0f), FStyleColors::ForegroundHover))
-			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/maximize", FVector2f(42.0f, 34.0f), FStyleColors::Foreground));
+			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/maximize", FVector2f(42.0f, 23.0f), FStyleColors::Foreground))
+			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/maximize", FVector2f(42.0f, 23.0f), FStyleColors::ForegroundHover))
+			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/maximize", FVector2f(42.0f, 23.0f), FStyleColors::Foreground));
 
 		const FButtonStyle RestoreButtonStyle = FButtonStyle(NoBorder)
-			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/restore", FVector2f(42.0f, 34.0f), FStyleColors::Foreground))
-			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/restore", FVector2f(42.0f, 34.0f), FStyleColors::ForegroundHover))
-			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/restore", FVector2f(42.0f, 34.0f), FStyleColors::Foreground));
+			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/restore", FVector2f(42.0f, 23.0f), FStyleColors::Foreground))
+			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/restore", FVector2f(42.0f, 23.0f), FStyleColors::ForegroundHover))
+			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/restore", FVector2f(42.0f, 23.0f), FStyleColors::Foreground));
 
 		const FButtonStyle CloseButtonStyle = FButtonStyle(NoBorder)
-			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/close", FVector2f(42.0f, 34.0f), FStyleColors::Foreground))
-			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/close", FVector2f(42.0f, 34.0f), FStyleColors::ForegroundHover))
-			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/close", FVector2f(42.0f, 34.0f), FStyleColors::Foreground));
+			.SetNormal( IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/close", FVector2f(42.0f, 23.0f), FStyleColors::Foreground))
+			.SetHovered(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/close", FVector2f(42.0f, 23.0f), FStyleColors::ForegroundHover))
+			.SetPressed(IMAGE_BRUSH_SVG("Starship/CoreWidgets/Window/close", FVector2f(42.0f, 23.0f), FStyleColors::Foreground));
 #endif
 
-		FWindowStyle Window =
-			FWindowStyle()
+		FWindowStyle Window = FWindowStyle()
 #if !PLATFORM_MAC
 			.SetMinimizeButtonStyle(MinimizeButtonStyle)
 			.SetMaximizeButtonStyle(MaximizeButtonStyle)
@@ -778,16 +779,22 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 			.SetCornerRadius(2)
 			.SetBorderPadding(FMargin(3.0f, 3.0f, 3.0f, 3.0f));
 
-
 		Style->Set("Window", Window);
-		
+
+		const FButtonStyle MinMaxRestoreButtonBackgroundStyle = FButtonStyle(NoBorder)
+			.SetHovered(FSlateColorBrush(FColor(255, 255, 255, 40)));
+		const FButtonStyle CloseButtonBackgroundStyle = FButtonStyle(NoBorder)
+			.SetHovered(FSlateColorBrush(FColor(255, 20, 20, 150)));
+
+		Style->Set("Window.MinMaxRestoreButtonHover", MinMaxRestoreButtonBackgroundStyle);
+		Style->Set("Window.CloseButtonHover", CloseButtonBackgroundStyle);
+
 		Window.SetCornerRadius(8.0f);
 
 		Style->Set("NotificationWindow", Window);
 
 		Style->Set("ChildWindow.Background", new FSlateColorBrush(FStyleColors::Recessed));
 	}
-
 
 	// Standard Dialog Settings
 	{
@@ -974,10 +981,10 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 			{
 				if (NormalIconPath.StartsWith(TEXT("/Platforms/")))
 				{
-#define PLATFORM_IMAGE_BRUSH( PlatformPath, ... ) FSlateImageBrush( PlatformPath.Replace(TEXT("/Platforms/"), *FPaths::EnginePlatformExtensionsDir()) + TEXT(".png") , __VA_ARGS__ )
-					Style->Set(PlatformInfo.GetIconStyleName(EPlatformIconSize::Normal), new PLATFORM_IMAGE_BRUSH(NormalIconPath, Icon24x24));
-					Style->Set(PlatformInfo.GetIconStyleName(EPlatformIconSize::Large), new PLATFORM_IMAGE_BRUSH(PlatformInfo.GetIconPath(EPlatformIconSize::Large), Icon64x64));
-					Style->Set(PlatformInfo.GetIconStyleName(EPlatformIconSize::XLarge), new PLATFORM_IMAGE_BRUSH(PlatformInfo.GetIconPath(EPlatformIconSize::XLarge), Icon128x128));
+#define PLATFORM_IMAGE_BRUSH( Platform, PlatformPath, ... ) FSlateImageBrush( PlatformPath.Replace(*(FString(TEXT("/Platforms/")) + Platform.ToString() + TEXT("/")), *FPaths::EnginePlatformExtensionDir(*Platform.ToString())) + TEXT(".png") , __VA_ARGS__ )
+					Style->Set(PlatformInfo.GetIconStyleName(EPlatformIconSize::Normal), new PLATFORM_IMAGE_BRUSH(PlatformInfo.IniPlatformName, NormalIconPath, Icon24x24));
+					Style->Set(PlatformInfo.GetIconStyleName(EPlatformIconSize::Large), new PLATFORM_IMAGE_BRUSH(PlatformInfo.IniPlatformName, PlatformInfo.GetIconPath(EPlatformIconSize::Large), Icon64x64));
+					Style->Set(PlatformInfo.GetIconStyleName(EPlatformIconSize::XLarge), new PLATFORM_IMAGE_BRUSH(PlatformInfo.IniPlatformName, PlatformInfo.GetIconPath(EPlatformIconSize::XLarge), Icon128x128));
 				}
 				else
 				{
@@ -995,11 +1002,11 @@ TSharedRef<ISlateStyle> FStarshipCoreStyle::Create()
 		{
 			if (!Item.ActiveIconPath.IsEmpty())
 			{
-				Style->Set(Item.ActiveIconName, new PLATFORM_IMAGE_BRUSH(Item.ActiveIconPath, Icon40x40));
+				Style->Set(Item.ActiveIconName, new PLATFORM_IMAGE_BRUSH(Item.PlatformName, Item.ActiveIconPath, Icon40x40));
 			}
 			if (!Item.InactiveIconPath.IsEmpty())
 			{
-				Style->Set(Item.InactiveIconName, new PLATFORM_IMAGE_BRUSH(Item.InactiveIconPath, Icon40x40));
+				Style->Set(Item.InactiveIconName, new PLATFORM_IMAGE_BRUSH(Item.PlatformName, Item.InactiveIconPath, Icon40x40));
 			}
 		}
 #endif

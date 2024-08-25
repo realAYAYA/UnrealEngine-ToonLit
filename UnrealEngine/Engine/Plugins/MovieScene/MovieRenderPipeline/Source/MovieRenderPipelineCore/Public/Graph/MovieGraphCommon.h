@@ -22,12 +22,14 @@ enum class EMovieGraphValueType : uint8
 	Name,
 	String,
 	Text,
-	Enum UMETA(Hidden),
-	Struct UMETA(Hidden),
-	Object UMETA(Hidden),
-	SoftObject UMETA(Hidden),
-	Class UMETA(Hidden),
-	SoftClass UMETA(Hidden),
+	Enum,
+	Struct,
+	Object,
+	SoftObject,
+	Class,
+	SoftClass,
+	UInt32,	// Type not fully supported at UI, will work with restrictions to type editing
+	UInt64, // Type not fully supported at UI, will work with restrictions to type editing
 
 	Count UMETA(Hidden)
 };

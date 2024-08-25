@@ -8,37 +8,15 @@
 #include "DecoratorBase/NodeDescription.h"
 #include "DecoratorBase/NodeTemplate.h"
 #include "DecoratorBase/NodeTemplateRegistry.h"
+#include "Serialization/ArchiveUObject.h"
+
+#include "DecoratorBase/DecoratorReader.h"
 
 namespace UE::AnimNext
 {
-	namespace Private
-	{
-		// Note: this does not account for inline/pooled/pinned properties
-		static uint32 GetNodeSharedSize(const FNodeTemplate& NodeTemplate)
-		{
-			const FDecoratorRegistry& Registry = FDecoratorRegistry::Get();
-
-			const uint32 NumDecorators = NodeTemplate.GetNumDecorators();
-			const FDecoratorTemplate* DecoratorTemplates = NodeTemplate.GetDecorators();
-
-			uint32 NodeSharedSize = sizeof(FNodeDescription);
-			for (uint32_t DecoratorIndex = 0; DecoratorIndex < NumDecorators; ++DecoratorIndex)
-			{
-				const FDecorator* Decorator = Registry.Find(DecoratorTemplates[DecoratorIndex].GetRegistryHandle());
-
-				const FDecoratorMemoryLayout MemoryLayout = Decorator->GetDecoratorMemoryDescription();
-				NodeSharedSize = Align(NodeSharedSize, MemoryLayout.SharedDataAlignment);
-				NodeSharedSize += MemoryLayout.SharedDataSize;
-			}
-
-			return NodeSharedSize;
-		}
-	}
-
 	FDecoratorWriter::FDecoratorWriter()
 		: FMemoryWriter(GraphSharedDataArchiveBuffer)
-		, GraphSharedDataSize(0)
-		, NextNodeUID(1)	// Node UID 0 is reserved for the invalid value (null)
+		, NextNodeID(FNodeID::GetFirstID())
 		, NumNodesWritten(0)
 		, bIsNodeWriting(false)
 		, ErrorState(EErrorState::None)
@@ -62,52 +40,26 @@ namespace UE::AnimNext
 			return FNodeHandle();
 		}
 
-		if (NextNodeUID == FNodeDescription::MAXIMUM_COUNT)
+		if (!NextNodeID.IsValid())
 		{
 			// We have too many nodes in the graph, we need to be able to represent them with 16 bits
+			// The node ID must have wrapped around
 			ErrorState = EErrorState::TooManyNodes;
 			return FNodeHandle();
 		}
 
-		const uint32 NodeSharedDataSize = Private::GetNodeSharedSize(NodeTemplate);
-		if (NodeSharedDataSize > FNodeDescription::MAXIMUM_SIZE)
-		{
-			// This node shared data is too large
-			ErrorState = EErrorState::NodeSharedDataTooLarge;
-			return FNodeHandle();
-		}
+		const FNodeHandle NodeHandle = FNodeHandle::FromNodeID(NextNodeID);
+		check(NodeHandle.IsValid() && NodeHandle.IsNodeID());
+		check(NodeMappings.Num() == NodeHandle.GetNodeID().GetNodeIndex());
 
-		const uint32 NodeSharedDataOffset = GraphSharedDataSize;
-		if (GraphSharedDataSize + NodeSharedDataSize > MAXIMUM_GRAPH_SHARED_DATA_SIZE)
-		{
-			// The graph shared data size is too large
-			ErrorState = EErrorState::GraphTooLarge;
-			return FNodeHandle();
-		}
-
-		GraphSharedDataSize += NodeSharedDataSize;
-
-		const FNodeHandle NodeHandle(NodeSharedDataOffset);
-		const uint16 NodeUID = NextNodeUID++;
+		NextNodeID = NextNodeID.GetNextID();
 
 		FNodeTemplateRegistry& NodeTemplateRegistry = FNodeTemplateRegistry::Get();
 		const FNodeTemplateRegistryHandle NodeTemplateHandle = NodeTemplateRegistry.FindOrAdd(&NodeTemplate);
 
-		NodeMappings.Add({ NodeHandle, NodeSharedDataSize, NodeUID, NodeTemplateHandle });
+		NodeMappings.Add({ NodeHandle, NodeTemplateHandle, 0 });
 
 		return NodeHandle;
-	}
-
-	uint16 FDecoratorWriter::GetNodeUID(const FNodeHandle NodeHandle) const
-	{
-		const FNodeMapping* NodeMapping = NodeMappings.FindByPredicate([NodeHandle](const FNodeMapping& It) { return It.NodeHandle == NodeHandle; });
-		return NodeMapping != nullptr ? NodeMapping->NodeUID : 0;
-	}
-
-	FNodeHandle FDecoratorWriter::GetNodeHandle(uint16 NodeUID) const
-	{
-		const FNodeMapping* NodeMapping = NodeMappings.FindByPredicate([NodeUID](const FNodeMapping& It) { return It.NodeUID == NodeUID; });
-		return NodeMapping != nullptr ? NodeMapping->NodeHandle : FNodeHandle();
 	}
 
 	void FDecoratorWriter::BeginNodeWriting()
@@ -122,14 +74,15 @@ namespace UE::AnimNext
 		}
 
 		bIsNodeWriting = true;
+		GraphReferencedObjects.Reset();
 
 		// Serialize the node templates
 		TArray<FNodeTemplateRegistryHandle> NodeTemplateHandles;
 		NodeTemplateHandles.Reserve(NodeMappings.Num());
 
-		for (const FNodeMapping& NodeMapping : NodeMappings)
+		for (FNodeMapping& NodeMapping : NodeMappings)
 		{
-			NodeTemplateHandles.AddUnique(NodeMapping.NodeTemplateHandle);
+			NodeMapping.NodeTemplateIndex = NodeTemplateHandles.AddUnique(NodeMapping.NodeTemplateHandle);
 		}
 
 		uint32 NumNodeTemplates = NodeTemplateHandles.Num();
@@ -138,7 +91,7 @@ namespace UE::AnimNext
 		FNodeTemplateRegistry& NodeTemplateRegistry = FNodeTemplateRegistry::Get();
 		for (FNodeTemplateRegistryHandle NodeTemplateHandle : NodeTemplateHandles)
 		{
-			FNodeTemplate* NodeTemplate = NodeTemplateRegistry.Find(NodeTemplateHandle);
+			FNodeTemplate* NodeTemplate = NodeTemplateRegistry.FindMutable(NodeTemplateHandle);
 			NodeTemplate->Serialize(*this);
 		}
 
@@ -146,8 +99,12 @@ namespace UE::AnimNext
 		uint32 NumNodes = NodeMappings.Num();
 		*this << NumNodes;
 
-		uint32 SharedDataSize = GraphSharedDataSize;
-		*this << SharedDataSize;
+		// Serialize the node template indices that we'll use for each node
+		for (const FNodeMapping& NodeMapping : NodeMappings)
+		{
+			uint32 NodeTemplateIndex = NodeMapping.NodeTemplateIndex;
+			*this << NodeTemplateIndex;
+		}
 	}
 
 	void FDecoratorWriter::EndNodeWriting()
@@ -164,7 +121,10 @@ namespace UE::AnimNext
 		ensure(NumNodesWritten == NodeMappings.Num());
 	}
 
-	void FDecoratorWriter::WriteNode(const FNodeHandle NodeHandle, const TFunction<const TMap<FString, FString>& (uint32 DecoratorIndex)>& GetDecoratorProperties)
+	void FDecoratorWriter::WriteNode(
+		const FNodeHandle NodeHandle,
+		const TFunction<FString (uint32 DecoratorIndex, FName PropertyName)>& GetDecoratorProperty,
+		const TFunction<uint16(uint32 DecoratorIndex, FName PropertyName)>& GetDecoratorLatentPropertyIndex)
 	{
 		ensure(bIsNodeWriting);
 
@@ -194,7 +154,7 @@ namespace UE::AnimNext
 		// Populate our node description into a temporary buffer
 		alignas(16) uint8 Buffer[64 * 1024];	// Max node size
 
-		FNodeDescription* NodeDesc = new(Buffer) FNodeDescription(NodeMapping->NodeUID, NodeMapping->NodeTemplateHandle);
+		FNodeDescription* NodeDesc = new(Buffer) FNodeDescription(NodeMapping->NodeHandle.GetNodeID(), NodeMapping->NodeTemplateHandle);
 
 		// Populate our decorator properties
 		const uint32 NumDecorators = NodeTemplate->GetNumDecorators();
@@ -206,16 +166,50 @@ namespace UE::AnimNext
 
 			FAnimNextDecoratorSharedData* SharedData = DecoratorTemplates[DecoratorIndex].GetDecoratorDescription(*NodeDesc);
 
-			const TMap<FString, FString>& Properties = GetDecoratorProperties(DecoratorIndex);
-			Decorator->SaveDecoratorSharedData(*this, Properties, *SharedData);
+			// Curry our lambda with the decorator index
+			const auto GetDecoratorPropertyAt = [&GetDecoratorProperty, DecoratorIndex](FName PropertyName)
+			{
+				return GetDecoratorProperty(DecoratorIndex, PropertyName);
+			};
+
+			Decorator->SaveDecoratorSharedData(GetDecoratorPropertyAt, *SharedData);
 		}
 
-		// Write our node size first so the reader knows how much to skip ahead to the next node
-		uint32 NodeSize = NodeMapping->NodeSize;
-		*this << NodeSize;
-
-		// Append it to our archive
+		// Append our node and decorator shared data to our archive
 		NodeDesc->Serialize(*this);
+
+		// Append our decorator latent property handles to our archive
+		// We only write out the properties that will be present at runtime
+		// This takes into account editor only latent properties which can be stripped in cooked builds
+		// Other forms of property stripping are not currently supported
+		// The latent property offsets will be computed at runtime on load to support property sizes/alignment
+		// changing between the editor and the runtime platform (e.g. 32 vs 64 bit pointers)
+		// To that end, we serialize the following property metadata:
+		//     * RigVM memory handle index
+		//     * Whether the property supports freezing or not
+		//     * The property name and index for us to look it up at runtime
+
+		for (uint32 DecoratorIndex = 0; DecoratorIndex < NumDecorators; ++DecoratorIndex)
+		{
+			const FDecoratorRegistryHandle DecoratorHandle = DecoratorTemplates[DecoratorIndex].GetRegistryHandle();
+			const FDecorator* Decorator = DecoratorRegistry.Find(DecoratorHandle);
+
+			// Curry our lambda with the decorator index
+			const auto GetDecoratorLatentPropertyIndexAt = [&GetDecoratorLatentPropertyIndex, DecoratorIndex](FName PropertyName)
+			{
+				return GetDecoratorLatentPropertyIndex(DecoratorIndex, PropertyName);
+			};
+
+			TArray<FLatentPropertyMetadata> LatentProperties = Decorator->GetLatentPropertyHandles(IsFilterEditorOnly(), GetDecoratorLatentPropertyIndexAt);
+
+			int32 NumLatentProperties = LatentProperties.Num();
+			*this << NumLatentProperties;
+
+			for (FLatentPropertyMetadata& Metadata : LatentProperties)
+			{
+				*this << Metadata;
+			}
+		}
 
 		NumNodesWritten++;
 	}
@@ -228,6 +222,27 @@ namespace UE::AnimNext
 	const TArray<uint8>& FDecoratorWriter::GetGraphSharedData() const
 	{
 		return GraphSharedDataArchiveBuffer;
+	}
+
+	const TArray<UObject*>& FDecoratorWriter::GetGraphReferencedObjects() const
+	{
+		return GraphReferencedObjects;
+	}
+
+	FArchive& FDecoratorWriter::operator<<(UObject*& Obj)
+	{
+		// Add our object for tracking
+		int32 ObjectIndex = GraphReferencedObjects.AddUnique(Obj);
+
+		// Save our index, we'll use it to resolve the object on load
+		*this << ObjectIndex;
+
+		return *this;
+	}
+
+	FArchive& FDecoratorWriter::operator<<(FObjectPtr& Obj)
+	{
+		return FArchiveUObject::SerializeObjectPtr(*this, Obj);
 	}
 }
 #endif

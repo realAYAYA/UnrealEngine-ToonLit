@@ -1,19 +1,140 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import { Checkbox, Icon, Image, Spinner, SpinnerSize, Stack, Text } from '@fluentui/react';
-import { getTheme, mergeStyles, mergeStyleSets } from '@fluentui/react/lib/Styling';
-import React, { useState, useEffect, useRef } from 'react';
+import { mergeStyleSets, mergeStyles } from '@fluentui/react/lib/Styling';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Link } from 'react-router-dom';
-import backend from '../../../backend';
-import { ArtifactData } from '../../../backend/Api';
+import dashboard from "../../../backend/Dashboard";
+import { projectStore } from "../../../backend/ProjectStore";
+import { TestDataWrapper } from '../../../backend/TestDataHandler';
 import { msecToElapsed } from '../../../base/utilities/timeUtils';
 import { testDataHandler } from '../../../components/TestReportView';
-import { TestDataWrapper } from '../../../backend/TestDataHandler';
-import { hordeClasses } from '../../../styles/Styles';
+import { getHordeStyling } from '../../../styles/Styles';
+import { getHordeTheme } from '../../../styles/theme';
 import { EventType, Metadata, TestDetails, TestEntry, TestEntryArtifact, TestPassSummary, TestResult, TestState, TestStateHistoryItem } from '../models/UnrealAutomatedTests';
 
-const theme = getTheme();
+let _styles: any;
+let _gutterHystoryStyles: any;
+let _stateStyles: any;
+
+const getStyling = () => {
+   const theme = getHordeTheme();
+
+   const styles = _styles ?? mergeStyleSets({
+      container: {
+         overflow: 'auto',
+         height: 'calc(100vh - 165px)',
+         marginTop: 8
+      },
+      item: [
+         {
+            fontSize: "11px",
+            fontFamily: "Horde Cousine Regular"
+         }
+      ],
+      gutter: [
+         {
+            padding: 0,
+            margin: 0,
+            paddingTop: 0,
+            paddingBottom: 0,
+            paddingRight: 14,
+            marginTop: 0,
+            marginBottom: 0,
+            height: 20
+         }
+      ],
+      gutterError: [
+         {
+            background: dashboard.darktheme ? "#330606" : "#FEF6F6",
+            borderLeftStyle: 'solid',
+            borderLeftColor: "#EC4C47"
+         }, gutterClass
+      ],
+      gutterWarning: [
+         {
+            background: dashboard.darktheme ? "#1E1817" : "#FEF8E7",
+            borderLeftStyle: 'solid',
+            borderLeftColor: "#F7D154"
+         }, gutterClass
+      ],
+      gutterSuccess: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: theme.palette.green
+         }, gutterClass
+      ],
+      itemWarning: [
+         {
+            background: dashboard.darktheme ? "#1E1817" : "#FEF8E7",
+         }
+      ],
+      itemError: [
+         {
+            background: dashboard.darktheme ? "#330606" : "#FEF6F6",
+         }
+      ],
+      itemHover: {
+         cursor: "pointer",
+         selectors: {
+            ':hover': {
+               background: theme.palette.neutralLight
+            }
+         }
+      },
+      itemHighlighted: {
+         borderWidth: "1px",
+         borderColor: "#888",
+         borderStyle: "solid"
+      },
+      historyList: {
+         zIndex: 1,
+         borderWidth: "1px",
+         borderColor: "#888",
+         borderStyle: "solid",
+         backgroundColor: theme.palette.white,
+         padding: "3px",
+         overflow: "auto"
+      }
+   });
+
+   const gutterHystoryStyles = _gutterHystoryStyles ?? new Map<string, string>([
+      [TestState.Success, styles.gutterSuccess],
+      [TestState.InProcess, mergeStyles({
+         background: dashboard.darktheme ? "#141115" : "#E4F1F5",
+         borderLeftStyle: 'solid',
+         borderLeftColor: "#01BCF2"
+      }, gutterClass)],
+      [TestState.NotRun, mergeStyles({
+         borderLeftStyle: 'solid',
+         borderLeftColor: "#A19F9D"
+      }, gutterClass)],
+      [TestState.SuccessWithWarnings, styles.gutterWarning],
+      [TestState.Failed, styles.gutterError],
+   ]);
+
+   const stateStyles = _stateStyles ?? new Map<string, string>([
+      [TestState.Success, mergeStyles({ color: "#9BF95C", userSelect: "none" }, iconClass)],
+      [TestState.InProcess, mergeStyles({ color: "#01BCF2", userSelect: "none" }, iconClass)],
+      [TestState.NotRun, mergeStyles({ color: "#A19F9D", userSelect: "none" }, iconClass)],
+      [TestState.SuccessWithWarnings, mergeStyles({ color: "#F7D154", userSelect: "none" }, iconClass)],
+      [TestState.Failed, mergeStyles({ color: "#EC4C47", userSelect: "none" }, iconClass)],
+      [TestState.Unknown, mergeStyles({ color: dashboard.darktheme ? "#666666" : "#000000", userSelect: "none" }, iconClass)],
+   ]);
+
+   _styles = styles;
+   _gutterHystoryStyles = gutterHystoryStyles;
+   _stateStyles = stateStyles;
+
+   return {
+      theme: theme,
+      styles: styles,
+      stateStyles: stateStyles,
+      gutterHystoryStyles: gutterHystoryStyles
+   }
+}
+
 const gutterClass = mergeStyles({
    borderLeftWidth: 6,
    padding: 0,
@@ -25,110 +146,13 @@ const gutterClass = mergeStyles({
    marginBottom: 0,
    height: 20
 });
-const styles = mergeStyleSets({
-   container: {
-      overflow: 'auto',
-      height: 'calc(100vh - 165px)',
-      marginTop: 8
-   },
-   item: [
-      {
-         fontSize: "11px",
-         fontFamily: "Horde Cousine Regular"
-      }
-   ],
-   gutter: [
-      {
-         padding: 0,
-         margin: 0,
-         paddingTop: 0,
-         paddingBottom: 0,
-         paddingRight: 14,
-         marginTop: 0,
-         marginBottom: 0,
-         height: 20
-      }
-   ],
-   gutterError: [
-      {
-         background: "#FEF6F6",
-         borderLeftStyle: 'solid',
-         borderLeftColor: "#EC4C47"
-      }, gutterClass
-   ],
-   gutterWarning: [
-      {
-         background: "#FEF8E7",
-         borderLeftStyle: 'solid',
-         borderLeftColor: "#F7D154"
-      }, gutterClass
-   ],
-   gutterSuccess: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: theme.palette.green
-      }, gutterClass
-   ],
-   itemWarning: [
-      {
-         background: "#FEF8E7"
-      }
-   ],
-   itemError: [
-      {
-         background: "#FEF6F6"
-      }
-   ],
-   itemHover: {
-      cursor: "pointer",
-      selectors: {
-         ':hover': {
-            background: theme.palette.neutralLight
-         }
-      }
-   },
-   itemHighlighted: {
-      background: theme.palette.neutralLighter
-   },
-   historyList: {
-      zIndex: 1,
-      borderWidth: "1px",
-      borderColor: "#888",
-      borderStyle: "solid",
-      backgroundColor: "#FFF",
-      padding: "3px",
-      overflow: "auto"
-   }
-});
-
-const gutterHystoryStyles = new Map<string, string>([
-   [TestState.Success, styles.gutterSuccess],
-   [TestState.InProcess, mergeStyles({
-      background: "#E4F1F5",
-      borderLeftStyle: 'solid',
-      borderLeftColor: "#01BCF2"
-   }, gutterClass)],
-   [TestState.NotRun, mergeStyles({
-      borderLeftStyle: 'solid',
-      borderLeftColor: "#A19F9D"
-   }, gutterClass)],
-   [TestState.SuccessWithWarnings, styles.gutterWarning],
-   [TestState.Failed, styles.gutterError],
-]);
 
 const iconClass = mergeStyles({
    fontSize: 12
 });
 
-const stateStyles = new Map<string, string>([
-   [TestState.Success, mergeStyles({ color: theme.palette.green, userSelect: "none" }, iconClass)],
-   [TestState.InProcess, mergeStyles({ color: "#01BCF2", userSelect: "none" }, iconClass)],
-   [TestState.NotRun, mergeStyles({ color: "#A19F9D", userSelect: "none" }, iconClass)],
-   [TestState.SuccessWithWarnings, mergeStyles({ color: "#F7D154", userSelect: "none" }, iconClass)],
-   [TestState.Failed, mergeStyles({ color: "#EC4C47", userSelect: "none" }, iconClass)],
-   [TestState.Unknown, mergeStyles({ color: "#000000", userSelect: "none" }, iconClass)],
-]);
 const getTestStateStyles = (test: TestResult): string | undefined => {
+   const { stateStyles } = getStyling();
    if (!stateStyles.has(test.State)) {
       return stateStyles.get(TestState.Unknown);
    }
@@ -177,11 +201,15 @@ const copyToClipboard = (value: string | undefined) => {
 const missingImage = "/images/missing-image.png";
 const MissingImageLabel = (): JSX.Element => { return <span style={{ fontWeight: 'bold' }}> [missing image]</span> }
 type ImageLinks = { approved?: string, unapproved?: string, difference?: string }
-const buildImageLink = (artifact?: ArtifactData) => artifact !== undefined ? `${backend.serverUrl}/api/v1/artifacts/${artifact.id}/download?Code=${artifact.code}` : undefined;
+
 
 const EntryPane: React.FC<{ entry: TestEntry, testArtifacts: TestEntryArtifact[] }> = (props) => {
    const { entry, testArtifacts } = props;
    const [imageLinks, setImageLinks] = useState<ImageLinks>({});
+
+
+   const { styles } = getStyling();
+
    const eventType = entry.Event.Type;
    const is_error = eventType === EventType.Error;
    const is_warning = eventType === EventType.Warning;
@@ -197,15 +225,12 @@ const EntryPane: React.FC<{ entry: TestEntry, testArtifacts: TestEntryArtifact[]
       if (artifact !== undefined) {
          const findLinks = async () => {
             const imageLinks: ImageLinks = {};
-            // Approved
-            let foundJobArtifact = await testDataHandler.cursor?.findArtifactData(artifact.Files.Approved);
-            imageLinks.approved = buildImageLink(foundJobArtifact);
-            // Unapproved
-            foundJobArtifact = await testDataHandler.cursor?.findArtifactData(artifact.Files.Unapproved);
-            imageLinks.unapproved = buildImageLink(foundJobArtifact);
+            // Approved            
+            imageLinks.approved = artifact.Files.Approved && await testDataHandler.cursor?.getArtifactImageLink(artifact.Files.Approved);
+            // Unapproved            
+            imageLinks.unapproved = artifact.Files.Unapproved && await testDataHandler.cursor?.getArtifactImageLink(artifact.Files.Unapproved);
             // Difference
-            foundJobArtifact = await testDataHandler.cursor?.findArtifactData(artifact.Files.Difference);
-            imageLinks.difference = buildImageLink(foundJobArtifact);
+            imageLinks.difference = artifact.Files.Difference && await testDataHandler.cursor?.getArtifactImageLink(artifact.Files.Difference);
 
             setImageLinks(imageLinks);
          }
@@ -223,18 +248,18 @@ const EntryPane: React.FC<{ entry: TestEntry, testArtifacts: TestEntryArtifact[]
             <Stack styles={{ root: { paddingLeft: 16 } }}>
                <Stack><Text variant="medium" styles={{ root: { fontWeight: "bold" } }}>Image comparison: {artifact?.Name}</Text></Stack>
                <Stack horizontal>
-               {(is_error || is_warning) &&
-                  <Stack styles={{ root: { padding: 5 } }}>
-                     <a href={imageLinks.approved}><Image width={400} src={imageLinks.approved || missingImage} alt={artifact?.Files.Approved} /></a>
-                     <Stack.Item align="center">Approved{!imageLinks.approved && MissingImageLabel()}</Stack.Item>
-                  </Stack>
-               }
-               {(is_error || is_warning) &&
-                  <Stack styles={{ root: { padding: 5 } }}>
-                     <a href={imageLinks.difference}><Image width={400} src={imageLinks.difference || missingImage} alt={artifact?.Files.Difference} /></a>
-                     <Stack.Item align="center">Difference{!imageLinks.difference && MissingImageLabel()}</Stack.Item>
-                  </Stack>
-               }
+                  {(is_error || is_warning) &&
+                     <Stack styles={{ root: { padding: 5 } }}>
+                        <a href={imageLinks.approved}><Image width={400} src={imageLinks.approved || missingImage} alt={artifact?.Files.Approved} /></a>
+                        <Stack.Item align="center">Approved{!imageLinks.approved && MissingImageLabel()}</Stack.Item>
+                     </Stack>
+                  }
+                  {(is_error || is_warning) &&
+                     <Stack styles={{ root: { padding: 5 } }}>
+                        <a href={imageLinks.difference}><Image width={400} src={imageLinks.difference || missingImage} alt={artifact?.Files.Difference} /></a>
+                        <Stack.Item align="center">Difference{!imageLinks.difference && MissingImageLabel()}</Stack.Item>
+                     </Stack>
+                  }
                   <Stack styles={{ root: { padding: 5 } }}>
                      <a href={imageLinks.unapproved}><Image width={400} src={imageLinks.unapproved || missingImage} alt={artifact?.Files.Unapproved} /></a>
                      <Stack.Item align="center">Unapproved{!imageLinks.unapproved && MissingImageLabel()}</Stack.Item>
@@ -248,15 +273,22 @@ const EntryPane: React.FC<{ entry: TestEntry, testArtifacts: TestEntryArtifact[]
 
 const HistoryItem: React.FC<{ item: TestStateHistoryItem, testName: string, selected: boolean }> = (props) => {
    const { item, testName, selected } = props;
+
+   const {theme, gutterHystoryStyles, styles} = getStyling();
+
    const gutterStyle = gutterHystoryStyles.get(item.State);
 
    return (
-      <Stack horizontal className={`${styles.itemHover} ${selected ? styles.itemHighlighted : ""}`}>
+      <Stack horizontal className={`${selected ? styles.itemHighlighted : ""}`}>
          <Stack className={gutterStyle}></Stack>
          <Stack.Item>
-            <Link to={`/testreport/${item.TestdataId}?test=${testName}`}>
+            <Link to={`/testreport/${item.TestdataId}?test=${testName}`} className={`${styles.itemHover}`}>
                <Text variant="smallPlus">{getStateLabel(item.State)} on {item.Change}</Text>
             </Link>
+            {item.RangeUrl &&
+               <a href={item.RangeUrl} target="blank" className={`${styles.itemHover}`}>
+                  <Text variant="smallPlus" styles={{ root: { color: theme.palette.neutralDark, paddingLeft: 4, paddingRight: 4 } }}>[ Swarm Range ]</Text>
+               </a>}
          </Stack.Item>
       </Stack>
    );
@@ -288,16 +320,18 @@ const TestResultPane: React.FC<{ test: TestResult, selected: boolean }> = (props
 
    const navigate = useNavigate();
 
+   const { styles } = getStyling();
+
    function onClickTest() {
       if (selected) {
          if (visible) {
             // remove test name selection
-            navigate(window.location.pathname, {replace: true});
+            navigate(window.location.pathname, { replace: true });
             return;
          }
       }
       // add test name selection
-      navigate(`${window.location.pathname}?test=${test.FullTestPath}`, {replace: true});
+      navigate(`${window.location.pathname}?test=${test.FullTestPath}`, { replace: true });
    }
 
    function onClickTestName() {
@@ -318,19 +352,11 @@ const TestResultPane: React.FC<{ test: TestResult, selected: boolean }> = (props
       if (loading) {
          return;
       }
-      const testArtifact: ArtifactData | undefined = await testDataHandler.cursor?.findArtifactData(test.ArtifactName);
-      if (!testArtifact) {
-         console.error("Could not find Job Artifacts Data with name '" + test.ArtifactName + "'!");
-         return;
-      }
-
-      backend.getArtifactDataById(testArtifact.id).then(
-         (value) => { setTestDetails(value as TestDetails) }
-      ).catch(
-         (reason) => { console.error(reason) }
-      ).finally(
-         () => { setLoading(false) }
-      );
+      testDataHandler.cursor?.findArtifactData(test.ArtifactName).then((value) => {
+         setTestDetails(value as TestDetails);
+      }).catch((reason) => {
+         console.error(reason);
+      }).finally(() => { setLoading(false) });
 
       setLoading(true);
    }
@@ -363,21 +389,28 @@ const TestResultPane: React.FC<{ test: TestResult, selected: boolean }> = (props
    function getTestHistory(testFullName: string, testdataItems: TestDataWrapper[]): TestStateHistoryItem[] {
       const testResults: TestStateHistoryItem[] = [];
 
-      testdataItems.forEach((item) => {
+      let previousChange: number = 0;
+      const stream = projectStore.streamById(testDataHandler.streamId)!;
+      const project = projectStore.byId(stream?.projectId)!;
+      const name = project?.name === "Engine" ? "UE4" : project.name;
+
+      testdataItems.reverse().forEach((item) => {
          const testdata = item.data as TestPassSummary;
          const foundTest = testdata.Tests.find(testItem => testItem.FullTestPath === testFullName);
 
          if (foundTest !== undefined) {
             const testHistoryItem: TestStateHistoryItem = {
                Change: item.change,
+               RangeUrl: previousChange > 0 ? `${dashboard.swarmUrl}/files/${name}/${stream.name}?range=@${previousChange},@${item.change}#commits` : undefined,
                TestdataId: item.id,
                State: foundTest.Warnings > 0 && foundTest.State === TestState.Success ? TestState.SuccessWithWarnings : foundTest.State,
             };
             testResults.push(testHistoryItem);
          }
+         previousChange = item.change;
       });
 
-      return testResults;
+      return testResults.reverse();
    }
 
    function onClickHistory() {
@@ -435,7 +468,7 @@ const TestResultPane: React.FC<{ test: TestResult, selected: boolean }> = (props
                   <Stack onClick={(ev) => { onClickHistory() }} tabIndex={0} onBlur={onHistoryBlur} className={styles.itemHover} style={{ position: "relative" }}>
                      <Text styles={{ root: { fontWeight: 'bold', paddingLeft: 4, paddingRight: 4 } }}>History</Text>
                      {historyVisible &&
-                        <div style={{ position: "absolute", width: 200, top: "100%", maxHeight: 300 }} className={styles.historyList} onClick={(ev) => { ev.stopPropagation() }}>
+                        <div style={{ position: "absolute", width: 250, top: "100%", maxHeight: 300 }} className={styles.historyList} onClick={(ev) => { ev.stopPropagation() }}>
                            {!historyLoaded && <Spinner styles={{ root: { padding: 10 } }} size={SpinnerSize.small}></Spinner>}
                            {historyLoaded && history.length > 0 &&
                               history.map((historyItem) => <HistoryItem key={historyItem.Change} item={historyItem} testName={test.FullTestPath} selected={historyItem.Change === testDataHandler.cursor?.change} />)
@@ -446,8 +479,8 @@ const TestResultPane: React.FC<{ test: TestResult, selected: boolean }> = (props
                   </Stack>
                   <Text onClick={(ev) => { copyToClipboard(test.FullTestPath); }} styles={{ root: { fontWeight: 'bold', paddingLeft: 4, paddingRight: 4 } }} className={styles.itemHover}>To Clipboard</Text>
                </Stack>
-               {testDetails.Entries.filter(isEntryNeedDisplay).map((value, index) => <EntryPane key={index} entry={value} testArtifacts={testDetails.Artifacts} />)}
-               {testDetails.Entries.length === 0 && <Text styles={{ root: { padding: 8, fontWeight: 'bold' } }}>No event for this test.</Text>}
+               {!!testDetails.Entries && testDetails.Entries.filter(isEntryNeedDisplay).map((value, index) => <EntryPane key={index} entry={value} testArtifacts={testDetails.Artifacts ?? []} />)}
+               {(!testDetails.Entries || testDetails.Entries.length === 0) && <Text styles={{ root: { padding: 8, fontWeight: 'bold' } }}>No event for this test.</Text>}
             </div>
          }
       </Stack>
@@ -455,6 +488,10 @@ const TestResultPane: React.FC<{ test: TestResult, selected: boolean }> = (props
 }
 
 const TestResultPanel: React.FC<{ tests: TestResult[], title?: string, selected?: string }> = (props) => {
+
+   const { hordeClasses } = getHordeStyling();
+   const { theme } = getStyling();
+
    const { tests, title, selected } = props;
 
    const suites = new Map<string, TestResult[]>();
@@ -490,6 +527,10 @@ const TestResultPanel: React.FC<{ tests: TestResult[], title?: string, selected?
 }
 
 export const TestPassSummaryView: React.FC<{ data: TestPassSummary, query: URLSearchParams }> = (props) => {
+
+   const { hordeClasses, modeColors } = getHordeStyling();   
+   const { stateStyles, styles } = getStyling();
+
    const { data, query } = props;
    const failedTests: TestResult[] = [];
    const notrunTests: TestResult[] = [];
@@ -508,7 +549,7 @@ export const TestPassSummaryView: React.FC<{ data: TestPassSummary, query: URLSe
    const selectedTest = query.get('test') ? query.get('test')! : undefined;
 
    return (
-      <Stack className={styles.container} styles={{ root: { backgroundColor: "#faf9f9", paddingLeft: 24, paddingTop: 12, paddingRight: 12 } }}>
+      <Stack className={styles.container} styles={{ root: { backgroundColor: modeColors.background, paddingLeft: 24, paddingTop: 12, paddingRight: 12 } }}>
 
          <Stack styles={{ root: { paddingTop: 18, paddingRight: 0 } }}>
             <Stack className={hordeClasses.raised}>
@@ -517,7 +558,7 @@ export const TestPassSummaryView: React.FC<{ data: TestPassSummary, query: URLSe
                      <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Summary</Text>
                   </Stack>
                   <Stack styles={{ root: { paddingLeft: 8 } }}>
-                     <Text>This test pass run on <span style={{ fontWeight: 'bold' }}>{data.ReportCreatedOn}</span> for a duration of <span style={{ fontWeight: 'bold' }}>{msecToElapsed(data.TotalDurationSeconds * 1000)}</span> on <span style={{ fontWeight: 'bold' }}>{getMetadata(data.Metadata, 'Platform') ?? "Unknown"}</span></Text>
+                     <Text>This test pass ran on <span style={{ fontWeight: 'bold' }}>{data.ReportCreatedOn}</span> for a duration of <span style={{ fontWeight: 'bold' }}>{msecToElapsed(data.TotalDurationSeconds * 1000)}</span> on <span style={{ fontWeight: 'bold' }}>{getMetadata(data.Metadata, 'Platform') ?? "Unknown"}</span></Text>
                      <Text>
                         {data.FailedCount > 0 && <span><span style={{ fontWeight: 'bold' }}>{data.FailedCount}</span> tests <span style={{ fontWeight: 'bold' }} className={stateStyles.get('Fail')}>{stateLabels.get('Fail')?.toLowerCase()}</span>. </span>}
                         {data.InProcessCount > 0 && <span><span style={{ fontWeight: 'bold' }}>{data.InProcessCount}</span> tests <span style={{ fontWeight: 'bold' }} className={stateStyles.get('InProcess')}>{stateLabels.get('InProcess')?.toLowerCase()}</span>. </span>}

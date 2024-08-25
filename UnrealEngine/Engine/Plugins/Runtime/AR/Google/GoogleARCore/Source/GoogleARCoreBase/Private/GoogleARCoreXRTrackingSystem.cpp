@@ -446,7 +446,7 @@ TArray<FARVideoFormat> FGoogleARCoreXRTrackingSystem::OnGetSupportedVideoFormats
 
 		TArray<FARVideoFormat> VideoFormats;
 
-		for (const FGoogleARCoreCameraConfig& CameraConfig : SupportedCameraConfig)
+		for (const FGoogleARCoreCameraConfig& CameraConfig : SupportedCameraConfig) //-V1078  // Array always empty on non-android, but this code only actually runs on android.
 		{
 			// FPS is not exposed so we assume it's 30...
 			// Note that we're using CameraTextureResolution rather than CameraImageResolution as the former is relevant

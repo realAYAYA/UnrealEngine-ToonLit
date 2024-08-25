@@ -199,6 +199,7 @@ void UMovieSceneAnimationTrackRecorder::CreateTrackImpl()
 
 			if (AnimTrack)
 			{
+				AnimTrack->SetDisplayName(AnimSettings->AnimationTrackName);
 				AnimTrack->AddNewAnimation(FFrameNumber(0), AnimSequence.Get());
 				MovieSceneSection = Cast<UMovieSceneSkeletalAnimationSection>(AnimTrack->GetAllSections()[0]);
 				MovieSceneSection->Params.bForceCustomMode = true;

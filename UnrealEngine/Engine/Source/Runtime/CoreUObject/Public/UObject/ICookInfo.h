@@ -2,12 +2,22 @@
 
 #pragma once
 
+#if WITH_EDITOR
 #include "Containers/Array.h"
 #include "Containers/UnrealString.h"
+#include "Delegates/Delegate.h"
 #include "HAL/Platform.h"
+#include "UObject/CookEnums.h"
 #include "UObject/NameTypes.h"
+#endif
 
 #if WITH_EDITOR
+
+enum class EDataValidationResult : uint8;
+class FDataValidationContext;
+class UPackage;
+
+namespace UE::Cook { class IMPCollector; }
 
 namespace UE::Cook
 {
@@ -47,6 +57,7 @@ namespace UE::Cook
 	CallbackMacro(RequestPackageFunction, true) \
 	CallbackMacro(Dependency, false) \
 	CallbackMacro(HardDependency, false) \
+	CallbackMacro(HardEditorOnlyDependency, false) \
 	CallbackMacro(SoftDependency, false) \
 	CallbackMacro(Unsolicited, false) \
 	CallbackMacro(EditorOnlyLoad, false) \
@@ -96,9 +107,47 @@ public:
 	 * First element is the direct instigator of the package, last is the root instigator that started the chain.
 	 */
 	virtual TArray<FInstigator> GetInstigatorChain(FName PackageName) = 0;
+
+	/** The type (e.g. CookByTheBook) of the running cook. This function will not return ECookType::Unknown. */
+	virtual UE::Cook::ECookType GetCookType() = 0;
+	/** Whether dlc is being cooked (e.g. via "-dlcname=<PluginName>"). This function will not return ECookingDLC::Unknown. */
+	virtual UE::Cook::ECookingDLC GetCookingDLC() = 0;
+	/** The role the current process plays in its MPCook session, or EProcessType::SingleProcess if it is running standalone. */
+	virtual UE::Cook::EProcessType GetProcessType() = 0;
+
+	/**
+	 * MPCook: register in the current process a collector that replicates system-specific and package-specific
+	 * information between CookWorkers and the CookDirector. Registration will be skipped if the current cook is
+	 * singleprocess, or if the provided ProcessType does not match the current processtype. If registration is
+	 * skipped, the Collector will be referenced but then immediately released, which will delete the Collector if
+	 * the caller does not have their own TRefCountPtr to it.
+	 * 
+	 * @param ProcessType: The given collector will only be registered on the given process types, allowing you
+	 *                     to register a different class on Workers than on the Director if desired. 
+	 */
+	virtual void RegisterCollector(IMPCollector* Collector,
+		UE::Cook::EProcessType ProcessType=UE::Cook::EProcessType::AllMPCook) = 0;
+	/**
+	 * MPCook: Unregister in the current process a collector that was registered via RegisterCollector. Silently
+	 * returns if the collector is not registered. References to the Collector will be released, which will
+	 * delete the Collector if he caller does not have their own TRefCountPtr to it.
+	 */
+	virtual void UnregisterCollector(IMPCollector* Collector) = 0;
 };
 
-}
+DECLARE_MULTICAST_DELEGATE_OneParam(FCookInfoEvent, ICookInfo&);
+DECLARE_DELEGATE_RetVal_TwoParams(EDataValidationResult, FValidateSourcePackage, UPackage* /*Package*/, FDataValidationContext& /*ValidationContext*/);
+
+/** UE::Cook::FDelegates: callbacks for cook events. */
+struct FDelegates
+{
+public:
+	static COREUOBJECT_API FCookInfoEvent CookByTheBookStarted;
+	static COREUOBJECT_API FCookInfoEvent CookByTheBookFinished;
+	static COREUOBJECT_API FValidateSourcePackage ValidateSourcePackage;
+};
+
+} // namespace UE::Cook
 
 /**
  * A scope around loads when cooking that indicates whether the loaded package is needed in game or not.
@@ -126,4 +175,4 @@ private:
 	ECookLoadType PreviousScope;
 };
 
-#endif
+#endif // WITH_EDITOR

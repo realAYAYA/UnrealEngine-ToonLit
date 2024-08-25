@@ -95,9 +95,9 @@ void SEditorViewportToolbarMenu::Construct( const FArguments& Declaration )
 
 	ChildSlot
 	[
-		SAssignNew( MenuAnchor, SMenuAnchor )
-		.Placement( MenuPlacement_BelowAnchor )
-		.OnGetMenuContent( Declaration._OnGetMenuContent )
+		SAssignNew(MenuAnchor, SMenuAnchor)
+		.Placement(Declaration._MenuPlacement)
+		.OnGetMenuContent(Declaration._OnGetMenuContent)
 	];
 
 	MenuAnchor->SetContent(

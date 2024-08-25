@@ -56,6 +56,10 @@ THIRD_PARTY_INCLUDES_START
 	#include <shlwapi.h>
 	#include <IPHlpApi.h>
 	#include <VersionHelpers.h>
+#include "Windows/AllowWindowsPlatformAtomics.h"
+	#include <comdef.h>
+	#include <Wbemidl.h>
+#include "Windows/HideWindowsPlatformAtomics.h"
 THIRD_PARTY_INCLUDES_END
 #include "Windows/HideWindowsPlatformTypes.h"
 
@@ -65,6 +69,7 @@ THIRD_PARTY_INCLUDES_END
 	#include <Psapi.h>
 #include "Windows/HideWindowsPlatformTypes.h"
 #pragma comment(lib, "psapi.lib")
+#pragma comment(lib, "wbemuuid.lib")
 
 #include <fcntl.h>
 #include <io.h>
@@ -395,6 +400,308 @@ namespace
 		}
 		return false;
 	}
+
+	struct StorageDevice
+	{
+		FString SerialNumber;
+		WIDECHAR Drive;
+		FPlatformDriveStats Stats;
+
+		StorageDevice(FString&& SerialNumber, WIDECHAR DriveLetter)
+			: SerialNumber(MoveTemp(SerialNumber))
+			, Drive(DriveLetter)
+			, Stats{ DriveLetter, 0, 0, EStorageDeviceType ::Unknown}
+		{}
+	};
+
+	TArray<StorageDevice> StorageDevices;
+
+	static void LogStorageInformationWarning(HRESULT HRes,  const TCHAR* message)
+	{
+		IErrorInfo* ErrorInfo = nullptr;
+		GetErrorInfo(0, &ErrorInfo);
+		if (ErrorInfo)
+		{
+			BSTR ErrorMessage;
+			ErrorInfo->GetDescription(&ErrorMessage);
+			if (ErrorMessage && *ErrorMessage)
+			{
+				UE_LOG(LogWindows, Log, TEXT("%s [%s]"), message, ErrorMessage);
+			}
+			else
+			{
+				UE_LOG(LogWindows, Log, TEXT("%s [error code %x]"), message, HRes);
+			}
+			::SysFreeString(ErrorMessage);
+			ErrorInfo->Release();
+		}
+		else
+		{
+			UE_LOG(LogWindows, Log, TEXT("%s [error code %x]"), message, HRes);
+		}
+	}
+
+	static bool CollectStorageInformation()
+	{
+		IWbemLocator* WbemLocator = nullptr;
+		IWbemServices* WbemServices = nullptr;
+
+		if (!FWindowsPlatformMisc::CoInitialize())
+		{
+			return false;
+		}
+		HRESULT hres = CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL);
+		if (FAILED(hres))
+		{
+			LogStorageInformationWarning(hres, TEXT("Error initializing COM"));
+			FWindowsPlatformMisc::CoUninitialize();
+			return false;
+		}
+		hres = CoCreateInstance(CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID*)&WbemLocator);
+		if (FAILED(hres))
+		{
+			LogStorageInformationWarning(hres, TEXT("Error creating Wbem instance"));
+			FWindowsPlatformMisc::CoUninitialize();
+			return false;
+		}
+		hres = WbemLocator->ConnectServer(_bstr_t(L"ROOT\\microsoft\\windows\\storage"), NULL, NULL, 0, NULL, 0, 0, &WbemServices);
+		if (FAILED(hres))
+		{
+			LogStorageInformationWarning(hres, TEXT("Error connecting to storage service"));
+			WbemLocator->Release();
+			FWindowsPlatformMisc::CoUninitialize();
+			return false;
+		}
+		hres = CoSetProxyBlanket(
+			WbemServices,
+			RPC_C_AUTHN_WINNT,
+			RPC_C_AUTHZ_NONE,
+			NULL,
+			RPC_C_AUTHN_LEVEL_CALL,
+			RPC_C_IMP_LEVEL_IMPERSONATE,
+			NULL,
+			EOAC_NONE
+		);
+		if (FAILED(hres))
+		{
+			LogStorageInformationWarning(hres, TEXT("Error setting authentication information"));
+			WbemServices->Release();
+			WbemLocator->Release();
+			FWindowsPlatformMisc::CoUninitialize();
+			return false;
+		}
+
+
+		IEnumWbemClassObject* StorageEnumerator = nullptr;
+		hres = WbemServices->ExecQuery(
+			bstr_t("WQL"),
+			bstr_t("SELECT * FROM MSFT_DiskToPartition"),
+			WBEM_FLAG_FORWARD_ONLY,
+			NULL,
+			&StorageEnumerator);
+
+		if (FAILED(hres))
+		{
+			LogStorageInformationWarning(hres, TEXT("Error listing partitions"));
+			WbemServices->Release();
+			WbemLocator->Release();
+			FWindowsPlatformMisc::CoUninitialize();
+			return false;
+		}
+
+		// Enumerate all partitions, and store disk information
+		while (StorageEnumerator)
+		{
+			ULONG Returned;
+			IWbemClassObject* StorageWbemObject[10]{};
+			hres = StorageEnumerator->Next(WBEM_INFINITE, 10, StorageWbemObject, &Returned);
+			if (FAILED(hres))
+			{
+				LogStorageInformationWarning(hres, TEXT("Error iterating over partitions"));
+				break;
+			}
+			else if (Returned == 0)
+			{
+				break;
+			}
+			for (ULONG i = 0; i < Returned; ++i)
+			{
+				VARIANT Disk;
+				VARIANT Partition;
+
+				StorageWbemObject[i]->Get(L"Disk", 0, &Disk, NULL, NULL);
+				StorageWbemObject[i]->Get(L"Partition", 0, &Partition, NULL, NULL);
+
+				IWbemClassObject* PartitionObject = nullptr;
+				IWbemClassObject* DiskObject = nullptr;
+				hres = WbemServices->GetObject(
+					Partition.bstrVal,
+					WBEM_FLAG_RETURN_WBEM_COMPLETE,
+					NULL,
+					&PartitionObject,
+					NULL);
+				if (SUCCEEDED(hres))
+				{
+					hres = WbemServices->GetObject(
+						Disk.bstrVal,
+						WBEM_FLAG_RETURN_WBEM_COMPLETE,
+						NULL,
+						&DiskObject,
+						NULL);
+					if (SUCCEEDED(hres))
+					{
+						VARIANT Drive;
+						hres = PartitionObject->Get(L"DriveLetter", 0, &Drive, NULL, NULL);
+						if (SUCCEEDED(hres))
+						{
+							if (Drive.uiVal != 0)
+							{
+								VARIANT SerialNumber;
+								hres = DiskObject->Get(L"SerialNumber", 0, &SerialNumber, NULL, NULL);
+								if (SUCCEEDED(hres))
+								{
+									StorageDevices.Emplace(SerialNumber.bstrVal, Drive.uiVal);
+									VariantClear(&SerialNumber);
+								}
+								else
+								{
+									LogStorageInformationWarning(hres, TEXT("Error retrieving serial number"));
+								}
+								VariantClear(&Drive);
+							}
+						}
+						else
+						{
+							LogStorageInformationWarning(hres, TEXT("Error retrieving drive letter"));
+						}
+						DiskObject->Release();
+					}
+					else
+					{
+						LogStorageInformationWarning(hres, TEXT("Error retrieving disk information"));
+					}
+					PartitionObject->Release();
+				}
+				else
+				{
+					LogStorageInformationWarning(hres, TEXT("Error retrieving partition information"));
+				}
+
+				VariantClear(&Disk);
+				VariantClear(&Partition);
+				StorageWbemObject[i]->Release();
+			}
+		}
+
+		StorageEnumerator->Release();
+		hres = WbemServices->ExecQuery(
+			bstr_t("WQL"),
+			bstr_t("SELECT * FROM MSFT_PhysicalDisk"),
+			WBEM_FLAG_FORWARD_ONLY,
+			NULL,
+			&StorageEnumerator);
+
+		if (FAILED(hres))
+		{
+			LogStorageInformationWarning(hres, TEXT("Error when querying physical disks"));
+			WbemServices->Release();
+			WbemLocator->Release();
+			FWindowsPlatformMisc::CoUninitialize();
+			return false;
+		}
+
+		while (StorageEnumerator)
+		{
+			ULONG Returned;
+			IWbemClassObject* StorageWbemObject = nullptr;
+			hres = StorageEnumerator->Next(WBEM_INFINITE, 1, &StorageWbemObject, &Returned);
+			if (FAILED(hres))
+			{
+				LogStorageInformationWarning(hres, TEXT("Error when iterating over physical disks"));
+				break;
+			}
+			else if (Returned == 0)
+			{
+				break;
+			}
+
+			// see https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/msft-physicaldisk for other properties
+			VARIANT SerialNumber;
+			VARIANT MediaType;
+			VARIANT BusType;
+			VARIANT SpindleSpeed;
+
+			StorageWbemObject->Get(L"SerialNumber", 0, &SerialNumber, NULL, NULL);
+			StorageWbemObject->Get(L"MediaType", 0, &MediaType, NULL, NULL);
+			StorageWbemObject->Get(L"BusType", 0, &BusType, NULL, NULL);
+			StorageWbemObject->Get(L"SpindleSpeed", 0, &SpindleSpeed, NULL, NULL);
+
+			FString Serial(SerialNumber.bstrVal);
+			for (auto& StorageDevice : StorageDevices)
+			{
+				if (StorageDevice.SerialNumber == Serial)
+				{
+					if (MediaType.uiVal == 3) // HDD
+					{
+						StorageDevice.Stats.DriveType = EStorageDeviceType::HDD;
+					}
+					else if (MediaType.uiVal == 4) // SSD
+					{
+						if (BusType.uiVal == 17) // NVMe
+						{
+							StorageDevice.Stats.DriveType = EStorageDeviceType::NVMe;
+						}
+						else if (SpindleSpeed.uintVal != 0)
+						{
+							StorageDevice.Stats.DriveType = EStorageDeviceType::Hybrid;
+						}
+						else
+						{
+							StorageDevice.Stats.DriveType = EStorageDeviceType::SSD;
+						}
+					}
+					else
+					{
+						StorageDevice.Stats.DriveType = EStorageDeviceType::Other;
+					}
+				}
+			}
+
+			VariantClear(&BusType);
+			VariantClear(&MediaType);
+			VariantClear(&SerialNumber);
+			StorageWbemObject->Release();
+		}
+
+		StorageEnumerator->Release();
+		WbemServices->Release();
+		WbemLocator->Release();
+		FWindowsPlatformMisc::CoUninitialize();
+		FWindowsPlatformMisc::UpdateDriveFreeSpace();
+
+		return true;
+	}
+}
+
+const TCHAR* LexToString(EStorageDeviceType StorageType)
+{
+	switch (StorageType)
+	{
+	case EStorageDeviceType::Other:
+		return TEXT("Other");
+	case EStorageDeviceType::HDD:
+		return TEXT("HDD");
+	case EStorageDeviceType::SSD:
+		return TEXT("SSD");
+	case EStorageDeviceType::NVMe:
+		return TEXT("NVMe");
+	case EStorageDeviceType::Hybrid:
+		return TEXT("Hybrid");
+	case EStorageDeviceType::Unknown:
+		[[fallthrough]];
+	default:
+		return TEXT("Unknown");
+	}
 }
 
 #include "Windows/HideWindowsPlatformTypes.h"
@@ -440,7 +747,7 @@ static void PureCallHandler()
 	}
 }
 
-#if ENABLE_PGO_PROFILE && !defined(__INTEL_LLVM_COMPILER)
+#if ENABLE_PGO_PROFILE && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 void PGO_WriteFile()
 {
 	// NB. Using pgosweep.exe means the PGC file will be writable as soon as the title exits & we can control where it is written.
@@ -483,7 +790,7 @@ void PGO_WriteFile()
 		UE_LOG(LogWindows, Log, TEXT("pgosweep.exe exit code %d"), ExitCode);
 	}
 }
-#endif //ENABLE_PGO_PROFILE && !__INTEL_LLVM_COMPILER
+#endif //ENABLE_PGO_PROFILE && !__clang__ && !__INTEL_LLVM_COMPILER
 
 
 /*-----------------------------------------------------------------------------
@@ -564,6 +871,9 @@ void FWindowsPlatformMisc::PlatformPreInit()
 
 	FGenericPlatformMisc::PlatformPreInit();
 
+	FThreadHeartBeat::Get().GetOnThreadStuck().BindStatic(&FGenericCrashContext::OnThreadStuck);
+	FThreadHeartBeat::Get().GetOnThreadUnstuck().BindStatic(&FGenericCrashContext::OnThreadUnstuck);
+
 	// Load the bundled version of dbghelp.dll if necessary
 #if USE_BUNDLED_DBGHELP
 	// Loading newer versions of DbgHelp fails on Windows 7 since it is no longer supported.
@@ -587,6 +897,15 @@ void FWindowsPlatformMisc::PlatformPreInit()
 
 	// initialize the file SHA hash mapping
 	InitSHAHashes();
+
+	// Check for SSE42 or better. This is now minspec and there is a high likelihood
+	// of crashing on an invalid instruction on unsupported processors as we use these
+	// instructions now.
+	if (CheckFeatureBit_X86(ECPUFeatureBits_X86::SSE42) == false)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, NSLOCTEXT("Launch", "Error_CPUNotSupported", "This CPU does not support a required feature (SSE4.2)."));
+		FPlatformMisc::RequestExit(false, TEXT("FWindowsPlatformMisc::PlatformPreInit.CPUNotSupported"));
+	}
 }
 
 
@@ -615,6 +934,8 @@ void FWindowsPlatformMisc::PlatformInit()
 
 	// Register on the game thread.
 	FWindowsPlatformStackWalk::RegisterOnModulesChanged();
+
+	CollectStorageInformation();
 }
 
 void FWindowsPlatformMisc::PlatformTearDown()
@@ -770,7 +1091,15 @@ int32 FWindowsPlatformMisc::GetMaxPathLength()
 			{
 				typedef BOOLEAN(NTAPI *RtlAreLongPathsEnabledFunc)();
 				RtlAreLongPathsEnabledFunc RtlAreLongPathsEnabled = (RtlAreLongPathsEnabledFunc)(void*)GetProcAddress(Handle, "RtlAreLongPathsEnabled");
-				bValue = (RtlAreLongPathsEnabled != NULL && RtlAreLongPathsEnabled());
+				if (RtlAreLongPathsEnabled != NULL)
+				{
+					bValue = RtlAreLongPathsEnabled();
+				}
+				else
+				{
+					// Long paths are always supported under Wine
+					bValue = FWindowsPlatformMisc::IsWine();
+				}
 			}
 		}
 	};
@@ -990,13 +1319,6 @@ void FWindowsPlatformMisc::LocalPrint( const TCHAR *Message )
 #endif
 }
 
-bool FWindowsPlatformMisc::IsLowLevelOutputDebugStringStructured()
-{
-	HANDLE Mutex = OpenMutexW(SYNCHRONIZE, /*bInheritHandle*/ false, L"UE_LOG_JSON");
-	ON_SCOPE_EXIT { CloseHandle(Mutex); };
-	return !!Mutex || FGenericPlatformMisc::IsLowLevelOutputDebugStringStructured();
-}
-
 void FWindowsPlatformMisc::RequestExit( bool Force, const TCHAR* CallSite )
 {
 	UE_LOG(LogWindows, Log,  TEXT("FPlatformMisc::RequestExit(%i, %s)"),
@@ -1018,12 +1340,12 @@ void FWindowsPlatformMisc::RequestExitWithStatus(bool Force, uint8 ReturnCode, c
 	UE_LOG(LogWindows, Log, TEXT("FPlatformMisc::RequestExitWithStatus(%i, %i, %s)"), Force, ReturnCode,
 		CallSite ? CallSite : TEXT("<NoCallSiteInfo>"));
 
-#if ENABLE_PGO_PROFILE && !defined(__INTEL_LLVM_COMPILER)
+#if ENABLE_PGO_PROFILE && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 	// save current PGO profiling data and terminate immediately
 	PGO_WriteFile();
 	TerminateProcess(GetCurrentProcess(), 0);
 	return;
-#endif
+#else
 
 	RequestEngineExit(TEXT("Win RequestExit"));
 
@@ -1054,6 +1376,7 @@ void FWindowsPlatformMisc::RequestExitWithStatus(bool Force, uint8 ReturnCode, c
 		// Tell the platform specific code we want to exit cleanly from the main loop.
 		PostQuitMessage(ReturnCode);
 	}
+#endif
 }
 
 const TCHAR* FWindowsPlatformMisc::GetSystemErrorMessage(TCHAR* OutBuffer, int32 BufferCount, int32 Error)
@@ -1992,6 +2315,31 @@ bool FWindowsPlatformMisc::VerifyWindowsVersion(uint32 MajorVersion, uint32 Mino
 	return !!VerifyVersionInfo(&Version, VER_MAJORVERSION | VER_MINORVERSION | VER_BUILDNUMBER, ConditionMask);
 }
 
+bool FWindowsPlatformMisc::IsWine()
+{
+	struct FWineDetected
+	{
+		bool bValue;
+
+		FWineDetected()
+		{
+			HMODULE Handle = GetModuleHandle(TEXT("ntdll.dll"));
+			if (Handle == NULL)
+			{
+				bValue = false;
+			}
+			else
+			{
+				void* WineGetVersion = (void*)GetProcAddress(Handle, "wine_get_version");
+				bValue = (WineGetVersion != NULL);
+			}
+		}
+	};
+
+	static FWineDetected WineDetected;
+	return WineDetected.bValue;
+}
+
 bool FWindowsPlatformMisc::IsValidAbsolutePathFormat(const FString& Path)
 {
 	bool bIsValid = true;
@@ -2594,6 +2942,8 @@ public:
 	}
 
 private:
+
+#if !PLATFORM_CPU_ARM_FAMILY
 	/**
 	 * Checks if __cpuid instruction is present on current machine.
 	 *
@@ -2759,6 +3109,14 @@ private:
 
 		return Result;
 	}
+#else
+	static bool CheckForCPUIDInstruction() { return false; }
+	static bool CheckForTimedPauseInstruction() { return false; }
+	static void GetCPUVendor(ANSICHAR(&OutBuffer)[12 + 1]) {}
+	static void GetCPUBrand(ANSICHAR(&OutBrandString)[0x40]) {}
+	static void QueryCPUInfo(int Args[4]) {}
+	static int32 QueryCacheLineSize() { return PLATFORM_CACHE_LINE_SIZE; }
+#endif
 
 	/** Static field with pre-cached __cpuid data. */
 	static FCPUIDQueriedData CPUIDStaticCache;
@@ -2801,51 +3159,120 @@ FString FWindowsPlatformMisc::GetCPUBrand()
 	return FCPUIDQueriedData::GetBrand();
 }
 
+#if PLATFORM_CPU_X86_FAMILY
+
+#ifdef _MSC_VER
+	#define CpuIdEx __cpuidex
+	#define CpuId __cpuid
+#else
+	// GCC/Clang
+
+	// 64-bit: GCC/Clang won't let us use "=b" constraint on Mac64, and we need to preserve RBX
+	// (PIC/PIE base)
+	#define CpuIdEx(out, leaf_id, subleaf_id)\
+			asm("xchgq %%rbx,%q1\n" \
+				"cpuid\n" \
+				"xchgq %%rbx,%q1\n" \
+				: "=a" (out[0]), "=&r" (out[1]), "=c" (out[2]), "=d" (out[3]): "0" (leaf_id), "2"(subleaf_id));
+
+	#define CpuId(out, leaf_id) CpuIdEx(out, leaf_id, 0)
+
+#endif // if not msc
+
+static std::atomic_uint32_t CachedX86FeatureBits = 0;
+uint32 FWindowsPlatformMisc::GetFeatureBits_X86()
+{
+	//
+	// Note we are 64bit+ now so we know we have cpuid.
+	//
+
+	uint32 FeatureBits = CachedX86FeatureBits.load(std::memory_order_relaxed);
+	if (FeatureBits)
+	{
+		return FeatureBits;
+	}
+
+	int CpuInfo[4];
+	uint32 MaxLeaf;
+
+	// Basic CPUID information
+	CpuId(CpuInfo, 0);
+	MaxLeaf = CpuInfo[0];
+
+	// Basic feature flags
+	CpuId(CpuInfo, 1);
+
+	FeatureBits |= (CpuInfo[3] & (1u << 26)) ? ECPUFeatureBits_X86::SSE2 : 0;
+	FeatureBits |= (CpuInfo[2] & (1u << 9)) ? ECPUFeatureBits_X86::SSSE3 : 0;
+	FeatureBits |= (CpuInfo[2] & (1u << 20)) ? ECPUFeatureBits_X86::SSE42 : 0;
+	FeatureBits |= (CpuInfo[2] & (1u << 28)) ? ECPUFeatureBits_X86::AVX : 0;
+	FeatureBits |= (CpuInfo[2] & (1u << 29)) ? ECPUFeatureBits_X86::F16C : 0;
+
+	// We don't have a feature flag we report for this, but we do use it later
+	bool has_popcnt = (CpuInfo[2] & (1u << 23)) != 0;
+
+	if (MaxLeaf >= 7)
+	{
+		// "Structured extended feature flags enumeration"
+		CpuIdEx(CpuInfo, 7, 0);
+
+		// Some (Celeron) Skylakes erroneously report BMI1/BMI2 even though they don't have it.
+		// These Celerons also don't have AVX.
+		//
+		// All CPUs that actually have BMI1/BMI2 (as of this writing, 2016-05-11) have AVX.
+		// (The ones we care about, anyway.) So only report BMI1/BMI2 if AVX is present.
+		// Also only report AVX or the BMIs if POPCNT is present; all processors I know of
+		// have either both or neither, and it's convenient for us to be able to assume
+		// that either BMI1/BMI2 or AVX2 implies POPCNT.
+		if ((FeatureBits & ECPUFeatureBits_X86::AVX) && has_popcnt)
+		{
+			if (CpuInfo[1] & (1u << 3))	FeatureBits |= ECPUFeatureBits_X86::BMI1;
+			if (CpuInfo[1] & (1u << 8))	FeatureBits |= ECPUFeatureBits_X86::BMI2;
+
+			// OS must save YMM registers between context switch
+			bool OsSavesAvxRegs = (_xgetbv(0) & 6) == 6;
+
+			// In addition to the above, only report AVX2 if BMI1 (and thus LZCNT/TZCNT)
+			// are also reported present; finally VC++ with /arch:AVX2 will emit BMI2
+			// instructions for things like variable shifts so we require BMI2 for AVX2
+			// as well.
+			//
+			// In practice this is not a limitation, AVX2 and BMI2 are a package deal on
+			// all uArchs I'm aware of.
+			const uint32 Avx2Bits = (1u << 3) /* BMI1 */ | (1u << 5) /* AVX2 */ | (1u << 8) /* BMI2 */;
+			if (((CpuInfo[1] & Avx2Bits) == Avx2Bits) && OsSavesAvxRegs)
+				FeatureBits |= ECPUFeatureBits_X86::AVX2;
+
+			// For us to report AVX512, we want the Skylake feature set
+			const uint32 Avx512Bits = (1u << 31) /* AVX512VL */ | (1u << 30) /* AVX512BW */ | (1u << 17) /* AVX512DQ */ | (1u << 16) /* AVX512F */;
+			if ((CpuInfo[1] & Avx512Bits) == Avx512Bits)
+				FeatureBits |= ECPUFeatureBits_X86::AVX512;
+
+			// Use the VBMI2 bit (set on ICL+) to set the NOCAVEATS flag. This is available
+			// on a generation of cores where AVX-512 has no major clock penalty anymore so
+			// whether to use AVX-512 or not is a much more straightforward calculation,
+			// and not so dependent on what else is running at the same time.
+			if (CpuInfo[2] & (1u << 6))
+				FeatureBits |= ECPUFeatureBits_X86::AVX512_NOCAVEATS;
+		}
+	}
+
+	// write detected features
+	// only write value once at end of the function!
+	FeatureBits |= 1; // initialized flag
+
+	CachedX86FeatureBits.store(FeatureBits, std::memory_order_release);
+	return FeatureBits;
+}
+#endif
+
 bool FWindowsPlatformMisc::HasAVX2InstructionSupport()
 {
-	if (!HasCPUIDInstruction())
-	{
-		return false;
-	}
-
-	int flags[4];
-	/* CPUID.(EAX=01H, ECX=0H):ECX.FMA[bit 12]==1   &&
-	   CPUID.(EAX=01H, ECX=0H):ECX.MOVBE[bit 22]==1 &&
-	   CPUID.(EAX=01H, ECX=0H):ECX.XSAVE[bit 26]==1 &&
-	   CPUID.(EAX=01H, ECX=0H):ECX.OSXSAVE[bit 27]==1 &&
-	   CPUID.(EAX=01H, ECX=0H):ECX.AVX[bit 28]==1 */
-	const int FMA_MOVBE_XSAVE_OSXSAVE_AVX_BITS = (1 << 12) | (1 << 22) | (1 << 26) | (1 << 27) | (1 << 28);
-	__cpuidex(flags, 1, 0);
-	if ((flags[2] & FMA_MOVBE_XSAVE_OSXSAVE_AVX_BITS) != FMA_MOVBE_XSAVE_OSXSAVE_AVX_BITS)
-	{
-		return false;
-	}
-
-	/*  CPUID.(EAX=07H, ECX=0H):EBX.AVX2[bit 5]==1  &&
-		CPUID.(EAX=07H, ECX=0H):EBX.BMI1[bit 3]==1  &&
-		CPUID.(EAX=07H, ECX=0H):EBX.BMI2[bit 8]==1  */
-	const int AVX2_BMI1_BMI2_BITS = (1 << 5) | (1 << 3) | (1 << 8);
-	__cpuidex(flags, 7, 0);
-	if ((flags[1] & AVX2_BMI1_BMI2_BITS) != AVX2_BMI1_BMI2_BITS)
-	{
-		return false;
-	}
-
-	/* CPUID.(EAX=80000001H):ECX.LZCNT[bit 5]==1 */
-	const int LZCNT_BITS = (1 << 5);
-	__cpuidex(flags, 0x80000001, 0);
-	if ((flags[2] & LZCNT_BITS) != LZCNT_BITS)
-	{
-		return false;
-	}
-
-	// OS must save YMM registers between context switch
-	if ((_xgetbv(0) & 6) != 6)
-	{
-		return false;
-	}
-
-	return true;
+#if PLATFORM_CPU_ARM_FAMILY
+	return false;
+#else
+	return CheckFeatureBit_X86(ECPUFeatureBits_X86::AVX2);
+#endif
 }
 
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -2997,15 +3424,15 @@ static void GetVideoDriverDetailsFromSetup(const FString& DeviceName, bool bVerb
 
 	if (!Out.ProviderName.IsEmpty())
 	{
-		if (Out.ProviderName.Find(TEXT("NVIDIA")) != INDEX_NONE)
+		if (Out.ProviderName.Contains(TEXT("NVIDIA")))
 		{
 			Out.SetNVIDIA();
 		}
-		else if (Out.ProviderName.Find(TEXT("Advanced Micro Devices")) != INDEX_NONE)
+		else if (Out.ProviderName.Contains(TEXT("Advanced Micro Devices")))
 		{
 			Out.SetAMD();
 		}
-		else if (Out.ProviderName.Find(TEXT("Intel")) != INDEX_NONE)	// usually TEXT("Intel Corporation")
+		else if (Out.ProviderName.Contains(TEXT("Intel")))	// usually TEXT("Intel Corporation")
 		{
 			Out.SetIntel();
 		}
@@ -3015,7 +3442,7 @@ static void GetVideoDriverDetailsFromSetup(const FString& DeviceName, bool bVerb
 
 	if(Out.IsNVIDIA())
 	{
-		Out.UserDriverVersion = Out.TrimNVIDIAInternalVersion(Out.InternalDriverVersion);
+		Out.UserDriverVersion = Out.GetNVIDIAUnifiedVersion(Out.InternalDriverVersion);
 	}
 	else if(Out.IsAMD() && !RegistryKey.IsEmpty())
 	{
@@ -3103,7 +3530,7 @@ static void GetVideoDriverDetails(const FString& Key, FGPUDriverInfo& Out)
 
 	if(Out.IsNVIDIA())
 	{
-		Out.UserDriverVersion = Out.TrimNVIDIAInternalVersion(Out.InternalDriverVersion);
+		Out.UserDriverVersion = Out.GetNVIDIAUnifiedVersion(Out.InternalDriverVersion);
 	}
 	else if(Out.IsAMD())
 	{
@@ -3542,7 +3969,7 @@ bool FWindowsPlatformMisc::QueryRegKey( const Windows::HKEY InKey, const TCHAR* 
 						if (RegQueryValueEx(Key, InValueName, NULL, NULL, (LPBYTE)Buffer, &Size) == ERROR_SUCCESS)
 						{
 							const uint32 Length = (Size / sizeof(TCHAR)) - 1;
-							OutData = FString(Length, (TCHAR*)Buffer);
+							OutData = FString::ConstructFromPtrSize((TCHAR*)Buffer, Length);
 							bSuccess = true;
 						}
 						delete[] Buffer;
@@ -3608,8 +4035,6 @@ bool FWindowsPlatformMisc::IsRunningOnBattery()
 	default:
 		return false;
 	}
-
-	return false;
 }
 
 FString FWindowsPlatformMisc::GetOperatingSystemId()
@@ -3719,4 +4144,30 @@ int32 FWindowsPlatformMisc::GetMaxRefreshRate()
 #endif
 
 	return Result;
+}
+
+void FWindowsPlatformMisc::UpdateDriveFreeSpace()
+{
+	for (auto& StorageDevice : StorageDevices)
+	{
+		ULARGE_INTEGER TotalNumberOfBytes, TotalNumberOfFreeBytes;
+		WCHAR DriveName[4] = { StorageDevice.Stats.DriveName, L':', L'\\', 0 };
+		if (GetDiskFreeSpaceExW(DriveName, NULL, &TotalNumberOfBytes, &TotalNumberOfFreeBytes))
+		{
+			StorageDevice.Stats.FreeBytes = TotalNumberOfFreeBytes.QuadPart;
+			StorageDevice.Stats.UsedBytes = TotalNumberOfBytes.QuadPart - TotalNumberOfFreeBytes.QuadPart;
+		}
+	}
+}
+
+const FPlatformDriveStats* FWindowsPlatformMisc::GetDriveStats(WIDECHAR DriveLetter)
+{
+	for (auto& StorageDevice : StorageDevices)
+	{
+		if (StorageDevice.Stats.DriveName == DriveLetter)
+		{
+			return &StorageDevice.Stats;
+		}
+	}
+	return nullptr;
 }

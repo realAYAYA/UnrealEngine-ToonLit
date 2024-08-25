@@ -27,6 +27,7 @@
 #include "SourceControlPreferences.h"
 #include "Styling/SlateTypes.h"
 #include "UObject/ObjectSaveContext.h"
+#include "Engine/AssetManager.h"
 
 #define LOCTEXT_NAMESPACE "UncontrolledChangelists"
 
@@ -67,18 +68,37 @@ void FUncontrolledChangelistsModule::StartupModule()
 
 	LoadState();
 
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-	//OnAssetAddedDelegateHandle = AssetRegistry.OnAssetAdded().AddLambda([](const struct FAssetData& AssetData) { Get().OnAssetAdded(AssetData); });
 	OnObjectPreSavedDelegateHandle = FCoreUObjectDelegates::OnObjectPreSave.AddLambda([](UObject* InAsset, const FObjectPreSaveContext& InPreSaveContext) { Get().OnObjectPreSaved(InAsset, InPreSaveContext); });
 	OnEndFrameDelegateHandle = FCoreDelegates::OnEndFrame.AddLambda([]() { Get().OnEndFrame(); });
 
-	StartupTask = MakeUnique<FAsyncTask<FStartupTask>>(this);		
-	StartupTask->StartBackgroundTask();
+	// Create initial scan event object
+	InitialScanEvent = MakeShared<FInitialScanEvent>();
+
+	UAssetManager::CallOrRegister_OnCompletedInitialScan(FSimpleMulticastDelegate::FDelegate::CreateLambda([this, WeakScanEvent = InitialScanEvent->AsWeak()]()
+	{
+		// Weak here allows us to check if module as been shutdown before using [this]
+		if(!WeakScanEvent.IsValid())
+		{
+			return;
+		}
+
+		StartupTask = MakeUnique<FAsyncTask<FStartupTask>>(this);
+		StartupTask->StartBackgroundTask();
+
+		InitialScanEvent = nullptr;
+
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+		OnAssetAddedDelegateHandle = AssetRegistry.OnAssetAdded().AddLambda([](const struct FAssetData& AssetData) { Get().OnAssetAdded(AssetData); });
+	}));
+
 }
 
 void FUncontrolledChangelistsModule::ShutdownModule()
 {
+	// This will make sure callback for initial scan early outs if module was shutdown
+	InitialScanEvent = nullptr;
+
 	if (StartupTask)
 	{
 		StartupTask->EnsureCompletion();
@@ -191,6 +211,11 @@ void FUncontrolledChangelistsModule::UpdateStatus()
 
 FText FUncontrolledChangelistsModule::GetReconcileStatus() const
 {
+	if (InitialScanEvent.IsValid())
+	{
+		return LOCTEXT("WaitForAssetRegistryStatus", "Waiting for Asset Registry initial scan...");
+	}
+
 	if (StartupTask && !StartupTask->IsDone())
 	{
 		return LOCTEXT("ProcessingAssetsStatus", "Processing assets...");
@@ -422,7 +447,7 @@ void FUncontrolledChangelistsModule::MoveFilesToUncontrolledChangelist(const TAr
 	Algo::Transform(InControlledFileStates, Filenames, [](const FSourceControlStateRef& State) { return State->GetFilename(); });
 
 	ISourceControlProvider& SourceControlProvider = ISourceControlModule::Get().GetProvider();
-	auto RevertOperation = ISourceControlOperation::Create<FRevert>();
+	TSharedRef<FRevert, ESPMode::ThreadSafe> RevertOperation = ISourceControlOperation::Create<FRevert>();
 
 	// Revert controlled files
 	RevertOperation->SetSoftRevert(true);
@@ -436,6 +461,40 @@ void FUncontrolledChangelistsModule::MoveFilesToUncontrolledChangelist(const TAr
 	}
 
 	Algo::Transform(InUncontrolledFileStates, Filenames, [](const FSourceControlStateRef& State) { return State->GetFilename(); });
+
+	// Add all files to their UncontrolledChangelist
+	bHasStateChanged = (*ChangelistState)->AddFiles(Filenames, FUncontrolledChangelistState::ECheckFlags::None);
+
+	if (bHasStateChanged)
+	{
+		OnStateChanged();
+	}
+}
+
+void FUncontrolledChangelistsModule::MoveFilesToUncontrolledChangelist(const TArray<FString>& InControlledFiles, const FUncontrolledChangelist& InUncontrolledChangelist)
+{
+	bool bHasStateChanged = false;
+
+	if (!IsEnabled())
+	{
+		return;
+	}
+
+	FUncontrolledChangelistsStateCache::ValueType* ChangelistState = UncontrolledChangelistsStateCache.Find(InUncontrolledChangelist);
+
+	if (ChangelistState == nullptr)
+	{
+		return;
+	}
+
+	const TArray<FString>& Filenames = InControlledFiles;
+
+	ISourceControlProvider& SourceControlProvider = ISourceControlModule::Get().GetProvider();
+	TSharedRef<FRevert, ESPMode::ThreadSafe> RevertOperation = ISourceControlOperation::Create<FRevert>();
+
+	// Revert controlled files
+	RevertOperation->SetSoftRevert(true);
+	SourceControlProvider.Execute(RevertOperation, Filenames);
 
 	// Add all files to their UncontrolledChangelist
 	bHasStateChanged = (*ChangelistState)->AddFiles(Filenames, FUncontrolledChangelistState::ECheckFlags::None);
@@ -615,6 +674,12 @@ void FUncontrolledChangelistsModule::OnStateChanged()
 
 void FUncontrolledChangelistsModule::OnEndFrame()
 {
+	if (StartupTask && StartupTask->IsDone())
+	{
+		AddedAssetsCache.Append(StartupTask->GetTask().GetAddedAssetsCache());
+		StartupTask = nullptr;
+	}
+
 	if (bIsStateDirty)
 	{
 		OnUncontrolledChangelistModuleChanged.Broadcast();

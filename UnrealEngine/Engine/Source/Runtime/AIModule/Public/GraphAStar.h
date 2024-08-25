@@ -299,12 +299,20 @@ struct FGraphAStar
 			check(false); // We should never reach here.
 		}
 
-		int32 PopIndex(bool bAllowShrinking = true)
+		int32 PopIndex()
 		{
 			int32 SearchNodeIndex = INDEX_NONE;
-			Super::HeapPop(SearchNodeIndex, NodeSorter, /*bAllowShrinking = */false);
+
+			// During A* we grow the array as needed and it does not make sense to shrink in the process.
+			Super::HeapPop(SearchNodeIndex, NodeSorter, EAllowShrinking::No);
 			NodePool[SearchNodeIndex].MarkNotOpened();
 			return SearchNodeIndex;
+		}
+
+		UE_DEPRECATED(5.4, "PopIndex with a boolean bAllowShrinking has been deprecated - please use the version without parameter")
+		FORCEINLINE int32 PopIndex(bool bAllowShrinking)
+		{
+			return PopIndex();
 		}
 	};
 
@@ -517,14 +525,22 @@ struct FGraphAStar
 		OpenList.Reset();
 
 		// kick off the search with the first node
-		FSearchNode& StartPoolNode = NodePool.Add(StartNode);
-		StartPoolNode.TraversalCost = 0;
-		StartPoolNode.TotalCost = GetHeuristicCost(Filter, StartNode, EndNode) * Filter.GetHeuristicScale();
+		int32 BestNodeIndex = INDEX_NONE;
+		FVector::FReal BestNodeCost = TNumericLimits<FVector::FReal>::Max();
+		{
+			// scoping StartPoolNode to make it clear it's not safe to use after ProcessSingleNode due to potential NodePool reallocation
+			FSearchNode& StartPoolNode = NodePool.Add(StartNode);
+			StartPoolNode.TraversalCost = 0;
+			StartPoolNode.TotalCost = GetHeuristicCost(Filter, StartNode, EndNode) * Filter.GetHeuristicScale();
 
-		OpenList.Push(StartPoolNode);
+			OpenList.Push(StartPoolNode);
 
-		int32 BestNodeIndex = StartPoolNode.SearchNodeIndex;
-		FVector::FReal BestNodeCost = StartPoolNode.TotalCost;
+			BestNodeIndex = StartPoolNode.SearchNodeIndex;
+			BestNodeCost = StartPoolNode.TotalCost;
+		}
+
+		const int32 StartPoolSearchNodeIndex = NodePool[BestNodeIndex].SearchNodeIndex;
+		const FGraphNodeRef StartPoolNodeRef = NodePool[BestNodeIndex].NodeRef;
 
 		EGraphAStarResult Result = EGraphAStarResult::SearchSuccess;
 		const bool bIsBound = true;
@@ -546,12 +562,12 @@ struct FGraphAStar
 		{
 			// store the path. Note that it will be reversed!
 			int32 SearchNodeIndex = BestNodeIndex;
-			int32 PathLength = ShouldIncludeStartNodeInPath(Filter) && BestNodeIndex != StartPoolNode.SearchNodeIndex ? 1 : 0;
+			int32 PathLength = ShouldIncludeStartNodeInPath(Filter) && BestNodeIndex != StartPoolSearchNodeIndex ? 1 : 0;
 			do 
 			{
 				PathLength++;
 				SearchNodeIndex = NodePool[SearchNodeIndex].ParentNodeIndex;
-			} while (NodePool.IsValidIndex(SearchNodeIndex) && NodePool[SearchNodeIndex].NodeRef != StartPoolNode.NodeRef && ensure(PathLength < Policy::FatalPathLength));
+			} while (NodePool.IsValidIndex(SearchNodeIndex) && NodePool[SearchNodeIndex].NodeRef != StartPoolNodeRef && ensure(PathLength < Policy::FatalPathLength));
 			
 			if (PathLength >= Policy::FatalPathLength)
 			{
@@ -589,14 +605,19 @@ struct FGraphAStar
 		OpenList.Reset();
 
 		// kick off the search with the first node
-		FSearchNode& StartPoolNode = NodePool.Add(StartNode);
-		StartPoolNode.TraversalCost = 0;
-		StartPoolNode.TotalCost = 0;
+		int32 BestNodeIndex = INDEX_NONE;
+		FVector::FReal BestNodeCost = TNumericLimits<FVector::FReal>::Max();
+		{
+			// scoping StartPoolNode to make it clear it's not safe to use after ProcessSingleNode due to potential NodePool reallocation
+			FSearchNode& StartPoolNode = NodePool.Add(StartNode);
+			StartPoolNode.TraversalCost = 0;
+			StartPoolNode.TotalCost = 0;
 
-		OpenList.Push(StartPoolNode);
+			OpenList.Push(StartPoolNode);
 
-		int32 BestNodeIndex = StartPoolNode.SearchNodeIndex;
-		FVector::FReal BestNodeCost = StartPoolNode.TotalCost;
+			BestNodeIndex = StartPoolNode.SearchNodeIndex;
+			BestNodeCost = StartPoolNode.TotalCost;
+		}
 		
 		const FSearchNode FakeEndNode = StartNode;
 		const bool bIsBound = false;

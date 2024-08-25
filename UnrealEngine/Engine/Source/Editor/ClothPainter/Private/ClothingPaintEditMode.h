@@ -5,6 +5,7 @@
 #include "IMeshPaintMode.h"
 #include "Templates/SharedPointer.h"
 
+class SClothPaintTab;
 class FClothPainter;
 class IPersonaToolkit;
 
@@ -19,6 +20,7 @@ public:
 	virtual TSharedPtr<class FModeToolkit> GetToolkit() override;
 
 	void SetPersonaToolKit(class TSharedPtr<IPersonaToolkit> InToolkit);
+	void SetupClothPaintTab(TSharedPtr<SClothPaintTab> InClothPaintTab);
 
 	virtual void Enter() override;
 	virtual void Exit() override;
@@ -29,4 +31,5 @@ protected:
 
 	class IPersonaPreviewScene* GetAnimPreviewScene() const;
 	class TWeakPtr<IPersonaToolkit> PersonaToolkit;
+	TWeakPtr<SClothPaintTab> ClothPaintTab;
 };

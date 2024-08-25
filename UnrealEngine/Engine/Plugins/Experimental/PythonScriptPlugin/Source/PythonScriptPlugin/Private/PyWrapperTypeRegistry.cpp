@@ -1287,7 +1287,7 @@ PyTypeObject* FPyWrapperTypeRegistry::GenerateWrappedClassType(const UClass* InC
 		GeneratedWrappedDynamicMethod.MethodName = PyGenUtil::TCHARToUTF8Buffer(*PythonStructMethodName);
 
 		// We remove the first function parameter, as that's the 'self' argument and we'll infer that when we call
-		GeneratedWrappedDynamicMethod.MethodFunc.InputParams.RemoveAt(0, 1, /*bAllowShrinking*/false);
+		GeneratedWrappedDynamicMethod.MethodFunc.InputParams.RemoveAt(0, 1, EAllowShrinking::No);
 
 		// Reference parameters may lead to a 'self' parameter that is also an output parameter
 		// In this case we need to remove the output too, and set it as our 'self' return (which will apply the result back onto 'self')
@@ -1335,7 +1335,7 @@ PyTypeObject* FPyWrapperTypeRegistry::GenerateWrappedClassType(const UClass* InC
 			else
 			{
 				GeneratedWrappedDynamicMethod.SelfReturn = MoveTemp(GeneratedWrappedDynamicMethod.MethodFunc.OutputParams[0]);
-				GeneratedWrappedDynamicMethod.MethodFunc.OutputParams.RemoveAt(0, 1, /*bAllowShrinking*/false);
+				GeneratedWrappedDynamicMethod.MethodFunc.OutputParams.RemoveAt(0, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -1841,9 +1841,12 @@ void FPyWrapperTypeRegistry::RegisterWrappedClassType(const FName ClassName, PyT
 	PythonWrappedClasses.Add(ClassName, PyType);
 }
 
-void FPyWrapperTypeRegistry::UnregisterWrappedClassType(const FName ClassName, PyTypeObject* PyType)
+void FPyWrapperTypeRegistry::UnregisterWrappedClassType(const FName ClassName, PyTypeObject* PyType, const bool InUnregisterName)
 {
-	UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), ClassName);
+	if (InUnregisterName)
+	{
+		UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), ClassName);
+	}
 	PythonWrappedClasses.Remove(ClassName);
 }
 
@@ -2139,9 +2142,12 @@ void FPyWrapperTypeRegistry::RegisterWrappedStructType(const FName StructName, P
 	PythonWrappedStructs.Add(StructName, PyType);
 }
 
-void FPyWrapperTypeRegistry::UnregisterWrappedStructType(const FName StructName, PyTypeObject* PyType)
+void FPyWrapperTypeRegistry::UnregisterWrappedStructType(const FName StructName, PyTypeObject* PyType, const bool InUnregisterName)
 {
-	UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), StructName);
+	if (InUnregisterName)
+	{
+		UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), StructName);
+	}
 	PythonWrappedStructs.Remove(StructName);
 }
 
@@ -2319,9 +2325,12 @@ void FPyWrapperTypeRegistry::RegisterWrappedEnumType(const FName EnumName, PyTyp
 	PythonWrappedEnums.Add(EnumName, PyType);
 }
 
-void FPyWrapperTypeRegistry::UnregisterWrappedEnumType(const FName EnumName, PyTypeObject* PyType)
+void FPyWrapperTypeRegistry::UnregisterWrappedEnumType(const FName EnumName, PyTypeObject* PyType, const bool InUnregisterName)
 {
-	UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), EnumName);
+	if (InUnregisterName)
+	{
+		UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), EnumName);
+	}
 	PythonWrappedEnums.Remove(EnumName);
 }
 
@@ -2491,9 +2500,12 @@ void FPyWrapperTypeRegistry::RegisterWrappedDelegateType(const FName DelegateNam
 	PythonWrappedDelegates.Add(DelegateName, PyType);
 }
 
-void FPyWrapperTypeRegistry::UnregisterWrappedDelegateType(const FName DelegateName, PyTypeObject* PyType)
+void FPyWrapperTypeRegistry::UnregisterWrappedDelegateType(const FName DelegateName, PyTypeObject* PyType, const bool InUnregisterName)
 {
-	UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), DelegateName);
+	if (InUnregisterName)
+	{
+		UnregisterPythonTypeName(UTF8_TO_TCHAR(PyType->tp_name), DelegateName);
+	}
 	PythonWrappedDelegates.Remove(DelegateName);
 }
 
@@ -3082,8 +3094,8 @@ void FPyWrapperTypeRegistry::GenerateStubCodeForWrappedType(PyTypeObject* PyType
 			}
 			else
 			{
-				FStructOnScope FuncParams(InTypeMethod.MethodFunc.Func);
-				MethodReturnValueStr = GetFunctionReturnValue(FuncParams.GetStructMemory(), InTypeMethod.MethodFunc.OutputParams);
+				PY_UFUNCTION_STACK(FuncParams, InTypeMethod.MethodFunc.Func);
+				MethodReturnValueStr = GetFunctionReturnValue(FuncParams.GetMemory(), InTypeMethod.MethodFunc.OutputParams);
 			}
 		}
 		else
@@ -3120,8 +3132,8 @@ void FPyWrapperTypeRegistry::GenerateStubCodeForWrappedType(PyTypeObject* PyType
 			UClass* Class = InTypeConstant.ConstantFunc.Func->GetOwnerClass();
 			UObject* Obj = Class->GetDefaultObject();
 
-			FStructOnScope FuncParams(InTypeConstant.ConstantFunc.Func);
-			PyUtil::InvokeFunctionCall(Obj, InTypeConstant.ConstantFunc.Func, FuncParams.GetStructMemory(), TEXT("export generated constant"));
+			PY_UFUNCTION_STACK(FuncParams, InTypeConstant.ConstantFunc.Func);
+			PyUtil::InvokeFunctionCall(Obj, InTypeConstant.ConstantFunc.Func, FuncParams.GetMemory(), TEXT("export generated constant"));
 			PyErr_Clear(); // Clear any errors in case InvokeFunctionCall failed
 
 			if (PyGenUtil::IsTypeHintingEnabled())
@@ -3131,7 +3143,7 @@ void FPyWrapperTypeRegistry::GenerateStubCodeForWrappedType(PyTypeObject* PyType
 			}
 			else
 			{
-				ConstantValueStr = GetFunctionReturnValue(FuncParams.GetStructMemory(), InTypeConstant.ConstantFunc.OutputParams);
+				ConstantValueStr = GetFunctionReturnValue(FuncParams.GetMemory(), InTypeConstant.ConstantFunc.OutputParams);
 			}
 		}
 		else // Cannot resove type/value.

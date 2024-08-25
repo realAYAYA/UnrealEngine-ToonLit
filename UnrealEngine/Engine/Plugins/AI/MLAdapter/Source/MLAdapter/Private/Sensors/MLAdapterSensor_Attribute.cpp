@@ -117,7 +117,7 @@ void UMLAdapterSensor_Attribute::BindAttributes(AActor& Actor)
 	Attributes.Reset(AttributeNames.Num());
 	if (AttributeSetsFound.Num() > 0)
 	{
-		ensureMsgf(AttributeSetsFound.Num() == 1, TEXT("Found %s attribute sets, using the first one"), AttributeSetsFound.Num());
+		ensureMsgf(AttributeSetsFound.Num() == 1, TEXT("Found %d attribute sets, using the first one"), AttributeSetsFound.Num());
 		AttributeSet = AttributeSetsFound[0];
 		UClass* AttributeSetClass = AttributeSet->GetClass();
 		for (const FName& Name : AttributeNames)

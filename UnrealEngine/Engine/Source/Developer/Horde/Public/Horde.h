@@ -2,15 +2,17 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
-#include "Containers/UnrealString.h"
+#if !defined(HORDE_API)
+#define HORDE_API
+#endif
 
-#if WITH_EDITOR
+#include "Containers/UnrealString.h"
 
 struct FHorde
 {
 	HORDE_API static FString GetTemplateName();
 	HORDE_API static FString GetTemplateId();
+	HORDE_API static FString GetServerURL();
 	HORDE_API static FString GetJobId();
 	HORDE_API static FString GetJobURL();
 	HORDE_API static FString GetStepId();
@@ -19,4 +21,3 @@ struct FHorde
 	HORDE_API static FString GetBatchId();
 };
 
-#endif

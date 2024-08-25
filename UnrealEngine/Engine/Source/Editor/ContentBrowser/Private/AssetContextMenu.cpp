@@ -71,13 +71,6 @@
 class FMenuBuilder;
 class SWidget;
 
-
-namespace ContentBrowserConsoleVariables
-{
-	static bool ContentBrowser_EnablePublicAssetFeature = false;
-	static FAutoConsoleVariableRef ContentBrowser_EnablePublicAssetFeatureCVar(TEXT("ContentBrowser.PublicAsset.EnablePublicAssetFeature"),
-		ContentBrowser_EnablePublicAssetFeature, TEXT("Enables the Experimental Public Asset Feature (False: disabled, True:enabled"));
-}
 #define LOCTEXT_NAMESPACE "ContentBrowser"
 
 FAssetContextMenu::FAssetContextMenu(const TWeakPtr<SAssetView>& InAssetView)
@@ -254,7 +247,8 @@ TSharedRef<SWidget> FAssetContextMenu::MakeContextMenu(TArrayView<const FContent
 				}
 			}
 
-			if (ensure(CommonClass))
+			// We can have a null common class if an asset is from unloaded plugin or an missing class.
+			if (CommonClass)
 			{
 				MenuName = UToolMenus::JoinMenuPaths(BaseMenuName, CommonClass->GetFName());
 
@@ -433,7 +427,8 @@ void FAssetContextMenu::AddMenuOptions(UToolMenu* InMenu)
 	// Add quick access to view commands
 	AddExploreMenuOptions(InMenu);
 
-	if (ContentBrowserConsoleVariables::ContentBrowser_EnablePublicAssetFeature)
+	static const IConsoleVariable* EnablePublicAssetFeatureCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("AssetTools.EnablePublicAssetFeature"));
+	if (EnablePublicAssetFeatureCVar && EnablePublicAssetFeatureCVar->GetBool())
 	{
 		AddPublicStateMenuOptions(InMenu);
 	}
@@ -922,7 +917,7 @@ void FAssetContextMenu::ExecuteEditItems()
 
 void FAssetContextMenu::ExecuteSaveAsset()
 {
-	const EContentBrowserItemSaveFlags SaveFlags = EContentBrowserItemSaveFlags::SaveOnlyIfLoaded;
+	const EContentBrowserItemSaveFlags SaveFlags = EContentBrowserItemSaveFlags::None;
 
 	// Batch these by their data sources
 	TMap<UContentBrowserDataSource*, TArray<FContentBrowserItemData>> SourcesAndItems;
@@ -1280,7 +1275,7 @@ bool FAssetContextMenu::CanExecuteSaveAsset() const
 	bool bCanSave = false;
 	for (const FContentBrowserItem& SelectedItem : SelectedFiles)
 	{
-		bCanSave |= SelectedItem.CanSave(EContentBrowserItemSaveFlags::SaveOnlyIfLoaded);
+		bCanSave |= SelectedItem.CanSave(EContentBrowserItemSaveFlags::None);
 	}
 	return bCanSave;
 }
@@ -1308,8 +1303,17 @@ void FAssetContextMenu::CacheCanExecuteVars()
 		}
 		if (bCanChangeAssetPublicState)
 		{
-			FNameBuilder ItemInternalPath(SelectedItem.GetInternalPath());
-			bCanChangeAssetPublicState = FContentBrowserSingleton::Get().CanChangeAssetPublicState(ItemInternalPath);
+			const FNameBuilder ItemInternalPath(SelectedItem.GetInternalPath());
+			const FStringView AssetPath(ItemInternalPath);
+
+			if (!IAssetTools::Get().CanAssetBePublic(AssetPath))
+			{
+				const FAssetData AssetData = IAssetRegistry::GetChecked().GetAssetByObjectPath(FSoftObjectPath(ItemInternalPath));
+				if (!AssetData.IsValid() || AssetData.HasAnyPackageFlags(PKG_NotExternallyReferenceable))
+				{
+					bCanChangeAssetPublicState = false;
+				}
+			}
 		}
 
 		if (bCanChangeAssetPublicState)

@@ -2,11 +2,12 @@
 
 #include "WorldPartition/WorldPartitionFoliageBuilder.h"
 
-#include "WorldPartition/ActorDescContainer.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
 #include "WorldPartition/ActorPartition/PartitionActorDesc.h"
 #include "WorldPartition/DataLayer/DataLayerEditorContext.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "PackageSourceControlHelper.h"
 #include "SourceControlHelpers.h"
 #include "HAL/PlatformFileManager.h"
@@ -81,9 +82,9 @@ bool UWorldPartitionFoliageBuilder::RunInternal(UWorld* World, const FCellInfo& 
 	TArray<FGuid> ExistingActors;
 			
 	// Snapshot existing ActorDescs
-	FWorldPartitionHelpers::ForEachActorDesc(WorldPartition, AInstancedFoliageActor::StaticClass(), [&ExistingActors](const FWorldPartitionActorDesc* ActorDesc)
+	FWorldPartitionHelpers::ForEachActorDescInstance(WorldPartition, AInstancedFoliageActor::StaticClass(), [&ExistingActors](const FWorldPartitionActorDescInstance* ActorDescInstance)
 	{
-		ExistingActors.Add(ActorDesc->GetGuid());
+		ExistingActors.Add(ActorDescInstance->GetGuid());
 		return true;
 	});
 
@@ -104,16 +105,16 @@ bool UWorldPartitionFoliageBuilder::RunInternal(UWorld* World, const FCellInfo& 
 	ForEachActorWithLoadingParams.ActorClasses = { AInstancedFoliageActor::StaticClass() };
 	ForEachActorWithLoadingParams.ActorGuids.Append(ExistingActors);
 
-	FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [this, World, WorldPartition, ActorPartitionSubsystem, &SCCHelper, &NewActors, &NumInstances, &NumInstancesProcessed](const FWorldPartitionActorDesc* ActorDesc)
+	FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [this, World, WorldPartition, ActorPartitionSubsystem, &SCCHelper, &NewActors, &NumInstances, &NumInstancesProcessed](const FWorldPartitionActorDescInstance* ActorDescInstance)
 	{
 		TMap<UFoliageType*, TArray<FFoliageInstance>> FoliageToAdd;
 		FBox InstanceBounds(ForceInit);
 
-		FPartitionActorDesc* PartitionActorDesc = (FPartitionActorDesc*)ActorDesc;
-		AInstancedFoliageActor* IFA = Cast<AInstancedFoliageActor>(ActorDesc->GetActor());
+		const FPartitionActorDesc* PartitionActorDesc = (FPartitionActorDesc*)ActorDescInstance->GetActorDesc();
+		AInstancedFoliageActor* IFA = Cast<AInstancedFoliageActor>(ActorDescInstance->GetActor());
 		if (!IFA)
 		{
-			UE_LOG(LogWorldPartitionFoliageBuilder, Error, TEXT("Foliage actor failed to load: %s (%s)"), *ActorDesc->GetActorName().ToString(), *ActorDesc->GetActorPackage().ToString());
+			UE_LOG(LogWorldPartitionFoliageBuilder, Error, TEXT("Foliage actor failed to load: %s (%s)"), *PartitionActorDesc->GetActorName().ToString(), *PartitionActorDesc->GetActorPackage().ToString());
 			return false;
 		}
 
@@ -121,31 +122,31 @@ bool UWorldPartitionFoliageBuilder::RunInternal(UWorld* World, const FCellInfo& 
 		{
 			FPackageSourceControlHelper PackageHelper;
 
-			const FDataLayerEditorContext DataLayerEditorContext(World, ActorDesc->GetDataLayerInstanceNames());
-			const FActorPartitionIdentifier ActorPartitionIdentifier(ActorDesc->GetActorNativeClass(), IFA->GetGridGuid(), DataLayerEditorContext.GetHash());
+			const FDataLayerEditorContext DataLayerEditorContext(World, ActorDescInstance->GetDataLayerInstanceNames().ToArray());
+			const FActorPartitionIdentifier ActorPartitionIdentifier(PartitionActorDesc->GetActorNativeClass(), IFA->GetGridGuid(), DataLayerEditorContext.GetHash());
 			const bool bShouldIncludeGridSizeInName = ActorPartitionIdentifier.GetClass()->GetDefaultObject<APartitionActor>()->ShouldIncludeGridSizeInName(World, ActorPartitionIdentifier);
-			const FString ExpectedActorName = APartitionActor::GetActorName(World, ActorPartitionIdentifier.GetClass(), ActorPartitionIdentifier.GetGridGuid(), ActorPartitionIdentifier, PartitionActorDesc->GridSize, 
-				PartitionActorDesc->GridIndexX, PartitionActorDesc->GridIndexY, PartitionActorDesc->GridIndexZ, DataLayerEditorContext.GetHash());
+			const FString ExpectedActorName = APartitionActor::GetActorName(World, ActorPartitionIdentifier, PartitionActorDesc->GridSize, 
+				PartitionActorDesc->GridIndexX, PartitionActorDesc->GridIndexY, PartitionActorDesc->GridIndexZ);
 
-			if (ActorDesc->GetActorName() != ExpectedActorName)
+			if (PartitionActorDesc->GetActorName() != ExpectedActorName)
 			{
 				UPackage* PackageToModify = nullptr;
 				UPackage* PackageToDelete = nullptr;
 				UPackage* PackageToAdd = nullptr;
 
-				UE_LOG(LogWorldPartitionFoliageBuilder, Display, TEXT("Repairing invalid foliage actor: %s->%s "), *ActorDesc->GetActorName().ToString(), *ExpectedActorName);
+				UE_LOG(LogWorldPartitionFoliageBuilder, Display, TEXT("Repairing invalid foliage actor: %s->%s "), *PartitionActorDesc->GetActorName().ToString(), *ExpectedActorName);
 
 				const FString ExpectedActorPath = FString::Printf(TEXT("%s.%s"), *World->PersistentLevel->GetPathName(), *ExpectedActorName);
 				
-				if (const FWorldPartitionActorDesc* DupActorDesc = WorldPartition->GetActorDescByName(ExpectedActorPath))
+				if (const FWorldPartitionActorDescInstance* DupActorDescInstance = WorldPartition->GetActorDescInstanceByPath(ExpectedActorPath))
 				{
 					// Merge with existing
-					FWorldPartitionReference DupActorRef(WorldPartition, DupActorDesc->GetGuid());
+					FWorldPartitionReference DupActorRef(WorldPartition, DupActorDescInstance->GetGuid());
 
-					AInstancedFoliageActor* DupIFA = Cast<AInstancedFoliageActor>(DupActorDesc->GetActor());
+					AInstancedFoliageActor* DupIFA = Cast<AInstancedFoliageActor>(DupActorDescInstance->GetActor());
 					if (!DupIFA)
 					{
-						UE_LOG(LogWorldPartitionFoliageBuilder, Error, TEXT("Foliage actor failed to load: %s (%s)"), *DupActorDesc->GetActorName().ToString(), *DupActorDesc->GetActorPackage().ToString());
+						UE_LOG(LogWorldPartitionFoliageBuilder, Error, TEXT("Foliage actor failed to load: %s (%s)"), *DupActorDescInstance->GetActorName().ToString(), *DupActorDescInstance->GetActorPackage().ToString());
 						return false;
 					}
 
@@ -224,7 +225,7 @@ bool UWorldPartitionFoliageBuilder::RunInternal(UWorld* World, const FCellInfo& 
 		{	
 			check(IFA->GetGridSize() != NewGridSize);
 			// Harvest Instances from existing IFA and build up instance bounds
-			UE_LOG(LogWorldPartitionFoliageBuilder, Display, TEXT("Processing existing foliage actor: %s (%s)"), *ActorDesc->GetActorName().ToString(), *ActorDesc->GetActorPackage().ToString());
+			UE_LOG(LogWorldPartitionFoliageBuilder, Display, TEXT("Processing existing foliage actor: %s (%s)"), *PartitionActorDesc->GetActorName().ToString(), *PartitionActorDesc->GetActorPackage().ToString());
 		
 			IFA->ForEachFoliageInfo([IFA, &FoliageToAdd, &InstanceBounds, &NumInstances](UFoliageType* FoliageType, FFoliageInfo& FoliageInfo)
 			{
@@ -262,7 +263,7 @@ bool UWorldPartitionFoliageBuilder::RunInternal(UWorld* World, const FCellInfo& 
 					const FGuid& NewActorGuid = NewActors.FindChecked(InCellCoord);
 					FWorldPartitionReference Reference(WorldPartition, NewActorGuid);
 					ActorReferences.Add(Reference);
-					IntersectingActors.Add(InCellCoord, CastChecked<AInstancedFoliageActor>(Reference->GetActor()));
+					IntersectingActors.Add(InCellCoord, CastChecked<AInstancedFoliageActor>(Reference.GetActor()));
 				}
 
 				return true;
@@ -323,8 +324,8 @@ bool UWorldPartitionFoliageBuilder::RunInternal(UWorld* World, const FCellInfo& 
 					}
 
 					FGuid NewActorGuid = IntersectingActor->GetActorGuid();
-					FWorldPartitionActorDesc* NewActorDesc = WorldPartition->GetActorDesc(NewActorGuid);
-					check(NewActorDesc);
+					FWorldPartitionActorDescInstance* NewActorDescInstance = WorldPartition->GetActorDescInstance(NewActorGuid);
+					check(NewActorDescInstance);
 					NewActors.Add(Pair.Key, NewActorGuid);
 
 					// Add ref so actor gets unloaded 
@@ -366,9 +367,9 @@ bool UWorldPartitionFoliageBuilder::RunInternal(UWorld* World, const FCellInfo& 
 		// Delete old IFAs
 		for (const FGuid& ActorGuid : ExistingActors)
 		{
-			FWorldPartitionActorDesc* ActorDesc = WorldPartition->GetActorDesc(ActorGuid);
-			check(ActorDesc);
-			const FString PackageToDelete = ActorDesc->GetActorPackage().ToString();
+			FWorldPartitionActorDescInstance* ActorDescInstance = WorldPartition->GetActorDescInstance(ActorGuid);
+			check(ActorDescInstance);
+			const FString PackageToDelete = ActorDescInstance->GetActorPackage().ToString();
 			if (!SCCHelper.Delete(PackageToDelete))
 			{
 				UE_LOG(LogWorldPartitionFoliageBuilder, Error, TEXT("Error deleting package %s."), *PackageToDelete);

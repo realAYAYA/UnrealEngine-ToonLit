@@ -70,6 +70,9 @@ private:
 
 	/** Holds the current ApplyToClient async operation. Only one operation for all presets can be done at a time. */
 	static TPimplPtr<struct FApplyToClientPollingOperation> ApplyToClientPollingOperation;
+
+	/** Utility variable used to keep track of the number of times this was applied. */
+	uint32 ApplyCount = 0;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

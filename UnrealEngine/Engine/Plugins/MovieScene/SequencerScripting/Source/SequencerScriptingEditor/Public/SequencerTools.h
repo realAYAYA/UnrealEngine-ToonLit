@@ -85,25 +85,25 @@ struct FSequencerExportFBXParams
 		, OverrideOptions(InOverrideOptions)
 		, FBXFileName(InFBXFileName) {}
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<UWorld> World;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<ULevelSequence> Sequence;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<ULevelSequence> RootSequence;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<FMovieSceneBindingProxy> Bindings;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<TObjectPtr<UMovieSceneTrack>> Tracks;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<UFbxExportOption> OverrideOptions;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	FString FBXFileName;
 };
 
@@ -170,9 +170,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Sequencer Tools | FBX")
 	static bool ExportLevelSequenceFBX(const FSequencerExportFBXParams& InParams);
 	
-	UE_DEPRECATED(5.1, "Please use ExportLevelSequenceFBX that takes a FSequencerExportFBXParams")
-	static bool ExportLevelSequenceFBX(UWorld* InWorld, ULevelSequence* InSequence, const TArray<FMovieSceneBindingProxy>& InBindings, const TArray<UMovieSceneTrack*>& InTracks, UFbxExportOption* InOverrideOptions, const FString& InFBXFileName) { FSequencerExportFBXParams Params(InWorld, InSequence, InSequence, InBindings, InTracks, InOverrideOptions, InFBXFileName); return ExportLevelSequenceFBX(Params); }
-
 	/*
 	 * Export Passed in Binding as an Anim Seqquence.
 	 *

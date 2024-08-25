@@ -11,6 +11,7 @@
 #include "MLDeformerComponent.h"
 #include "MLDeformerPerfCounter.h"
 #include "MLDeformerEditorStyle.h"
+#include "MLDeformerEditorToolkit.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailCategoryBuilder.h"
 #include "DetailWidgetRow.h"
@@ -37,6 +38,15 @@
 
 namespace UE::MLDeformer
 {
+	// UE_DEPRECATED(5.4, Remove these constructors when StatsMainMemUsageGroup is removed and there is no longer warnings in the implicit functions)
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FMLDeformerVizSettingsDetails::FMLDeformerVizSettingsDetails(const FMLDeformerVizSettingsDetails&) = default;
+	FMLDeformerVizSettingsDetails::FMLDeformerVizSettingsDetails(FMLDeformerVizSettingsDetails&&) = default;
+	FMLDeformerVizSettingsDetails& FMLDeformerVizSettingsDetails::operator=(const FMLDeformerVizSettingsDetails&) = default;
+	FMLDeformerVizSettingsDetails& FMLDeformerVizSettingsDetails::operator=(FMLDeformerVizSettingsDetails&&) = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	// END UE_DEPRECATED(5.4)
+
 	bool FMLDeformerVizSettingsDetails::UpdateMemberPointers(const TArray<TWeakObjectPtr<UObject>>& Objects)
 	{
 		Model = nullptr;
@@ -159,12 +169,13 @@ namespace UE::MLDeformer
 
 		AddGroundTruth();
 
+		IDetailPropertyRow& CompareAssetRow = TestAssetsCategory->AddProperty(UMLDeformerVizSettings::GetCompareActorsPropertyName(), UMLDeformerVizSettings::StaticClass())
+			.ShouldAutoExpand(true);
+
 		LiveSettingsCategory->SetCategoryVisibility(bShowTestData);
 		LiveSettingsCategory->AddProperty(UMLDeformerVizSettings::GetWeightPropertyName(), UMLDeformerVizSettings::StaticClass());
 		LiveSettingsCategory->AddProperty(UMLDeformerVizSettings::GetAnimPlaySpeedPropertyName(), UMLDeformerVizSettings::StaticClass());
 		LiveSettingsCategory->AddProperty(UMLDeformerVizSettings::GetTestingFrameNumberPropertyName(), UMLDeformerVizSettings::StaticClass());
-		LiveSettingsCategory->AddProperty(UMLDeformerVizSettings::GetQualityLevelPropertyName(), UMLDeformerVizSettings::StaticClass())
-			.Visibility(Model->DoesSupportQualityLevels() ? EVisibility::Visible : EVisibility::Collapsed);
 
 		IDetailGroup& HeatMapGroup = LiveSettingsCategory->AddGroup("HeatMap", LOCTEXT("HeatMap", "Heat Map"), false, true);
 		HeatMapGroup.AddPropertyRow(DetailBuilder.GetProperty(UMLDeformerVizSettings::GetShowHeatMapPropertyName(), UMLDeformerVizSettings::StaticClass()));
@@ -174,11 +185,47 @@ namespace UE::MLDeformer
 
 		AddAdditionalSettings();
 
+		// Debugging group.
+		IDetailGroup& DebuggingGroup = LiveSettingsCategory->AddGroup("Debugging", LOCTEXT("DebuggingLabel", "Debugging"), false, true);
+		FDetailWidgetRow& DebuggingRow = DebuggingGroup.HeaderRow();
+		DebuggingRow.NameContent().Widget = 
+			SNew(STextBlock)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+			.Text(FText::FromName(DebuggingGroup.GetGroupName()));	
+		DebuggingRow.ValueContent().Widget =
+			SNew(STextBlock)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+			.Text_Lambda
+			(
+				[this]()
+				{
+					FMLDeformerEditorToolkit* Editor = EditorModel->GetEditor();
+					if (Editor && IsValid(Editor->GetDebugActor()))
+					{
+						return LOCTEXT("DebuggingActiveText", "Debugging Active");
+					}
+
+					return GEditor->GetPIEViewport() ? LOCTEXT("DebuggingPIEActiveText", "PIE Active") : FText();
+				}
+			)
+			.ColorAndOpacity_Lambda			
+			(
+				[this]()
+				{
+					return GEditor->GetPIEViewport() ? FSlateColor(FColor::Green) : FSlateColor::UseForeground();
+				}
+			);
+		DebuggingGroup.AddPropertyRow(DetailBuilder.GetProperty(UMLDeformerVizSettings::GetDrawDebugActorBoundsPropertyName(), UMLDeformerVizSettings::StaticClass()));
+		DebuggingGroup.AddPropertyRow(DetailBuilder.GetProperty(UMLDeformerVizSettings::GetDebugBoundsColorPropertyName(), UMLDeformerVizSettings::StaticClass()));
+
+		// Visibility group.
 		IDetailGroup& VisGroup = LiveSettingsCategory->AddGroup("Visibility", LOCTEXT("VisibilityLabel", "Visibility"), false, true);
 		VisGroup.AddPropertyRow(DetailBuilder.GetProperty(UMLDeformerVizSettings::GetDrawLinearSkinnedActorPropertyName(), UMLDeformerVizSettings::StaticClass()));
 		VisGroup.AddPropertyRow(DetailBuilder.GetProperty(UMLDeformerVizSettings::GetDrawMLDeformedActorPropertyName(), UMLDeformerVizSettings::StaticClass()));
 		VisGroup.AddPropertyRow(DetailBuilder.GetProperty(UMLDeformerVizSettings::GetDrawGroundTruthActorPropertyName(), UMLDeformerVizSettings::StaticClass()))
 			.Visibility(VizSettings->HasTestGroundTruth() ? EVisibility::Visible : EVisibility::Collapsed);
+		VisGroup.AddPropertyRow(DetailBuilder.GetProperty(UMLDeformerVizSettings::GetDrawMLCompareActorsPropertyName(), UMLDeformerVizSettings::StaticClass()))
+			.Visibility(!VizSettings->GetCompareActors().IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed);
 
 		TrainingMeshesCategoryBuilder->SetCategoryVisibility(bShowTrainingData);
 		TrainingMeshesCategoryBuilder->AddProperty(UMLDeformerVizSettings::GetTrainingFrameNumberPropertyName(), UMLDeformerVizSettings::StaticClass());
@@ -259,56 +306,12 @@ namespace UE::MLDeformer
 
 	void FMLDeformerVizSettingsDetails::AddStatistics()
 	{
-		const FLinearColor MainColor = FMLDeformerEditorStyle::Get().GetColor("MLDeformer.Statistics.Performance");
+		const FLinearColor HighlightColor = FMLDeformerEditorStyle::Get().GetColor("MLDeformer.Statistics.Performance");
 
 		// Create the groups
 		StatsPerformanceGroup = &StatsCategoryBuilder->AddGroup("CPU Performance", LOCTEXT("CPUPerformanceLabel", "CPU Performance"), false, true);
-		StatsMemUsageGroup = &StatsCategoryBuilder->AddGroup("Approximated Memory Usage", LOCTEXT("MemoryUsageLabel", "Memory Usage (Approximated)"), false, true);
-		StatsMainMemUsageGroup = &StatsMemUsageGroup->AddGroup("Main Memory Usage", FText(), false);
-		StatsMainMemUsageGroup->HeaderRow()
-			.NameContent()
-			[
-				SNew(STextBlock)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.Text(LOCTEXT("MainMemoryTotalMemUsageLabel", "Main Memory"))
-			]			
-			.ValueContent()
-			[
-				SNew(STextBlock)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.ColorAndOpacity(MainColor)
-				.Text_Lambda
-				(
-					[this]
-					{
-						const uint64 TotalBytes = Model->GetMemUsageInBytes(UE::MLDeformer::EMemUsageRequestFlags::Cooked);
-						return FText::Format(LOCTEXT("TotalMemUsageValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
-					}
-				)
-			];
-
-		StatsGPUMemUsageGroup = &StatsMemUsageGroup->AddGroup("GPU Memory Usage", FText(), false);
-		StatsGPUMemUsageGroup->HeaderRow()
-			.NameContent()
-			[
-				SNew(STextBlock)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.Text(LOCTEXT("GPUMemoryUsageLabel", "GPU Memory"))
-			]			
-			.ValueContent()
-			[
-				SNew(STextBlock)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.ColorAndOpacity(MainColor)
-				.Text_Lambda
-				(
-					[this]
-					{
-						const uint64 TotalBytes = Model->GetGPUMemUsageInBytes();
-						return FText::Format(LOCTEXT("TotalGPUMemUsageValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
-					}
-				)
-			];
+		StatsMemUsageGroup = &StatsCategoryBuilder->AddGroup("Estimated Memory Usage", LOCTEXT("MemoryUsageLabel", "Estimated Memory Usage"), false, true);
+		StatsAssetSizeGroup = &StatsCategoryBuilder->AddGroup("Estimated Asset Sizes", LOCTEXT("AssetSize", "Estimated Asset Sizes"), false, true);
 
 		AddStatsPerfRow(*StatsPerformanceGroup, LOCTEXT("AvgTickTimeLabel", "Avg Time"), EditorModel, PerformanceMetricFormat, true,
 			[](const FMLDeformerEditorModel* EditorModelPtr)
@@ -331,33 +334,78 @@ namespace UE::MLDeformer
 				return MLDeformerComponent ? MLDeformerComponent->GetTickPerfCounter().GetCyclesMax() : 0;
 			});
 
-		StatsMainMemUsageGroup->AddWidgetRow()
+		StatsMemUsageGroup->AddWidgetRow()
 			.NameContent()
 			[			
 				SNew(STextBlock)
 				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.Text(LOCTEXT("ModelCookedMemUsageLabel", "Model - Cooked"))
+				.Text(LOCTEXT("MainMemoryLabel", "Main Memory"))
 			]
 			.ValueContent()
 			[
 				SNew(STextBlock)
 				.Font(IDetailLayoutBuilder::GetDetailFont())
+				.ColorAndOpacity(HighlightColor)
 				.Text_Lambda
 				(
 					[this]
 					{
-						const uint64 TotalBytes = Model->GetMemUsageInBytes(UE::MLDeformer::EMemUsageRequestFlags::Cooked);
-						return FText::Format(LOCTEXT("TotalCookedModelMemUsageValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
+						const uint64 TotalBytes = Model->GetMainMemUsageInBytes();
+						return FText::Format(LOCTEXT("MainMemoryValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
 					}
 				)
 			];
 
-		StatsMainMemUsageGroup->AddWidgetRow()
+		StatsMemUsageGroup->AddWidgetRow()
 			.NameContent()
 			[			
 				SNew(STextBlock)
 				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.Text(LOCTEXT("ModelInEditorMemUsageLabel", "Model - In Editor"))
+				.Text(LOCTEXT("GPUMemoryLabel", "GPU Memory"))
+			]
+			.ValueContent()
+			[
+				SNew(STextBlock)
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+				.ColorAndOpacity(HighlightColor)
+				.Text_Lambda
+				(
+					[this]
+					{
+						const uint64 TotalBytes = Model->GetGPUMemUsageInBytes();
+						return FText::Format(LOCTEXT("GPUMemoryValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
+					}
+				)
+			];
+
+		StatsAssetSizeGroup->AddWidgetRow()
+			.NameContent()
+			[			
+				SNew(STextBlock)
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+				.Text(LOCTEXT("CookedAssetSizeLabel", "Cooked"))
+			]
+			.ValueContent()
+			[
+				SNew(STextBlock)
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+				.ColorAndOpacity(HighlightColor)
+				.Text_Lambda
+				(
+					[this]
+					{
+						const uint64 TotalBytes = Model->GetCookedAssetSizeInBytes();
+						return FText::Format(LOCTEXT("CookedAssetSizeInBytesValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
+					}
+				)
+			];
+
+		StatsAssetSizeGroup->AddWidgetRow()
+			.NameContent()
+			[			
+				SNew(STextBlock)
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+				.Text(LOCTEXT("EditorAssetSizeLabel", "Uncooked"))
 			]
 			.ValueContent()
 			[
@@ -367,8 +415,8 @@ namespace UE::MLDeformer
 				(
 					[this]
 					{
-						const uint64 TotalBytes = Model->GetMemUsageInBytes(UE::MLDeformer::EMemUsageRequestFlags::Uncooked);
-						return FText::Format(LOCTEXT("TotalInEditorModelMemUsageValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
+						const uint64 TotalBytes = Model->GetEditorAssetSizeInBytes();
+						return FText::Format(LOCTEXT("EditorAssetSizeInBytesValue", "{0} mb"), FText::AsNumber(TotalBytes / static_cast<float>(1024*1024), &MemUsageMetricFormat));
 					}
 				)
 			];

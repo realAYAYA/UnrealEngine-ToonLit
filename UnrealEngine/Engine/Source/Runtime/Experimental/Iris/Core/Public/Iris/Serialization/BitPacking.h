@@ -2,9 +2,10 @@
 
 #pragma once
 
+#include <type_traits>
+
 #include "Iris/Serialization/NetBitStreamReader.h"
 #include "Iris/Serialization/NetBitStreamWriter.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsIntegral.h"
 #include "Templates/IsSigned.h"
@@ -114,14 +115,14 @@ template<typename T, typename TEnableIf<TIsSigned<T>::Value && sizeof(T) <= 8U, 
 inline void SerializeIntDelta(FNetBitStreamWriter& Writer, const T Value, const T PrevValue, const uint8* SmallBitCountTable, const uint32 SmallBitCountTableEntryCount, uint8 LargeBitCount)
 {
 	// Careful casting to properly represent negative numbers in the larger type as we want the delta between small negative numbers and small positive numbers to be small.
-	using SignedType = typename TChooseClass<sizeof(T) == 8, int64, int32>::Result;
+	using SignedType = std::conditional_t<sizeof(T) == 8, int64, int32>;
 	return SerializeIntDelta(Writer, SignedType(Value), SignedType(PrevValue), SmallBitCountTable, SmallBitCountTableEntryCount, LargeBitCount);
 }
 
 template<typename T, typename TEnableIf<TIsSigned<T>::Value && sizeof(T) <= 8U, int32>::Type U = -1>
 inline void DeserializeIntDelta(FNetBitStreamReader& Reader, T& OutValue, const T PrevValue, const uint8* SmallBitCountTable, const uint32 SmallBitCountTableEntryCount, uint8 LargeBitCount)
 {
-	using SignedType = typename TChooseClass<sizeof(T) == 8, int64, int32>::Result;
+	using SignedType = std::conditional_t<sizeof(T) == 8, int64, int32>;
 
 	SignedType Value;
 	DeserializeIntDelta(Reader, Value, SignedType(PrevValue), SmallBitCountTable, SmallBitCountTableEntryCount, LargeBitCount);
@@ -132,14 +133,14 @@ template<typename T, typename TEnableIf<!TIsSigned<T>::Value && TIsIntegral<T>::
 inline void SerializeUintDelta(FNetBitStreamWriter& Writer, const T Value, const T PrevValue, const uint8* SmallBitCountTable, const uint32 SmallBitCountTableEntryCount, uint8 LargeBitCount)
 {
 	// Careful casting to allow the delta between small positive numbers and large positive numbers to be small.
-	using UnsignedType = typename TChooseClass<sizeof(T) == 8, uint64, uint32>::Result;
+	using UnsignedType = std::conditional_t<sizeof(T) == 8, uint64, uint32>;
 	return SerializeUintDelta(Writer, UnsignedType(Value), UnsignedType(PrevValue), SmallBitCountTable, SmallBitCountTableEntryCount, LargeBitCount);
 }
 
 template<typename T, typename TEnableIf<!TIsSigned<T>::Value && TIsIntegral<T>::Value && sizeof(T) <= 8U, uint32>::Type U = 1U>
 inline void DeserializeUintDelta(FNetBitStreamReader& Reader, T& OutValue, const T PrevValue, const uint8* SmallBitCountTable, const uint32 SmallBitCountTableEntryCount, uint8 LargeBitCount)
 {
-	using UnsignedType = typename TChooseClass<sizeof(T) == 8, uint64, uint32>::Result;
+	using UnsignedType = std::conditional_t<sizeof(T) == 8, uint64, uint32>;
 
 	UnsignedType Value;
 	DeserializeUintDelta(Reader, Value, UnsignedType(PrevValue), SmallBitCountTable, SmallBitCountTableEntryCount, LargeBitCount);

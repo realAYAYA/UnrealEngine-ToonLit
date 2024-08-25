@@ -72,7 +72,14 @@ public:
 
 		ForElementType() {}
 
-		ElementType* GetAllocation() const { return IfAThenAElseB<ElementType>(SecondaryData.GetAllocation(), GetInlineElements()); }
+		ElementType* GetAllocation() const
+		{
+			if (ElementType* Result = SecondaryData.GetAllocation())
+			{
+				return Result;
+			}
+			return GetInlineElements();
+		}
 
 		void Initialize() { SecondaryData.Initialize(); }
 

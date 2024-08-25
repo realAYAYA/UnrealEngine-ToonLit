@@ -122,6 +122,16 @@ public:
 	virtual IDetailCategoryBuilder& EditCategory(FName CategoryName, const FText& NewLocalizedDisplayName = FText::GetEmpty(), ECategoryPriority::Type CategoryType = ECategoryPriority::Default) = 0;
 
 	/**
+	* Edits an existing category or creates a new one
+	* If CategoryName is NAME_None, will enable access to properties without categories
+	* 
+	* @param CategoryName				The name of the category
+	* @param NewLocalizedDisplayName	The new display name of the category (optional)
+	* @param CategoryType				Category type to define sort order.  Category display order is sorted by this type (optional)
+	*/
+	virtual IDetailCategoryBuilder& EditCategoryAllowNone(FName CategoryName, const FText& NewLocalizedDisplayName = FText::GetEmpty(), ECategoryPriority::Type CategoryType = ECategoryPriority::Default) = 0;
+
+	/**
 	 * Gets the current set of existing category names. This includes both categories derived from properties and categories added via EditCategory.
 	 * @param	OutCategoryNames	 The array of category names
 	 */
@@ -175,10 +185,24 @@ public:
 	 * The property will remain in the default location but the widget or other attributes for the property can be changed 
 	 * Note This cannot be used to customize other customizations
 
-	 * @param InPropertyHandle	The handle to the property that you want to add to its own category.
+	 * @param InPropertyHandle	The handle to the property that you want to edit
 	 * @return					The property row to edit or nullptr if the property row does not exist
 	 */
 	virtual IDetailPropertyRow* EditDefaultProperty(TSharedPtr<IPropertyHandle> InPropertyHandle) = 0;
+
+	/**
+	 * Get the property row from the root of the details panel after it's been constructed, so this will work with default or custom 
+	 * properties
+	 * @param InPropertyHandle	The handle to the property that you want to edit
+	 * @return					The property row to edit or nullptr if the property row does not exist, which may happen if not 
+	 * constructed yet
+	 */
+	virtual IDetailPropertyRow* EditPropertyFromRoot(TSharedPtr<IPropertyHandle> InPropertyHandle) = 0;
+
+	/**
+	 * @return true if the category contains child rows. 
+	 */
+	virtual bool DoesCategoryHaveGeneratedChildren(FName CategoryName) = 0;
 
 	/**
 	 * Hides an entire category

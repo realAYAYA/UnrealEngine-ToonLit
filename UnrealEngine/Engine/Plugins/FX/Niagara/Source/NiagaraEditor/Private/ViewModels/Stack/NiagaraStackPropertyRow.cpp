@@ -11,7 +11,14 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraStackPropertyRow)
 
-void UNiagaraStackPropertyRow::Initialize(FRequiredEntryData InRequiredEntryData, TSharedRef<IDetailTreeNode> InDetailTreeNode, bool bInIsTopLevelProperty, FString InOwnerStackItemEditorDataKey, FString InOwnerStackEditorDataKey, UNiagaraNode* InOwningNiagaraNode)
+void UNiagaraStackPropertyRow::Initialize(
+	FRequiredEntryData InRequiredEntryData,
+	TSharedRef<IDetailTreeNode> InDetailTreeNode,
+	bool bInIsTopLevelProperty,
+	bool bInHideTopLevelCategories,
+	FString InOwnerStackItemEditorDataKey,
+	FString InOwnerStackEditorDataKey,
+	UNiagaraNode* InOwningNiagaraNode)
 {
 	TSharedPtr<IPropertyHandle> PropertyHandle = InDetailTreeNode->CreatePropertyHandle();
 	FString RowStackEditorDataKey = FString::Printf(TEXT("%s-%s"), *InOwnerStackEditorDataKey, *InDetailTreeNode->GetNodeName().ToString());
@@ -20,6 +27,7 @@ void UNiagaraStackPropertyRow::Initialize(FRequiredEntryData InRequiredEntryData
 	SetIsAdvanced(bRowIsAdvanced);
 	DetailTreeNode = InDetailTreeNode;
 	bIsTopLevelProperty = bInIsTopLevelProperty;
+	bHideTopLevelCategories = bInHideTopLevelCategories;
 	OwningNiagaraNode = InOwningNiagaraNode;
 	CategorySpacer = nullptr;
 	if (DetailTreeNode->GetNodeType() == EDetailNodeType::Category)
@@ -40,6 +48,7 @@ void UNiagaraStackPropertyRow::Initialize(FRequiredEntryData InRequiredEntryData
 			bCannotEditInThisContext = true;
 		}
 	}
+	bIsHiddenCategory = false;
 }
 
 TSharedRef<IDetailTreeNode> UNiagaraStackPropertyRow::GetDetailTreeNode() const
@@ -57,6 +66,11 @@ bool UNiagaraStackPropertyRow::GetIsEnabled() const
 UNiagaraStackEntry::EStackRowStyle UNiagaraStackPropertyRow::GetStackRowStyle() const
 {
 	return RowStyle;
+}
+
+bool UNiagaraStackPropertyRow::GetShouldShowInStack() const
+{
+	return bIsHiddenCategory == false;
 }
 
 bool UNiagaraStackPropertyRow::HasOverridenContent() const
@@ -88,8 +102,20 @@ void UNiagaraStackPropertyRow::FinalizeInternal()
 
 void UNiagaraStackPropertyRow::RefreshChildrenInternal(const TArray<UNiagaraStackEntry*>& CurrentChildren, TArray<UNiagaraStackEntry*>& NewChildren, TArray<FStackIssue>& NewIssues)
 {
+	TArray<TSharedRef<IDetailTreeNode>> AllNodeChildren;
+	DetailTreeNode->GetChildren(AllNodeChildren);
+
 	TArray<TSharedRef<IDetailTreeNode>> NodeChildren;
-	DetailTreeNode->GetChildren(NodeChildren);
+	if (OnFilterDetailNodes.IsBound())
+	{
+		OnFilterDetailNodes.Execute(AllNodeChildren, NodeChildren);
+	}
+	else
+	{
+		NodeChildren = AllNodeChildren;
+	}
+
+	bIsHiddenCategory = DetailTreeNode->GetNodeType() == EDetailNodeType::Category && (NodeChildren.Num() == 0 || (bIsTopLevelProperty && bHideTopLevelCategories));
 	for (TSharedRef<IDetailTreeNode> NodeChild : NodeChildren)
 	{
 		if (NodeChild->GetNodeType() == EDetailNodeType::Advanced)
@@ -104,7 +130,7 @@ void UNiagaraStackPropertyRow::RefreshChildrenInternal(const TArray<UNiagaraStac
 		{
 			bool bChildIsTopLevelProperty = false;
 			ChildRow = NewObject<UNiagaraStackPropertyRow>(this);
-			ChildRow->Initialize(CreateDefaultChildRequiredData(), NodeChild, bChildIsTopLevelProperty, GetOwnerStackItemEditorDataKey(), GetStackEditorDataKey(), OwningNiagaraNode);
+			ChildRow->Initialize(CreateDefaultChildRequiredData(), NodeChild, bChildIsTopLevelProperty, bHideTopLevelCategories, GetOwnerStackItemEditorDataKey(), GetStackEditorDataKey(), OwningNiagaraNode);
 			ChildRow->SetOwnerGuid(OwnerGuid);
 		}
 

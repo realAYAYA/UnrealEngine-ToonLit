@@ -658,7 +658,7 @@ bool FDataTableEditorUtils::MoveRow(UDataTable* DataTable, FName RowName, ERowMo
 	}
 
 	// Swap the order around as requested
-	OrderedRowNames.RemoveAt(CurrentRowIndex, 1, false);
+	OrderedRowNames.RemoveAt(CurrentRowIndex, 1, EAllowShrinking::No);
 	OrderedRowNames.Insert(RowName, NewRowIndex);
 
 	// Build a name -> index map as the KeySort will hit this a lot

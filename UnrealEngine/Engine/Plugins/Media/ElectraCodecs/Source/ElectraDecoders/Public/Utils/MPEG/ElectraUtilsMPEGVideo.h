@@ -5,18 +5,13 @@
 #include <CoreMinimal.h>
 #include <Containers/Array.h>
 
+#include "ElectraDecodersUtils.h"
+
 namespace ElectraDecodersUtil
 {
 	namespace MPEG
 	{
-		struct FFractionalValue
-		{
-			FFractionalValue(int64 InNumerator=0, uint32 InDenominator=0)
-				: Num(InNumerator), Denom(InDenominator)
-			{ }
-			int64 Num = 0;
-			uint32 Denom = 0;
-		};
+		using ElectraDecodersUtil::FFractionalValue;
 
 		/**
 		 * Sequence parameter set as per ISO/IEC 14496-10:2012, section 7.3.2.1.1
@@ -302,20 +297,20 @@ namespace ElectraDecodersUtil
 					{
 						default:
 						case 0:
-							SubWidthC = 1; 
-							SubHeightC = 1;	
+							SubWidthC = 1;
+							SubHeightC = 1;
 							break;
-						case 1:	
-							SubWidthC = 2; 
-							SubHeightC = 2;	
+						case 1:
+							SubWidthC = 2;
+							SubHeightC = 2;
 							break;
-						case 2:	
-							SubWidthC = 2; 
-							SubHeightC = 1;	
+						case 2:
+							SubWidthC = 2;
+							SubHeightC = 1;
 							break;
-						case 3:	
-							SubWidthC = 1; 
-							SubHeightC = 1;	
+						case 3:
+							SubWidthC = 1;
+							SubHeightC = 1;
 							break;
 					}
 					Left = conf_win_left_offset * SubWidthC;
@@ -389,6 +384,16 @@ namespace ElectraDecodersUtil
 
 			int32 GetNumberOfSPS() const;
 			const FISO23008_2_seq_parameter_set_data& GetParsedSPS(int32 SpsIndex) const;
+
+			uint8 GetGeneralProfileSpace() const { return GeneralProfileSpace; }
+			uint8 GetGeneralTierFlag() const { return GeneralTierFlag; }
+			uint8 GetGeneralProfileIDC() const { return GeneralProfileIDC; }
+			uint32 GetGeneralProfileCompatibilityFlags() const { return GeneralProfileCompatibilityFlags; }
+			uint64 GetGeneralConstraintIndicatorFlags() const { return GeneralConstraintIndicatorFlags; }
+			uint8 GetGeneralLevelIDC() const { return GeneralLevelIDC; }
+			uint8 GetChromaFormat() const { return ChromaFormat; }
+			uint8 GetBitDepthLumaMinus8() const { return BitDepthLumaMinus8; }
+			uint8 GetBitDepthChromaMinus8() const { return BitDepthChromaMinus8; }
 
 		private:
 			struct FArray

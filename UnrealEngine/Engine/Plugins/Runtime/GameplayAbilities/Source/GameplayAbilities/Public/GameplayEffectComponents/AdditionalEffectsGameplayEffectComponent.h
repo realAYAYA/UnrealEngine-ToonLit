@@ -7,7 +7,7 @@
 #include "AdditionalEffectsGameplayEffectComponent.generated.h"
 
 /** Add additional Gameplay Effects that attempt to activate under certain conditions (or no conditions) */
-UCLASS(CollapseCategories)
+UCLASS(CollapseCategories, DisplayName="Apply Additional Effects")
 class GAMEPLAYABILITIES_API UAdditionalEffectsGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()

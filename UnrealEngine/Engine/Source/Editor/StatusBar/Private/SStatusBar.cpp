@@ -946,7 +946,7 @@ void SStatusBar::UpdateProgressStatus()
 				ProgressNotification.ContentWidget = ActiveNotificationProgressWidgetPin.ToSharedRef();
 				ProgressNotification.FadeOutDuration = StatusBarNotificationConstants::NotificationFadeDuration;
 				ProgressNotification.ForWindow = FSlateApplication::Get().FindWidgetWindow(AsShared());
-
+				ProgressNotification.bAllowThrottleWhenFrameRateIsLow = false;
 				ActiveProgressNotificationPin = FSlateNotificationManager::Get().AddNotification(ProgressNotification);
 
 				ActiveProgressNotification = ActiveProgressNotificationPin;

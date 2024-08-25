@@ -2,10 +2,7 @@
 
 #pragma once
 
-#include "CoreTypes.h"
-
-#define VK_NO_PROTOTYPES
-#include "vulkan.h"
+#include "VulkanThirdParty.h"
 
 // List all instance Vulkan entry points used by Unreal that need to be loaded manually
 #define ENUM_VK_ENTRYPOINTS_INSTANCE(EnumMacro) \
@@ -99,6 +96,7 @@
 	EnumMacro(PFN_vkCreateCommandPool, vkCreateCommandPool) \
 	EnumMacro(PFN_vkDestroyCommandPool, vkDestroyCommandPool) \
 	EnumMacro(PFN_vkResetCommandPool, vkResetCommandPool) \
+	EnumMacro(PFN_vkTrimCommandPool, vkTrimCommandPool) \
 	EnumMacro(PFN_vkAllocateCommandBuffers, vkAllocateCommandBuffers) \
 	EnumMacro(PFN_vkFreeCommandBuffers, vkFreeCommandBuffers) \
 	EnumMacro(PFN_vkBeginCommandBuffer, vkBeginCommandBuffer) \
@@ -216,6 +214,11 @@
 	EnumMacro(PFN_vkCmdBindDescriptorBuffersEXT, vkCmdBindDescriptorBuffersEXT) \
 	EnumMacro(PFN_vkCmdSetDescriptorBufferOffsetsEXT, vkCmdSetDescriptorBufferOffsetsEXT) \
 	EnumMacro(PFN_vkGetDescriptorEXT, vkGetDescriptorEXT) \
+	EnumMacro(PFN_vkCreateDeferredOperationKHR, vkCreateDeferredOperationKHR) \
+	EnumMacro(PFN_vkDestroyDeferredOperationKHR, vkDestroyDeferredOperationKHR) \
+	EnumMacro(PFN_vkDeferredOperationJoinKHR, vkDeferredOperationJoinKHR) \
+	EnumMacro(PFN_vkGetDeferredOperationMaxConcurrencyKHR, vkGetDeferredOperationMaxConcurrencyKHR) \
+	EnumMacro(PFN_vkGetDeferredOperationResultKHR, vkGetDeferredOperationResultKHR) \
     EnumMacro(PFN_vkCmdWriteBufferMarkerAMD, vkCmdWriteBufferMarkerAMD) \
     EnumMacro(PFN_vkCmdSetCheckpointNV, vkCmdSetCheckpointNV) \
     EnumMacro(PFN_vkGetQueueCheckpointDataNV, vkGetQueueCheckpointDataNV) \

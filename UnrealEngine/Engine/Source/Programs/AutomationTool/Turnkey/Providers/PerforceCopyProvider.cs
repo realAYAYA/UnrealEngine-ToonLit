@@ -7,6 +7,7 @@ using EpicGames.Core;
 using AutomationTool;
 using System.Text.RegularExpressions;
 using System.IO;
+using UnrealBuildBase;
 
 namespace Turnkey
 {
@@ -244,7 +245,7 @@ namespace Turnkey
 
 			string SpecRoot = StreamMatch.Groups[1].ToString();
 			string DepotName = SpecRoot.Substring(0, SpecRoot.LastIndexOf('/'));
-			string Hostname = System.Net.Dns.GetHostName();
+			string Hostname = Unreal.MachineName;
 
 			// @todo turnkey - for depot types, we can't totally safely check DepotName, we need to make sure the recent Client can handle the Operation - which we could with tricky View parsing
 			if (ConnectedRoot != SpecRoot || PerforceConnection == null)

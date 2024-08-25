@@ -26,6 +26,7 @@ public:
 
 	static TSharedPtr<SToolTip> GetTableTooltip(const Insights::FTable& Table);
 	static TSharedPtr<SToolTip> GetColumnTooltip(const Insights::FTableColumn& Column);
+	static TSharedPtr<SToolTip> GetColumnTooltipForMode(const Insights::FTableColumn& Column, ETraceFrameType InAggregationMode);
 	static TSharedPtr<SToolTip> GetRowTooltip(const TSharedPtr<FTimerNode> TreeNodePtr);
 
 	static bool GetSource(const TSharedPtr<FTimerNode> TreeNodePtr, FText& OutSourcePrefix, FText& OutSourceSuffix);

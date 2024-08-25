@@ -51,27 +51,27 @@ struct FActorPartitionGetParams
 
 struct FActorPartitionIdentifier
 {
-	FActorPartitionIdentifier(UClass* InClass, const FGuid& InGridGuid, const uint32& InDataLayerEditorContextHash)
+	FActorPartitionIdentifier(UClass* InClass, const FGuid& InGridGuid, const uint32& InContextHash)
 		: Class(InClass)
 		, GridGuid(InGridGuid)
-		, DataLayerEditorContextHash(InDataLayerEditorContextHash)
+		, ContextHash(InContextHash)
 	{}
 
-	bool operator == (const FActorPartitionIdentifier& Other) const { return Class == Other.Class && GridGuid == Other.GridGuid && DataLayerEditorContextHash == Other.DataLayerEditorContextHash; }
+	bool operator == (const FActorPartitionIdentifier& Other) const { return Class == Other.Class && GridGuid == Other.GridGuid && ContextHash == Other.ContextHash; }
 
 	friend uint32 GetTypeHash(const FActorPartitionIdentifier& Id)
 	{
-		return GetTypeHash(Id.Class.Get()->GetName()) ^ GetTypeHash(Id.GridGuid) ^ GetTypeHash(Id.DataLayerEditorContextHash);
+		return GetTypeHash(Id.Class.Get()->GetName()) ^ GetTypeHash(Id.GridGuid) ^ GetTypeHash(Id.ContextHash);
 	}
 
 	const TSubclassOf<APartitionActor>& GetClass() const { return Class; }
 	const FGuid& GetGridGuid() const { return GridGuid; }
-	uint32 GetDataLayerEditorContextHash() const { return DataLayerEditorContextHash; }
-
+	uint32 GetContextHash() const { return ContextHash; }
+	static const uint32 EmptyContextHash = 0;
 private:
 	TSubclassOf<APartitionActor> Class;
 	FGuid GridGuid;
-	uint32 DataLayerEditorContextHash;
+	uint32 ContextHash;
 };
 
 #endif
@@ -174,6 +174,9 @@ public:
 	ENGINE_API void ForEachRelevantActor(const TSubclassOf<APartitionActor>& InActorClass, const FBox& IntersectionBounds, TFunctionRef<bool(APartitionActor*)>InOperation) const;
 #endif
 	ENGINE_API bool IsLevelPartition() const;
+
+protected:
+	ENGINE_API virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 
 private:
 

@@ -17,6 +17,7 @@ struct SYMS_ElfImgHeader
   SYMS_U64 sh_name_low_offset;
   SYMS_U64 sh_name_high_offset;
   SYMS_U64 base_address;
+  SYMS_U64 entry_point;
 };
 
 typedef struct SYMS_ElfSection SYMS_ElfSection;
@@ -98,6 +99,7 @@ SYMS_API SYMS_ElfBinAccel *syms_elf_bin_accel_from_file(SYMS_Arena *arena, SYMS_
 SYMS_API SYMS_ExtFileList  syms_elf_ext_file_list_from_bin(SYMS_Arena *arena, SYMS_String8 file, SYMS_ElfBinAccel *bin_accel);
 SYMS_API SYMS_SecInfoArray syms_elf_sec_info_array_from_bin(SYMS_Arena *arena, SYMS_String8 data, SYMS_ElfBinAccel *bin);
 SYMS_API SYMS_U64          syms_elf_default_vbase_from_bin(SYMS_ElfBinAccel *bin);
+SYMS_API SYMS_U64          syms_elf_entry_point_voff_from_bin(SYMS_ElfBinAccel *bin);
 
 SYMS_API SYMS_Arch         syms_elf_arch_from_bin(SYMS_ElfBinAccel *bin);
 

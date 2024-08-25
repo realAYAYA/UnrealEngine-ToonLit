@@ -30,12 +30,8 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-		int GetInputCount() const override;
-		Node* GetInputNode(int i) const override;
-		void SetInputNode(int i, NodePtr pNode) override;
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -45,7 +41,7 @@ namespace mu
 		void SetVariationCount(int InCount);
 		int GetVariationCount() const;
 
-		void SetVariationTag(int InIndex, const char* InStrTag);
+		void SetVariationTag(int InIndex, const FString& InTag);
 
 		void SetVariationValue(int InIndex, NodeExtensionDataPtr InValue);
 

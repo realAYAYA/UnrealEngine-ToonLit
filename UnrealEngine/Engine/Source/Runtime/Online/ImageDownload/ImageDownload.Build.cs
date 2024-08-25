@@ -13,6 +13,7 @@ public class ImageDownload : ModuleRules
 				"Core",
 				"HTTP",
 				"SlateCore",
+				"ImageCore",
 				"ImageWrapper",
 			}
 			);

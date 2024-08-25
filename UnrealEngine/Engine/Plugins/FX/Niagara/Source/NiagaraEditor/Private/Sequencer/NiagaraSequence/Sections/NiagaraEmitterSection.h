@@ -18,7 +18,7 @@ public:
 	virtual UMovieSceneSection* GetSectionObject(void) override;
 	virtual int32 OnPaintSection(FSequencerSectionPainter& InPainter) const override;
 	virtual FText GetSectionTitle(void) const override;
-	virtual float GetSectionHeight() const override { return 20.0f; }
+	virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const override;
 
 private:
 	UMovieSceneNiagaraEmitterSection* EmitterSection;

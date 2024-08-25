@@ -31,7 +31,7 @@ public:
 	static FLinearColor GetTypeColor(const FName& Type);
 };
 
-class FDataflowConnectionDrawingPolicy : public FConnectionDrawingPolicy
+class FDataflowConnectionDrawingPolicy : public FConnectionDrawingPolicy, public FGCObject
 {
 public:
 	FDataflowConnectionDrawingPolicy(int32 InBackLayerID, int32 InFrontLayerID, float InZoomFactor, const FSlateRect& InClippingRect, FSlateWindowElementList& InDrawElements, UEdGraph* InGraph);
@@ -39,7 +39,11 @@ public:
 
 	const UDataflowSchema* GetSchema() { return Schema; }
 
+	/** FGCObject interface */
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override { return TEXT("FDataflowConnectionDrawingPolicy"); }
+
 private:
-	class UDataflowSchema* Schema;
+	TObjectPtr<UDataflowSchema> Schema = nullptr;
 };
 

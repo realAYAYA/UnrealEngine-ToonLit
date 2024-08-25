@@ -8,6 +8,7 @@
 
 #include "Containers/ContainersFwd.h"
 #include "RHIDefinitions.h"
+#include "Templates/TypeHash.h" // This must be before StaticArray to resolve adl compile error in nopch unity builds
 #include "Containers/StaticArray.h"
 #include "Containers/StringFwd.h"
 #include "Math/IntRect.h"
@@ -303,18 +304,42 @@ struct FRasterizerStateInitializerRHI
 	float SlopeScaleDepthBias = 0.0f;
 	ERasterizerDepthClipMode DepthClipMode = ERasterizerDepthClipMode::DepthClip;
 	bool bAllowMSAA = false;
+	UE_DEPRECATED(5.4, "bEnableLineAA is unsupported")
 	bool bEnableLineAA = false;
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FRasterizerStateInitializerRHI() = default;
+	FRasterizerStateInitializerRHI(const FRasterizerStateInitializerRHI&) = default;
+	FRasterizerStateInitializerRHI(FRasterizerStateInitializerRHI&&) = default;
+	FRasterizerStateInitializerRHI& operator=(const FRasterizerStateInitializerRHI&) = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	FRasterizerStateInitializerRHI(ERasterizerFillMode InFillMode, ERasterizerCullMode InCullMode, bool bInAllowMSAA)
+		: FillMode(InFillMode)
+		, CullMode(InCullMode)
+		, bAllowMSAA(bInAllowMSAA)
+	{
+	}
+
+	FRasterizerStateInitializerRHI(ERasterizerFillMode InFillMode, ERasterizerCullMode InCullMode, float InDepthBias, float InSlopeScaleDepthBias, ERasterizerDepthClipMode InDepthClipMode, bool bInAllowMSAA)
+		: FillMode(InFillMode)
+		, CullMode(InCullMode)
+		, DepthBias(InDepthBias)
+		, SlopeScaleDepthBias(InSlopeScaleDepthBias)
+		, DepthClipMode(InDepthClipMode)
+		, bAllowMSAA(bInAllowMSAA)
+	{
+	}
+
+	UE_DEPRECATED(5.4, "bEnableLineAA is unsupported")
 	FRasterizerStateInitializerRHI(ERasterizerFillMode InFillMode, ERasterizerCullMode InCullMode, bool bInAllowMSAA, bool bInEnableLineAA)
 		: FillMode(InFillMode)
 		, CullMode(InCullMode)
 		, bAllowMSAA(bInAllowMSAA)
-		, bEnableLineAA(bInEnableLineAA)
 	{
 	}
 
+	UE_DEPRECATED(5.4, "bEnableLineAA is unsupported")
 	FRasterizerStateInitializerRHI(ERasterizerFillMode InFillMode, ERasterizerCullMode InCullMode, float InDepthBias, float InSlopeScaleDepthBias, ERasterizerDepthClipMode InDepthClipMode, bool bInAllowMSAA, bool bInEnableLineAA)
 		: FillMode(InFillMode)
 		, CullMode(InCullMode)
@@ -322,11 +347,10 @@ struct FRasterizerStateInitializerRHI
 		, SlopeScaleDepthBias(InSlopeScaleDepthBias)
 		, DepthClipMode(InDepthClipMode)
 		, bAllowMSAA(bInAllowMSAA)
-		, bEnableLineAA(bInEnableLineAA)
 	{
 	}
 
-	friend FArchive& operator<<(FArchive& Ar,FRasterizerStateInitializerRHI& RasterizerStateInitializer)
+	friend FArchive& operator<<(FArchive& Ar, FRasterizerStateInitializerRHI& RasterizerStateInitializer)
 	{
 		Ar << RasterizerStateInitializer.FillMode;
 		Ar << RasterizerStateInitializer.CullMode;
@@ -334,7 +358,6 @@ struct FRasterizerStateInitializerRHI
 		Ar << RasterizerStateInitializer.SlopeScaleDepthBias;
 		Ar << RasterizerStateInitializer.DepthClipMode;
 		Ar << RasterizerStateInitializer.bAllowMSAA;
-		Ar << RasterizerStateInitializer.bEnableLineAA;
 		return Ar;
 	}
 
@@ -618,6 +641,9 @@ extern RHI_API void RHIPostInit(const TArray<uint32>& InPixelFormatByteWidth);
 /** Shuts down the RHI. */
 extern RHI_API void RHIExit();
 
+// Detect whether the current driver is denylisted and show a message box
+// prompting to update it if necessary.
+extern RHI_API void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken);
 
 // Panic delegate is called when when a fatal condition is encountered within RHI function.
 DECLARE_DELEGATE_OneParam(FRHIPanicEvent, const FName&);

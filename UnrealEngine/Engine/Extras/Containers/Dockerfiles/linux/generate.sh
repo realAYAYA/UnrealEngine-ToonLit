@@ -15,7 +15,7 @@ function generateDockerfile {
 		# Engine source code are defined by Docker build arguments that the user sets when building images with the generated Dockerfiles.
 		# The need to specify a release number is purely an artifact of how the `ue4-docker build` command was originally designed prior to
 		# the addition of functionality to generate Dockerfiles rather than always building container images.
-		'5.0.0'
+		--ue-version '5.0.0'
 		
 		# Ensure that we generate Dockerfiles for Linux container images even if this script is run on a Windows host system (e.g. in git bash)
 		# (Note that although generating the Dockerfiles under Windows is fine, it is NOT recommended that the images actually be built under Windows)
@@ -30,11 +30,17 @@ function generateDockerfile {
 		# This specifies the individual images whose Dockerfiles will be combined
 		--target=build-prerequisites,source,minimal
 		
-		# This disables building the Engine for AArch64 when creating an Installed Build, and enables support for client and dedicated server targets
-		--opt buildgraph-args='-set:WithLinuxArm64=false -set:WithClient=true -set:WithServer=true'
+		# This sets the Build ID, disables building the Engine for AArch64, and enables support for client and dedicated server targets
+		--opt buildgraph-args='-set:BuildIdOverride=UE_5.4 -set:WithLinuxArm64=false -set:WithClient=true -set:WithServer=true'
+		
+		# This ensures we do not exclude binary files for any platforms
+		--opt gitdependencies-args=''
 		
 		# This enables the use of BuildKit build secrets, which is necessary in order to build images independently of ue4-docker itself
 		--opt credential-mode=secrets
+		
+		# This enables support for ushell
+		--opt enable-ushell=true
 		
 		# This strips out the Dockerfile code that ue4-docker would ordinarily generate that is uneccesary for Unreal Engine 4.26+
 		--opt disable-all-patches
@@ -42,8 +48,8 @@ function generateDockerfile {
 		# This strips out the image labels that are ordinarily used to facilitate cleanup and inspection of images built by ue4-docker
 		--opt disable-labels
 		
-		# This enables the glibc DSO sorting patch, which significantly improves Editor startup times
-		--opt enable-dso-patch
+		# This disables the glibc DSO sorting patch, since it is not needed under Ubuntu 22.04
+		--opt enable_dso_patch=false
 	)
 	
 	# Invoke ue4-docker to generate the Dockerfile

@@ -3,8 +3,8 @@
 #include "DMXPixelMappingPixelMapRenderer.h"
 
 #include "DMXPixelMappingRenderElement.h"
+#include "DMXPixelMappingRenderPixelMapProxy.h"
 #include "Engine/TextureRenderTarget2D.h"
-#include "RenderPixelMapProxy.h"
 #include "RenderingThread.h"
 
 
@@ -13,10 +13,10 @@ const FIntPoint UDMXPixelMappingPixelMapRenderer::MaxPixelMapSize = FIntPoint(40
 UDMXPixelMappingPixelMapRenderer::UDMXPixelMappingPixelMapRenderer()
 {
 	using namespace UE::DMXPixelMapping::Rendering::Private;
-	RendererPixelMapProxy = MakeShared<FRenderPixelMapProxy>();
+	RendererPixelMapProxy = MakeShared<FDMXPixelMappingRenderPixelMapProxy>();
 }
 
-void UDMXPixelMappingPixelMapRenderer::SetElements(const TArray<TSharedRef<UE::DMXPixelMapping::Rendering::FPixelMapRenderElement>>& InElements)
+void UDMXPixelMappingPixelMapRenderer::SetElements(const TArray<TSharedRef<UE::DMXPixelMapping::Rendering::FPixelMapRenderElement>>& InElements, EPixelFormat InFormat)
 {
 	check(IsInGameThread());
 
@@ -48,15 +48,19 @@ void UDMXPixelMappingPixelMapRenderer::SetElements(const TArray<TSharedRef<UE::D
 	};
 
 	// Create a new render target if needed
+	constexpr bool bForceLinearGamma = false;
 	if (!PixelMapRenderTarget)
 	{
 		const FName TargetName = MakeUniqueObjectName(this, UTextureRenderTarget2D::StaticClass(), TEXT("PixelMapRenderTarget"));
 		PixelMapRenderTarget = NewObject<UTextureRenderTarget2D>(this, TargetName);
 		PixelMapRenderTarget->ClearColor = FLinearColor::Black;
 
-		constexpr bool bInForceLinearGamma = false;
 		const FVector2D InitialSize{ 1.0, 1.0 };
-		PixelMapRenderTarget->InitCustomFormat(ValidSize.X, ValidSize.Y, EPixelFormat::PF_B8G8R8A8, bInForceLinearGamma);
+		PixelMapRenderTarget->InitCustomFormat(ValidSize.X, ValidSize.Y, InFormat, bForceLinearGamma);
+	}
+	else if (PixelMapRenderTarget->GetFormat() != InFormat)
+	{
+		PixelMapRenderTarget->InitCustomFormat(ValidSize.X, ValidSize.Y, InFormat, bForceLinearGamma);
 	}
 	else if (ValidSize.X != PixelMapRenderTarget->GetSurfaceWidth() || ValidSize.Y != PixelMapRenderTarget->GetSurfaceHeight())
 	{
@@ -64,6 +68,12 @@ void UDMXPixelMappingPixelMapRenderer::SetElements(const TArray<TSharedRef<UE::D
 	}
 
 	RenderElements = InElements;
+}
+
+void UDMXPixelMappingPixelMapRenderer::SetElements(const TArray<TSharedRef<UE::DMXPixelMapping::Rendering::FPixelMapRenderElement>>& InElements)
+{
+	// DERPECATED 5.4 - Use EPixelFormat::PF_B8G8R8A8 as it was used up to 5.4
+	SetElements(InElements, EPixelFormat::PF_B8G8R8A8);
 }
 
 void UDMXPixelMappingPixelMapRenderer::Render(UTexture* InputTexture, float Brightness)

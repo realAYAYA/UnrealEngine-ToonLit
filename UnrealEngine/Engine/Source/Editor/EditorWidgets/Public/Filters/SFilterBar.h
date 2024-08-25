@@ -40,7 +40,6 @@ public:
 	using FOnFilterChanged = typename SBasicFilterBar<FilterType>::FOnFilterChanged;
 	using FConvertItemToAssetData = typename FAssetFilter<FilterType>::FConvertItemToAssetData;
 	using FCompareItemWithClassNames = typename FAssetFilter<FilterType>::FCompareItemWithClassNames;
-	using FOnExtendAddFilterMenu = typename SBasicFilterBar<FilterType>::FOnExtendAddFilterMenu;
 	using FCreateTextFilter = typename SBasicFilterBar<FilterType>::FCreateTextFilter;
 	using SFilter = typename SBasicFilterBar<FilterType>::SFilter;
 	
@@ -50,6 +49,7 @@ public:
 	    , _FilterBarLayout(EFilterBarLayout::Horizontal)
 		, _CanChangeOrientation(false)
 		, _FilterPillStyle(EFilterPillStyle::Default)
+		, _DefaultMenuExpansionCategory(EAssetCategoryPaths::Basic)
 		{
 		
 		}
@@ -97,6 +97,9 @@ public:
 		
 		/** Determines how each individual filter pill looks like */
 		SLATE_ARGUMENT(EFilterPillStyle, FilterPillStyle)
+
+		/** The filter menu category to expand. */
+		SLATE_ARGUMENT(TOptional<FAssetCategoryPath>, DefaultMenuExpansionCategory);
 	
 	SLATE_END_ARGS()
 
@@ -115,6 +118,7 @@ public:
 		Args._FilterBarLayout = InArgs._FilterBarLayout;
         Args._CanChangeOrientation = InArgs._CanChangeOrientation;
 		Args._FilterPillStyle = InArgs._FilterPillStyle;
+		Args._DefaultMenuExpansionCategory = InArgs._DefaultMenuExpansionCategory;
 		
 		SAssetFilterBar<FilterType>::Construct(Args);
 		

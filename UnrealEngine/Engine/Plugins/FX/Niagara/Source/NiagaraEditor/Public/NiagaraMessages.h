@@ -25,8 +25,7 @@ enum class ENiagaraMessageSeverity : uint8
 	Error = 1,
 	PerformanceWarning = 2,
 	Warning = 3,
-	Info = 4,
-	CustomNote = 5 // Should be last
+	Info = 4
 };
 
 //Struct for passing around script asset info from compile event message job to message types
@@ -253,13 +252,39 @@ struct FNiagaraStackMessage
 	FText ShortDescription;
 
 	UPROPERTY()
-	ENiagaraMessageSeverity MessageSeverity = ENiagaraMessageSeverity::CustomNote;
+	ENiagaraMessageSeverity MessageSeverity = ENiagaraMessageSeverity::Info;
 
 	UPROPERTY()
 	bool bAllowDismissal = true;
 
 	UPROPERTY()
 	FGuid Guid;
+};
+
+USTRUCT()
+struct FNiagaraStackNoteData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FText MessageHeader;
+	
+	UPROPERTY()
+	FText Message;
+
+	/** If true, this note should be used inline for a stack entry, instead of adding additional rows. */
+	UPROPERTY()
+	bool bInlineNote = false;
+
+	bool operator==(const FNiagaraStackNoteData& Other) const
+	{
+		return MessageHeader.EqualTo(Other.MessageHeader) && Message.EqualTo(Other.Message); 
+	}
+
+	bool IsValid() const
+	{
+		return MessageHeader.IsEmpty() == false || Message.IsEmpty() == false;
+	}
 };
 
 struct FGenerateNiagaraMessageInfo

@@ -22,7 +22,9 @@ FVideoEncoder::~FVideoEncoder()
 	}
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 bool FVideoEncoder::AddLayer(FLayerConfig const& config)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
     if (GetNumLayers() >= GetMaxLayers())
     {
@@ -39,7 +41,9 @@ bool FVideoEncoder::AddLayer(FLayerConfig const& config)
     return false;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FVideoEncoder::FLayerConfig FVideoEncoder::GetLayerConfig(uint32 layerIdx) const
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	if (layerIdx >= GetNumLayers())
 	{
@@ -47,10 +51,15 @@ FVideoEncoder::FLayerConfig FVideoEncoder::GetLayerConfig(uint32 layerIdx) const
 		return {};
 	}
 
-	return Layers[layerIdx]->GetConfig();
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+    return Layers[layerIdx]->GetConfig();
+    PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoEncoder::UpdateLayerConfig(uint32 layerIdx, FLayerConfig const& config)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
     if (layerIdx >= GetNumLayers())
     {
@@ -58,7 +67,10 @@ void FVideoEncoder::UpdateLayerConfig(uint32 layerIdx, FLayerConfig const& confi
         return;
     }
 
+    PRAGMA_DISABLE_DEPRECATION_WARNINGS
     Layers[layerIdx]->UpdateConfig(config);
+    PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
+
 
 } /* namespace AVEncoder */

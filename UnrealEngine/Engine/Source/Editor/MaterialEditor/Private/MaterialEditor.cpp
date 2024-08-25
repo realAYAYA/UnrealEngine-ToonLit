@@ -42,6 +42,7 @@
 #include "Engine/TextureCube.h"
 #include "Engine/Texture2DArray.h"
 #include "Engine/TextureCubeArray.h"
+#include "SparseVolumeTexture/SparseVolumeTexture.h"
 #include "Dialogs/Dialogs.h"
 #include "UnrealEdGlobals.h"
 #include "Editor.h"
@@ -85,6 +86,8 @@
 #include "Materials/MaterialExpressionTextureSampleParameter2DArray.h"
 #include "Materials/MaterialExpressionTextureSampleParameterCubeArray.h"
 #include "Materials/MaterialExpressionTextureSampleParameterSubUV.h"
+#include "Materials/MaterialExpressionSparseVolumeTextureSample.h"
+#include "Materials/MaterialExpressionSparseVolumeTextureObject.h"
 #include "Materials/MaterialExpressionTransformPosition.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionDoubleVectorParameter.h"
@@ -148,25 +151,30 @@
 #include "Materials/MaterialExpressionMaterialLayerOutput.h"
 #include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialExpressionReroute.h"
-#include "Materials/MaterialExpressionStrata.h"
+#include "Materials/MaterialExpressionSubstrate.h"
 
 #include "MaterialStats.h"
 #include "MaterialEditorTabs.h"
 #include "MaterialEditorModes.h"
 #include "Materials/MaterialExpression.h"
 #include "MaterialCachedHLSLTree.h"
-#include "SMaterialEditorStrataWidget.h"
+#include "SMaterialEditorSubstrateWidget.h"
+#include "SGraphSubstrateMaterial.h"
 
 #include "SMaterialParametersOverviewWidget.h"
 #include "SMaterialEditorCustomPrimitiveDataWidget.h"
 #include "IPropertyRowGenerator.h"
+#include "LandscapeMaterialInstanceConstant.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "UObject/TextProperty.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "ToolMenus.h"
+#include "MaterialEditorHelpers.h"
 #include "MaterialEditorContext.h"
 #include "UObject/MetaData.h"
 #include "ToolMenus.h"
+
+
 
 #define LOCTEXT_NAMESPACE "MaterialEditor"
 
@@ -177,6 +185,16 @@ static TAutoConsoleVariable<int32> CVarMaterialEdUseDevShaders(
 	1,
 	TEXT("Toggles whether the material editor will use shaders that include extra overhead incurred by the editor. Material editor must be re-opened if changed at runtime."),
 	ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarMaterialEdMaxDerivedMaterialInstances(
+	TEXT("r.MaterialEditor.MaxDerivedMaterialInstances"),
+	-1,
+	TEXT("Limits amount of derived material instance shown in platform stats. Use negative number to disable the limit. Material editor must be re-opened if changed at runtime."));
+
+TAutoConsoleVariable<bool> CVarMaterialEdAllowIgnoringCompilationErrors(
+	TEXT("r.MaterialEditor.AllowIgnoringCompilationErrors"),
+	true,
+	TEXT("Allow ignoring compilation errors of platform shaders and derived materials."));
 
 ///////////////////////////
 // FMatExpressionPreview //
@@ -212,7 +230,7 @@ FMatExpressionPreview::FMatExpressionPreview(UMaterialExpression* InExpression)
 		CachedHLSLTree.Reset(LocalTree);
 
 		FMaterialCachedExpressionData* LocalCachedData = new FMaterialCachedExpressionData();
-		LocalCachedData->UpdateForCachedHLSLTree(*LocalTree, nullptr);
+		LocalCachedData->UpdateForCachedHLSLTree(*LocalTree, nullptr, BaseMaterial);
 		CachedExpressionData.Reset(LocalCachedData);
 	}
 	else
@@ -273,13 +291,19 @@ bool FMatExpressionPreview::ShouldCache(EShaderPlatform Platform, const FShaderT
 
 int32 FMatExpressionPreview::CompilePropertyAndSetMaterialProperty(EMaterialProperty Property, FMaterialCompiler* Compiler, EShaderFrequency OverrideShaderFrequency, bool bUsePreviousFrameTime) const
 {
+	// Early out if the compiler wishes to terminate translation.
+	if (Compiler->ShouldStopTranslating())
+	{
+		return INDEX_NONE;
+	}
+
 	// needs to be called in this function!!
 	Compiler->SetMaterialProperty(Property, OverrideShaderFrequency, bUsePreviousFrameTime);
 
-	if(Strata::IsStrataEnabled())
+	if(Substrate::IsSubstrateEnabled())
 	{
-		// Set the Strata export mode to material preview
-		Compiler->SetStrataMaterialExportType(SME_MaterialPreview, EStrataMaterialExportContext::SMEC_Opaque, 0);
+		// Set the Substrate export mode to material preview
+		Compiler->SetSubstrateMaterialExportType(SME_MaterialPreview, ESubstrateMaterialExportContext::SMEC_Opaque, 0);
 	}
 
 	int32 Ret = INDEX_NONE;
@@ -312,9 +336,9 @@ int32 FMatExpressionPreview::CompilePropertyAndSetMaterialProperty(EMaterialProp
 	else if (Property == MP_FrontMaterial)
 	{
 		// No need to compile the front material: when previewing a node, the FrontMaterial is plugged into the emissive color.
-		// Then CompilePreview is called, and this is where we convert the strata material to a single color for preview.
+		// Then CompilePreview is called, and this is where we convert the Substrate material to a single color for preview.
 		// That single color is then scheduled to be output thanks to setting the compiler as SME_MaterialPreview. 
-		return Compiler->StrataCreateAndRegisterNullMaterial();
+		return Compiler->SubstrateCreateAndRegisterNullMaterial();
 	}
 	else
 	{
@@ -443,10 +467,10 @@ void FMaterialEditor::RegisterToolbarTab(const TSharedRef<class FTabManager>& In
 		.SetGroup(WorkspaceMenuCategoryRef)
 		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Tabs.Layers"));
 
-	InTabManager->RegisterTabSpawner(FMaterialEditorTabs::StrataTabId, FOnSpawnTab::CreateSP(this, &FMaterialEditor::SpawnTab_Strata))
+	InTabManager->RegisterTabSpawner(FMaterialEditorTabs::SubstrateTabId, FOnSpawnTab::CreateSP(this, &FMaterialEditor::SpawnTab_Substrate))
 		.SetDisplayName(LOCTEXT("SubstrateTab", "Substrate"))
 		.SetGroup(WorkspaceMenuCategoryRef)
-		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "Kismet.Tabs.Palette"));	// STRATA_TODO a strata icon
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "Kismet.Tabs.Palette"));	// SUBSTRATE_TODO a Substrate icon
 
 	MaterialStatsManager->RegisterTabs();
 
@@ -471,7 +495,7 @@ void FMaterialEditor::UnregisterTabSpawners(const TSharedRef<class FTabManager>&
 	InTabManager->UnregisterTabSpawner(FMaterialEditorTabs::ParameterDefaultsTabId);
 	InTabManager->UnregisterTabSpawner(FMaterialEditorTabs::CustomPrimitiveTabId);
 	InTabManager->UnregisterTabSpawner(FMaterialEditorTabs::LayerPropertiesTabId);
-	InTabManager->UnregisterTabSpawner(FMaterialEditorTabs::StrataTabId);
+	InTabManager->UnregisterTabSpawner(FMaterialEditorTabs::SubstrateTabId);
 
 	MaterialStatsManager->UnregisterTabs();
 
@@ -546,8 +570,8 @@ void FMaterialEditor::InitMaterialEditor( const EToolkitMode::Type Mode, const T
 
 	GEditor->RegisterForUndo(this);
 
-	MaterialStatsManager = FMaterialStatsUtils::CreateMaterialStats(this);
-	MaterialStatsManager->SetMaterialDisplayName(OriginalMaterial->GetName());
+	MaterialStatsManager = FMaterialStatsUtils::CreateMaterialStats(this, true, CVarMaterialEdAllowIgnoringCompilationErrors.GetValueOnGameThread());
+	MaterialStatsManager->SetMaterialsDisplayNames({OriginalMaterial->GetName()});
 	MaterialStatsManager->GetOldStatsListing()->OnMessageTokenClicked().AddSP(this, &FMaterialEditor::OnMessageLogLinkActivated);
 
 	if (!Material->MaterialGraph)
@@ -1594,7 +1618,7 @@ void FMaterialEditor::CreateInternalWidgets()
 	FindResults =
 		SNew(SFindInMaterial, SharedThis(this));
 
-	StrataWidget = SNew(SMaterialEditorStrataWidget, SharedThis(this));
+	SubstrateWidget = SNew(SMaterialEditorSubstrateWidget, SharedThis(this));
 
 	RegenerateCodeView();
 }
@@ -1945,6 +1969,15 @@ void FMaterialEditor::GenerateInheritanceMenu(UToolMenu* Menu)
 	}
 }
 
+void FMaterialEditor::RefreshStatsMaterials()
+{
+	// unconditionally recreate as settings might have changed
+	CreateDerivedMaterialInstancesPreviews();
+
+	MaterialStatsManager->SetMaterial(bStatsFromPreviewMaterial ? Material : OriginalMaterial, bStatsFromPreviewMaterial ? DerivedMaterialInstances : OriginalDerivedMaterialInstances);
+	MaterialStatsManager->SignalMaterialChanged();
+}
+
 void FMaterialEditor::GeneratePreviewMenuContent(UToolMenu* Menu)
 {
 	Menu->bShouldCloseWindowAfterMenuSelection = true;
@@ -2111,12 +2144,28 @@ void FMaterialEditor::AddGraphEditorPinActionsToContextMenu(FToolMenuSection& In
 		);
 	}
 
+	// Reset to Default Value
 	{
-		auto AddStrataContextualMenu = [&](TSharedPtr<FUICommandInfo> CreateNodeCommand, EStrataNodeForPin StrataNodeForPin)
+		FToolUIAction ResetToDefaultAction;
+		ResetToDefaultAction.ExecuteAction = FToolMenuExecuteAction::CreateSP(this, &FMaterialEditor::OnResetToDefault);
+		ResetToDefaultAction.IsActionVisibleDelegate = FToolMenuIsActionButtonVisible::CreateSP(this, &FMaterialEditor::OnCanResetToDefault);
+
+		TSharedPtr<FUICommandInfo> ResetToDefaultCommand = FMaterialEditorCommands::Get().ResetToDefault;
+		InSection.AddMenuEntry(
+			ResetToDefaultCommand->GetCommandName(),
+			ResetToDefaultCommand->GetLabel(),
+			ResetToDefaultCommand->GetDescription(),
+			ResetToDefaultCommand->GetIcon(),
+			ResetToDefaultAction
+		);
+	}
+
+	{
+		auto AddSubstrateContextualMenu = [&](TSharedPtr<FUICommandInfo> CreateNodeCommand, ESubstrateNodeForPin SubstrateNodeForPin)
 		{
 			FToolUIAction CreateNodeAction;
-			CreateNodeAction.ExecuteAction = FToolMenuExecuteAction::CreateSP(this, &FMaterialEditor::OnCreateStrataNodeForPin, StrataNodeForPin);
-			CreateNodeAction.IsActionVisibleDelegate = FToolMenuIsActionButtonVisible::CreateSP(this, &FMaterialEditor::OnCanCreateStrataNodeForPin, StrataNodeForPin);
+			CreateNodeAction.ExecuteAction = FToolMenuExecuteAction::CreateSP(this, &FMaterialEditor::OnCreateSubstrateNodeForPin, SubstrateNodeForPin);
+			CreateNodeAction.IsActionVisibleDelegate = FToolMenuIsActionButtonVisible::CreateSP(this, &FMaterialEditor::OnCanCreateSubstrateNodeForPin, SubstrateNodeForPin);
 
 			InSection.AddMenuEntry(
 				CreateNodeCommand->GetCommandName(),
@@ -2126,10 +2175,10 @@ void FMaterialEditor::AddGraphEditorPinActionsToContextMenu(FToolMenuSection& In
 				CreateNodeAction
 			);
 		};
-		AddStrataContextualMenu(FMaterialEditorCommands::Get().CreateSlabNode, EStrataNodeForPin::Slab);
-		AddStrataContextualMenu(FMaterialEditorCommands::Get().CreateHorizontalMixNode, EStrataNodeForPin::HorizontalMix);
-		AddStrataContextualMenu(FMaterialEditorCommands::Get().CreateVerticalLayerNode, EStrataNodeForPin::VerticalLayer);
-		AddStrataContextualMenu(FMaterialEditorCommands::Get().CreateWeightNode, EStrataNodeForPin::Weight);
+		AddSubstrateContextualMenu(FMaterialEditorCommands::Get().CreateSlabNode, ESubstrateNodeForPin::Slab);
+		AddSubstrateContextualMenu(FMaterialEditorCommands::Get().CreateHorizontalMixNode, ESubstrateNodeForPin::HorizontalMix);
+		AddSubstrateContextualMenu(FMaterialEditorCommands::Get().CreateVerticalLayerNode, ESubstrateNodeForPin::VerticalLayer);
+		AddSubstrateContextualMenu(FMaterialEditorCommands::Get().CreateWeightNode, ESubstrateNodeForPin::Weight);
 	}
 }
 
@@ -2521,6 +2570,7 @@ void FMaterialEditor::UpdatePreviewMaterial( bool bForce )
 
 	if( PreviewExpression && ExpressionPreviewMaterial )
 	{
+		ExpressionPreviewMaterial->UpdateCachedExpressionData();
 		PreviewExpression->ConnectToPreviewMaterial(ExpressionPreviewMaterial,0);
 	}
 
@@ -2565,17 +2615,29 @@ void FMaterialEditor::UpdatePreviewMaterial( bool bForce )
 		// Null out the expression preview material so they can be GC'ed
 		ExpressionPreviewMaterial = NULL;
 	}
-	MaterialStatsManager->SetMaterial(bStatsFromPreviewMaterial ? Material : OriginalMaterial);
+
+	if (DerivedMaterialInstances.IsEmpty())
+	{
+		CreateDerivedMaterialInstancesPreviews();
+	}
+
+	MaterialStatsManager->SetMaterial(bStatsFromPreviewMaterial ? Material : OriginalMaterial, bStatsFromPreviewMaterial ? DerivedMaterialInstances : OriginalDerivedMaterialInstances);
 	MaterialStatsManager->SignalMaterialChanged();
 
 	// Reregister all components that use the preview material, since UMaterial::PEC does not reregister components using a bIsPreviewMaterial=true material
 	RefreshPreviewViewport();
 }
 
-
-
 bool FMaterialEditor::UpdateOriginalMaterial()
 {
+	if (MaterialStatsManager->GetProvideDerivedMIFlag())
+	{
+		MaterialStatsManager->CacheAndCompilePendingShaders();
+	}
+
+	TArray<FText> Errors;
+	bool bBaseMaterialFailsToCompile = false;
+
 	// If the Material has compilation errors, warn the user
 	for (int32 i = ERHIFeatureLevel::Num - 1; i >= 0; --i)
 	{
@@ -2585,31 +2647,74 @@ bool FMaterialEditor::UpdateOriginalMaterial()
 		{
 			FString FeatureLevelName;
 			GetFeatureLevelName(FeatureLevel, FeatureLevelName);
+			Errors.Push(FText::Format(NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInMaterial_ListEntryFeatureLevel", "- At feature level {0}."), FText::FromString(*FeatureLevelName)));
+			bBaseMaterialFailsToCompile = true;
+		}
+	}
 
-			if (Material->bUsedAsSpecialEngineMaterial)
+	// If derived material instances have compilation errors, warn the user
+	const auto& PlatformList = MaterialStatsManager->GetPlatformsDB();
+	for (const auto& Pair : PlatformList)
+	{
+		const auto& PlatformPtr = Pair.Value;
+		if (PlatformPtr->IsPresentInGrid())
+		{
+			for (int32 QualityLevel = 0; QualityLevel < EMaterialQualityLevel::Num; ++QualityLevel)
 			{
-				FSuppressableWarningDialog::FSetupInfo Info(
-					FText::Format(NSLOCTEXT("UnrealEd", "Error_CompileErrorsInDefaultMaterial", "The current material has compilation errors for feature level {0}.\nThis material is a Default Material which must be available as a code fallback at all times, compilation errors are not allowed."), FText::FromString(*FeatureLevelName)),
-					NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInDefaultMaterial_Title", "Error: Compilation errors in Default Material"), "Error_CompileErrorsInDefaultMaterial");
-				Info.ConfirmText = NSLOCTEXT("ModalDialogs", "CompileErrorsInDefaultMaterialOk", "Ok");
+				const auto& PlatformData = PlatformPtr->GetPlatformData((EMaterialQualityLevel::Type)QualityLevel);
+				for (int32 InstanceIndex = 0; InstanceIndex < PlatformData.Instances.Num(); ++InstanceIndex)
+				{
+					const FMaterialResource* CurrentResource = PlatformData.Instances[InstanceIndex].MaterialResourcesStats;
+					if (CurrentResource && CurrentResource->GetCompileErrors().Num() > 0)
+					{
+						const auto& PlatformName = MaterialStatsManager->GetPlatformName(Pair.Key);
+						const auto& AssetName = MaterialStatsManager->GetMaterialName(InstanceIndex);
+						const FString QualityName = FMaterialStatsUtils::MaterialQualityToShortString((EMaterialQualityLevel::Type)QualityLevel);
 
-				FSuppressableWarningDialog CompileErrors(Info);
-				CompileErrors.ShowModal();
-				return false;
+						if (InstanceIndex == 0)
+						{
+							Errors.Push(FText::Format(NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInMaterial_ListEntryMaterial", "- For platform {0} at quality level {1}."), FText::FromName(PlatformName), FText::FromString(QualityName)));
+						}
+						else
+						{
+							Errors.Push(FText::Format(NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInMaterial_ListEntryDerivedMaterial", "- Material instance {0} for platform {1} at quality level {2}."), FText::FromString(*AssetName), FText::FromName(PlatformName), FText::FromString(QualityName)));
+						}
+					}
+				}
 			}
-			else
-			{
+		}
+	}
+
+	if (Errors.Num() > 0)
+	{
+		const FText JoinedErrors = FText::Join(FText::FromString(TEXT("\n")), Errors);
+		if (Material->bUsedAsSpecialEngineMaterial && bBaseMaterialFailsToCompile)
+		{
 			FSuppressableWarningDialog::FSetupInfo Info(
-				FText::Format(NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInMaterial", "The current material has compilation errors, so it will not render correctly in feature level {0}.\nAre you sure you wish to continue?"),FText::FromString(*FeatureLevelName)),
+				FText::Format(NSLOCTEXT("UnrealEd", "Error_CompileErrorsInDefaultMaterial", "The current material has the following compilation errors:\n{0}\nThis material is a Default Material which must be available as a code fallback at all times, compilation errors are not allowed."), JoinedErrors),
+				NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInDefaultMaterial_Title", "Error: Compilation errors in Default Material"), "Error_CompileErrorsInDefaultMaterial");
+			Info.ConfirmText = NSLOCTEXT("ModalDialogs", "CompileErrorsInDefaultMaterialOk", "Ok");
+			Info.DialogMode = FSuppressableWarningDialog::EMode::DontPersistSuppressionAcrossSessions;
+			Info.WrapMessageAt = 0.0f;
+
+			FSuppressableWarningDialog CompileErrors(Info);
+			CompileErrors.ShowModal();
+			return false;
+		}
+		else
+		{
+			FSuppressableWarningDialog::FSetupInfo Info(
+				FText::Format(NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInMaterial", "The current material has the following compilation errors:\n{0}\nAre you sure you wish to continue?"), JoinedErrors),
 				NSLOCTEXT("UnrealEd", "Warning_CompileErrorsInMaterial_Title", "Warning: Compilation errors in this Material" ), "Warning_CompileErrorsInMaterial");
 			Info.ConfirmText = NSLOCTEXT("ModalDialogs", "CompileErrorsInMaterialConfirm", "Continue");
 			Info.CancelText = NSLOCTEXT("ModalDialogs", "CompileErrorsInMaterialCancel", "Abort");
+			Info.DialogMode = FSuppressableWarningDialog::EMode::DontPersistSuppressionAcrossSessions;
+			Info.WrapMessageAt = 0.0f;
 
 			FSuppressableWarningDialog CompileErrorsWarning( Info );
-			if( CompileErrorsWarning.ShowModal() == FSuppressableWarningDialog::Cancel )
+			if(CompileErrorsWarning.ShowModal() == FSuppressableWarningDialog::Cancel)
 			{
-					return false;
-				}
+				return false;
 			}
 		}
 	}
@@ -3068,6 +3173,14 @@ void FMaterialEditor::UpdateMaterialinfoList_Old()
 					TSharedRef<FTokenizedMessage> ShaderCountLine = FTokenizedMessage::Create(EMessageSeverity::Info);
 					ShaderCountLine->AddToken(FTextToken::Create(FText::FromString(ShaderCountString)));
 					Messages.Add(ShaderCountLine);
+
+					// Add number of preshaders and stats
+					uint32 TotalParams, TotalOps;
+					MaterialResource->GetPreshaderStats(TotalParams, TotalOps);
+					FString PreshaderCountString = FString::Printf(TEXT("Preshaders: %u  (%u param fetches, %u ops)"), ShaderMap->GetNumPreshaders(), TotalParams, TotalOps);
+					TSharedRef<FTokenizedMessage> PreshaderCountLine = FTokenizedMessage::Create(EMessageSeverity::Info);
+					PreshaderCountLine->AddToken(FTextToken::Create(FText::FromString(PreshaderCountString)));
+					Messages.Add(PreshaderCountLine);
 				}
 			}
 
@@ -3198,9 +3311,24 @@ void FMaterialEditor::UpdateMaterialInfoList()
 		}
 	}
 
+	if (DerivedMaterialInstances.IsEmpty())
+	{
+		CreateDerivedMaterialInstancesPreviews();
+	}
+
 	// extract material stats
-	MaterialStatsManager->SetMaterial(MaterialForStats);
+	MaterialStatsManager->SetMaterial(MaterialForStats, bStatsFromPreviewMaterial ? DerivedMaterialInstances : OriginalDerivedMaterialInstances);
 	MaterialStatsManager->Update();
+
+	// check if any derived instances fail, if so show the window
+	if (MaterialStatsManager->AnyNewCompilationErrors(1))
+	{
+		// but then check if base material is compiling, if not, keep the old stats popup not to break UX flow until we merge old and new stats together
+		if (!MaterialStatsManager->AnyNewCompilationErrors(0))
+		{
+			TabManager->TryInvokeTab(MaterialStatsManager->GetGridStatsTabName());
+		}
+	}
 }
 
 void FMaterialEditor::UpdateGraphNodeStates()
@@ -3307,6 +3435,10 @@ void FMaterialEditor::AddReferencedObjects( FReferenceCollector& Collector )
 {
 	Collector.AddReferencedObject(EditorOptions);
 	Collector.AddReferencedObject(Material);
+	for (auto& DerivedMaterialInstance: DerivedMaterialInstances)
+	{
+		Collector.AddReferencedObject(DerivedMaterialInstance);
+	}
 	Collector.AddReferencedObject(OriginalMaterial);
 	Collector.AddReferencedObject(MaterialFunction);
 	Collector.AddReferencedObject(ExpressionPreviewMaterial);
@@ -3409,7 +3541,6 @@ void FMaterialEditor::BindCommands()
 	ToolkitCommands->MapAction(
 		Commands.ConvertToConstant,
 		FExecuteAction::CreateSP(this, &FMaterialEditor::OnConvertObjects));
-
 	ToolkitCommands->MapAction(
 		Commands.SelectNamedRerouteDeclaration,
 		FExecuteAction::CreateSP(this, &FMaterialEditor::OnSelectNamedRerouteDeclaration));
@@ -3790,7 +3921,8 @@ void FMaterialEditor::OnUseCurrentTexture()
 	// as the texture to use in all selected texture sample expressions.
 	FEditorDelegates::LoadSelectedAssetsIfNeeded.Broadcast();
 	UTexture* SelectedTexture = GEditor->GetSelectedObjects()->GetTop<UTexture>();
-	if ( SelectedTexture )
+	USparseVolumeTexture* SelectedSparseVolumeTexture = GEditor->GetSelectedObjects()->GetTop<USparseVolumeTexture>();
+	if ( SelectedTexture || SelectedSparseVolumeTexture )
 	{
 		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "UseCurrentTexture", "Use Current Texture") );
 		const FGraphPanelSelectionSet SelectedNodes = GetSelectedNodes();
@@ -3798,12 +3930,18 @@ void FMaterialEditor::OnUseCurrentTexture()
 		for (FGraphPanelSelectionSet::TConstIterator NodeIt(SelectedNodes); NodeIt; ++NodeIt)
 		{
 			UMaterialGraphNode* GraphNode = Cast<UMaterialGraphNode>(*NodeIt);
-			if (GraphNode && GraphNode->MaterialExpression->IsA(UMaterialExpressionTextureBase::StaticClass()) )
+			if (SelectedTexture && GraphNode && GraphNode->MaterialExpression->IsA(UMaterialExpressionTextureBase::StaticClass()) )
 			{
 				UMaterialExpressionTextureBase* TextureBase = static_cast<UMaterialExpressionTextureBase*>(GraphNode->MaterialExpression);
 				TextureBase->Modify();
 				TextureBase->Texture = SelectedTexture;
 				TextureBase->AutoSetSampleType();
+			}
+			else if (SelectedSparseVolumeTexture && GraphNode && GraphNode->MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureBase::StaticClass()))
+			{
+				UMaterialExpressionSparseVolumeTextureBase* TextureBase = static_cast<UMaterialExpressionSparseVolumeTextureBase*>(GraphNode->MaterialExpression);
+				TextureBase->Modify();
+				TextureBase->SparseVolumeTexture = SelectedSparseVolumeTexture;
 			}
 		}
 
@@ -3939,6 +4077,8 @@ void FMaterialEditor::OnConvertObjects()
 				UMaterialExpressionTextureObjectParameter* TextureObjectParameterExpression = Cast<UMaterialExpressionTextureObjectParameter>(CurrentSelectedExpression);
 				UMaterialExpressionRuntimeVirtualTextureSample* RuntimeVirtualTextureSampleExpression = Cast<UMaterialExpressionRuntimeVirtualTextureSample>(CurrentSelectedExpression);
 				UMaterialExpressionSparseVolumeTextureSample* SparseVolumeTextureSampleExpression = Cast<UMaterialExpressionSparseVolumeTextureSample>(CurrentSelectedExpression);
+				UMaterialExpressionSparseVolumeTextureObject* SparseVolumeTextureObjectExpression = Cast<UMaterialExpressionSparseVolumeTextureObject>(CurrentSelectedExpression);
+				UMaterialExpressionSparseVolumeTextureObjectParameter* SparseVolumeTextureObjectParameterExpression = Cast<UMaterialExpressionSparseVolumeTextureObjectParameter>(CurrentSelectedExpression);
 
 				// Setup the class to convert to
 				UClass* ClassToCreate = NULL;
@@ -3982,9 +4122,17 @@ void FMaterialEditor::OnConvertObjects()
 				{
 					ClassToCreate = UMaterialExpressionRuntimeVirtualTextureSampleParameter::StaticClass();
 				}
+				else if (SparseVolumeTextureObjectParameterExpression) // Has to come before SparseVolumeTextureSample comparison 
+				{
+					ClassToCreate = UMaterialExpressionSparseVolumeTextureObject::StaticClass();
+				}
 				else if (SparseVolumeTextureSampleExpression)
 				{
 					ClassToCreate = UMaterialExpressionSparseVolumeTextureSampleParameter::StaticClass();
+				}
+				else if (SparseVolumeTextureObjectExpression)
+				{
+					ClassToCreate = UMaterialExpressionSparseVolumeTextureObjectParameter::StaticClass();
 				}
 				else if (ComponentMaskExpression)
 				{
@@ -4080,12 +4228,24 @@ void FMaterialEditor::OnConvertObjects()
 							NewRuntimeVirtualTextureExpression->MipValueMode = RuntimeVirtualTextureSampleExpression->MipValueMode;
 							NewGraphNode->ReconstructNode();
 						}
-						else if (SparseVolumeTextureSampleExpression)
+						else if (SparseVolumeTextureSampleExpression && !SparseVolumeTextureObjectParameterExpression) // Sample -> SampleParameter
 						{
 							bNeedsRefresh = true;
 							UMaterialExpressionSparseVolumeTextureSampleParameter* NewSparseVolumeTextureExpression = CastChecked<UMaterialExpressionSparseVolumeTextureSampleParameter>(NewExpression);
 							NewSparseVolumeTextureExpression->SparseVolumeTexture = SparseVolumeTextureSampleExpression->SparseVolumeTexture;
 							NewGraphNode->ReconstructNode();
+						}
+						else if (SparseVolumeTextureObjectExpression && !SparseVolumeTextureObjectParameterExpression) // Object -> ObjectParameter
+						{
+							bNeedsRefresh = true;
+							UMaterialExpressionSparseVolumeTextureObjectParameter* NewSparseVolumeTextureObjectParameterExpression = CastChecked<UMaterialExpressionSparseVolumeTextureObjectParameter>(NewExpression);
+							NewSparseVolumeTextureObjectParameterExpression->SparseVolumeTexture = SparseVolumeTextureObjectExpression->SparseVolumeTexture;
+						}
+						else if (SparseVolumeTextureObjectParameterExpression) // ObjectParameter -> Object
+						{
+							bNeedsRefresh = true;
+							UMaterialExpressionSparseVolumeTextureObject* NewTextureObjectExpression = CastChecked<UMaterialExpressionSparseVolumeTextureObject>(NewExpression);
+							NewTextureObjectExpression->SparseVolumeTexture = SparseVolumeTextureObjectParameterExpression->SparseVolumeTexture;
 						}
 						else if (ComponentMaskExpression)
 						{
@@ -4162,6 +4322,8 @@ void FMaterialEditor::OnConvertTextures()
 				UMaterialExpression* CurrentSelectedExpression = GraphNode->MaterialExpression;
 				UMaterialExpressionTextureSample* TextureSampleExpression = Cast<UMaterialExpressionTextureSample>(CurrentSelectedExpression);
 				UMaterialExpressionTextureObject* TextureObjectExpression = Cast<UMaterialExpressionTextureObject>(CurrentSelectedExpression);
+				UMaterialExpressionSparseVolumeTextureSample* SparseVolumeTextureSampleExpression = Cast<UMaterialExpressionSparseVolumeTextureSample>(CurrentSelectedExpression);
+				UMaterialExpressionSparseVolumeTextureObject* SparseVolumeTextureObjectExpression = Cast<UMaterialExpressionSparseVolumeTextureObject>(CurrentSelectedExpression);
 
 				// Setup the class to convert to
 				UClass* ClassToCreate = NULL;
@@ -4172,6 +4334,14 @@ void FMaterialEditor::OnConvertTextures()
 				else if (TextureObjectExpression)
 				{
 					ClassToCreate = UMaterialExpressionTextureSample::StaticClass();
+				}
+				else if (SparseVolumeTextureSampleExpression)
+				{
+					ClassToCreate = UMaterialExpressionSparseVolumeTextureObject::StaticClass();
+				}
+				else if (SparseVolumeTextureObjectExpression)
+				{
+					ClassToCreate = UMaterialExpressionSparseVolumeTextureSample::StaticClass();
 				}
 
 				if (ClassToCreate)
@@ -4200,6 +4370,18 @@ void FMaterialEditor::OnConvertTextures()
 							NewTextureExpr->AutoSetSampleType();
 							NewTextureExpr->IsDefaultMeshpaintTexture = TextureObjectExpression->IsDefaultMeshpaintTexture;
 							NewTextureExpr->MipValueMode = TMVM_None;
+						}
+						else if (SparseVolumeTextureSampleExpression)
+						{
+							bNeedsRefresh = true;
+							UMaterialExpressionSparseVolumeTextureObject* NewTextureExpr = CastChecked<UMaterialExpressionSparseVolumeTextureObject>(NewExpression);
+							NewTextureExpr->SparseVolumeTexture = SparseVolumeTextureSampleExpression->SparseVolumeTexture;
+						}
+						else if (SparseVolumeTextureObjectExpression)
+						{
+							bNeedsRefresh = true;
+							UMaterialExpressionSparseVolumeTextureSample* NewTextureExpr = CastChecked<UMaterialExpressionSparseVolumeTextureSample>(NewExpression);
+							NewTextureExpr->SparseVolumeTexture = SparseVolumeTextureObjectExpression->SparseVolumeTexture;
 						}
 
 						if (bNeedsRefresh)
@@ -4230,6 +4412,34 @@ void FMaterialEditor::OnConvertTextures()
 	}
 }
 
+void FMaterialEditor::OnCollapseToFunction()
+{
+	FMaterialEditorHelpers::CollapseToFunction(*this);
+}
+
+bool FMaterialEditor::CanCollapseToFunction() const
+{
+	return CanCopyNodes();
+}
+
+void FMaterialEditor::OnExpandMaterialFunctionNode()
+{
+	FMaterialEditorHelpers::ExpandNode(*this);
+}
+
+bool FMaterialEditor::CanExpandMaterialFunctionNode() const
+{
+	// If any of the nodes can be expanded then we should allow expanding
+	for (UObject* NodeObject : GetSelectedNodes())
+	{
+		UMaterialGraphNode* Node = Cast<UMaterialGraphNode>(NodeObject);
+		if (Node && Cast<UMaterialExpressionMaterialFunctionCall>(Node->MaterialExpression))
+		{
+			return true;
+		}
+	}
+	return false;
+}
 void FMaterialEditor::OnSelectNamedRerouteDeclaration()
 {
 	if (TSharedPtr<SGraphEditor> FocusedGraphEd = FocusedGraphEdPtr.Pin())
@@ -4668,9 +4878,11 @@ UClass* FMaterialEditor::GetOnPromoteToParameterClass(const UEdGraphPin* TargetP
 
 	if (RootPinNode != nullptr)
 	{
-		EMaterialProperty propertyId = (EMaterialProperty)FCString::Atoi(*TargetPin->PinType.PinSubCategory.ToString());
-
-		switch (propertyId)
+		const UMaterialGraph* MaterialGraph = CastChecked<UMaterialGraph>(RootPinNode->GetGraph());
+		const FMaterialInputInfo& MaterialInput = MaterialGraph->MaterialInputs[TargetPin->SourceIndex];
+		EMaterialProperty PropertyId = MaterialInput.GetProperty();
+		
+		switch (PropertyId)
 		{
 			case MP_Opacity:
 			case MP_Metallic:
@@ -4731,7 +4943,7 @@ UClass* FMaterialEditor::GetOnPromoteToParameterClass(const UEdGraphPin* TargetP
 					case MCT_VolumeTexture: 
 					case MCT_Texture: return UMaterialExpressionTextureObjectParameter::StaticClass();
 
-					case MCT_Strata: return nullptr;
+					case MCT_Substrate: return nullptr;
 				}
 
 				break;
@@ -4779,6 +4991,166 @@ void FMaterialEditor::OnPromoteToParameter(const FToolMenuContext& InMenuContext
 	}
 }
 
+void FMaterialEditor::OnResetToDefault(const FToolMenuContext& InMenuContext) const
+{
+	UGraphNodeContextMenuContext* NodeContext = InMenuContext.FindContext<UGraphNodeContextMenuContext>();
+	const int32 PinIndex = NodeContext->Pin->SourceIndex;
+	const UMaterialGraphNode_Root* RootPinNode = Cast<UMaterialGraphNode_Root>(NodeContext->Pin->GetOwningNode());
+
+	if (RootPinNode != nullptr)
+	{
+		UEdGraphPin* TargetPin = RootPinNode->GetPinAt(PinIndex);
+
+		const FScopedTransaction Transaction( NSLOCTEXT("GraphEditor", "ResetPinToDefault", "Reset Pin Value to its default" ) );
+		TargetPin->Modify();
+		
+		const UMaterialGraph* MaterialGraph = CastChecked<UMaterialGraph>(RootPinNode->GetGraph());
+		const FMaterialInputInfo& MaterialInput = MaterialGraph->MaterialInputs[TargetPin->SourceIndex];
+		const EMaterialProperty PropertyId = MaterialInput.GetProperty();
+		UMaterialEditorOnlyData* EditorOnlyData = Material->GetEditorOnlyData();
+		switch (PropertyId)
+		{
+			case MP_BaseColor:
+				EditorOnlyData->BaseColor.Constant = FColor(128, 128, 128);
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->BaseColor.GetDefaultValue());
+				break;
+
+			case MP_Opacity:
+				EditorOnlyData->Opacity.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Opacity).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Opacity.GetDefaultValue());
+				break;
+			
+			case MP_Metallic:
+				EditorOnlyData->Metallic.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Metallic).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Metallic.GetDefaultValue());
+				break;
+			
+			case MP_Specular:
+				EditorOnlyData->Specular.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Specular).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Specular.GetDefaultValue());
+				break;
+			
+			case MP_Roughness:
+				EditorOnlyData->Roughness.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Roughness).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Roughness.GetDefaultValue());
+				break;
+			
+			case MP_Anisotropy:
+				EditorOnlyData->Anisotropy.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Anisotropy).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Anisotropy.GetDefaultValue());
+				break;
+			
+			case MP_CustomData0:
+				EditorOnlyData->ClearCoat.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_CustomData0).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->ClearCoat.GetDefaultValue());
+				break;
+			
+			case MP_CustomData1:
+				EditorOnlyData->ClearCoatRoughness.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_CustomData1).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->ClearCoatRoughness.GetDefaultValue());
+				break;
+			
+			case MP_AmbientOcclusion:
+				EditorOnlyData->AmbientOcclusion.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_AmbientOcclusion).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->AmbientOcclusion.GetDefaultValue());
+				break;
+			
+			case MP_Refraction:
+				EditorOnlyData->Refraction.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Refraction).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Refraction.GetDefaultValue());
+				break;
+			
+			case MP_OpacityMask:
+				EditorOnlyData->OpacityMask.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_OpacityMask).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->OpacityMask.GetDefaultValue());
+				break;
+			
+			case MP_SurfaceThickness:
+				EditorOnlyData->SurfaceThickness.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_SurfaceThickness).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->SurfaceThickness.GetDefaultValue());
+				break;
+			
+			case MP_Displacement:
+				EditorOnlyData->Displacement.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Displacement).X;
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Displacement.GetDefaultValue());
+				break;
+			
+			case MP_WorldPositionOffset:
+				EditorOnlyData->WorldPositionOffset.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_WorldPositionOffset);
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->WorldPositionOffset.GetDefaultValue());
+				break;
+			
+			case MP_EmissiveColor:
+				EditorOnlyData->EmissiveColor.Constant = FLinearColor(FMaterialAttributeDefinitionMap::GetDefaultValue(MP_EmissiveColor)).ToFColorSRGB();
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->EmissiveColor.GetDefaultValue());
+				break;
+			
+			case MP_SubsurfaceColor:
+				EditorOnlyData->SubsurfaceColor.Constant = FLinearColor(FMaterialAttributeDefinitionMap::GetDefaultValue(MP_SubsurfaceColor)).ToFColorSRGB(); 
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->SubsurfaceColor.GetDefaultValue());
+				break;
+			
+			case MP_Normal:
+				EditorOnlyData->Normal.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Normal); 
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Normal.GetDefaultValue());
+				break;
+			
+			case MP_Tangent:
+				EditorOnlyData->Tangent.Constant = FMaterialAttributeDefinitionMap::GetDefaultValue(MP_Tangent);
+				TargetPin->GetSchema()->TrySetDefaultValue(*TargetPin, EditorOnlyData->Tangent.GetDefaultValue());
+				break;
+			
+			default:
+				break;
+		}
+		FMaterialEditorUtilities::UpdateMaterialAfterGraphChange(MaterialGraph);
+	}
+}
+
+bool FMaterialEditor::OnCanResetToDefault(const FToolMenuContext& InMenuContext) const
+{
+	UGraphNodeContextMenuContext* NodeContext = InMenuContext.FindContext<UGraphNodeContextMenuContext>();
+	if (!NodeContext)
+	{
+		return false;
+	}
+	const UEdGraphPin* TargetPin = NodeContext->Pin;
+	const UMaterialGraphNode_Root* RootPinNode = Cast<UMaterialGraphNode_Root>(TargetPin->GetOwningNode());
+	if (RootPinNode != nullptr)
+	{
+		const UMaterialGraph* MaterialGraph = CastChecked<UMaterialGraph>(RootPinNode->GetGraph());
+		const FMaterialInputInfo& MaterialInput = MaterialGraph->MaterialInputs[TargetPin->SourceIndex];
+		const EMaterialProperty PropertyId = MaterialInput.GetProperty();
+		UMaterialEditorOnlyData* EditorOnlyData = Material->GetEditorOnlyData();
+		switch (PropertyId)
+		{
+			case MP_BaseColor:				
+			case MP_Opacity:				
+			case MP_Metallic:				
+			case MP_Specular:				
+			case MP_Roughness:				
+			case MP_Anisotropy:				
+			case MP_CustomData0:			
+			case MP_CustomData1:			
+			case MP_AmbientOcclusion:		
+			case MP_Refraction:				
+			case MP_OpacityMask:			
+			case MP_SurfaceThickness:		
+			case MP_Displacement:			
+			case MP_WorldPositionOffset:	
+			case MP_EmissiveColor:			
+			case MP_SubsurfaceColor:		
+			case MP_Normal:					
+			case MP_Tangent:				
+				return true;
+				
+			default:
+				return false;
+		}
+	}
+	return false;
+}
+
 bool FMaterialEditor::OnCanPromoteToParameter(const FToolMenuContext& InMenuContext) const
 {
 	UGraphNodeContextMenuContext* NodeContext = InMenuContext.FindContext<UGraphNodeContextMenuContext>();
@@ -4796,7 +5168,7 @@ bool FMaterialEditor::OnCanPromoteToParameter(const FToolMenuContext& InMenuCont
 	return false;
 }
 
-void FMaterialEditor::OnCreateStrataNodeForPin(const FToolMenuContext& InMenuContext, EStrataNodeForPin NodeForPin) const
+void FMaterialEditor::OnCreateSubstrateNodeForPin(const FToolMenuContext& InMenuContext, ESubstrateNodeForPin NodeForPin) const
 {
 	UGraphNodeContextMenuContext* NodeContext = InMenuContext.FindContext<UGraphNodeContextMenuContext>();
 	const UEdGraphPin* TargetPin = NodeContext->Pin;
@@ -4804,25 +5176,25 @@ void FMaterialEditor::OnCreateStrataNodeForPin(const FToolMenuContext& InMenuCon
 	const bool bTargetPinIsInput = TargetPin->Direction == EEdGraphPinDirection::EGPD_Input;
 
 	FMaterialGraphSchemaAction_NewNode Action;
-	Action.MaterialExpressionClass = UMaterialExpressionStrataSlabBSDF::StaticClass();
-	if (NodeForPin == EStrataNodeForPin::HorizontalMix)
+	Action.MaterialExpressionClass = UMaterialExpressionSubstrateSlabBSDF::StaticClass();
+	if (NodeForPin == ESubstrateNodeForPin::HorizontalMix)
 	{
-		Action.MaterialExpressionClass = UMaterialExpressionStrataHorizontalMixing::StaticClass();
+		Action.MaterialExpressionClass = UMaterialExpressionSubstrateHorizontalMixing::StaticClass();
 	}
-	else if (NodeForPin == EStrataNodeForPin::VerticalLayer)
+	else if (NodeForPin == ESubstrateNodeForPin::VerticalLayer)
 	{
-		Action.MaterialExpressionClass = UMaterialExpressionStrataVerticalLayering::StaticClass();
+		Action.MaterialExpressionClass = UMaterialExpressionSubstrateVerticalLayering::StaticClass();
 	}
-	else if (NodeForPin == EStrataNodeForPin::Weight)
+	else if (NodeForPin == ESubstrateNodeForPin::Weight)
 	{
-		Action.MaterialExpressionClass = UMaterialExpressionStrataWeight::StaticClass();
+		Action.MaterialExpressionClass = UMaterialExpressionSubstrateWeight::StaticClass();
 	}
 
 	check(PinNode);
 	UEdGraph* GraphObj = PinNode->GetGraph();
 	check(GraphObj);
 
-	const FScopedTransaction Transaction(LOCTEXT("CreateStrataNode", "Create Strata Node"));
+	const FScopedTransaction Transaction(LOCTEXT("CreateSubstrateNode", "Create Substrate Node"));
 	GraphObj->Modify();
 
 	// Set position of new node to be close to node we clicked on
@@ -4858,7 +5230,7 @@ void FMaterialEditor::OnCreateStrataNodeForPin(const FToolMenuContext& InMenuCon
 	}
 }
 
-bool FMaterialEditor::OnCanCreateStrataNodeForPin(const FToolMenuContext& InMenuContext, EStrataNodeForPin NodeForPin) const
+bool FMaterialEditor::OnCanCreateSubstrateNodeForPin(const FToolMenuContext& InMenuContext, ESubstrateNodeForPin NodeForPin) const
 {
 	UGraphNodeContextMenuContext* NodeContext = InMenuContext.FindContext<UGraphNodeContextMenuContext>();
 	const UEdGraphPin* TargetPin = NodeContext->Pin;
@@ -4867,49 +5239,11 @@ bool FMaterialEditor::OnCanCreateStrataNodeForPin(const FToolMenuContext& InMenu
 
 	if ((TargetPin->Direction == EEdGraphPinDirection::EGPD_Input) && (TargetPin->LinkedTo.Num() == 0))
 	{
-		if (RootPinNode != nullptr)
-		{
-			EMaterialProperty propertyId = (EMaterialProperty)FCString::Atoi(*TargetPin->PinType.PinSubCategory.ToString());
-			switch (propertyId)
-			{
-			case MP_FrontMaterial:
-				return true;
-			}
-		}
-		else if (OtherPinNode)
-		{
-			TArrayView<FExpressionInput*> ExpressionInputs = OtherPinNode->MaterialExpression->GetInputsView();
-			FName TargetPinName = OtherPinNode->GetShortenPinName(TargetPin->PinName);
-
-			for (int32 Index = 0; Index < ExpressionInputs.Num(); ++Index)
-			{
-				FExpressionInput* Input = ExpressionInputs[Index];
-				FName InputName = OtherPinNode->MaterialExpression->GetInputName(Index);
-				InputName = OtherPinNode->GetShortenPinName(InputName);
-
-				if (InputName == TargetPinName)
-				{
-					switch (OtherPinNode->MaterialExpression->GetInputType(Index))
-					{
-					case MCT_Strata:
-						return true;
-					}
-					break;
-				}
-			}
-		}
+		return FSubstrateWidget::HasInputSubstrateType(TargetPin);
 	}
-	else if (TargetPin && (TargetPin->Direction == EEdGraphPinDirection::EGPD_Output) && (TargetPin->LinkedTo.Num() == 0) && NodeForPin != EStrataNodeForPin::Slab)
+	else if ((TargetPin->Direction == EEdGraphPinDirection::EGPD_Output) && (TargetPin->LinkedTo.Num() == 0) && NodeForPin != ESubstrateNodeForPin::Slab)
 	{
-		if (OtherPinNode)
-		{
-			const TArray<FExpressionOutput>& ExpressionOutputs = OtherPinNode->MaterialExpression->GetOutputs();
-			check(TargetPin->SourceIndex < ExpressionOutputs.Num());
-			if (OtherPinNode->MaterialExpression->GetOutputType(TargetPin->SourceIndex) == MCT_Strata)
-			{
-				return true;
-			}
-		}
+		return FSubstrateWidget::HasOutputSubstrateType(TargetPin);
 	}
 
 	return false;
@@ -5229,20 +5563,20 @@ TSharedRef<SDockTab> FMaterialEditor::SpawnTab_LayerProperties(const FSpawnTabAr
 	return SpawnedTab;
 }
 
-TSharedRef<SDockTab> FMaterialEditor::SpawnTab_Strata(const FSpawnTabArgs& Args)
+TSharedRef<SDockTab> FMaterialEditor::SpawnTab_Substrate(const FSpawnTabArgs& Args)
 {
-	check(Args.GetTabId() == FMaterialEditorTabs::StrataTabId);
+	check(Args.GetTabId() == FMaterialEditorTabs::SubstrateTabId);
 
-	TSharedRef<SDockTab> StrataTab = SNew(SDockTab)
+	TSharedRef<SDockTab> SubstrateTab = SNew(SDockTab)
 		.Label(LOCTEXT("MaterialSubstrateTabTitle", "Substrate"))
 		[
 			SNew(SBox)
 			[
-				StrataWidget.ToSharedRef()
+				SubstrateWidget.ToSharedRef()
 			]
 		];
 
-	return StrataTab;
+	return SubstrateTab;
 }
 
 void FMaterialEditor::SetPreviewExpression(UMaterialExpression* NewPreviewExpression)
@@ -5609,6 +5943,11 @@ bool FMaterialEditor::CanSelectAllNodes() const
 
 void FMaterialEditor::DeleteSelectedNodes()
 {
+	DeleteSelectedNodes(true);
+}
+
+void FMaterialEditor::DeleteSelectedNodes(bool bShowConfirmation)
+{
 	TArray<UEdGraphNode*> NodesToDelete;
 	const FGraphPanelSelectionSet SelectedNodes = GetSelectedNodes();
 
@@ -5616,15 +5955,20 @@ void FMaterialEditor::DeleteSelectedNodes()
 	{
 		NodesToDelete.Add(CastChecked<UEdGraphNode>(*NodeIt));
 	}
-
-	DeleteNodes(NodesToDelete);
+	
+	DeleteNodes(NodesToDelete, bShowConfirmation);
 }
 
 void FMaterialEditor::DeleteNodes(const TArray<UEdGraphNode*>& NodesToDelete)
 {
+	DeleteNodes(NodesToDelete, true);
+}
+
+void FMaterialEditor::DeleteNodes(const TArray<UEdGraphNode*>& NodesToDelete, bool bShowConfirmation)
+{
 	if (NodesToDelete.Num() > 0)
 	{
-		if (!CheckExpressionRemovalWarnings(NodesToDelete))
+		if (bShowConfirmation && !CheckExpressionRemovalWarnings(NodesToDelete))
 		{
 			return;
 		}
@@ -5801,11 +6145,16 @@ void FMaterialEditor::DeleteNodesInternal(const TArray<class UEdGraphNode*>& Nod
 void FMaterialEditor::CopySelectedNodes()
 {
 	// Export the selected nodes and place the text on the clipboard
-	const FGraphPanelSelectionSet SelectedNodes = GetSelectedNodes();
+	const FString Buffer = CopyNodesToBuffer(GetSelectedNodes());
+	FPlatformApplicationMisc::ClipboardCopy(*Buffer);
+}
+
+FString FMaterialEditor::CopyNodesToBuffer(const FGraphPanelSelectionSet& Nodes)
+{
 
 	FString ExportedText;
 
-	for (FGraphPanelSelectionSet::TConstIterator SelectedIter(SelectedNodes); SelectedIter; ++SelectedIter)
+	for (FGraphPanelSelectionSet::TConstIterator SelectedIter(Nodes); SelectedIter; ++SelectedIter)
 	{
 		if(UEdGraphNode* Node = Cast<UEdGraphNode>(*SelectedIter))
 		{
@@ -5813,11 +6162,10 @@ void FMaterialEditor::CopySelectedNodes()
 		}
 	}
 
-	FEdGraphUtilities::ExportNodesToText(SelectedNodes, /*out*/ ExportedText);
-	FPlatformApplicationMisc::ClipboardCopy(*ExportedText);
+	FEdGraphUtilities::ExportNodesToText(Nodes, /*out*/ ExportedText);
 
 	// Make sure Material remains the owner of the copied nodes
-	for (FGraphPanelSelectionSet::TConstIterator SelectedIter(SelectedNodes); SelectedIter; ++SelectedIter)
+	for (FGraphPanelSelectionSet::TConstIterator SelectedIter(Nodes); SelectedIter; ++SelectedIter)
 	{
 		if (UMaterialGraphNode* Node = Cast<UMaterialGraphNode>(*SelectedIter))
 		{
@@ -5828,6 +6176,16 @@ void FMaterialEditor::CopySelectedNodes()
 			Comment->PostCopyNode();
 		}
 	}
+
+	return ExportedText;
+}
+
+FString FMaterialEditor::CopyNodesToBuffer(const TSet<UEdGraphNode*>& Nodes)
+{
+	static_assert(std::is_convertible<UEdGraphNode*, UObject*>::value, "UEdGraphNode must be derived from UObject");
+	static_assert(std::is_same_v<FGraphPanelSelectionSet, TSet<UObject*>>, "FGraphPanelSelectionSet is expected to be defined as TSet<UObject*>");
+
+	return CopyNodesToBuffer(reinterpret_cast<const FGraphPanelSelectionSet&>(Nodes));
 }
 
 bool FMaterialEditor::CanCopyNodes() const
@@ -5916,6 +6274,14 @@ void FMaterialEditor::PostPasteMaterialExpression(UMaterialExpression* NewExpres
 
 void FMaterialEditor::PasteNodesHere(const FVector2D& Location, const class UEdGraph* Graph)
 {
+	// Grab the text to paste from the clipboard.
+	FString TextToImport;
+	FPlatformApplicationMisc::ClipboardPaste(TextToImport);
+	
+	PasteNodesHereFromBuffer(Location, Graph, TextToImport, nullptr);
+}
+void FMaterialEditor::PasteNodesHereFromBuffer(const FVector2D& Location, const class UEdGraph* Graph, const FString& TextToImport, TMap<FGuid, FGuid>* OutOldToNewGuids)
+{
 	// Undo/Redo support
 	const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "MaterialEditorPaste", "Material Editor: Paste") );
 	Material->MaterialGraph->Modify();
@@ -5929,10 +6295,6 @@ void FMaterialEditor::PasteNodesHere(const FVector2D& Location, const class UEdG
 	{
 		FocusedGraphEd->ClearSelectionSet();
 	}
-
-	// Grab the text to paste from the clipboard.
-	FString TextToImport;
-	FPlatformApplicationMisc::ClipboardPaste(TextToImport);
 
 	// Import the nodes
 	TSet<UEdGraphNode*> PastedNodes;
@@ -6006,8 +6368,14 @@ void FMaterialEditor::PasteNodesHere(const FVector2D& Location, const class UEdG
 
 		Node->SnapToGrid(SNodePanel::GetSnapGridSize());
 
+		const FGuid OldNodeGuid = Node->NodeGuid;
+		
 		// Give new node a different Guid from the old one
 		Node->CreateNewGuid();
+		if (OutOldToNewGuids)
+		{
+			OutOldToNewGuids->Add(OldNodeGuid, Node->NodeGuid);
+		}
 	}
 
 	for (auto* NewExpression : NewMaterialExpressions)
@@ -6062,15 +6430,15 @@ FText FMaterialEditor::GetOriginalObjectName() const
 	return FText::FromString(GetEditingObjects()[0]->GetName());
 }
 
-void FMaterialEditor::UpdateStrataTopologyPreview()
+void FMaterialEditor::UpdateSubstrateTopologyPreview()
 {
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
-		// Update all Strata node which have a preview.
+		// Update all Substrate node which have a preview.
 		for (int32 Index = 0; Index < Material->MaterialGraph->Nodes.Num(); ++Index)
 		{
 			UMaterialGraphNode* MaterialNode = Cast<UMaterialGraphNode>(Material->MaterialGraph->Nodes[Index]);
-			if (MaterialNode && MaterialNode->MaterialExpression && MaterialNode->MaterialExpression->IsA(UMaterialExpressionStrataBSDF::StaticClass()))
+			if (MaterialNode && MaterialNode->MaterialExpression && MaterialNode->MaterialExpression->IsA(UMaterialExpressionSubstrateBSDF::StaticClass()))
 			{
 				UEdGraph* Graph = MaterialNode->GetGraph();
 				if (Graph)
@@ -6080,6 +6448,119 @@ void FMaterialEditor::UpdateStrataTopologyPreview()
 			}
 		}
 	}
+}
+
+void FMaterialEditor::CreateDerivedMaterialInstancesPreviews()
+{
+	DerivedMaterialInstances.Empty();
+	OriginalDerivedMaterialInstances.Empty();
+
+	TArray<FString> DisplayNames;
+	DisplayNames.Push(OriginalMaterial->GetName());
+
+	if (MaterialStatsManager->GetProvideDerivedMIFlag())
+	{
+		const int32 MaxCount = CVarMaterialEdMaxDerivedMaterialInstances.GetValueOnGameThread();
+		// TODO consider a mode where we load all MaterialChildList also
+
+		for (TObjectIterator<UMaterialInstance> It; It; ++It)
+		{
+			UMaterialInstance* Instance = *It;
+			if (!Instance->HasStaticParameters())
+			{
+				continue;
+			}
+
+			FMaterialInheritanceChain Chain;
+			Instance->GetMaterialInheritanceChain(Chain);
+			if (Chain.GetBaseMaterial() != OriginalMaterial)
+			{
+				continue;
+			}
+
+			if (Instance->IsEditorOnly())
+			{
+				continue;
+			}
+
+			bool bSkip = false;
+			for (int32 i = 1; i < Chain.MaterialInstances.Num(); ++i)
+			{
+				auto NestedMaterialInstance = Chain.MaterialInstances[i];
+				if (NestedMaterialInstance->HasStaticParameters())
+				{
+					bSkip = true;
+				}
+			}
+
+			if (bSkip)
+			{
+				UE_LOG(LogMaterialEditor, Display, TEXT("Skipping material instance '%s' with static parameters due to depending on other material instances with static parameters"), *Instance->GetName());
+				continue;
+			}
+
+			const UMaterial* InstanceBaseMaterial = Instance->GetBaseMaterial();
+			const FStaticParameterSet& InstanceStaticParameters = Instance->GetStaticParameters();
+			for(int32_t i = 0; i < OriginalDerivedMaterialInstances.Num(); ++i)
+			{
+				auto ExistingInstance = OriginalDerivedMaterialInstances[i];
+				if (ExistingInstance->GetStaticParameters().Equivalent(InstanceStaticParameters))
+				{
+					bSkip = true;
+				}
+			}
+
+			if (bSkip)
+			{
+				UE_LOG(LogMaterialEditor, Display, TEXT("Skipping material instance '%s' because instance with same static parameters and base material is already present"), *Instance->GetName());
+				continue;
+			}
+
+			const bool bIsLandscapeMaterial = Instance->IsA<ULandscapeMaterialInstanceConstant>();
+
+			FString DisplayName;
+			if (bIsLandscapeMaterial)
+			{
+				const auto LandscapeMaterial = Cast<ULandscapeMaterialInstanceConstant>(Instance);
+				if (LandscapeMaterial->bEditorToolUsage)
+				{
+					UE_LOG(LogMaterialEditor, Display, TEXT("Skipping material instance '%s' because it's used by landscape editor"), *Instance->GetName());
+					continue;
+				}
+
+				// Provide a special name for landscape MIC's to improve UX, so user will be able to tell which combination is not compiling.
+				FString BaseMaterialName = Instance->Parent ? Instance->Parent->GetName() : Instance->GetName();
+				FString LayerNames = FString::JoinBy(LandscapeMaterial->GetEditorOnlyStaticParameters().TerrainLayerWeightParameters,
+					TEXT(","),
+					[](const FStaticTerrainLayerWeightParameter& x) -> FString { return x.LayerName.ToString(); });
+
+				DisplayName = FString::Format(TEXT("{0}({1})"), {*BaseMaterialName, *LayerNames});
+			}
+			else
+			{
+				DisplayName = Instance->GetName();
+			}
+
+			UMaterialInstance* DerivedInstance = Cast<UMaterialInstance>(StaticDuplicateObject(Instance, GetTransientPackage(), NAME_None, ~RF_Standalone, Instance->GetClass()));
+
+			// Beware that this potentially ruins inheritance chain:
+			// - Let's say we have Base material <- Material instance 1 with no static params <- Material instance 2 with static params
+			// - Material instance 1 doesn't influence shader compilation
+			// - So it's safe to change inheritance to Base material <- Material instance 2 with static params
+			DerivedInstance->Parent = Material;
+
+			DerivedMaterialInstances.Add(DerivedInstance);
+			OriginalDerivedMaterialInstances.Add(Instance);
+			DisplayNames.Push(DisplayName);
+
+			if (MaxCount >= 0 && OriginalDerivedMaterialInstances.Num() >= MaxCount)
+			{
+				break;
+			}
+		}
+	}
+
+	MaterialStatsManager->SetMaterialsDisplayNames(DisplayNames);
 }
 
 void FMaterialEditor::UpdateMaterialAfterGraphChange()
@@ -6113,7 +6594,12 @@ void FMaterialEditor::UpdateMaterialAfterGraphChange()
 
 	Material->MaterialGraph->UpdatePinTypes();
 
-	UpdateStrataTopologyPreview();
+	UpdateSubstrateTopologyPreview();
+}
+
+void FMaterialEditor::MarkMaterialDirty()
+{
+	SetMaterialDirty();
 }
 
 void FMaterialEditor::JumpToHyperlink(const UObject* ObjectReference)
@@ -6342,14 +6828,16 @@ void FMaterialEditor::OnExpandNodes()
 	{
 		FocusedGraphEd->ClearSelectionSet();
 	}
-
+	TMap<UMaterialGraphNode*, FMaterialEditor*> FunctionCalls;
+       
 	for (FGraphPanelSelectionSet::TConstIterator NodeIt(SelectedNodes); NodeIt; ++NodeIt)
 	{
 		ExpandedNodes.Empty();
 		bool bExpandedNodesNeedUniqueGuid = true;
 
 		DocumentManager->CleanInvalidTabs();
-
+		UMaterialGraphNode* Node = Cast<UMaterialGraphNode>(*NodeIt);
+		 	
 		if (UMaterialGraphNode_Composite* SelectedCompositeNode = Cast<UMaterialGraphNode_Composite>(*NodeIt))
 		{
 			// No need to assign unique GUIDs since the source graph will be removed.
@@ -6362,6 +6850,23 @@ void FMaterialEditor::OnExpandNodes()
 			FBlueprintEditorUtils::RemoveGraph(nullptr, SourceGraph, EGraphRemoveFlags::None);
 			SourceGraph->MarkAsGarbage();
 		}
+		else if (Node)
+		{
+			UMaterialExpressionMaterialFunctionCall* FunctionCallExpression = Cast<UMaterialExpressionMaterialFunctionCall>(Node->MaterialExpression);
+			if (FunctionCallExpression && FunctionCallExpression->MaterialFunction)
+			{
+				FMaterialEditor* FunctionMaterialEditor = FMaterialEditorHelpers::OpenMaterialEditorForAsset(FunctionCallExpression->MaterialFunction);
+				if (!ensure(FunctionMaterialEditor))
+				{
+					continue;
+				}
+				// FunctionCalls.Add(Node, FunctionMaterialEditor);
+				FMaterialEditorHelpers::ExpandNode(*this, *FunctionMaterialEditor, Node);
+
+				this->FocusWindow();
+			}
+		}
+		
 
 		UEdGraphNode* SourceNode = CastChecked<UEdGraphNode>(*NodeIt);
 		check(SourceNode);
@@ -6393,7 +6898,12 @@ bool FMaterialEditor::CanExpandNodes() const
 	const FGraphPanelSelectionSet SelectedNodes = GetSelectedNodes();
 	for (FGraphPanelSelectionSet::TConstIterator NodeIt(SelectedNodes); NodeIt; ++NodeIt)
 	{
-		if (Cast<UMaterialGraphNode_Composite>(*NodeIt))
+		UMaterialGraphNode* Node = Cast<UMaterialGraphNode>(*NodeIt);
+		if (Cast<UMaterialGraphNode_Composite>(Node))
+		{
+			return true;
+		}
+		else if (Node && Cast<UMaterialExpressionMaterialFunctionCall>(Node->MaterialExpression))
 		{
 			return true;
 		}
@@ -6987,6 +7497,10 @@ TSharedRef<SGraphEditor> FMaterialEditor::CreateGraphEditorWidget(TSharedRef<cla
 			FCanExecuteAction::CreateSP( this, &FMaterialEditor::CanCollapseNodes )
 		);
 
+		GraphEditorCommands->MapAction( FGraphEditorCommands::Get().CollapseSelectionToFunction,
+					FExecuteAction::CreateSP( this, &FMaterialEditor::OnCollapseToFunction ),
+					FCanExecuteAction::CreateSP( this, &FMaterialEditor::CanCollapseToFunction )
+				);
 		GraphEditorCommands->MapAction( FGraphEditorCommands::Get().ExpandNodes,
 			FExecuteAction::CreateSP( this, &FMaterialEditor::OnExpandNodes ),
 			FCanExecuteAction::CreateSP( this, &FMaterialEditor::CanExpandNodes ),
@@ -7085,7 +7599,7 @@ FGraphAppearanceInfo FMaterialEditor::GetGraphAppearance() const
 		AppearanceInfo.CornerText = LOCTEXT("AppearanceCornerText_Material", "MATERIAL"); 
 	}
 
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
 		UMaterial* MaterialForStats = this->bStatsFromPreviewMaterial ? this->Material : this->OriginalMaterial;
 		const FMaterialResource* MaterialResource = MaterialForStats->GetMaterialResource(GMaxRHIFeatureLevel);
@@ -7096,7 +7610,7 @@ FGraphAppearanceInfo FMaterialEditor::GetGraphAppearance() const
 			FMaterialShaderMap* ShaderMap = MaterialResource->GetGameThreadShaderMap();
 			if (ShaderMap)
 			{
-				const FStrataMaterialCompilationOutput& CompilationOutput = ShaderMap->GetStrataMaterialCompilationOutput();
+				const FSubstrateMaterialCompilationOutput& CompilationOutput = ShaderMap->GetSubstrateMaterialCompilationOutput();
 				if (CompilationOutput.bMaterialOutOfBudgetHasBeenSimplified)
 				{
 					AppearanceInfo.WarningText = LOCTEXT("AppearanceWarningText_Material", "Substrate material was out of budget and has been simplified.");
@@ -7168,7 +7682,7 @@ void FMaterialEditor::DeepCopyExpressions(UMaterialGraph* CopyGraph, UMaterialEx
 			PostPasteMaterialExpression(MaterialNode->MaterialExpression);
 
 		}
-		else if (UMaterialGraphNode_Comment* Comment = Cast<UMaterialGraphNode_Comment>(MaterialNode))
+		else if (UMaterialGraphNode_Comment* Comment = Cast<UMaterialGraphNode_Comment>(Node))
 		{
 			Comment->Modify();
 			Comment->Rename(/*NewName=*/ NULL, /*NewOuter=*/ CopyGraph);
@@ -7578,7 +8092,7 @@ void FMaterialEditor::UpdateStatsMaterials()
 	}
 
 	// Also request to update the Substrate slab.
-	StrataWidget->UpdateFromMaterial();
+	SubstrateWidget->UpdateFromMaterial();
 }
 
 void FMaterialEditor::NotifyExternalMaterialChange()

@@ -191,7 +191,7 @@ void FPacketViewDrawHelper::DrawCached(const FNetworkPacketSeries& Series) const
 
 		NumDrawSamples++;
 
-		const float X = SampleIndex * SampleW;
+		const float X = static_cast<float>(SampleIndex) * SampleW;
 
 		//const float ValueY = FMath::RoundToFloat(ViewportY.GetOffsetForValue(static_cast<double>(Sample.LargestPacket.ContentSizeInBits)));
 		const float ValueY = FMath::RoundToFloat(ViewportY.GetOffsetForValue(static_cast<double>(Sample.LargestPacket.TotalSizeInBytes * 8)));
@@ -248,7 +248,7 @@ void FPacketViewDrawHelper::DrawSampleHighlight(const FNetworkPacketAggregatedSa
 	const int32 PacketsPerSample = Viewport.GetNumPacketsPerSample();
 	const int32 FirstPacketIndex = Viewport.GetFirstPacketIndex();
 	const int32 SampleIndex = (Sample.LargestPacket.Index - FirstPacketIndex) / PacketsPerSample;
-	const float X = SampleIndex * SampleW;
+	const float X = static_cast<float>(SampleIndex) * SampleW;
 
 	const FAxisViewportDouble& ViewportY = Viewport.GetVerticalAxisViewport();
 
@@ -309,10 +309,10 @@ void FPacketViewDrawHelper::DrawSelection(int32 StartPacketIndex, int32 EndPacke
 	const int32 FirstPacketIndex = Viewport.GetFirstPacketIndex();
 
 	const int32 StartSampleIndex = (StartPacketIndex - FirstPacketIndex) / PacketsPerSample;
-	const float X1 = FMath::Max(-2.0f, StartSampleIndex * SampleW);
+	const float X1 = FMath::Max(-2.0f, static_cast<float>(StartSampleIndex) * SampleW);
 
 	const int32 EndSampleIndex = (EndPacketIndex - FirstPacketIndex) / PacketsPerSample;
-	const float X2 = FMath::Min(Viewport.GetWidth() + 2.0f, EndSampleIndex * SampleW);
+	const float X2 = FMath::Min(Viewport.GetWidth() + 2.0f, static_cast<float>(EndSampleIndex) * SampleW);
 
 	const FAxisViewportDouble& ViewportY = Viewport.GetVerticalAxisViewport();
 

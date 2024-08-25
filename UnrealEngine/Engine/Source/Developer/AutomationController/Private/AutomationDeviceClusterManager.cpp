@@ -10,13 +10,14 @@ void FAutomationDeviceClusterManager::Reset()
 	Clusters.Empty();
 }
 
-
 void FAutomationDeviceClusterManager::AddDeviceFromMessage(const FMessageAddress& MessageAddress, const FAutomationWorkerFindWorkersResponse& Message, const uint32 GroupFlags)
 {
-	int32 TestClusterIndex;
-	int32 TestDeviceIndex;
+	check(Message.InstanceId.IsValid());
+
+	int32 TestClusterIndex = INDEX_NONE;
+	int32 TestDeviceIndex = INDEX_NONE;
 	//if we don't already know about this device
-	if (!FindDevice(MessageAddress, TestClusterIndex, TestDeviceIndex))
+	if (!FindDevice(Message.InstanceId, TestClusterIndex, TestDeviceIndex))
 	{
 		FDeviceState NewDevice(MessageAddress, Message);
 		FString GroupName = GetGroupNameForDevice(NewDevice, GroupFlags);
@@ -41,16 +42,33 @@ void FAutomationDeviceClusterManager::AddDeviceFromMessage(const FMessageAddress
 			Clusters.Add(NewCluster);
 		}
 	}
+	else
+	{
+		UpdateDeviceFromMessage(MessageAddress, Message);
+	}
 }
 
+void FAutomationDeviceClusterManager::UpdateDeviceFromMessage(const FMessageAddress& MessageAddress, const FAutomationWorkerMessageBase& Message)
+{
+	check(Message.InstanceId.IsValid());
 
-void FAutomationDeviceClusterManager::Remove(const FMessageAddress& MessageAddress)
+	int32 TestClusterIndex = INDEX_NONE;
+	int32 TestDeviceIndex = INDEX_NONE;
+
+	if (FindDevice(Message.InstanceId, TestClusterIndex, TestDeviceIndex))
+	{
+		// If we already know about this device
+		Clusters[TestClusterIndex].Devices[TestDeviceIndex].DeviceMessageAddress = MessageAddress;
+	}
+}
+
+void FAutomationDeviceClusterManager::Remove(const FGuid& DeviceInstanceId)
 {
 	for (int32 ClusterIndex = 0; ClusterIndex < Clusters.Num(); ++ClusterIndex)
 	{
 		for (int32 DeviceIndex = Clusters[ClusterIndex].Devices.Num()-1; DeviceIndex >= 0; --DeviceIndex)
 		{
-			if (MessageAddress == Clusters[ClusterIndex].Devices[DeviceIndex].DeviceMessageAddress)
+			if (DeviceInstanceId == Clusters[ClusterIndex].Devices[DeviceIndex].Info.Instance)
 			{
 				Clusters[ClusterIndex].Devices.RemoveAt(DeviceIndex);
 			}
@@ -106,7 +124,7 @@ FString FAutomationDeviceClusterManager::GetGroupNameForDevice(const FDeviceStat
 	if( OutGroupName.Len() > 0 )
 	{
 		//Get rid of the trailing '-'
-		OutGroupName.LeftChopInline(1, false);
+		OutGroupName.LeftChopInline(1, EAllowShrinking::No);
 	}
 
 	return OutGroupName;
@@ -213,8 +231,14 @@ FString FAutomationDeviceClusterManager::GetClusterDeviceName(const int32 Cluste
 
 FString FAutomationDeviceClusterManager::GetClusterGameInstance(const int32 ClusterIndex, const int32 DeviceIndex) const
 {
+	return GetDeviceInfo(ClusterIndex, DeviceIndex).InstanceName;
+}
+
+FGuid FAutomationDeviceClusterManager::GetClusterGameInstanceId(const int32 ClusterIndex, const int32 DeviceIndex) const
+{
 	return GetDeviceInfo(ClusterIndex, DeviceIndex).Instance;
 }
+
 
 const FAutomationDeviceInfo& FAutomationDeviceClusterManager::GetDeviceInfo(const int32 ClusterIndex, const int32 DeviceIndex) const
 {
@@ -223,7 +247,7 @@ const FAutomationDeviceInfo& FAutomationDeviceClusterManager::GetDeviceInfo(cons
 	return Clusters[ClusterIndex].Devices[DeviceIndex].Info;
 }
 
-bool FAutomationDeviceClusterManager::FindDevice(const FMessageAddress& MessageAddress, int32& OutClusterIndex, int32& OutDeviceIndex)
+bool FAutomationDeviceClusterManager::FindDevice(const FGuid& InstanceId, int32& OutClusterIndex, int32& OutDeviceIndex)
 {
 	OutClusterIndex = INDEX_NONE;
 	OutDeviceIndex = INDEX_NONE;
@@ -232,7 +256,7 @@ bool FAutomationDeviceClusterManager::FindDevice(const FMessageAddress& MessageA
 		for (int32 DeviceIndex = 0; DeviceIndex < Clusters[ClusterIndex].Devices.Num(); ++DeviceIndex)
 		{
 			//if network addresses match
-			if (MessageAddress == Clusters[ClusterIndex].Devices[DeviceIndex].DeviceMessageAddress)
+			if (InstanceId == Clusters[ClusterIndex].Devices[DeviceIndex].Info.Instance)
 			{
 				OutClusterIndex = ClusterIndex;
 				OutDeviceIndex = DeviceIndex;
@@ -242,7 +266,6 @@ bool FAutomationDeviceClusterManager::FindDevice(const FMessageAddress& MessageA
 	}
 	return false;
 }
-
 
 FMessageAddress FAutomationDeviceClusterManager::GetDeviceMessageAddress(const int32 ClusterIndex, const int32 DeviceIndex) const
 {

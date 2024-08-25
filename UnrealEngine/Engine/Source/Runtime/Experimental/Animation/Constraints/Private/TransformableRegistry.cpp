@@ -69,11 +69,11 @@ const FTransformableRegistry::FTransformableInfo* FTransformableRegistry::FindIn
 void FTransformableRegistry::RegisterBaseObjects()
 {
     // register USceneComponent and AActor
-    auto CreateComponentHandle = [](UObject* Outer, UObject* InObject, const FName& InSocketName)->UTransformableHandle*
+    auto CreateComponentHandle = [](UObject* InObject, const FName& InSocketName)->UTransformableHandle*
     {
     	if (USceneComponent* Component = Cast<USceneComponent>(InObject))
     	{
-    		return FTransformConstraintUtils::CreateHandleForSceneComponent(Component, InSocketName, Outer);
+    		return FTransformConstraintUtils::CreateHandleForSceneComponent(Component, InSocketName);
     	}
     	return nullptr;
     };
@@ -87,11 +87,11 @@ void FTransformableRegistry::RegisterBaseObjects()
     	return 0;
     };
     
-    auto CreateComponentHandleFromActor = [CreateComponentHandle](UObject* Outer, UObject* InObject, const FName& InSocketName)->UTransformableHandle*
+    auto CreateComponentHandleFromActor = [CreateComponentHandle](UObject* InObject, const FName& InSocketName)->UTransformableHandle*
     {
     	if (const AActor* Actor = Cast<AActor>(InObject))
     	{
-    		return CreateComponentHandle(Outer, Actor->GetRootComponent(), InSocketName);
+    		return CreateComponentHandle(Actor->GetRootComponent(), InSocketName);
     	}
     	return nullptr;
     };

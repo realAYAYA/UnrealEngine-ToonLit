@@ -122,6 +122,7 @@ class FHairEnvironmentAO : public FGlobalShader
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FVirtualVoxelParameters, VirtualVoxel)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FHairStrandsViewUniformParameters, HairStrands)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(ShaderPrint::FShaderParameters, ShaderPrintParameters)
 
 		RENDER_TARGET_BINDING_SLOTS()
@@ -146,12 +147,13 @@ static void AddHairStrandsEnvironmentAOPass(
 
 	FHairEnvironmentAO::FParameters* PassParameters = GraphBuilder.AllocParameters<FHairEnvironmentAO::FParameters>();
 	PassParameters->Voxel_MacroGroupId = MacroGroupData.MacroGroupId;
-	PassParameters->Voxel_TanConeAngle = FMath::Tan(FMath::DegreesToRadians(GetHairStrandsSkyLightingConeAngle()));
+	PassParameters->Voxel_TanConeAngle = View.IsPerspectiveProjection() ? FMath::Tan(FMath::DegreesToRadians(GetHairStrandsSkyLightingConeAngle())) : 1.0f;
 	PassParameters->SceneTextures = SceneTextures;
 	PassParameters->VirtualVoxel = VoxelResources.UniformBuffer;
 
 	PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
 	PassParameters->HairStrands = HairStrands::BindHairStrandsViewUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	const FFinalPostProcessSettings& Settings = View.FinalPostProcessSettings;
 	PassParameters->AO_Power = Settings.AmbientOcclusionPower;
 	PassParameters->AO_Intensity = Settings.AmbientOcclusionIntensity;
@@ -308,8 +310,6 @@ class FHairEnvironmentLightingPS : public FGlobalShader
 IMPLEMENT_GLOBAL_SHADER(FHairEnvironmentLightingPS, "/Engine/Private/HairStrands/HairStrandsEnvironmentLighting.usf", "MainPS", SF_Pixel);
 IMPLEMENT_GLOBAL_SHADER(FHairEnvironmentLightingVS, "/Engine/Private/HairStrands/HairStrandsEnvironmentLighting.usf", "MainVS", SF_Vertex);
 
-bool AllowStaticLighting();
-
 static void AddHairStrandsEnvironmentLightingPassPS(
 	FRDGBuilder& GraphBuilder,
 	const FScene* Scene,
@@ -350,7 +350,7 @@ static void AddHairStrandsEnvironmentLightingPassPS(
 	// Only support static lighting with SH integrator at the moment
 	const bool bUseVolumetricLightmap = Scene && Scene->VolumetricLightmapSceneData.HasData();
 	const bool bLumenActive = ShouldRenderLumenDiffuseGI(Scene, View);
-	const bool bHasStaticLighting = AllowStaticLighting() && bUseVolumetricLightmap && !bLumenActive && IntegrationType == EHairLightingIntegrationType::SH;
+	const bool bHasStaticLighting = IsStaticLightingAllowed() && bUseVolumetricLightmap && !bLumenActive && IntegrationType == EHairLightingIntegrationType::SH;
 
 	// Sanity check
 	if (bHasStaticLighting) { check(LightingType != EHairLightingSourceType::Lumen); }
@@ -472,17 +472,7 @@ void RenderHairStrandsSceneColorScattering(
 		const FHairStrandsVoxelResources& VoxelResources = View.HairStrandsViewData.VirtualVoxelResources;
 		check(VoxelResources.IsValid());
 
-		bool bNeedScatterSceneLighting = false;
-		for (const FHairStrandsMacroGroupData& MacroGroupData : View.HairStrandsViewData.MacroGroupDatas)
-		{
-			if (MacroGroupData.bNeedScatterSceneLighting)
-			{
-				bNeedScatterSceneLighting = true;
-				break;
-			}
-		}
-
-		if (bNeedScatterSceneLighting)
+		if (HasHairFlags(View.HairStrandsViewData.Flags, HAIR_FLAGS_SCATTER_SCENE_LIGHT))
 		{
 			AddHairStrandsEnvironmentLightingPassPS(GraphBuilder, Scene, View, VisibilityData, VoxelResources, SceneColorTexture, EHairLightingSourceType::SceneColor, nullptr);
 		}

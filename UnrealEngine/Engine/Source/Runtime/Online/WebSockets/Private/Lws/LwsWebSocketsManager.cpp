@@ -193,6 +193,11 @@ void FLwsWebSocketsManager::ShutdownWebSockets()
 
 	if (LwsContext)
 	{
+		if (!Sockets.IsEmpty())
+		{
+			lws_cancel_service(LwsContext);
+		}
+
 		lws_context_destroy(LwsContext);
 		LwsContext = nullptr;
 	}
@@ -246,8 +251,6 @@ uint32 FLwsWebSocketsManager::Run()
 void FLwsWebSocketsManager::Stop()
 {
 	ExitRequest.Set(true);
-	// Safe to call from other threads
-	lws_cancel_service(LwsContext);
 }
 
 void FLwsWebSocketsManager::Exit()

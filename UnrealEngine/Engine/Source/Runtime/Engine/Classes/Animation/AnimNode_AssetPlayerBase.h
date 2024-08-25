@@ -6,6 +6,7 @@
 #include "UObject/ObjectMacros.h"
 #include "Animation/AnimationAsset.h"
 #include "Animation/AnimNode_RelevantAssetPlayerBase.h"
+#include "Animation/AnimSync.h"
 #include "AnimNode_AssetPlayerBase.generated.h"
 
 /* Base class for any asset playing anim node */
@@ -85,4 +86,7 @@ protected:
 
 	/** Track whether we have been full weight previously. Reset when we reach 0 weight*/
 	bool bHasBeenFullWeight = false;
+
+	/** Get sync parameters for the tick record produced by this asset player */
+	ENGINE_API UE::Anim::FAnimSyncParams GetSyncParams(bool bRequestedInertialization) const;
 };

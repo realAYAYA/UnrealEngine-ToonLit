@@ -1,0 +1,14 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+
+Texture2D InputTexture;
+SamplerState InputSampler;
+float InverseGamma = 1.0;
+
+float4 GammaCorrectionPS(noperspective float4 UVAndScreenPos : TEXCOORD0) : SV_Target0
+{
+	float2 UV = UVAndScreenPos.xy;
+	float4 TextureColor = Texture2DSample(InputTexture, InputSampler, UV);
+	return float4(pow(TextureColor.rgb, InverseGamma), TextureColor.a);
+}

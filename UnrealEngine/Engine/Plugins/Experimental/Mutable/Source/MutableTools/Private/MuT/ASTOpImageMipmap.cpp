@@ -18,9 +18,6 @@
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -40,8 +37,9 @@ namespace mu
 
 	bool ASTOpImageMipmap::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpImageMipmap* other = dynamic_cast<const ASTOpImageMipmap*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpImageMipmap* other = static_cast<const ASTOpImageMipmap*>(&otherUntyped);
 			return Source == other->Source &&
 				Levels == other->Levels &&
 				BlockLevels == other->BlockLevels &&
@@ -379,7 +377,7 @@ namespace mu
 
 		case OP_TYPE::IM_COMPOSE:
 		{
-			const ASTOpImageCompose* typedAt = dynamic_cast<const ASTOpImageCompose*>(at.get());
+			const ASTOpImageCompose* typedAt = static_cast<const ASTOpImageCompose*>(at.get());
 			if (!currentMipmapOp->bOnlyTail
 				&&
 				// Don't move the mipmapping if we are composing with a mask.
@@ -410,7 +408,7 @@ namespace mu
 				// a top-level  mipmapping operation to generate the smallest
 				// mipmaps after the patch is done.
 
-				const ASTOpImagePatch* typedSource = dynamic_cast<const ASTOpImagePatch*>(at.get());
+				const ASTOpImagePatch* typedSource = static_cast<const ASTOpImagePatch*>(at.get());
 				Ptr<ASTOp> rectOp = typedSource->patch.child();
 				ASTOp::FGetImageDescContext context;
 				FImageDesc patchDesc = rectOp->GetImageDesc(false, &context);

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GenericPlatform/GenericPlatformSurvey.h"
+#include "Misc/App.h"
 #include "Modules/ModuleManager.h"
 #include "SynthBenchmark.h"
 #include "RHI.h"
@@ -63,7 +64,7 @@ static FTimeSample RunBenchmark(float WorkScale, float (*Function)())
 		FPlatformMisc::MemoryBarrier();
 	}
 	
-	return FTimeSample(Sum, Sum / RunCount);
+	return FTimeSample(Sum, Sum / (float)RunCount);
 }
 
 template<int NumMethods>

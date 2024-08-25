@@ -279,6 +279,39 @@ void UCompositeDataTable::AppendParentTables(const TArray<UDataTable*>& NewTable
 	OnParentTablesUpdated(EPropertyChangeType::ValueSet);
 }
 
+void UCompositeDataTable::RemoveParentTables(const TArray<UDataTable*>& TablesToRemove)
+{
+	for(UDataTable* DataTable : TablesToRemove)
+	{
+		if(DataTable)
+		{
+			ParentTables.Remove(DataTable);
+		}
+	}
+	OnParentTablesUpdated(EPropertyChangeType::ValueSet);
+}
+
+void UCompositeDataTable::AddParentTable(const TObjectPtr<UDataTable>& TableToAdd)
+{
+	if(TableToAdd == nullptr)
+	{
+		return;
+	}
+	ParentTables.Add(TableToAdd);
+	OnParentTablesUpdated(EPropertyChangeType::ValueSet);
+}
+
+void UCompositeDataTable::RemoveParentTable(const TObjectPtr<UDataTable>& TableToRemove)
+{
+	if(TableToRemove == nullptr)
+	{
+		return;
+	}
+	ParentTables.Remove(TableToRemove);
+	OnParentTablesUpdated(EPropertyChangeType::ValueSet);
+}
+
+
 void UCompositeDataTable::OnParentTablesUpdated(EPropertyChangeType::Type ChangeType)
 {
 	// Prevent recursion when there was a cycle in the parent hierarchy (or during the undo of the action that created the cycle; in that case PostEditUndo will recall OnParentTablesUpdated when the dust has settled)

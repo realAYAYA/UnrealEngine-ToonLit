@@ -74,13 +74,22 @@ MakeU64(uint32 H, uint32 L)
 	return uint64(L) | (uint64(H) << 32);
 }
 
+struct FRange
+{
+	uint64 Offset = 0;
+	uint64 Size = 0;
+};
+
 struct FTimingLogger
 {
-	bool		Enabled	  = false;
+	bool		bEnabled  = false;
 	FTimePoint	TimeBegin = FTimePoint{};
 	std::string Name;
-	FTimingLogger(const char* InName, bool InEnabled = true);
+	ELogLevel	LogLevel;
+
+	FTimingLogger(const char* InName, ELogLevel InLogLevel, bool InEnabled = true);
 	~FTimingLogger();
+	void Finish();
 };
 
 inline double
@@ -128,9 +137,12 @@ HashToHexString(const HashType& Hash)
 
 std::wstring ConvertUtf8ToWide(std::string_view StringUtf8);
 std::string	 ConvertWideToUtf8(std::wstring_view StringWide);
+void		 ConvertWideToUtf8(std::wstring_view StringWide, std::string& Result);
 
 std::wstring StringToLower(const std::wstring& Input);
 std::wstring StringToUpper(const std::wstring& Input);
+
+std::string StringEscape(const std::string_view Input);
 
 // Returns a list of alternative DFS paths for a given root
 struct FDfsStorageInfo
@@ -173,7 +185,17 @@ template<typename T>
 TArrayView<T>
 MakeView(const T* Ptr, size_t Count)
 {
-	return TArrayView{Ptr, Ptr + Count};
+	TArrayView<T> Result;
+	Result.BeginPtr = Ptr;
+	Result.EndPtr	= Ptr + Count;
+	return Result;
+}
+
+template<typename T>
+TArrayView<T>
+MakeView(const std::vector<T>& Container)
+{
+	return MakeView(Container.data(), Container.size());
 }
 
 inline uint64
@@ -280,6 +302,38 @@ CountLeadingZeros64(uint64 X)
 	return ((63 - XLog2) & Mask) | (64 & ~Mask);
 }
 
+template<typename StorageT>
+struct TBitArrayInfo
+{
+	static constexpr size_t ElemSizeInBits	= sizeof(StorageT) * 8;
+	const uint64			ElemIndex;
+	const StorageT			BitMask;
+	TBitArrayInfo(uint64 BitIndex) : ElemIndex(BitIndex / ElemSizeInBits), BitMask(StorageT(1) << (BitIndex % ElemSizeInBits)) {}
+};
+
+template<typename StorageT>
+inline bool
+BitArrayGet(const StorageT* Storage, uint64 BitIndex)
+{
+	TBitArrayInfo<StorageT> Info(BitIndex);
+	return (Storage[Info.ElemIndex] & Info.BitMask) != 0;
+}
+
+template<typename StorageT>
+inline void
+BitArraySet(StorageT* Storage, uint64 BitIndex, bool bValue)
+{
+	TBitArrayInfo<StorageT> Info(BitIndex);
+	if (bValue)
+	{
+		Storage[Info.ElemIndex] |= Info.BitMask;
+	}
+	else
+	{
+		Storage[Info.ElemIndex] &= ~Info.BitMask;
+	}
+}
+
 FPath NormalizeFilenameUtf8(const std::string& InFilename);
 FPath GetAbsoluteNormalPath(const FPath& InPath);
 
@@ -309,5 +363,15 @@ Append(fmt::memory_buffer& Buf, const char* S)
 {
 	Buf.append(std::string_view(S));
 }
+
+void OpenUrlInDefaultBrowser(const char* Address);
+
+FPath GetUserHomeDirectory();
+
+FHash256	GetAnonymizedMachineId(std::string_view Salt = {});
+std::string GetAnonymizedMachineIdString(std::string_view Salt = {});
+
+// Returns string in format 'Error code 123: Some description.`
+std::string FormatSystemErrorMessage(int32 ErrorCode);
 
 }  // namespace unsync

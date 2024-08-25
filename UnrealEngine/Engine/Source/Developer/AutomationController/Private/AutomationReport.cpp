@@ -318,7 +318,7 @@ bool FAutomationReport::SetFilter( TSharedPtr< AutomationFilterCollection > InFi
 	{
 		bool ThisChildPassedFilter = ChildReports[ChildIndex]->SetFilter( InFilter, bSelfPassesFilter );
 
-		if( ThisChildPassedFilter || bSelfPassesFilter || ParentPassedFilter )
+		if( ThisChildPassedFilter )
 		{
 			if ( !ChildReports[ChildIndex]->IsParent() || ChildReports[ChildIndex]->GetFilteredChildren().Num() > 0 )
 			{
@@ -871,7 +871,18 @@ bool FAutomationReport::IsToBeSkipped(FName* OutReason, bool* OutWarn) const
 	{
 		if (OutReason != nullptr)
 		{
-			*OutReason = ExcludeTestInfo.Reason;
+			if (!ExcludeTestInfo.Platforms.IsEmpty())
+			{
+				*OutReason = *(SetToShortString(ExcludeTestInfo.Platforms) + TEXT(": ") + ExcludeTestInfo.Reason.ToString());
+			}
+			else if (!ExcludeTestInfo.RHIs.IsEmpty())
+			{
+				*OutReason = *(SetToShortString(ExcludeTestInfo.RHIs) + TEXT(": ") + ExcludeTestInfo.Reason.ToString());
+			}
+			else
+			{
+				*OutReason = ExcludeTestInfo.Reason;
+			}
 		}
 
 		if (OutWarn != nullptr)
@@ -959,7 +970,8 @@ void FAutomationReport::SetSkipFlag(bool bEnableSkip, const FAutomationTestExclu
 			auto Entry = ExcludedTestCached->GetExcludeTestEntry(TestInfo.GetFullTestPath());
 			if (Entry != nullptr && ExcludeTestInfo.RemoveConditions(*Entry))
 			{
-				// Branch off the template with a different exclusion condition set
+				// Branch off the template with the difference exclusion condition set
+				// Remove the overlapping conditions as they are redundant since the parent has precedence 
 				Template = &ExcludeTestInfo;
 			}
 			ExcludedTestCached->AddToExcludeTest(TestInfo.GetFullTestPath(), *Template);
@@ -993,7 +1005,7 @@ void FAutomationReport::SetSkipFlag(bool bEnableSkip, const FAutomationTestExclu
 	if (!bFromPropagation)
 	{
 		// Save config only at the end of the recursion
-		ExcludedTestCached->SaveConfig();
+		ExcludedTestCached->SaveToConfigs();
 	}
 }
 

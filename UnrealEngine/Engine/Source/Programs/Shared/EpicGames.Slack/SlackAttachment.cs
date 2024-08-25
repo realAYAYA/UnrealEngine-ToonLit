@@ -1,12 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using EpicGames.Slack.Blocks;
-using EpicGames.Slack.Elements;
 
 namespace EpicGames.Slack
 {

@@ -36,7 +36,9 @@ public class UnrealInsightsTarget : TargetRules
 
 		bHasExports = false;
 
+		// Enable server controls
+		GlobalDefinitions.Add("UE_TRACE_SERVER_CONTROLS_ENABLED=1");
 		// Have UnrealInsights implicitly launch the trace store.
-		GlobalDefinitions.Add("WITH_UNREAL_TRACE_LAUNCH=1");
+		GlobalDefinitions.Add("UE_TRACE_SERVER_LAUNCH_ENABLED=1");
 	}
 }

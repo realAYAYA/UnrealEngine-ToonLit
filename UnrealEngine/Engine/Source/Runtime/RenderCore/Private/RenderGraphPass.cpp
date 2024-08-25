@@ -123,7 +123,7 @@ FRDGBarrierBatchBegin::FRDGBarrierBatchBegin(ERHIPipeline InPipelinesToBegin, ER
 #endif
 {}
 
-void FRDGBarrierBatchBegin::AddTransition(FRDGViewableResource* Resource, const FRHITransitionInfo& Info)
+void FRDGBarrierBatchBegin::AddTransition(FRDGViewableResource* Resource, FRDGTransitionInfo Info)
 {
 	Transitions.Add(Info);
 	bTransitionNeeded = true;
@@ -151,10 +151,10 @@ void FRDGBarrierBatchBegin::AddAlias(FRDGViewableResource* Resource, const FRHIT
 #endif
 }
 
-void FRDGBarrierBatchBegin::CreateTransition()
+void FRDGBarrierBatchBegin::CreateTransition(TConstArrayView<FRHITransitionInfo> TransitionsRHI)
 {
 	check(bTransitionNeeded && !Transition);
-	Transition = RHICreateTransition(FRHITransitionCreateInfo(PipelinesToBegin, PipelinesToEnd, TransitionFlags, Transitions, Aliases));
+	Transition = RHICreateTransition(FRHITransitionCreateInfo(PipelinesToBegin, PipelinesToEnd, TransitionFlags, TransitionsRHI, Aliases));
 }
 
 void FRDGBarrierBatchBegin::Submit(FRHIComputeCommandList& RHICmdList, ERHIPipeline Pipeline, FRDGTransitionQueue& TransitionsToBegin)

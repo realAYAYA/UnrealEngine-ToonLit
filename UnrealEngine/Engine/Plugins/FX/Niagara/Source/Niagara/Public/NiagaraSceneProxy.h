@@ -30,11 +30,8 @@ public:
 	/** Called to allow renderers to free render state */
 	NIAGARA_API void DestroyRenderState_Concurrent();
 
-	/** Gets whether or not this scene proxy should be rendered. */
-	NIAGARA_API bool GetRenderingEnabled() const;
-
 	/** Sets whether or not this scene proxy should be rendered. */
-	NIAGARA_API void SetRenderingEnabled(bool bInRenderingEnabled);
+	NIAGARA_API void SetRenderingEnabled_GT(bool bInRenderingEnabled);
 
 	FNiagaraGpuComputeDispatchInterface* GetComputeDispatchInterface() const { return ComputeDispatchInterface; }
 
@@ -48,7 +45,14 @@ public:
 
 	NIAGARA_API const FVector3f& GetLWCRenderTile() const;
 
+	NIAGARA_API TUniformBuffer<FPrimitiveUniformShaderParameters>* GetCustomUniformBufferResource(FRHICommandListBase& RHICmdList, bool bHasVelocity, const FBox& InstanceBounds = FBox(ForceInitToZero)) const;
+
+	UE_DEPRECATED(5.4, "GetCustomUniformBufferResource requires a command list.")
 	NIAGARA_API TUniformBuffer<FPrimitiveUniformShaderParameters>* GetCustomUniformBufferResource(bool bHasVelocity, const FBox& InstanceBounds = FBox(ForceInitToZero)) const;
+
+	NIAGARA_API FRHIUniformBuffer* GetCustomUniformBuffer(FRHICommandListBase& RHICmdList, bool bHasVelocity, const FBox& InstanceBounds = FBox(ForceInitToZero)) const;
+
+	UE_DEPRECATED(5.4, "GetCustomUniformBuffer requires a command list.")
 	NIAGARA_API FRHIUniformBuffer* GetCustomUniformBuffer(bool bHasVelocity, const FBox& InstanceBounds = FBox(ForceInitToZero)) const;
 
 	NIAGARA_API virtual FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override;
@@ -71,10 +75,10 @@ private:
 	NIAGARA_API void ReleaseUniformBuffers(bool bEmpty);
 
 	//~ Begin FPrimitiveSceneProxy Interface.
-	NIAGARA_API virtual void CreateRenderThreadResources() override;
+	NIAGARA_API virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 
 	//virtual void OnActorPositionChanged() override;
-	NIAGARA_API virtual void OnTransformChanged() override;
+	NIAGARA_API virtual void OnTransformChanged(FRHICommandListBase& RHICmdList) override;
 
 	NIAGARA_API virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override;
 

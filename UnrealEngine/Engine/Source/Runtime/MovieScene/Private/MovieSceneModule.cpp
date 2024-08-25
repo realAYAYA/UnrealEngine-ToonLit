@@ -94,6 +94,8 @@ public:
 
 	virtual void StartupModule() override
 	{
+		FModuleManager::Get().LoadModuleChecked("UniversalObjectLocator");
+
 		struct FNoopDefaultDeleter
 		{
 			void operator()(FMovieSceneModule* Object) const {}

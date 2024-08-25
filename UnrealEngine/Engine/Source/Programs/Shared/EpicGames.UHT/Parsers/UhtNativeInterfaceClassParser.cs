@@ -120,11 +120,7 @@ namespace EpicGames.UHT.Parsers
 				tokenReader.LogError($"When compiling class definition for '{classObj.SourceName}', attempting to strip prefix results in an empty name. Did you leave off a prefix?");
 			}
 
-			if (classObj.Outer != null)
-			{
-				classObj.Outer.AddChild(classObj);
-			}
-
+			classObj.Outer?.AddChild(classObj);
 			classObj.SuperIdentifier = superName;
 
 			//TODO - C++ UHT compatibility - When we know for sure that we have a native interface, then we should error out.  Due to the lack of a symbol table,

@@ -19,49 +19,51 @@ namespace ResonanceAudio
 
 	void* LoadResonanceAudioDynamicLibrary()
 	{
-		FString LibraryPath = FPaths::EngineDir() / TEXT("Source/ThirdParty/ResonanceAudioApi/lib");
-		FString DynamicLibraryToLoad;
-		void* DynamicLibraryHandle = nullptr;
+		auto LoadLibrary = [](const FString& FilePath)
+		{
+			FString DynamicLibraryToLoad = FPaths::EngineDir() / TEXT("Source/ThirdParty/ResonanceAudioApi/lib") / FilePath;
+			void* DynamicLibraryHandle = nullptr;
+
+			UE_LOG(LogResonanceAudio, Log, TEXT("Attempting to load %s"), *DynamicLibraryToLoad);
+
+			if (FPaths::FileExists(DynamicLibraryToLoad))
+			{
+				DynamicLibraryHandle = FPlatformProcess::GetDllHandle(*DynamicLibraryToLoad);
+			}
+			else
+			{
+				UE_LOG(LogResonanceAudio, Log, TEXT("File does not exist. %s"), *DynamicLibraryToLoad);
+			}
+	
+			if (!DynamicLibraryHandle)
+			{
+				UE_LOG(LogResonanceAudio, Log, TEXT("Unable to load %s."), *FPaths::ConvertRelativePathToFull(DynamicLibraryToLoad));
+			}
+			else
+			{
+				UE_LOG(LogResonanceAudio, Log, TEXT("Loaded %s."), *DynamicLibraryToLoad);
+			}
+	
+			return DynamicLibraryHandle;
+		};
 
 #if PLATFORM_WINDOWS
 	#if PLATFORM_64BITS
-		DynamicLibraryToLoad = LibraryPath / TEXT("win_x64/vraudio.dll");
+		return LoadLibrary(TEXT("win_x64/vraudio.dll"));
 	#else
-		DynamicLibraryToLoad = LibraryPath / TEXT("win_x86/vraudio.dll");
+		return LoadLibrary(TEXT("win_x86/vraudio.dll"));
 	#endif	// PLATFORM_64BITS
 #elif PLATFORM_MAC
-		DynamicLibraryToLoad = LibraryPath / TEXT("darwin/libvraudio.dylib");
+		return LoadLibrary(TEXT("darwin/libvraudio.dylib"));
 #elif PLATFORM_ANDROID || PLATFORM_IOS
 		 // Not necessary on this platform.
 		return nullptr;
 #elif PLATFORM_LINUX
-		DynamicLibraryToLoad = LibraryPath / TEXT("linux/libvraudio.so");
+		return LoadLibrary(TEXT("linux/libvraudio.so"));
 #else
 		UE_LOG(LogResonanceAudio, Error, TEXT("Unsupported Platform. Supported platforms are ANDROID, IOS, LINUX, MAC and WINDOWS"));
 		return nullptr;
 #endif  // PLATFORM_WINDOWS
-
-		UE_LOG(LogResonanceAudio, Log, TEXT("Attempting to load %s"), *DynamicLibraryToLoad);
-
-		if (FPaths::FileExists(DynamicLibraryToLoad))
-		{
-			DynamicLibraryHandle = FPlatformProcess::GetDllHandle(*DynamicLibraryToLoad);
-		}
-		else
-		{
-			UE_LOG(LogResonanceAudio, Log, TEXT("File does not exist. %s"), *DynamicLibraryToLoad);
-		}
-
-		if (!DynamicLibraryHandle)
-		{
-			UE_LOG(LogResonanceAudio, Log, TEXT("Unable to load %s."), *FPaths::ConvertRelativePathToFull(DynamicLibraryToLoad));
-		}
-		else
-		{
-			UE_LOG(LogResonanceAudio, Log, TEXT("Loaded %s."), *DynamicLibraryToLoad);
-		}
-
-		return DynamicLibraryHandle;
 	}
 
 	vraudio::ResonanceAudioApi* CreateResonanceAudioApi(void* DynamicLibraryHandle, size_t NumChannels, size_t NumFrames, int SampleRate) {

@@ -83,6 +83,34 @@ void FRHITexture::SetName(const FName& InName)
 #endif
 }
 
+const TCHAR* FRHIViewDesc::GetBufferTypeString(FRHIViewDesc::EBufferType BufferType)
+{
+	switch (BufferType)
+	{
+	case FRHIViewDesc::EBufferType::Unknown:				return TEXT("Unknown");
+	case FRHIViewDesc::EBufferType::Typed:					return TEXT("Typed");
+	case FRHIViewDesc::EBufferType::Structured:				return TEXT("Structured");
+	case FRHIViewDesc::EBufferType::AccelerationStructure:	return TEXT("AccelerationStructure");
+	case FRHIViewDesc::EBufferType::Raw:					return TEXT("Raw");
+	default:												checkf(false, TEXT("Missing FRHIViewDesc::EBufferType %d"), BufferType);
+	}
+	return TEXT("");
+}
+
+const TCHAR* FRHIViewDesc::GetTextureDimensionString(FRHIViewDesc::EDimension Dimension)
+{
+	switch (Dimension)
+	{
+	case EDimension::Texture2D:				return TEXT("Texture2D");
+	case EDimension::Texture2DArray:		return TEXT("Texture2DArray");
+	case EDimension::Texture3D:				return TEXT("Texture3D");
+	case EDimension::TextureCube:			return TEXT("TextureCube");
+	case EDimension::TextureCubeArray:		return TEXT("TextureCubeArray");
+	default:								checkf(false, TEXT("Missing FRHIViewDesc::EDimension %d"), Dimension);
+	}
+
+	return TEXT("");
+}
 FRHIViewDesc::FBuffer::FViewInfo FRHIViewDesc::FBuffer::GetViewInfo(FRHIBuffer* TargetBuffer) const
 {
 	check(TargetBuffer);
@@ -111,7 +139,12 @@ FRHIViewDesc::FBuffer::FViewInfo FRHIViewDesc::FBuffer::GetViewInfo(FRHIBuffer* 
 		checkf(!EnumHasAnyFlags(Desc.Usage, BUF_StructuredBuffer | BUF_AccelerationStructure), TEXT("Cannot create typed views of structured buffers, or ray tracing acceleration structures."));
 		checkf(Format != PF_Unknown, TEXT("Format cannot be unknown for typed buffers."));
 		checkf(Stride == 0, TEXT("Do not specify a stride for typed buffer views."));
-		checkf((OffsetInBytes % RHIGetMinimumAlignmentForBufferBackedSRV(Info.Format)) == 0, TEXT("Buffer offset must be a multiple of the minimum alignment supported by the RHI."));
+		checkf((OffsetInBytes % RHIGetMinimumAlignmentForBufferBackedSRV(Info.Format)) == 0, TEXT("Buffer OffsetInBytes (%d) must be a multiple of the minimum alignment (%d) supported by the RHI for format (%d: %s)."),
+			OffsetInBytes,
+			RHIGetMinimumAlignmentForBufferBackedSRV(Info.Format),
+			Info.Format,
+			GPixelFormats[Info.Format].Name
+		);
 
 		// Stride is determined by the format
 		Info.StrideInBytes = GPixelFormats[Info.Format].BlockBytes;
@@ -124,10 +157,11 @@ FRHIViewDesc::FBuffer::FViewInfo FRHIViewDesc::FBuffer::GetViewInfo(FRHIBuffer* 
 		// Stride is taken from the view, or the underlying buffer if not provided.
 		Info.StrideInBytes = Stride == 0 ? Desc.Stride : Stride;
 		checkf(Info.StrideInBytes > 0, TEXT("Stride for structured buffers must be set by the view, or on the underlying buffer resource."));
+		checkf((OffsetInBytes % Info.StrideInBytes) == 0, TEXT("OffsetInBytes (%d) must be a multiple of element stride (%d)."), OffsetInBytes, Info.StrideInBytes);
 		break;
 
 	case EBufferType::AccelerationStructure:
-		checkf(EnumHasAnyFlags(Desc.Usage, BUF_AccelerationStructure), TEXT("The buffer descriptor does not a ray tracing acceleration structure, so is incompatible with this view type."));
+		checkf(EnumHasAnyFlags(Desc.Usage, BUF_AccelerationStructure), TEXT("The buffer descriptor is not a ray tracing acceleration structure, so is incompatible with this view type."));
 		checkf(Format == PF_Unknown, TEXT("Acceleration structure views should not specify a format."));
 		checkf(Stride == 0, TEXT("Do not specify a stride for acceleration structure views."));
 
@@ -148,7 +182,6 @@ FRHIViewDesc::FBuffer::FViewInfo FRHIViewDesc::FBuffer::GetViewInfo(FRHIBuffer* 
 	}
 
 	checkf(OffsetInBytes < Desc.Size, TEXT("Buffer byte offset (%d) is out of bounds (size: %d)."), OffsetInBytes, Desc.Size);
-	checkf((OffsetInBytes % Info.StrideInBytes) == 0, TEXT("Offset in bytes must be a multiple of element stride."));
 	Info.OffsetInBytes = OffsetInBytes;
 
 	// OffsetInBytes == 0 && NumElements == 0 is a special case to mean "whole resource". If offset is non-zero, we need the caller to pass the required number of elements, except for acceleration structures.
@@ -159,7 +192,7 @@ FRHIViewDesc::FBuffer::FViewInfo FRHIViewDesc::FBuffer::GetViewInfo(FRHIBuffer* 
 	Info.SizeInBytes = Info.NumElements * Info.StrideInBytes;
 
 	checkf(Info.OffsetInBytes + Info.SizeInBytes <= Desc.Size,
-		TEXT("The bounds of the view (offset: %d, size in bytes: %d, stride: %d, num elements %d) exceeds the size of the underlying buffer (%d bytes)."),
+		TEXT("The bounds of the view (offset: %d, size in bytes: %d, stride: %d, num elements: %d) exceeds the size of the underlying buffer (%d bytes)."),
 		Info.OffsetInBytes,
 		Info.SizeInBytes,
 		Info.StrideInBytes,
@@ -212,11 +245,36 @@ FRHIViewDesc::FTexture::FViewInfo FRHIViewDesc::FTexture::GetViewInfo(FRHITextur
 	);
 
 	checkf(ArrayRange.Num > 0 || ArrayRange.First == 0, TEXT("ArrayRange.Num cannot be zero, unless creating a view of the entire range."));
-	checkf((ArrayRange.First + ArrayRange.Num) <= Desc.ArraySize, TEXT("Array range (first: %d, num: %d) is out of bounds for texture description (array size: %d)."),
-		ArrayRange.First,
-		ArrayRange.Num,
-		Desc.ArraySize
-	);
+
+	// make sure the view fits in the texture
+	{
+		uint16 TextureArraySize = Desc.IsTextureCube() ? Desc.ArraySize * 6 : Desc.ArraySize;
+		uint16 ViewArrayFirst = ArrayRange.First;
+		uint16 ViewArrayNum = ArrayRange.Num == 0 ? Desc.ArraySize : ArrayRange.Num;
+
+		bool bIsCubeView = false;
+		if (Dimension == EDimension::TextureCube || Dimension == EDimension::TextureCubeArray)
+		{
+			bIsCubeView = true;
+			ViewArrayFirst *= 6;
+			ViewArrayNum *= 6;
+		}
+
+		uint16 SliceDividerForCheckMessage = bIsCubeView ? 6 : 1; // We want the message to report the number of elements in the units of the view
+		checkf(ViewArrayFirst + ViewArrayNum <= TextureArraySize, TEXT("Array range (first: %d, num: %d) is out of bounds for texture description (array size: %d)."),
+			ViewArrayFirst / SliceDividerForCheckMessage,
+			ViewArrayNum / SliceDividerForCheckMessage,
+			TextureArraySize / SliceDividerForCheckMessage
+		);
+	}
+
+	// When ArrayRange.Num == 0, we use the number of elements from the texture. If the view is a 2D array and the texture a cube (array), we need to do x6 on the number of slices
+	// We already checked that we can only create cube views on cube textures, so we only need to take into account the 2D view on cube texture case
+	uint16 AdjustedTextureArraySize = Desc.ArraySize;
+	if (Dimension == EDimension::Texture2DArray && Desc.IsTextureCube())
+	{
+		AdjustedTextureArraySize *= 6;
+	}
 
 	FViewInfo Info = {};
 	Info.Format = Format == PF_Unknown ? Desc.Format : Format;
@@ -265,8 +323,8 @@ FRHIViewDesc::FTexture::FViewInfo FRHIViewDesc::FTexture::GetViewInfo(FRHITextur
 	);
 
 	Info.ArrayRange.First = ArrayRange.First;
-	Info.ArrayRange.Num = ArrayRange.Num == 0 ? Desc.ArraySize : ArrayRange.Num;
-	Info.bAllSlices = Info.ArrayRange.First == 0 && Info.ArrayRange.Num == Desc.ArraySize;
+	Info.ArrayRange.Num = ArrayRange.Num == 0 ? AdjustedTextureArraySize : ArrayRange.Num;
+	Info.bAllSlices = Info.ArrayRange.First == 0 && Info.ArrayRange.Num == AdjustedTextureArraySize;
 
 	return Info;
 }
@@ -333,5 +391,6 @@ FRHIUniformBufferLayout::FRHIUniformBufferLayout(const FRHIUniformBufferLayoutIn
 	, BindingFlags(Initializer.BindingFlags)
 	, bHasNonGraphOutputs(Initializer.bHasNonGraphOutputs)
 	, bNoEmulatedUniformBuffer(Initializer.bNoEmulatedUniformBuffer)
+	, bUniformView(Initializer.bUniformView)
 {
 }

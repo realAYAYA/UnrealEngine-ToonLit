@@ -2,13 +2,20 @@
 
 #include "Blueprints/DisplayClusterBlueprintLib.h"
 #include "Blueprints/DisplayClusterBlueprintAPIImpl.h"
-#include "UObject/Package.h"
+
+#include "Cluster/IDisplayClusterClusterManager.h"
+#include "Components/DisplayClusterICVFXCameraComponent.h"
+#include "Game/IDisplayClusterGameManager.h"
+#include "Misc/DisplayClusterLog.h"
+
+#include "IDisplayCluster.h"
 
 #include "DisplayClusterChromakeyCardActor.h"
 #include "DisplayClusterLightCardActor.h"
 #include "DisplayClusterRootActor.h"
 #include "DisplayClusterConfigurationTypes.h"
-#include "Components/DisplayClusterICVFXCameraComponent.h"
+
+#include "UObject/Package.h"
 
 #if WITH_EDITOR
 #include "ScopedTransaction.h"
@@ -16,15 +23,103 @@
 
 #define LOCTEXT_NAMESPACE "UDisplayClusterBlueprintLib"
 
-UDisplayClusterBlueprintLib::UDisplayClusterBlueprintLib(class FObjectInitializer const & ObjectInitializer)
-	: Super(ObjectInitializer)
-{
-}
 
+// [DEPRECATED]
 void UDisplayClusterBlueprintLib::GetAPI(TScriptInterface<IDisplayClusterBlueprintAPI>& OutAPI)
 {
 	static UDisplayClusterBlueprintAPIImpl* Obj = NewObject<UDisplayClusterBlueprintAPIImpl>(GetTransientPackage(), NAME_None, RF_MarkAsRootSet);
 	OutAPI = Obj;
+}
+
+EDisplayClusterOperationMode UDisplayClusterBlueprintLib::GetOperationMode()
+{
+	return IDisplayCluster::Get().GetOperationMode();
+}
+
+ADisplayClusterRootActor* UDisplayClusterBlueprintLib::GetRootActor()
+{
+	return IDisplayCluster::Get().GetGameMgr()->GetRootActor();
+}
+
+FString UDisplayClusterBlueprintLib::GetNodeId()
+{
+	return IDisplayCluster::Get().GetClusterMgr()->GetNodeId();
+}
+
+void UDisplayClusterBlueprintLib::GetActiveNodeIds(TArray<FString>& OutNodeIds)
+{
+	IDisplayCluster::Get().GetClusterMgr()->GetNodeIds(OutNodeIds);
+}
+
+int32 UDisplayClusterBlueprintLib::GetActiveNodesAmount()
+{
+	return IDisplayCluster::Get().GetClusterMgr()->GetNodesAmount();
+}
+
+bool UDisplayClusterBlueprintLib::IsPrimary()
+{
+	return IDisplayCluster::Get().GetClusterMgr()->IsPrimary();
+}
+
+bool UDisplayClusterBlueprintLib::IsSecondary()
+{
+	return IDisplayCluster::Get().GetClusterMgr()->IsSecondary();
+}
+
+bool UDisplayClusterBlueprintLib::IsBackup()
+{
+	return IDisplayCluster::Get().GetClusterMgr()->IsBackup();
+}
+
+EDisplayClusterNodeRole UDisplayClusterBlueprintLib::GetClusterRole()
+{
+	return IDisplayCluster::Get().GetClusterMgr()->GetClusterRole();
+}
+
+void UDisplayClusterBlueprintLib::AddClusterEventListener(TScriptInterface<IDisplayClusterClusterEventListener> Listener)
+{
+	IDisplayCluster::Get().GetClusterMgr()->AddClusterEventListener(Listener);
+}
+
+void UDisplayClusterBlueprintLib::RemoveClusterEventListener(TScriptInterface<IDisplayClusterClusterEventListener> Listener)
+{
+	IDisplayCluster::Get().GetClusterMgr()->RemoveClusterEventListener(Listener);
+}
+
+void UDisplayClusterBlueprintLib::EmitClusterEventJson(const FDisplayClusterClusterEventJson& Event, bool bPrimaryOnly)
+{
+	IDisplayCluster::Get().GetClusterMgr()->EmitClusterEventJson(Event, bPrimaryOnly);
+}
+
+void UDisplayClusterBlueprintLib::EmitClusterEventBinary(const FDisplayClusterClusterEventBinary& Event, bool bPrimaryOnly)
+{
+	IDisplayCluster::Get().GetClusterMgr()->EmitClusterEventBinary(Event, bPrimaryOnly);
+}
+
+void UDisplayClusterBlueprintLib::SendClusterEventJsonTo(const FString& Address, const int32 Port, const FDisplayClusterClusterEventJson& Event, bool bPrimaryOnly)
+{
+	if (Port >= 0 && Port <= 0xffff)
+	{
+		const uint16 PortNumber = static_cast<uint16>(Port);
+		IDisplayCluster::Get().GetClusterMgr()->SendClusterEventTo(Address, PortNumber, Event, bPrimaryOnly);
+	}
+	else
+	{
+		UE_LOG(LogDisplayClusterBlueprint, Warning, TEXT("Wrong port number: %d"), Port);
+	}
+}
+
+void UDisplayClusterBlueprintLib::SendClusterEventBinaryTo(const FString& Address, const int32 Port, const FDisplayClusterClusterEventBinary& Event, bool bPrimaryOnly)
+{
+	if (Port >= 0 && Port <= 0xffff)
+	{
+		const uint16 PortNumber = static_cast<uint16>(Port);
+		IDisplayCluster::Get().GetClusterMgr()->SendClusterEventTo(Address, PortNumber, Event, bPrimaryOnly);
+	}
+	else
+	{
+		UE_LOG(LogDisplayClusterBlueprint, Warning, TEXT("Wrong port number: %d"), Port);
+	}
 }
 
 ADisplayClusterLightCardActor* UDisplayClusterBlueprintLib::CreateLightCard(ADisplayClusterRootActor* RootActor)

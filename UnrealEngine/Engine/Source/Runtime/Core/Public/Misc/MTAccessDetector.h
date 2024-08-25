@@ -365,7 +365,7 @@ private:
 		const SIZE_T StackTraceSize = 65536;
 		ANSICHAR StackTrace[StackTraceSize] = { 0 };
 		FPlatformStackWalk::StackWalkAndDump(StackTrace, StackTraceSize, 0);
-		return StackTrace;
+		return ANSI_TO_TCHAR(StackTrace);
 	}
 
 	static FString GetThreadCallstack(uint32 ThreadId)
@@ -384,7 +384,7 @@ private:
 		const SIZE_T StackTraceSize = 65536;
 		ANSICHAR StackTrace[StackTraceSize] = { 0 };
 		FPlatformStackWalk::ThreadStackWalkAndDump(StackTrace, StackTraceSize, 0, ThreadId);
-		return StackTrace;
+		return ANSI_TO_TCHAR(StackTrace);
 	}
 
 //////////////////////////////////////////////////////////////////////
@@ -448,7 +448,7 @@ private:
 		uint32 ReaderNum = --GetReadersTls()[ReaderIndex].Num;
 		if (ReaderNum == 0)
 		{
-			GetReadersTls().RemoveAtSwap(ReaderIndex, 1, /* bAllowShrinking = */ false);
+			GetReadersTls().RemoveAtSwap(ReaderIndex, 1, EAllowShrinking::No);
 		}
 	}
 	///////////////////////////////////////////////
@@ -622,9 +622,10 @@ public:
 
 		ensureMsgf(LocalState == PrevState,
 			TEXT("Data race detected: other thread(s) activity during releasing write access on thread %d: %u -> %u readers, %u -> %u writers on thread %u -> %u\nCurrent thread %u callstack:\n%s\nWriter thread %u callstack:\n%s"),
+			FPlatformTLS::GetCurrentThreadId(),
 			LocalState.ReaderNum, PrevState.ReaderNum,
-			LocalState.WriterNum, PrevState.WriterNum,
-			LocalState.GetWriterThreadId(), PrevState.GetWriterThreadId(), 
+			LocalState.WriterNum, PrevState.WriterNum, 
+			LocalState.GetWriterThreadId(), PrevState.GetWriterThreadId(),
 			FPlatformTLS::GetCurrentThreadId(), *GetCurrentThreadCallstack(),
 			PrevState.GetWriterThreadId(), *GetThreadCallstack(PrevState.GetWriterThreadId()));
 	}
@@ -664,6 +665,7 @@ public:
 #define UE_MT_DECLARE_RW_ACCESS_DETECTOR(AccessDetector)
 #define UE_MT_DECLARE_RW_RECURSIVE_ACCESS_DETECTOR(AccessDetector)
 #define UE_MT_DECLARE_RW_FULLY_RECURSIVE_ACCESS_DETECTOR(AccessDetector)
+#define UE_MT_DECLARE_MRSW_RECURSIVE_ACCESS_DETECTOR(AccessDetector)
 
 #define UE_MT_SCOPED_READ_ACCESS(AccessDetector) 
 #define UE_MT_SCOPED_WRITE_ACCESS(AccessDetector)

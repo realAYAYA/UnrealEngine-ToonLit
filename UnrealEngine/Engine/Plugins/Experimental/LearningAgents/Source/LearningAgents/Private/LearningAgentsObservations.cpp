@@ -2,2435 +2,3920 @@
 
 #include "LearningAgentsObservations.h"
 
-#include "LearningAgentsManager.h"
-#include "LearningAgentsInteractor.h"
+#include "LearningAgentsManagerListener.h"
+#include "LearningAgentsDebug.h"
+
 #include "LearningArray.h"
-#include "LearningArrayMap.h"
-#include "LearningFeatureObject.h"
 #include "LearningLog.h"
 
-#include "GameFramework/Actor.h"
+#include "Containers/StaticArray.h"
 
-namespace UE::Learning::Agents::Observations::Private
+#include "Runtime/Engine/Public/DrawDebugHelpers.h"
+#include "Engine/World.h"
+#include "Components/SplineComponent.h"
+
+bool operator==(const FLearningAgentsObservationObjectElement& Lhs, const FLearningAgentsObservationObjectElement& Rhs)
 {
-	template<typename ObservationUObject, typename ObservationFObject, typename... InArgTypes>
-	ObservationUObject* AddObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const TCHAR* FunctionName, InArgTypes&& ...Args)
+	return Lhs.ObjectElement.Index == Rhs.ObjectElement.Index;
+}
+
+uint32 GetTypeHash(const FLearningAgentsObservationObjectElement& Element)
+{
+	return (uint32)Element.ObjectElement.Index;
+}
+
+namespace UE::Learning::Agents::Observation::Private
+{
+	static inline bool ContainsDuplicates(const TArrayView<const int32> Indices)
 	{
-		if (!InInteractor)
-		{
-			UE_LOG(LogLearning, Error, TEXT("%s: InInteractor is nullptr."), FunctionName);
-			return nullptr;
-		}
-
-		if (!InInteractor->HasAgentManager())
-		{
-			UE_LOG(LogLearning, Error, TEXT("%s: Must be attached to a LearningAgentsManager Actor."), *InInteractor->GetName());
-			return nullptr;
-		}
-
-		const FName UniqueName = MakeUniqueObjectName(InInteractor, ObservationUObject::StaticClass(), Name, EUniqueObjectNameOptions::GloballyUnique);
-
-		ObservationUObject* Observation = NewObject<ObservationUObject>(InInteractor, UniqueName);
-
-		Observation->Init(InInteractor->GetAgentManager()->GetMaxAgentNum());
-		Observation->Interactor = InInteractor;
-		Observation->FeatureObject = MakeShared<ObservationFObject>(
-			Observation->GetFName(),
-			InInteractor->GetAgentManager()->GetInstanceData().ToSharedRef(),
-			InInteractor->GetAgentManager()->GetMaxAgentNum(),
-			Forward<InArgTypes>(Args)...);
-
-		// We assume all supported observation feature objects can be encoded
-		UE_LEARNING_CHECK(Observation->FeatureObject->IsEncodable());
-
-		InInteractor->AddObservation(Observation, Observation->FeatureObject.ToSharedRef());
-
-		return Observation;
-	}
-}
-
-//------------------------------------------------------------------
-
-void ULearningAgentsObservation::Init(const int32 MaxAgentNum)
-{
-	AgentIteration.SetNumUninitialized({ MaxAgentNum });
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, INDEX_NONE);
-}
-
-void ULearningAgentsObservation::OnAgentsAdded(const TArray<int32>& AgentIds)
-{
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, 0, AgentIds);
-}
-
-void ULearningAgentsObservation::OnAgentsRemoved(const TArray<int32>& AgentIds)
-{
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, INDEX_NONE, AgentIds);
-}
-
-void ULearningAgentsObservation::OnAgentsReset(const TArray<int32>& AgentIds)
-{
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, 0, AgentIds);
-}
-
-uint64 ULearningAgentsObservation::GetAgentIteration(const int32 AgentId) const
-{
-	return AgentIteration[AgentId];
-}
-
-//------------------------------------------------------------------
-
-UFloatObservation* UFloatObservation::AddFloatObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UFloatObservation, UE::Learning::FFloatFeature>(InInteractor, Name, TEXT("AddFloatObservation"), 1, Scale);
-}
-
-void UFloatObservation::SetFloatObservation(const int32 AgentId, const float Value)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		TSet<int32, DefaultKeyFuncs<int32>, TInlineSetAllocator<32>> IndicesSet;
+		IndicesSet.Append(Indices);
+		return Indices.Num() != IndicesSet.Num();
 	}
 
-	FeatureObject->InstanceData->View(FeatureObject->ValueHandle)[AgentId][0] = Value;
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UFloatObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UFloatObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> ValueView = FeatureObject->InstanceData->ConstView(FeatureObject->ValueHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	static inline bool ContainsDuplicates(const TArrayView<const FName> ElementNames)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		TSet<FName, DefaultKeyFuncs<FName>, TInlineSetAllocator<32>> ElementNameSet;
+		ElementNameSet.Append(ElementNames);
+		return ElementNames.Num() != ElementNameSet.Num();
+	}
+
+	static inline const TCHAR* GetObservationTypeString(const Learning::Observation::EType ObservationType)
+	{
+		switch (ObservationType)
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nValue: %s\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(ValueView[Instance]),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+		case  Learning::Observation::EType::Null: return TEXT("Null");
+		case  Learning::Observation::EType::Continuous: return TEXT("Continuous");
+		case  Learning::Observation::EType::And: return TEXT("Struct");
+		case  Learning::Observation::EType::OrExclusive: return TEXT("ExclusiveUnion");
+		case  Learning::Observation::EType::OrInclusive: return TEXT("InclusiveUnion");
+		case  Learning::Observation::EType::Array: return TEXT("StaticArray");
+		case  Learning::Observation::EType::Set: return TEXT("Set");
+		case  Learning::Observation::EType::Encoding: return TEXT("Encoding");
+		default:
+			UE_LEARNING_NOT_IMPLEMENTED();
+			return TEXT("Unimplemented");
 		}
 	}
-}
-#endif
 
-//------------------------------------------------------------------
-
-UFloatArrayObservation* UFloatArrayObservation::AddFloatArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 Num, const float Scale)
-{
-	if (Num < 1)
+	static bool ValidateObservationObjectMatchesSchema(
+		const Learning::Observation::FSchema& Schema,
+		const Learning::Observation::FSchemaElement SchemaElement,
+		const Learning::Observation::FObject& Object,
+		const Learning::Observation::FObjectElement ObjectElement)
 	{
-		UE_LOG(LogLearning, Error, TEXT("AddFloatArrayObservation: Number of elements in array must be at least 1, got %i."), Num);
-		return nullptr;
-	}
+		// Check Elements are Valid
 
-	return UE::Learning::Agents::Observations::Private::AddObservation<UFloatArrayObservation, UE::Learning::FFloatFeature>(InInteractor, Name, TEXT("AddFloatArrayObservation"), Num, Scale);
-}
-
-void UFloatArrayObservation::SetFloatArrayObservation(const int32 AgentId, const TArray<float>& Values)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> View = FeatureObject->InstanceData->View(FeatureObject->ValueHandle);
-
-	if (Values.Num() != View.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), View.Num<1>(), Values.Num());
-		return;
-	}
-
-	UE::Learning::Array::Copy<1, float>(View[AgentId], Values);
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UFloatArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UFloatArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> ValueView = FeatureObject->InstanceData->ConstView(FeatureObject->ValueHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		if (!Schema.IsValid(SchemaElement))
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nValue: %s\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(ValueView[Instance]),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Invalid Observation Schema Element."));
+			return false;
 		}
-	}
-}
-#endif
 
-//------------------------------------------------------------------
-
-UVectorObservation* UVectorObservation::AddVectorObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UVectorObservation, UE::Learning::FFloatFeature>(InInteractor, Name, TEXT("AddVectorObservation"), 3, Scale);
-}
-
-void UVectorObservation::SetVectorObservation(const int32 AgentId, const FVector Vector)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> View = FeatureObject->InstanceData->View(FeatureObject->ValueHandle);
-
-	View[AgentId][0] = Vector.X;
-	View[AgentId][1] = Vector.Y;
-	View[AgentId][2] = Vector.Z;
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UVectorObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UVectorObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> ValueView = FeatureObject->InstanceData->ConstView(FeatureObject->ValueHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		if (!Object.IsValid(ObjectElement))
 		{
-			const FVector Vector(ValueView[Instance][0], ValueView[Instance][1], ValueView[Instance][2]);
-
-			UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				Actor->GetActorLocation() + Vector,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation() + Vector,
-				VisualLogColor.ToFColor(true),
-				TEXT("Vector: [% 6.4f % 6.4f % 6.4f]"),
-				Vector.X, Vector.Y, Vector.Z);
-
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Invalid Observation Object Element."));
+			return false;
 		}
-	}
-}
-#endif
 
-UVectorArrayObservation* UVectorArrayObservation::AddVectorArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 Num, const float Scale)
-{
-	if (Num < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddVectorArrayObservation: Number of elements in array must be at least 1, got %i."), Num);
-		return nullptr;
-	}
+		// Check Names Match
 
-	return UE::Learning::Agents::Observations::Private::AddObservation<UVectorArrayObservation, UE::Learning::FFloatFeature>(InInteractor, Name, TEXT("AddVectorArrayObservation"), Num * 3, Scale);
-}
+		const FName ObservationSchemaElementTag = Schema.GetTag(SchemaElement);
+		const FName ObservationObjectElementTag = Object.GetTag(ObjectElement);
 
-void UVectorArrayObservation::SetVectorArrayObservation(const int32 AgentId, const TArray<FVector>& Vectors)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> View = FeatureObject->InstanceData->View(FeatureObject->ValueHandle);
-
-	if (Vectors.Num() != View.Num<1>() / 3)
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), View.Num<1>() / 3, Vectors.Num());
-		return;
-	}
-
-	for (int32 VectorIdx = 0; VectorIdx < Vectors.Num(); VectorIdx++)
-	{
-		View[AgentId][VectorIdx * 3 + 0] = Vectors[VectorIdx].X;
-		View[AgentId][VectorIdx * 3 + 1] = Vectors[VectorIdx].Y;
-		View[AgentId][VectorIdx * 3 + 2] = Vectors[VectorIdx].Z;
-	}
-
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UVectorArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UVectorArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> ValueView = FeatureObject->InstanceData->ConstView(FeatureObject->ValueHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 VectorNum = ValueView.Num<1>() / 3;
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		if (ObservationSchemaElementTag != ObservationObjectElementTag)
 		{
-			for (int32 VectorIdx = 0; VectorIdx < VectorNum; VectorIdx++)
+			UE_LOG(LogLearning, Warning, TEXT("ValidateObservationObjectMatchesSchema: Observation tag does not match Schema. Expected '%s', got '%s'."),
+				*ObservationSchemaElementTag.ToString(), *ObservationObjectElementTag.ToString());
+		}
+
+		// Check Types Match
+
+		const Learning::Observation::EType ObservationSchemaElementType = Schema.GetType(SchemaElement);
+		const Learning::Observation::EType ObservationObjectElementType = Object.GetType(ObjectElement);
+
+		if (ObservationSchemaElementType != ObservationObjectElementType)
+		{
+			UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' type does not match Schema. Expected type '%s', got type '%s'."),
+				*ObservationSchemaElementTag.ToString(),
+				GetObservationTypeString(ObservationSchemaElementType),
+				GetObservationTypeString(ObservationObjectElementType));
+			return false;
+		}
+
+		// Type Specific Checks
+
+		switch (ObservationSchemaElementType)
+		{
+		case Learning::Observation::EType::Null: return true;
+		
+		case Learning::Observation::EType::Continuous:
+		{
+			const int32 SchemaElementSize = Schema.GetContinuous(SchemaElement).Num;
+			const int32 ObjectElementSize = Object.GetContinuous(ObjectElement).Values.Num();
+
+			if (SchemaElementSize != ObjectElementSize)
 			{
-				const FVector Vector(ValueView[Instance][VectorIdx * 3 + 0], ValueView[Instance][VectorIdx * 3 + 1], ValueView[Instance][VectorIdx * 3 + 2]);
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(VectorIdx, VectorNum);
-
-				UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset,
-					Actor->GetActorLocation() + Offset + Vector,
-					VisualLogColor.ToFColor(true),
-					TEXT(""));
-
-				UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset + Vector,
-					VisualLogColor.ToFColor(true),
-					TEXT("Vector %i: [% 6.4f % 6.4f % 6.4f]"),
-					VectorIdx,
-					Vector.X, Vector.Y, Vector.Z);
+				UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' size does not match Schema. Expected '%i', got '%i'."),
+					*ObservationSchemaElementTag.ToString(),
+					SchemaElementSize,
+					ObjectElementSize);
+				return false;
 			}
 
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			return true;
 		}
-	}
-}
-#endif
 
-//------------------------------------------------------------------
-
-UEnumObservation* UEnumObservation::AddEnumObservation(ULearningAgentsInteractor* InInteractor, const UEnum* EnumType, const FName Name)
-{
-	if (!EnumType)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddEnumObservation: Invalid Enum."));
-		return nullptr;
-	}
-
-	if (EnumType->NumEnums() < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddEnumObservation: Enum requires at least one entry to be used as an observation."));
-		return nullptr;
-	}
-
-	UEnumObservation* Observation = UE::Learning::Agents::Observations::Private::AddObservation<UEnumObservation, UE::Learning::FFloatFeature>(InInteractor, Name, TEXT("AddEnumObservation"), EnumType->NumEnums());
-	if (Observation) { Observation->Enum = EnumType; }
-	
-	return Observation;
-}
-
-void UEnumObservation::SetEnumObservation(const int32 AgentId, const uint8 EnumValue)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const int32 Index = Enum->GetIndexByValue(EnumValue);
-
-	if (Index == INDEX_NONE)
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Invalid enum value: %i."), *GetName(), EnumValue);
-		return;
-	}
-
-	const TLearningArrayView<2, float> EnumView = FeatureObject->InstanceData->View(FeatureObject->ValueHandle);
-	UE::Learning::Array::Zero(EnumView[AgentId]);
-	EnumView[AgentId][Index] = 1.0f;
-
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UEnumObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UEnumObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> ValueView = FeatureObject->InstanceData->ConstView(FeatureObject->ValueHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 EnumNum = ValueView.Num<1>();
-		
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		case Learning::Observation::EType::And:
 		{
-			int32 EnumEntryIdx = INDEX_NONE;
+			const Learning::Observation::FSchemaAndParameters SchemaParameters = Schema.GetAnd(SchemaElement);
+			const Learning::Observation::FObjectAndParameters ObjectParameters = Object.GetAnd(ObjectElement);
+			UE_LEARNING_CHECK(SchemaParameters.Elements.Num() == SchemaParameters.ElementNames.Num());
+			UE_LEARNING_CHECK(ObjectParameters.Elements.Num() == ObjectParameters.ElementNames.Num());
 
-			for (int32 EnumIdx = 0; EnumIdx < EnumNum; EnumIdx++)
+			if (SchemaParameters.Elements.Num() != ObjectParameters.Elements.Num())
 			{
-				if (ValueView[Instance][EnumIdx] != 0.0f)
+				UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' number of sub-elements does not match Schema. Expected '%i', got '%i'."),
+					*ObservationSchemaElementTag.ToString(),
+					SchemaParameters.Elements.Num(),
+					ObjectParameters.Elements.Num());
+				return false;
+			}
+
+			for (int32 SchemaElementIdx = 0; SchemaElementIdx < SchemaParameters.Elements.Num(); SchemaElementIdx++)
+			{
+				const int32 ObjectElementIdx = ObjectParameters.ElementNames.Find(SchemaParameters.ElementNames[SchemaElementIdx]);
+
+				if (ObjectElementIdx == INDEX_NONE)
 				{
-					EnumEntryIdx = EnumIdx;
-					break;
+					UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' does not include '%s' observation required by Schema."),
+						*ObservationSchemaElementTag.ToString(),
+						*SchemaParameters.ElementNames[SchemaElementIdx].ToString());
+					return false;
+				}
+
+				if (!ValidateObservationObjectMatchesSchema(
+					Schema,
+					SchemaParameters.Elements[SchemaElementIdx],
+					Object,
+					ObjectParameters.Elements[ObjectElementIdx]))
+				{
+					return false;
 				}
 			}
 
-			if (EnumEntryIdx != INDEX_NONE)
+			return true;
+		}
+
+		case Learning::Observation::EType::OrExclusive:
+		{
+			const Learning::Observation::FSchemaOrExclusiveParameters SchemaParameters = Schema.GetOrExclusive(SchemaElement);
+			const Learning::Observation::FObjectOrExclusiveParameters ObjectParameters = Object.GetOrExclusive(ObjectElement);
+			UE_LEARNING_CHECK(SchemaParameters.Elements.Num() == SchemaParameters.ElementNames.Num());
+
+			const int32 SchemaSubElementIdx = SchemaParameters.ElementNames.Find(ObjectParameters.ElementName);
+
+			if (SchemaSubElementIdx == INDEX_NONE)
 			{
-				UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-					Actor->GetActorLocation(),
-					VisualLogColor.ToFColor(true),
-					TEXT("Agent %i\nValue: %i\nIndex: %i\nName: \"%s\"\nEncoded: %s"),
-					Instance,
-					Enum->GetValueByIndex(EnumEntryIdx),
-					EnumEntryIdx,
-					*Enum->GetDisplayNameTextByIndex(EnumEntryIdx).ToString(),
-					*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+				UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' Schema does not include '%s' observation."),
+					*ObservationSchemaElementTag.ToString(),
+					*ObjectParameters.ElementName.ToString());
+				return false;
 			}
-			else
+
+			return ValidateObservationObjectMatchesSchema(
+				Schema,
+				SchemaParameters.Elements[SchemaSubElementIdx],
+				Object,
+				ObjectParameters.Element);
+		}
+
+		case Learning::Observation::EType::OrInclusive:
+		{
+			const Learning::Observation::FSchemaOrInclusiveParameters SchemaParameters = Schema.GetOrInclusive(SchemaElement);
+			const Learning::Observation::FObjectOrInclusiveParameters ObjectParameters = Object.GetOrInclusive(ObjectElement);
+
+			if (ObjectParameters.Elements.Num() > SchemaParameters.Elements.Num())
 			{
-				UE_LOG(LogLearning, Error, TEXT("Invalid Enum encoding."));
+				UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' too many sub-observations provided. Expected at most '%i', got '%i'."),
+					*ObservationSchemaElementTag.ToString(),
+					SchemaParameters.Elements.Num(),
+					ObjectParameters.Elements.Num());
+				return false;
 			}
+
+			for (int32 ObjectSubElementIdx = 0; ObjectSubElementIdx < ObjectParameters.Elements.Num(); ObjectSubElementIdx++)
+			{
+				const int32 SchemaSubElementIdx = SchemaParameters.ElementNames.Find(ObjectParameters.ElementNames[ObjectSubElementIdx]);
+
+				if (SchemaSubElementIdx == INDEX_NONE)
+				{
+					UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' Schema does not include '%s' observation."),
+						*ObservationSchemaElementTag.ToString(),
+						*ObjectParameters.ElementNames[ObjectSubElementIdx].ToString());
+					return false;
+				}
+
+				if (!ValidateObservationObjectMatchesSchema(
+					Schema,
+					SchemaParameters.Elements[SchemaSubElementIdx],
+					Object,
+					ObjectParameters.Elements[ObjectSubElementIdx]))
+				{
+					return false;
+				}
+			}
+
+			return true;
 		}
-	}
-}
-#endif
 
-UEnumArrayObservation* UEnumArrayObservation::AddEnumArrayObservation(ULearningAgentsInteractor* InInteractor, const UEnum* EnumType, const FName Name, const int32 EnumNum)
-{
-	if (!EnumType)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddEnumArrayObservation: Invalid Enum."));
-		return nullptr;
-	}
-
-	if (EnumType->NumEnums() < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddEnumArrayObservation: Enum requires at least one entry to be used as an observation."));
-		return nullptr;
-	}
-
-	if (EnumNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddEnumArrayObservation: Number of elements in array must be at least 1, got %i."), EnumNum);
-		return nullptr;
-	}
-
-	UEnumArrayObservation* Observation = UE::Learning::Agents::Observations::Private::AddObservation<UEnumArrayObservation, UE::Learning::FFloatFeature>(InInteractor, Name, TEXT("AddEnumArrayObservation"), EnumNum * EnumType->NumEnums());
-	if (Observation) { Observation->Enum = EnumType; }
-
-	return Observation;
-}
-
-void UEnumArrayObservation::SetEnumArrayObservation(const int32 AgentId, const TArray<uint8>& EnumValues)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> EnumView = FeatureObject->InstanceData->View(FeatureObject->ValueHandle);
-
-	const int32 EnumEntryNum = Enum->NumEnums();
-
-	if (EnumValues.Num() != EnumView.Num<1>() / EnumEntryNum)
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), EnumView.Num<1>() / EnumEntryNum, EnumValues.Num());
-		return;
-	}
-
-	for (int32 EnumIdx = 0; EnumIdx < EnumValues.Num(); EnumIdx++)
-	{
-		const TLearningArrayView<1, float> EnumViewSlice = EnumView[AgentId].Slice(EnumIdx * EnumEntryNum, EnumEntryNum);
-		UE::Learning::Array::Zero(EnumViewSlice);
-
-		const int32 Index = Enum->GetIndexByValue(EnumValues[EnumIdx]);
-
-		if (Index == INDEX_NONE)
+		case Learning::Observation::EType::Array:
 		{
-			UE_LOG(LogLearning, Error, TEXT("%s: Invalid enum value: %i"), *GetName(), EnumValues[EnumIdx]);
-			continue;
+			const Learning::Observation::FSchemaArrayParameters SchemaParameters = Schema.GetArray(SchemaElement);
+			const Learning::Observation::FObjectArrayParameters ObjectParameters = Object.GetArray(ObjectElement);
+
+			if (ObjectParameters.Elements.Num() != SchemaParameters.Num)
+			{
+				UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' array incorrect size. Expected '%i' elements, got '%i'."),
+					*ObservationSchemaElementTag.ToString(),
+					SchemaParameters.Num,
+					ObjectParameters.Elements.Num());
+				return false;
+			}
+
+			for (int32 ElementIdx = 0; ElementIdx < ObjectParameters.Elements.Num(); ElementIdx++)
+			{
+				if (!ValidateObservationObjectMatchesSchema(
+					Schema,
+					SchemaParameters.Element,
+					Object,
+					ObjectParameters.Elements[ElementIdx]))
+				{
+					return false;
+				}
+			}
+
+			return true;
 		}
 
-		EnumViewSlice[Index] = 1.0f;
-	}
-
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UEnumArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UEnumArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> ValueView = FeatureObject->InstanceData->ConstView(FeatureObject->ValueHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		case Learning::Observation::EType::Set:
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nEncoded: %s"),
-				Instance,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			const Learning::Observation::FSchemaSetParameters SchemaParameters = Schema.GetSet(SchemaElement);
+			const Learning::Observation::FObjectSetParameters ObjectParameters = Object.GetSet(ObjectElement);
 
+			if (ObjectParameters.Elements.Num() > SchemaParameters.MaxNum)
+			{
+				UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Observation '%s' set too large. Expected at most '%i' elements, got '%i'."),
+					*ObservationSchemaElementTag.ToString(),
+					SchemaParameters.MaxNum,
+					ObjectParameters.Elements.Num());
+				return false;
+			}
+
+			for (int32 ElementIdx = 0; ElementIdx < ObjectParameters.Elements.Num(); ElementIdx++)
+			{
+				if (!ValidateObservationObjectMatchesSchema(
+					Schema,
+					SchemaParameters.Element,
+					Object,
+					ObjectParameters.Elements[ElementIdx]))
+				{
+					return false;
+				}
+			}
+
+			return true;
 		}
-	}
-}
-#endif
 
-//------------------------------------------------------------------
-
-UTimeObservation* UTimeObservation::AddTimeObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UTimeObservation, UE::Learning::FTimeFeature>(InInteractor, Name, TEXT("AddTimeObservation"), 1, Scale);
-}
-
-void UTimeObservation::SetTimeObservation(const int32 AgentId, const float Time, const float RelativeTime)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->TimeHandle)[AgentId][0] = Time;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeTimeHandle)[AgentId] = RelativeTime;
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UTimeObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UTimeObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> TimeView = FeatureObject->InstanceData->ConstView(FeatureObject->TimeHandle);
-	const TLearningArrayView<1, const float> RelativeTimeView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeTimeHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		case Learning::Observation::EType::Encoding:
 		{
-			const float Time = TimeView[Instance][0];
-			const float RelativeTime = RelativeTimeView[Instance];
+			const Learning::Observation::FSchemaEncodingParameters SchemaParameters = Schema.GetEncoding(SchemaElement);
+			const Learning::Observation::FObjectEncodingParameters ObjectParameters = Object.GetEncoding(ObjectElement);
 
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRelative Time: [% 6.3f]\nTime: [% 6.3f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				RelativeTime,
-				Time,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			return ValidateObservationObjectMatchesSchema(
+				Schema,
+				SchemaParameters.Element,
+				Object,
+				ObjectParameters.Element);
 		}
-	}
-}
-#endif
 
-UTimeArrayObservation* UTimeArrayObservation::AddTimeArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 TimeNum, const float Scale)
-{
-	if (TimeNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddTimeArrayObservation: Number of elements in array must be at least 1, got %i."), TimeNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<UTimeArrayObservation, UE::Learning::FTimeFeature>(InInteractor, Name, TEXT("AddTimeArrayObservation"), TimeNum, Scale);
-}
-
-void UTimeArrayObservation::SetTimeArrayObservation(const int32 AgentId, const TArray<float>& Times, const float RelativeTime)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> TimeView = FeatureObject->InstanceData->View(FeatureObject->TimeHandle);
-	const TLearningArrayView<1, float> RelativeTimeView = FeatureObject->InstanceData->View(FeatureObject->RelativeTimeHandle);
-
-	if (Times.Num() != TimeView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), TimeView.Num<1>(), Times.Num());
-		return;
-	}
-
-	UE::Learning::Array::Copy<1, float>(TimeView[AgentId], Times);
-	RelativeTimeView[AgentId] = RelativeTime;
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UTimeArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UTimeArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> TimeView = FeatureObject->InstanceData->ConstView(FeatureObject->TimeHandle);
-	const TLearningArrayView<1, const float> RelativeTimeView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeTimeHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		default:
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRelative Time: [% 6.3f]\nTimes: %s\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				RelativeTimeView[Instance],
-				*UE::Learning::Array::FormatFloat(TimeView[Instance]),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LEARNING_NOT_IMPLEMENTED();
+			return true;
+		}
 		}
 	}
-}
-#endif
 
-//------------------------------------------------------------------
-
-UAngleObservation* UAngleObservation::AddAngleObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UAngleObservation, UE::Learning::FAngleFeature>(InInteractor, Name, TEXT("AddAngleObservation"), 1, Scale);
-}
-
-void UAngleObservation::SetAngleObservation(const int32 AgentId, const float Angle, const float RelativeAngle)
-{
-	if (!Interactor->HasAgent(AgentId))
+	static void LogObservation(
+		const UE::Learning::Observation::FObject& Object, 
+		const UE::Learning::Observation::FObjectElement ObjectElement,
+		const FString& Indentation,
+		const FString& Prefix)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->AngleHandle)[AgentId][0] = FMath::DegreesToRadians(Angle);
-	FeatureObject->InstanceData->View(FeatureObject->RelativeAngleHandle)[AgentId] = FMath::DegreesToRadians(RelativeAngle);
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UAngleObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UAngleObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> AngleView = FeatureObject->InstanceData->ConstView(FeatureObject->AngleHandle);
-	const TLearningArrayView<1, const float> RelativeAngleView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeAngleHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		if (!Object.IsValid(ObjectElement))
 		{
-			const float Angle = AngleView[Instance][0];
-			const float RelativeAngle = RelativeAngleView[Instance];
+			UE_LOG(LogLearning, Error, TEXT("LogObservation: Invalid Observation Object Element."));
+			return;
+		}
 
-			UE_LEARNING_AGENTS_VLOG_ANGLE(this, LogLearning, Display,
-				Angle,
-				0.0f,
-				Actor->GetActorLocation(),
-				50.0f,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRelative Angle: [% 6.1f]\nAngle: [% 6.1f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				FMath::RadiansToDegrees(RelativeAngle),
-				FMath::RadiansToDegrees(Angle),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+		const UE::Learning::Observation::EType Type = Object.GetType(ObjectElement);
+		const FName Tag = Object.GetTag(ObjectElement);
+
+		switch (Type)
+		{
+		case UE::Learning::Observation::EType::Null:
+		{
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s)"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type));
+			return;
+		}
+
+		case UE::Learning::Observation::EType::Continuous:
+		{
+			const UE::Learning::Observation::FObjectContinuousParameters Parameters = Object.GetContinuous(ObjectElement);
+
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s) %s"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type), *UE::Learning::Array::FormatFloat(Parameters.Values));
+			return;
+		}
+
+		case UE::Learning::Observation::EType::And:
+		{
+			const UE::Learning::Observation::FObjectAndParameters Parameters = Object.GetAnd(ObjectElement);
+
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s)"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type));
+			for (int32 SubElementIdx = 0; SubElementIdx < Parameters.Elements.Num(); SubElementIdx++)
+			{
+				LogObservation(Object, Parameters.Elements[SubElementIdx], *(Indentation + TEXT("    ")), FString::Printf(TEXT("| \"%s\": "), *Parameters.ElementNames[SubElementIdx].ToString()));
+			}
+
+			return;
+		}
+
+		case UE::Learning::Observation::EType::OrExclusive:
+		{
+			const UE::Learning::Observation::FObjectOrExclusiveParameters Parameters = Object.GetOrExclusive(ObjectElement);
+
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s)"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type));
+			LogObservation(Object, Parameters.Element, *(Indentation + TEXT("    ")), FString::Printf(TEXT("| \"%s\": "), *Parameters.ElementName.ToString()));
+
+			return;
+		}
+
+		case UE::Learning::Observation::EType::OrInclusive:
+		{
+			const UE::Learning::Observation::FObjectOrInclusiveParameters Parameters = Object.GetOrInclusive(ObjectElement);
+
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s)"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type));
+			for (int32 SubElementIdx = 0; SubElementIdx < Parameters.Elements.Num(); SubElementIdx++)
+			{
+				LogObservation(Object, Parameters.Elements[SubElementIdx], *(Indentation + TEXT("    ")), FString::Printf(TEXT("| \"%s\": "), *Parameters.ElementNames[SubElementIdx].ToString()));
+			}
+
+			return;
+		}
+
+		case UE::Learning::Observation::EType::Array:
+		{
+			const UE::Learning::Observation::FObjectArrayParameters Parameters = Object.GetArray(ObjectElement);
+
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s)"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type));
+			for (int32 SubElementIdx = 0; SubElementIdx < Parameters.Elements.Num(); SubElementIdx++)
+			{
+				LogObservation(Object, Parameters.Elements[SubElementIdx], *(Indentation + TEXT("    ")), FString::Printf(TEXT("| %3i:"), SubElementIdx));
+			}
+
+			return;
+		}
+
+		case UE::Learning::Observation::EType::Set:
+		{
+			const UE::Learning::Observation::FObjectSetParameters Parameters = Object.GetSet(ObjectElement);
+
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s)"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type));
+			for (int32 SubElementIdx = 0; SubElementIdx < Parameters.Elements.Num(); SubElementIdx++)
+			{
+				LogObservation(Object, Parameters.Elements[SubElementIdx], *(Indentation + TEXT("    ")), FString::Printf(TEXT("| %3i:"), SubElementIdx));
+			}
+
+			return;
+		}
+
+		case UE::Learning::Observation::EType::Encoding:
+		{
+			const UE::Learning::Observation::FObjectEncodingParameters Parameters = Object.GetEncoding(ObjectElement);
+
+			UE_LOG(LogLearning, Display, TEXT("%s%s \"%s\" (%s)"), *Indentation, *Prefix, *Tag.ToString(), GetObservationTypeString(Type));
+			LogObservation(Object, Parameters.Element, *(Indentation + TEXT("    ")), TEXT("|"));
+
+			return;
+		}
+		}
+	}
+
+	static inline FVector VectorLogSafe(const FVector V, const float Epsilon = UE_SMALL_NUMBER)
+	{
+		return FVector(
+			FMath::Loge(FMath::Max(V.X, Epsilon)),
+			FMath::Loge(FMath::Max(V.Y, Epsilon)),
+			FMath::Loge(FMath::Max(V.Z, Epsilon)));
+	}
+
+	static inline FVector VectorExp(const FVector V)
+	{
+		return FVector(
+			FMath::Exp(V.X),
+			FMath::Exp(V.Y),
+			FMath::Exp(V.Z));
+	}
+
+	static inline Learning::Observation::EEncodingActivationFunction GetEncodingActivationFunction(const ELearningAgentsActivationFunction ActivationFunction)
+	{
+		switch (ActivationFunction)
+		{
+		case ELearningAgentsActivationFunction::ReLU: return Learning::Observation::EEncodingActivationFunction::ReLU;
+		case ELearningAgentsActivationFunction::ELU: return Learning::Observation::EEncodingActivationFunction::ELU;
+		case ELearningAgentsActivationFunction::TanH: return Learning::Observation::EEncodingActivationFunction::TanH;
+		default: UE_LEARNING_NOT_IMPLEMENTED(); return Learning::Observation::EEncodingActivationFunction::ReLU;
 		}
 	}
 }
-#endif
 
-UAngleArrayObservation* UAngleArrayObservation::AddAngleArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 AngleNum, const float Scale)
+FTransform ULearningAgentsObservations::ProjectTransformOntoGroundPlane(const FTransform Transform, const FVector LocalForwardVector, const float GroundPlaneHeight)
 {
-	if (AngleNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddAngleArrayObservation: Number of elements in array must be at least 1, got %i."), AngleNum);
-		return nullptr;
-	}
+	FVector Position = Transform.GetLocation();
+	Position.Z = GroundPlaneHeight;
 
-	return UE::Learning::Agents::Observations::Private::AddObservation<UAngleArrayObservation, UE::Learning::FAngleFeature>(InInteractor, Name, TEXT("AddAngleArrayObservation"), AngleNum, Scale);
+	const FVector Direction = (FVector(1.0f, 1.0f, 0.0f) * Transform.TransformVectorNoScale(LocalForwardVector)).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+
+	return FTransform(FQuat::FindBetweenNormals(FVector::ForwardVector, Direction), Position, Transform.GetScale3D());
 }
 
-void UAngleArrayObservation::SetAngleArrayObservation(const int32 AgentId, const TArray<float>& Angles, const float RelativeAngle)
+UEnum* ULearningAgentsObservations::FindEnumByName(const FString& Name)
 {
-	if (!Interactor->HasAgent(AgentId))
+	return FindObject<UEnum>(nullptr, *Name);
+}
+
+bool ULearningAgentsObservations::ValidateObservationObjectMatchesSchema(
+	const ULearningAgentsObservationSchema* Schema,
+	const FLearningAgentsObservationSchemaElement SchemaElement,
+	const ULearningAgentsObservationObject* Object,
+	const FLearningAgentsObservationObjectElement ObjectElement)
+{
+	if (!Schema)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Schema is nullptr."));
+		return false;
 	}
 
-	const TLearningArrayView<2, float> AngleView = FeatureObject->InstanceData->View(FeatureObject->AngleHandle);
-	const TLearningArrayView<1, float> RelativeAngleView = FeatureObject->InstanceData->View(FeatureObject->RelativeAngleHandle);
-
-	if (Angles.Num() != AngleView.Num<1>())
+	if (!Object)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), AngleView.Num<1>(), Angles.Num());
-		return;
+		UE_LOG(LogLearning, Error, TEXT("ValidateObservationObjectMatchesSchema: Object is nullptr."));
+		return false;
 	}
 
-	for (int32 AngleIdx = 0; AngleIdx < Angles.Num(); AngleIdx++)
+	return UE::Learning::Agents::Observation::Private::ValidateObservationObjectMatchesSchema(
+		Schema->ObservationSchema,
+		SchemaElement.SchemaElement,
+		Object->ObservationObject,
+		ObjectElement.ObjectElement);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyNullObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	if (!Schema)
 	{
-		AngleView[AgentId][AngleIdx] = FMath::DegreesToRadians(Angles[AngleIdx]);
+		UE_LOG(LogLearning, Error, TEXT("SpecifyNullObservation: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	return { Schema->ObservationSchema.CreateNull(Tag)};
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyContinuousObservation(ULearningAgentsObservationSchema* Schema, const int32 Size, const FName Tag)
+{
+	if (!Schema)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyContinuousObservation: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Size < 0)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyContinuousObservation: Invalid Continuous Observation Size '%i'."), Size);
+		return FLearningAgentsObservationSchemaElement();
 	}
 	
-	RelativeAngleView[AgentId] = FMath::DegreesToRadians(RelativeAngle);
-	AgentIteration[AgentId]++;
+	if (Size == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyContinuousObservation: Specifying zero-sized Continuous Observation."));
+	}
+
+	return { Schema->ObservationSchema.CreateContinuous({ Size }, Tag) };
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UAngleArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyExclusiveDiscreteObservation(ULearningAgentsObservationSchema* Schema, const int32 Size, const FName Tag)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UAngleArrayObservation::VisualLog);
+	return SpecifyContinuousObservation(Schema, Size, Tag);
+}
 
-	const TLearningArrayView<2, const float> AngleView = FeatureObject->InstanceData->ConstView(FeatureObject->AngleHandle);
-	const TLearningArrayView<1, const float> RelativeAngleView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeAngleHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyInclusiveDiscreteObservation(ULearningAgentsObservationSchema* Schema, const int32 Size, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, Size, Tag);
+}
 
-	const int32 AngleNum = AngleView.Num<1>();
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyCountObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 1, Tag);
+}
 
-	for (const int32 Instance : Instances)
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyStructObservation(ULearningAgentsObservationSchema* Schema, const TMap<FName, FLearningAgentsObservationSchemaElement>& Elements, const FName Tag)
+{
+	if (Elements.Num() == 0)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const float RelativeAngle = RelativeAngleView[Instance];
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyStructObservation: Specifying zero-sized Struct Observation."));
+	}
 
-			for (int32 AngleIdx = 0; AngleIdx < AngleNum; AngleIdx++)
+	const int32 SubElementNum = Elements.Num();
+
+	TArray<int32, TInlineAllocator<16>> SubElementIndices;
+	TArray<FName, TInlineAllocator<16>> SubElementNames;
+	TArray<FLearningAgentsObservationSchemaElement, TInlineAllocator<16>> SubElements;
+	SubElementIndices.Empty(Elements.Num());
+	SubElementNames.Empty(Elements.Num());
+	SubElements.Empty(Elements.Num());
+
+	int32 Index = 0;
+	for (const TPair<FName, FLearningAgentsObservationSchemaElement>& Element : Elements)
+	{
+		SubElementIndices.Add(Index);
+		SubElementNames.Add(Element.Key);
+		SubElements.Add(Element.Value);
+		Index++;
+	}
+
+	// Sort Elements According to FName
+
+	SubElementIndices.Sort([SubElementNames](const int32 Lhs, const int32 Rhs)
+	{
+		return SubElementNames[Lhs].ToString().ToLower() < SubElementNames[Rhs].ToString().ToLower();
+	});
+
+	TArray<FName, TInlineAllocator<16>> SortedSubElementNames;
+	TArray<FLearningAgentsObservationSchemaElement, TInlineAllocator<16>> SortedSubElements;
+	SortedSubElementNames.SetNumUninitialized(SubElementNum);
+	SortedSubElements.SetNumUninitialized(SubElementNum);
+	for (int32 Idx = 0; Idx < SubElementNum; Idx++)
+	{
+		SortedSubElementNames[Idx] = SubElementNames[SubElementIndices[Idx]];
+		SortedSubElements[Idx] = SubElements[SubElementIndices[Idx]];
+	}
+
+	return SpecifyStructObservationFromArrayViews(Schema, SortedSubElementNames, SortedSubElements, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyStructObservationFromArrays(ULearningAgentsObservationSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationSchemaElement>& Elements, const FName Tag)
+{
+	return SpecifyStructObservationFromArrayViews(Schema, ElementNames, Elements, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyStructObservationFromArrayViews(ULearningAgentsObservationSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationSchemaElement> Elements, const FName Tag)
+{
+	if (!Schema)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyStructObservationFromArrayViews: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyStructObservationFromArrayViews: Specifying zero-sized Struct Observation."));
+	}
+
+	if (Elements.Num() != ElementNames.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyStructObservationFromArrayViews: Number of elements (%i) must match number of names (%i)."), Elements.Num(), ElementNames.Num());
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (UE::Learning::Agents::Observation::Private::ContainsDuplicates(ElementNames))
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyStructObservationFromArrayViews: Element Names contain duplicates."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	TArray<UE::Learning::Observation::FSchemaElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationSchemaElement& Element : Elements)
+	{
+		if (!Schema->ObservationSchema.IsValid(Element.SchemaElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("SpecifyStructObservationFromArrayViews: Invalid Observation Object."));
+			return FLearningAgentsObservationSchemaElement();
+		}
+
+		SubElements.Add(Element.SchemaElement);
+	}
+
+	return { Schema->ObservationSchema.CreateAnd({ ElementNames, SubElements }, Tag) };
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyExclusiveUnionObservation(ULearningAgentsObservationSchema* Schema, const TMap<FName, FLearningAgentsObservationSchemaElement>& Elements, const int32 EncodingSize, const FName Tag)
+{
+	if (EncodingSize < 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyExclusiveUnionObservation: Invalid Observation EncodingSize '%i' - must be greater than zero."), EncodingSize);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyExclusiveUnionObservation: Specifying zero-sized Exclusive Union Observation."));
+	}
+
+	const int32 SubElementNum = Elements.Num();
+
+	TArray<int32, TInlineAllocator<16>> SubElementIndices;
+	TArray<FName, TInlineAllocator<16>> SubElementNames;
+	TArray<FLearningAgentsObservationSchemaElement, TInlineAllocator<16>> SubElements;
+	SubElementIndices.Empty(Elements.Num());
+	SubElementNames.Empty(Elements.Num());
+	SubElements.Empty(Elements.Num());
+
+	int32 Index = 0;
+	for (const TPair<FName, FLearningAgentsObservationSchemaElement>& Element : Elements)
+	{
+		SubElementIndices.Add(Index);
+		SubElementNames.Add(Element.Key);
+		SubElements.Add(Element.Value);
+		Index++;
+	}
+
+	// Sort Elements According to FName
+
+	SubElementIndices.Sort([SubElementNames](const int32 Lhs, const int32 Rhs)
+	{
+		return SubElementNames[Lhs].ToString().ToLower() < SubElementNames[Rhs].ToString().ToLower();
+	});
+
+	TArray<FName, TInlineAllocator<16>> SortedSubElementNames;
+	TArray<FLearningAgentsObservationSchemaElement, TInlineAllocator<16>> SortedSubElements;
+	SortedSubElementNames.SetNumUninitialized(SubElementNum);
+	SortedSubElements.SetNumUninitialized(SubElementNum);
+	for (int32 Idx = 0; Idx < SubElementNum; Idx++)
+	{
+		SortedSubElementNames[Idx] = SubElementNames[SubElementIndices[Idx]];
+		SortedSubElements[Idx] = SubElements[SubElementIndices[Idx]];
+	}
+
+	return SpecifyExclusiveUnionObservationFromArrayViews(Schema, SortedSubElementNames, SortedSubElements, EncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyExclusiveUnionObservationFromArrays(ULearningAgentsObservationSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationSchemaElement>& Elements, const int32 EncodingSize, const FName Tag)
+{
+	return SpecifyExclusiveUnionObservationFromArrayViews(Schema, ElementNames, Elements, EncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyExclusiveUnionObservationFromArrayViews(ULearningAgentsObservationSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationSchemaElement> Elements, const int32 EncodingSize, const FName Tag)
+{
+	if (!Schema)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyExclusiveUnionObservationFromArrayViews: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (EncodingSize < 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyExclusiveUnionObservationFromArrayViews: Invalid Observation EncodingSize '%i' - must be greater than zero."), EncodingSize);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyExclusiveUnionObservationFromArrayViews: Specifying zero-sized Exclusive Union Observation."));
+	}
+
+	if (Elements.Num() != ElementNames.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyExclusiveUnionObservationFromArrayViews: Number of elements (%i) must match number of names (%i)."), Elements.Num(), ElementNames.Num());
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (UE::Learning::Agents::Observation::Private::ContainsDuplicates(ElementNames))
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyExclusiveUnionObservationFromArrayViews: Element Names contain duplicates."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	TArray<UE::Learning::Observation::FSchemaElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationSchemaElement& Element : Elements)
+	{
+		if (!Schema->ObservationSchema.IsValid(Element.SchemaElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("SpecifyExclusiveUnionObservationFromArrayViews: Invalid Observation Object."));
+			return FLearningAgentsObservationSchemaElement();
+		}
+
+		SubElements.Add(Element.SchemaElement);
+	}
+
+	return { Schema->ObservationSchema.CreateOrExclusive({ ElementNames, SubElements, EncodingSize }, Tag) };
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyInclusiveUnionObservation(ULearningAgentsObservationSchema* Schema, const TMap<FName, FLearningAgentsObservationSchemaElement>& Elements, const int32 AttentionEncodingSize, const int32 AttentionHeadNum, const int32 ValueEncodingSize, const FName Tag)
+{
+	if (AttentionEncodingSize < 1 || AttentionHeadNum < 1 || ValueEncodingSize < 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyInclusiveUnionObservation: Invalid Observation Parameters: AttentionEncodingSize: %i, AttentionHeadNum: %i, ValueEncodingSize: %i - must be greater than zero."), AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyInclusiveUnionObservation: Specifying zero-sized Inclusive Union Observation."));
+	}
+
+	const int32 SubElementNum = Elements.Num();
+
+	TArray<int32, TInlineAllocator<16>> SubElementIndices;
+	TArray<FName, TInlineAllocator<16>> SubElementNames;
+	TArray<FLearningAgentsObservationSchemaElement, TInlineAllocator<16>> SubElements;
+	SubElementIndices.Empty(SubElementNum);
+	SubElementNames.Empty(SubElementNum);
+	SubElements.Empty(SubElementNum);
+
+	int32 Index = 0;
+	for (const TPair<FName, FLearningAgentsObservationSchemaElement>& Element : Elements)
+	{
+		SubElementIndices.Add(Index);
+		SubElementNames.Add(Element.Key);
+		SubElements.Add(Element.Value);
+		Index++;
+	}
+
+	// Sort Elements According to FName
+
+	SubElementIndices.Sort([SubElementNames](const int32 Lhs, const int32 Rhs)
+	{
+		return SubElementNames[Lhs].ToString().ToLower() < SubElementNames[Rhs].ToString().ToLower();
+	});
+
+	TArray<FName, TInlineAllocator<16>> SortedSubElementNames;
+	TArray<FLearningAgentsObservationSchemaElement, TInlineAllocator<16>> SortedSubElements;
+	SortedSubElementNames.SetNumUninitialized(SubElementNum);
+	SortedSubElements.SetNumUninitialized(SubElementNum);
+	for (int32 Idx = 0; Idx < SubElementNum; Idx++)
+	{
+		SortedSubElementNames[Idx] = SubElementNames[SubElementIndices[Idx]];
+		SortedSubElements[Idx] = SubElements[SubElementIndices[Idx]];
+	}
+
+	return SpecifyInclusiveUnionObservationFromArrayViews(Schema, SortedSubElementNames, SortedSubElements, AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyInclusiveUnionObservationFromArrays(ULearningAgentsObservationSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationSchemaElement>& Elements, const int32 AttentionEncodingSize, const int32 AttentionHeadNum, const int32 ValueEncodingSize, const FName Tag)
+{
+	return SpecifyInclusiveUnionObservationFromArrayViews(Schema, ElementNames, Elements, AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyInclusiveUnionObservationFromArrayViews(ULearningAgentsObservationSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationSchemaElement> Elements, const int32 AttentionEncodingSize, const int32 AttentionHeadNum, const int32 ValueEncodingSize, const FName Tag)
+{
+	if (!Schema)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyInclusiveUnionObservationFromArrayViews: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (AttentionEncodingSize < 1 || AttentionHeadNum < 1 || ValueEncodingSize < 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyInclusiveUnionObservationFromArrayViews: Invalid Observation Parameters: AttentionEncodingSize: %i, AttentionHeadNum: %i, ValueEncodingSize: %i - must be greater than zero."), AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyInclusiveUnionObservationFromArrayViews: Specifying zero-sized Inclusive Union Observation."));
+	}
+
+	if (Elements.Num() != ElementNames.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyInclusiveUnionObservationFromArrayViews: Number of elements (%i) must match number of names (%i)."), Elements.Num(), ElementNames.Num());
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (UE::Learning::Agents::Observation::Private::ContainsDuplicates(ElementNames))
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyInclusiveUnionObservationFromArrayViews: Element Names contain duplicates."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	TArray<UE::Learning::Observation::FSchemaElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationSchemaElement& Element : Elements)
+	{
+		if (!Schema->ObservationSchema.IsValid(Element.SchemaElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("SpecifyInclusiveUnionObservationFromArrayViews: Invalid Observation Object."));
+			return FLearningAgentsObservationSchemaElement();
+		}
+
+		SubElements.Add(Element.SchemaElement);
+	}
+
+	return { Schema->ObservationSchema.CreateOrInclusive({ ElementNames, SubElements, AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize }, Tag) };
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyStaticArrayObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 Num, const FName Tag)
+{
+	if (!Schema)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyStaticArrayObservation: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Num < 0)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyStaticArrayObservation: Invalid Observation Array Num %i."), Num);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Num == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifyStaticArrayObservation: Specifying zero-sized Static Array Observation."));
+	}
+
+	if (!Schema->ObservationSchema.IsValid(Element.SchemaElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyStaticArrayObservation: Invalid Observation Object."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	return { Schema->ObservationSchema.CreateArray({ Element.SchemaElement, Num }, Tag) };
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifySetObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 MaxNum, const int32 AttentionEncodingSize, const int32 AttentionHeadNum, const int32 ValueEncodingSize, const FName Tag)
+{
+	if (!Schema)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifySetObservation: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (MaxNum < 0)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifySetObservation: Invalid Observation Set MaxNum %i - must be greater than or equal to zero."), MaxNum);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (MaxNum == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("SpecifySetObservation: Specifying zero-sized Set Observation."));
+	}
+
+	if (AttentionEncodingSize < 1 || AttentionHeadNum < 1 || ValueEncodingSize < 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifySetObservation: Invalid Observation Parameters: AttentionEncodingSize: %i, AttentionHeadNum: %i, ValueEncodingSize: %i - must be greater than zero."), AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (!Schema->ObservationSchema.IsValid(Element.SchemaElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifySetObservation: Invalid Observation Object."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	return { Schema->ObservationSchema.CreateSet({ Element.SchemaElement, MaxNum, AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize }, Tag) };
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyPairObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element0, const FLearningAgentsObservationSchemaElement Element1, const FName Tag)
+{
+	return SpecifyStructObservationFromArrayViews(Schema, { TEXT("Key"), TEXT("Value") }, { Element0, Element1 }, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyArrayObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 MaxNum, const int32 AttentionEncodingSize, const int32 AttentionHeadNum, const int32 ValueEncodingSize, const FName Tag)
+{
+	return SpecifySetObservation(Schema, SpecifyPairObservation(Schema, SpecifyCountObservation(Schema), Element), MaxNum, AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyMapObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement KeyElement, const FLearningAgentsObservationSchemaElement ValueElement, const int32 MaxNum, const int32 AttentionEncodingSize, const int32 AttentionHeadNum, const int32 ValueEncodingSize, const FName Tag)
+{
+	return SpecifySetObservation(Schema, SpecifyPairObservation(Schema, KeyElement, ValueElement), MaxNum, AttentionEncodingSize, AttentionHeadNum, ValueEncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyEnumObservation(ULearningAgentsObservationSchema* Schema, const UEnum* Enum, const FName Tag)
+{
+	if (!Enum)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyEnumObservation: Enum is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	return SpecifyContinuousObservation(Schema, Enum->NumEnums() - 1, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyBitmaskObservation(ULearningAgentsObservationSchema* Schema, const UEnum* Enum, const FName Tag)
+{
+	if (!Enum)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyBitmaskObservation: Enum is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (Enum->NumEnums() - 1 > 32)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyBitmaskObservation: Too many values in Enum to use as Bitmask (%i)."), Enum->NumEnums() - 1);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	return SpecifyContinuousObservation(Schema, Enum->NumEnums() - 1, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyOptionalObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 EncodingSize, const FName Tag)
+{
+	return SpecifyExclusiveUnionObservationFromArrayViews(Schema, { TEXT("Null"), TEXT("Valid") }, { SpecifyNullObservation(Schema), Element }, EncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyEitherObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement A, const FLearningAgentsObservationSchemaElement B, const int32 EncodingSize, const FName Tag)
+{
+	return SpecifyExclusiveUnionObservationFromArrayViews(Schema, { TEXT("A"), TEXT("B") }, { A, B }, EncodingSize, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyEncodingObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 EncodingSize, const int32 HiddenLayerNum, const ELearningAgentsActivationFunction ActivationFunction, const FName Tag)
+{
+	if (!Schema)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyEncodingObservation: Schema is nullptr."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (EncodingSize < 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyEncodingObservation: Invalid Observation EncodingSize '%i' - must be greater than zero."), EncodingSize);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (HiddenLayerNum < 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyEncodingObservation: Invalid Observation HiddenLayerNum '%i' - must be greater than zero."), HiddenLayerNum);
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	if (!Schema->ObservationSchema.IsValid(Element.SchemaElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("SpecifyEncodingObservation: Invalid Observation Object."));
+		return FLearningAgentsObservationSchemaElement();
+	}
+
+	return { Schema->ObservationSchema.CreateEncoding({ Element.SchemaElement, EncodingSize, HiddenLayerNum, UE::Learning::Agents::Observation::Private::GetEncodingActivationFunction(ActivationFunction) }, Tag)};
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyBoolObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 1, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyFloatObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 1, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyLocationObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 3, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyRotationObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 6, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyScaleObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 3, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyTransformObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyStructObservationFromArrayViews(Schema,
+		{
+			TEXT("Location"),
+			TEXT("Rotation"),
+			TEXT("Scale")
+		},
+		{
+			SpecifyLocationObservation(Schema),
+			SpecifyRotationObservation(Schema),
+			SpecifyScaleObservation(Schema)
+		}, 
+		Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyAngleObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 2, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyVelocityObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 3, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyDirectionObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyContinuousObservation(Schema, 3, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyLocationAlongSplineObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyLocationObservation(Schema, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyProportionAlongSplineObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyExclusiveUnionObservationFromArrayViews(Schema,
+		{
+			TEXT("Angle"),
+			TEXT("Proportion")
+		},
+		{
+			SpecifyAngleObservation(Schema),
+			SpecifyFloatObservation(Schema)
+		},
+		8,
+		Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyDirectionAlongSplineObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyDirectionObservation(Schema, Tag);
+}
+
+FLearningAgentsObservationSchemaElement ULearningAgentsObservations::SpecifyProportionAlongRayObservation(ULearningAgentsObservationSchema* Schema, const FName Tag)
+{
+	return SpecifyFloatObservation(Schema, Tag);
+}
+
+void ULearningAgentsObservations::LogObservation(const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("LogObservation: Object is nullptr."));
+		return;
+	}
+
+	UE::Learning::Agents::Observation::Private::LogObservation(Object->ObservationObject, Element.ObjectElement, TEXT(""), TEXT(""));
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeNullObservation(ULearningAgentsObservationObject* Object, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeNullObservation: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	return { Object->ObservationObject.CreateNull(Tag) };
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeContinuousObservation(
+	ULearningAgentsObservationObject* Object, 
+	const TArray<float>& Values, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	return MakeContinuousObservationFromArrayView(Object, Values, Tag, bVisualLoggerEnabled, VisualLoggerListener, VisualLoggerAgentId, VisualLoggerLocation, VisualLoggerColor);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeContinuousObservationFromArrayView(
+	ULearningAgentsObservationObject* Object, 
+	const TArrayView<const float> Values, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeContinuousObservationFromArrayView: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (Values.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("MakeContinuousObservationFromArrayView: Creating zero-sized Continuous Observation."));
+	}
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nValues: %s\nEncoded: %s"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			*UE::Learning::Array::FormatFloat(Values),
+			*UE::Learning::Array::FormatFloat(Values)); // Encoded is identical to provided values
+	}
+#endif
+
+	return { Object->ObservationObject.CreateContinuous({ Values }, Tag) };
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeExclusiveDiscreteObservation(
+	ULearningAgentsObservationObject* Object, 
+	const int32 DiscreteIndex, 
+	const int32 Size, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	if (DiscreteIndex < 0 || DiscreteIndex >= Size)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeExclusiveDiscreteObservation: Discrete index out of range: Got %i, expected <= %i."), DiscreteIndex, Size);
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<float, TInlineAllocator<32>> Values;
+	Values.Init(0.0f, Size);
+	Values[DiscreteIndex] = 1.0f;
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nSize: [%i]\nIndex: [%i]\nEncoded: %s"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Size,
+			DiscreteIndex,
+			*UE::Learning::Array::FormatFloat(Values, Size));
+	}
+#endif
+
+	return MakeContinuousObservationFromArrayView(Object, Values, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeInclusiveDiscreteObservation(
+	ULearningAgentsObservationObject* Object, 
+	const TArray<int32>& DiscreteIndices, 
+	const int32 Size, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	return MakeInclusiveDiscreteObservationFromArrayView(Object, DiscreteIndices, Size, Tag, bVisualLoggerEnabled, VisualLoggerListener, VisualLoggerAgentId, VisualLoggerLocation, VisualLoggerColor);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeInclusiveDiscreteObservationFromArrayView(
+	ULearningAgentsObservationObject* Object, 
+	const TArrayView<const int32> DiscreteIndices, 
+	const int32 Size, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	if (UE::Learning::Agents::Observation::Private::ContainsDuplicates(DiscreteIndices))
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeInclusiveDiscreteObservationFromArrayView: Indices contain duplicates."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<float, TInlineAllocator<32>> Values;
+	Values.Init(0.0f, Size);
+
+	for (int32 Idx = 0; Idx < DiscreteIndices.Num(); Idx++)
+	{
+		if (DiscreteIndices[Idx] < 0 || DiscreteIndices[Idx] >= Size)
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeInclusiveDiscreteObservationFromArrayView: Discrete index out of range: Got %i, expected <= %i."), DiscreteIndices[Idx], Size);
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		Values[DiscreteIndices[Idx]] = 1.0f;
+	}
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nSize: [%i]\nIndices: %s\nEncoded: %s"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Size,
+			*UE::Learning::Array::FormatInt32(DiscreteIndices, Size),
+			*UE::Learning::Array::FormatFloat(Values, Size));
+	}
+#endif
+
+	return MakeContinuousObservationFromArrayView(Object, Values, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeCountObservation(
+	ULearningAgentsObservationObject* Object, 
+	const int32 Num, 
+	const int32 MaxNum, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	if (MaxNum == 0)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeCountObservation: MaxNum must not be zero for Count Observation."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	const float Encoded = (float)Num / (float)MaxNum;
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nNum: [%i]\nMax Num: [%i]\nEncoded: [%6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Num,
+			MaxNum,
+			Encoded);
+	}
+#endif
+
+	return MakeContinuousObservationFromArrayView(Object, { Encoded }, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeStructObservation(ULearningAgentsObservationObject* Object, const TMap<FName, FLearningAgentsObservationObjectElement>& Elements, const FName Tag)
+{
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("MakeStructObservation: Creating zero-sized Struct Observation."));
+	}
+
+	const int32 SubElementNum = Elements.Num();
+
+	TArray<FName, TInlineAllocator<16>> SubElementNames;
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> SubElements;
+	SubElementNames.Empty(SubElementNum);
+	SubElements.Empty(SubElementNum);
+
+	for (const TPair<FName, FLearningAgentsObservationObjectElement>& Element : Elements)
+	{
+		SubElementNames.Add(Element.Key);
+		SubElements.Add(Element.Value);
+	}
+
+	return MakeStructObservationFromArrayViews(Object, SubElementNames, SubElements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeStructObservationFromArrays(ULearningAgentsObservationObject* Object, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag)
+{
+	return MakeStructObservationFromArrayViews(Object, ElementNames, Elements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeStructObservationFromArrayViews(ULearningAgentsObservationObject* Object, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeStructObservationFromArrayViews: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("MakeStructObservationFromArrayViews: Creating zero-sized Struct Observation."));
+	}
+
+	if (Elements.Num() != ElementNames.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeStructObservationFromArrayViews: Number of elements (%i) must match number of names (%i)."), Elements.Num(), ElementNames.Num());
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (UE::Learning::Agents::Observation::Private::ContainsDuplicates(ElementNames))
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeStructObservationFromArrayViews: Element Names contain duplicates."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<UE::Learning::Observation::FObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationObjectElement& Element : Elements)
+	{
+		if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeStructObservationFromArrayViews: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(Element.ObjectElement);
+	}
+
+	return { Object->ObservationObject.CreateAnd({ ElementNames, SubElements }, Tag)};
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeExclusiveUnionObservation(ULearningAgentsObservationObject* Object, const FName ElementName, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeExclusiveUnionObservation: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeExclusiveUnionObservation: Invalid Observation Object."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	return { Object->ObservationObject.CreateOrExclusive({ ElementName, Element.ObjectElement }, Tag) };
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeInclusiveUnionObservation(ULearningAgentsObservationObject* Object, const TMap<FName, FLearningAgentsObservationObjectElement>& Elements, const FName Tag)
+{
+	const int32 SubElementNum = Elements.Num();
+
+	TArray<FName, TInlineAllocator<16>> SubElementNames;
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> SubElements;
+	SubElementNames.Empty(SubElementNum);
+	SubElements.Empty(SubElementNum);
+
+	for (const TPair<FName, FLearningAgentsObservationObjectElement>& Element : Elements)
+	{
+		SubElementNames.Add(Element.Key);
+		SubElements.Add(Element.Value);
+	}
+
+	return MakeInclusiveUnionObservationFromArrayViews(Object, SubElementNames, SubElements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeInclusiveUnionObservationFromArrays(ULearningAgentsObservationObject* Object, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag)
+{
+	return MakeInclusiveUnionObservationFromArrayViews(Object, ElementNames, Elements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeInclusiveUnionObservationFromArrayViews(ULearningAgentsObservationObject* Object, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeInclusiveUnionObservationFromArrayViews: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (Elements.Num() != ElementNames.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeInclusiveUnionObservationFromArrayViews: Number of elements (%i) must match number of names (%i)."), Elements.Num(), ElementNames.Num());
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (UE::Learning::Agents::Observation::Private::ContainsDuplicates(ElementNames))
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeInclusiveUnionObservationFromArrayViews: Element Names contain duplicates."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<UE::Learning::Observation::FObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationObjectElement& Element : Elements)
+	{
+		if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeInclusiveUnionObservationFromArrayViews: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(Element.ObjectElement);
+	}
+
+	return { Object->ObservationObject.CreateOrInclusive({ ElementNames, SubElements }, Tag) };
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeStaticArrayObservation(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag)
+{
+	return MakeStaticArrayObservationFromArrayView(Object, Elements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeStaticArrayObservationFromArrayView(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeStaticArrayObservationFromArrayView: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("MakeStaticArrayObservationFromArrayView: Creating zero-sized Static Array Observation."));
+	}
+
+	TArray<UE::Learning::Observation::FObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationObjectElement& Element : Elements)
+	{
+		if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeStaticArrayObservationFromArrayView: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(Element.ObjectElement);
+	}
+
+	return { Object->ObservationObject.CreateArray({ SubElements }, Tag) };
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeSetObservation(ULearningAgentsObservationObject* Object, const TSet<FLearningAgentsObservationObjectElement>& Elements, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeSetObservation: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<UE::Learning::Observation::FObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationObjectElement& Element : Elements)
+	{
+		if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeSetObservation: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(Element.ObjectElement);
+	}
+
+	return { Object->ObservationObject.CreateSet({ SubElements }, Tag) };
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeSetObservationFromArray(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag)
+{
+	return MakeSetObservationFromArrayView(Object, Elements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeSetObservationFromArrayView(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeSetObservationFromArrayView: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<UE::Learning::Observation::FObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (const FLearningAgentsObservationObjectElement& Element : Elements)
+	{
+		if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeSetObservationFromArrayView: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(Element.ObjectElement);
+	}
+
+	return { Object->ObservationObject.CreateSet({ SubElements }, Tag) };
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakePairObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Key, const FLearningAgentsObservationObjectElement Value, const FName Tag)
+{
+	return MakeStructObservationFromArrayViews(Object, { TEXT("Key"), TEXT("Value") }, { Key, Value }, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeArrayObservation(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Elements, const int32 MaxNum, const FName Tag)
+{
+	return MakeArrayObservationFromArrayView(Object, Elements, MaxNum, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeArrayObservationFromArrayView(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const int32 MaxNum, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeArrayObservationFromArrayView: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Elements.Num());
+
+	for (int32 ElementIdx = 0; ElementIdx < Elements.Num(); ElementIdx++)
+	{
+		const FLearningAgentsObservationObjectElement Element = Elements[ElementIdx];
+
+		if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeArrayObservationFromArrayView: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(MakePairObservation(Object, MakeCountObservation(Object, ElementIdx, MaxNum), Element));
+	}
+
+	return MakeSetObservationFromArrayView(Object, SubElements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeMapObservation(ULearningAgentsObservationObject* Object, const TMap<FLearningAgentsObservationObjectElement, FLearningAgentsObservationObjectElement>& Map, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeMapObservation: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Map.Num());
+
+	for (TPair<FLearningAgentsObservationObjectElement, FLearningAgentsObservationObjectElement> Item : Map)
+	{
+		if (!Object->ObservationObject.IsValid(Item.Key.ObjectElement) || !Object->ObservationObject.IsValid(Item.Value.ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeMapObservation: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(MakePairObservation(Object, Item.Key, Item.Value));
+	}
+
+	return MakeSetObservationFromArrayView(Object, SubElements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeMapObservationFromArrays(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Keys, const TArray<FLearningAgentsObservationObjectElement>& Values, const FName Tag)
+{
+	return MakeMapObservationFromArrayViews(Object, Keys, Values, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeMapObservationFromArrayViews(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Keys, const TArrayView<const FLearningAgentsObservationObjectElement> Values, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeMapObservationFromArrayViews: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (Keys.Num() != Values.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeMapObservationFromArrayViews: Number of keys (%i) must match number of values (%i)."), Keys.Num(), Values.Num());
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> SubElements;
+	SubElements.Empty(Keys.Num());
+
+	for (int32 ElementIdx = 0; ElementIdx < Keys.Num(); ElementIdx++)
+	{
+		if (!Object->ObservationObject.IsValid(Keys[ElementIdx].ObjectElement) || 
+			!Object->ObservationObject.IsValid(Values[ElementIdx].ObjectElement))
+		{
+			UE_LOG(LogLearning, Error, TEXT("MakeMapObservationFromArrayViews: Invalid Observation Object."));
+			return FLearningAgentsObservationObjectElement();
+		}
+
+		SubElements.Add(MakePairObservation(Object, Keys[ElementIdx], Values[ElementIdx]));
+	}
+
+	return MakeSetObservationFromArrayView(Object, SubElements, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeEnumObservation(
+	ULearningAgentsObservationObject* Object, 
+	const UEnum* Enum, 
+	const uint8 EnumValue, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	if (!Enum)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeEnumObservation: Enum is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	const int32 EnumValueIndex = Enum->GetIndexByValue(EnumValue);
+
+	if (EnumValueIndex == INDEX_NONE || EnumValueIndex < 0 || EnumValueIndex >= Enum->NumEnums() - 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeEnumObservation: EnumValue %i not valid for Enum '%s'."), EnumValue , *Enum->GetName());
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<float, TInlineAllocator<32>> OneHot;
+	OneHot.Init(0.0f, Enum->NumEnums() - 1);
+	OneHot[EnumValueIndex] = 1.0f;
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nEnum: %s\nSize: [%i]\nValue: [%s]\nIndex: [%i]\nEncoded: %s"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			*Enum->GetName(),
+			Enum->NumEnums() - 1,
+			*Enum->GetDisplayNameTextByValue(EnumValue).ToString(),
+			EnumValueIndex,
+			*UE::Learning::Array::FormatFloat(OneHot, Enum->NumEnums() - 1));
+	}
+#endif
+
+	return MakeContinuousObservationFromArrayView(Object, OneHot, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeBitmaskObservation(
+	ULearningAgentsObservationObject* Object, 
+	const UEnum* Enum, 
+	const int32 BitmaskValue, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	if (!Enum)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeBitmaskObservation: Enum is nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	if (Enum->NumEnums() - 1 > 32)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeBitmaskObservation: Too many values in Enum to use as Bitmask (%i)."), Enum->NumEnums() - 1);
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	TArray<float, TInlineAllocator<32>> OneHot;
+	OneHot.Init(0.0f, Enum->NumEnums() - 1);
+
+	for (int32 EnumIdx = 0; EnumIdx < Enum->NumEnums() - 1; EnumIdx++)
+	{
+		if (BitmaskValue & (1 << EnumIdx))
+		{
+			OneHot[EnumIdx] = 1.0f;
+		}
+	}
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		FString ValuesString;
+		FString IndicesString;
+
+		for (int32 EnumIdx = 0; EnumIdx < Enum->NumEnums() - 1; EnumIdx++)
+		{
+			if (BitmaskValue & (1 << EnumIdx))
 			{
-				const float Angle = AngleView[Instance][AngleIdx];
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(AngleIdx, AngleNum);
-
-				UE_LEARNING_AGENTS_VLOG_ANGLE(this, LogLearning, Display,
-					Angle,
-					RelativeAngle,
-					Actor->GetActorLocation() + Offset,
-					5.0f,
-					VisualLogColor.ToFColor(true),
-					TEXT("Angle %i: [% 6.4f]"),
-					AngleIdx,
-					FMath::RadiansToDegrees(Angle));
+				ValuesString += Enum->GetDisplayNameTextByIndex(EnumIdx).ToString() + TEXT(" ");
+				IndicesString += FString::FromInt(EnumIdx) + TEXT(" ");
 			}
-
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation() + FVector(0.0f, 0.0f, 20.0f),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRelative Angle: [% 6.1f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				FMath::RadiansToDegrees(RelativeAngle),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
 		}
+
+		ValuesString = ValuesString.TrimEnd();
+		IndicesString = IndicesString.TrimEnd();
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nEnum: %s\nSize: [%i]\nValues: [%s]\nIndices: [%s]\nEncoded: %s"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			*Enum->GetName(),
+			Enum->NumEnums() - 1,
+			*ValuesString,
+			*IndicesString,
+			*UE::Learning::Array::FormatFloat(OneHot, Enum->NumEnums() - 1));
 	}
-}
 #endif
 
-//------------------------------------------------------------------
-
-URotationObservation* URotationObservation::AddRotationObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<URotationObservation, UE::Learning::FRotationFeature>(InInteractor, Name, TEXT("AddRotationObservation"), 1, Scale);
+	return MakeContinuousObservationFromArrayView(Object, OneHot, Tag);
 }
 
-void URotationObservation::SetRotationObservation(const int32 AgentId, const FRotator Rotation, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeOptionalObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const ELearningAgentsOptionalObservation Option, const FName Tag)
 {
-	SetRotationObservationFromQuat(AgentId, Rotation.Quaternion(), RelativeRotation.Quaternion());
+	return MakeExclusiveUnionObservation(
+		Object,
+		Option == ELearningAgentsOptionalObservation::Null ? TEXT("Null") : TEXT("Valid"),
+		Option == ELearningAgentsOptionalObservation::Null ? MakeNullObservation(Object) : Element,
+		Tag);
 }
 
-void URotationObservation::SetRotationObservationFromQuat(const int32 AgentId, const FQuat Rotation, const FQuat RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeOptionalNullObservation(ULearningAgentsObservationObject* Object, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	return MakeExclusiveUnionObservation(Object, TEXT("Null"), MakeNullObservation(Object), Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeOptionalValidObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	return MakeExclusiveUnionObservation(Object, TEXT("Valid"), Element, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeEitherObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const ELearningAgentsEitherObservation Either, const FName Tag)
+{
+	return MakeExclusiveUnionObservation(Object, Either == ELearningAgentsEitherObservation::A ? TEXT("A") : TEXT("B"), Element, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeEitherAObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement A, const FName Tag)
+{
+	return MakeExclusiveUnionObservation(Object, TEXT("A"), A, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeEitherBObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement B, const FName Tag)
+{
+	return MakeExclusiveUnionObservation(Object, TEXT("B"), B, Tag);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeEncodingObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		UE_LOG(LogLearning, Error, TEXT("MakeEncodingObservation: Object is nullptr."));
+		return FLearningAgentsObservationObjectElement();
 	}
 
-	FeatureObject->InstanceData->View(FeatureObject->RotationHandle)[AgentId][0] = Rotation;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation;
-	AgentIteration[AgentId]++;
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeEncodingObservation: Invalid Observation Object."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	return { Object->ObservationObject.CreateEncoding({ Element.ObjectElement }, Tag) };
 }
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeBoolObservation(
+	ULearningAgentsObservationObject* Object,
+	const bool bValue,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	const float EncodedBool = bValue ? 1.0f : -1.0f;
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void URotationObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(URotationObservation::VisualLog);
-
-	const TLearningArrayView<2, const FQuat> RotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RotationHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const FQuat Rotation = RotationView[Instance][0];
-			const FRotator Rotator = Rotation.Rotator();
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-			const FRotator RelativeRotator = RelativeRotation.Rotator();
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation() + FVector(20.0f, 0.0f, 0.0f),
-				Rotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Relative Rotation: [% 6.1f % 6.1f % 6.1f]"),
-				RelativeRotator.Pitch, RelativeRotator.Roll, RelativeRotator.Yaw);
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				Rotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRotation: [% 6.1f % 6.1f % 6.1f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				Rotator.Pitch, Rotator.Roll, Rotator.Yaw,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nValue: [%s]\nEncoded: [% 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			bValue ? TEXT("true") : TEXT("false"),
+			EncodedBool);
 	}
-}
 #endif
 
-URotationArrayObservation* URotationArrayObservation::AddRotationArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 RotationNum, const float Scale)
-{
-	if (RotationNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddRotationArrayObservation: Number of elements in array must be at least 1, got %i."), RotationNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<URotationArrayObservation, UE::Learning::FRotationFeature>(InInteractor, Name, TEXT("AddRotationArrayObservation"), RotationNum, Scale);
+	return MakeContinuousObservationFromArrayView(Object, { EncodedBool }, Tag);
 }
 
-void URotationArrayObservation::SetRotationArrayObservation(const int32 AgentId, const TArray<FRotator>& Rotations, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeFloatObservation(
+	ULearningAgentsObservationObject* Object,
+	const float Value,
+	const float FloatScale,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, FQuat> RotationView = FeatureObject->InstanceData->View(FeatureObject->RotationHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Rotations.Num() != RotationView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), RotationView.Num<1>(), Rotations.Num());
-		return;
-	}
-
-	for (int32 RotationIdx = 0; RotationIdx < Rotations.Num(); RotationIdx++)
-	{
-		RotationView[AgentId][RotationIdx] = Rotations[RotationIdx].Quaternion();
-	}
-
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
-}
-
-void URotationArrayObservation::SetRotationArrayObservationFromQuats(const int32 AgentId, const TArray<FQuat>& Rotations, const FQuat RelativeRotation)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, FQuat> RotationView = FeatureObject->InstanceData->View(FeatureObject->RotationHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Rotations.Num() != RotationView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), RotationView.Num<1>(), Rotations.Num());
-		return;
-	}
-
-	UE::Learning::Array::Copy<1, FQuat>(RotationView[AgentId], Rotations);
-	RelativeRotationView[AgentId] = RelativeRotation;
-	AgentIteration[AgentId]++;
-}
+	const float EncodedValue = Value / FMath::Max(FloatScale, UE_SMALL_NUMBER);
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void URotationArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(URotationArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const FQuat> RotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RotationHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 RotationNum = RotationView.Num<1>();
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-			const FRotator RelativeRotator = RelativeRotation.Rotator();
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			for (int32 RotationIdx = 0; RotationIdx < RotationNum; RotationIdx++)
-			{
-				const FQuat Rotation = RotationView[Instance][RotationIdx];
-				const FRotator Rotator = Rotation.Rotator();
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(RotationIdx, RotationNum);
-
-				UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset,
-					Rotation,
-					VisualLogColor.ToFColor(true),
-					TEXT("Rotation %i: [% 6.3f % 6.3f % 6.3f]"),
-					RotationIdx,
-					Rotator.Pitch, Rotator.Roll, Rotator.Yaw);
-			}
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRelative Rotation: [% 6.3f % 6.3f % 6.3f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				RelativeRotator.Pitch, RelativeRotator.Roll, RelativeRotator.Yaw,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nValue: [% 6.1f]\nScale: [% 6.2f]\nEncoded: [% 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Value,
+			FloatScale,
+			EncodedValue);
 	}
-}
 #endif
 
-
-//------------------------------------------------------------------
-
-UDirectionObservation* UDirectionObservation::AddDirectionObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UDirectionObservation, UE::Learning::FDirectionFeature>(InInteractor, Name, TEXT("AddDirectionObservation"), 1, Scale);
+	return MakeContinuousObservationFromArrayView(Object, { EncodedValue }, Tag);
 }
 
-void UDirectionObservation::SetDirectionObservation(const int32 AgentId, const FVector Direction, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeLocationObservation(
+	ULearningAgentsObservationObject* Object,
+	const FVector Location,
+	const FTransform RelativeTransform,
+	const float LocationScale,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->DirectionHandle)[AgentId][0] = Direction;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
-}
+	const FVector LocalLocation = RelativeTransform.InverseTransformPosition(Location);
+	const FVector EncodedLocation = FVector(
+		LocalLocation.X / FMath::Max(LocationScale, UE_SMALL_NUMBER),
+		LocalLocation.Y / FMath::Max(LocationScale, UE_SMALL_NUMBER),
+		LocalLocation.Z / FMath::Max(LocationScale, UE_SMALL_NUMBER));
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UDirectionObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UDirectionObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> DirectionView = FeatureObject->InstanceData->ConstView(FeatureObject->DirectionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const FVector Direction = DirectionView[Instance][0];
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-			const FVector LocalDirection = RelativeRotation.UnrotateVector(Direction);
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				Actor->GetActorLocation() + 100.0f * Direction,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
+		UE_LEARNING_AGENTS_VLOG_LOCATION(VisualLoggerObject, LogLearning, Display,
+			Location,
+			10,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
 
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation() + 100.0f * Direction,
-				VisualLogColor.ToFColor(true),
-				TEXT("Direction: [% 6.3f % 6.3f % 6.3f]\nLocal Direction: [% 6.3f % 6.3f % 6.3f]"),
-				Direction.X, Direction.Y, Direction.Z,
-				LocalDirection.X, LocalDirection.Y, LocalDirection.Z);
+		UE_LEARNING_AGENTS_VLOG_SEGMENT(VisualLoggerObject, LogLearning, Display,
+			RelativeTransform.GetTranslation(),
+			Location,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
 
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_TRANSFORM(VisualLoggerObject, LogLearning, Display,
+			RelativeTransform.GetTranslation(),
+			RelativeTransform.GetRotation(),
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nLocation: [% 6.1f % 6.1f % 6.1f]\nLocal Location: [% 6.1f % 6.1f % 6.1f]\nScale: [% 6.2f]\nEncoded: [% 6.2f % 6.2f % 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Location.X, Location.Y, Location.Z,
+			LocalLocation.X, LocalLocation.Y, LocalLocation.Z,
+			LocationScale,
+			EncodedLocation.X, EncodedLocation.Y, EncodedLocation.Z);
 	}
-}
 #endif
 
-UDirectionArrayObservation* UDirectionArrayObservation::AddDirectionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 DirectionNum, const float Scale)
-{
-	if (DirectionNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddDirectionArrayObservation: Number of elements in array must be at least 1, got %i."), DirectionNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<UDirectionArrayObservation, UE::Learning::FDirectionFeature>(InInteractor, Name, TEXT("AddDirectionArrayObservation"), DirectionNum, Scale);
+	return MakeContinuousObservationFromArrayView(Object, {
+		(float)EncodedLocation.X,
+		(float)EncodedLocation.Y,
+		(float)EncodedLocation.Z,
+		}, Tag);
 }
 
-void UDirectionArrayObservation::SetDirectionArrayObservation(const int32 AgentId, const TArray<FVector>& Directions, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeRotationObservation(
+	ULearningAgentsObservationObject* Object,
+	const FRotator Rotation,
+	const FRotator RelativeRotation,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerRotationLocation,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
+	// Visual logging is handled in the MakeRotationObservationFromQuat
 
-	const TLearningArrayView<2, FVector> DirectionView = FeatureObject->InstanceData->View(FeatureObject->DirectionHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Directions.Num() != DirectionView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), DirectionView.Num<1>(), Directions.Num());
-		return;
-	}
-
-	UE::Learning::Array::Copy<1, FVector>(DirectionView[AgentId], Directions);
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
+	return MakeRotationObservationFromQuat(
+		Object,
+		FQuat::MakeFromRotator(Rotation), FQuat::MakeFromRotator(RelativeRotation), Tag,
+		bVisualLoggerEnabled, VisualLoggerListener, VisualLoggerAgentId, VisualLoggerRotationLocation, VisualLoggerLocation, VisualLoggerColor);
 }
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeRotationObservationFromQuat(
+	ULearningAgentsObservationObject* Object,
+	const FQuat Rotation,
+	const FQuat RelativeRotation,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerRotationLocation,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	const FQuat LocalRotation = RelativeRotation.Inverse() * Rotation;
+	const FVector LocalAxisForward = LocalRotation.GetForwardVector();
+	const FVector LocalAxisRight = LocalRotation.GetRightVector();
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UDirectionArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UDirectionArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> DirectionView = FeatureObject->InstanceData->ConstView(FeatureObject->DirectionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 DirectionNum = DirectionView.Num<1>();
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			for (int32 DirectionIdx = 0; DirectionIdx < DirectionNum; DirectionIdx++)
-			{
-				const FVector Direction = DirectionView[Instance][0];
-				const FVector LocalDirection = RelativeRotation.UnrotateVector(Direction);
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(DirectionIdx, DirectionNum);
+		UE_LEARNING_AGENTS_VLOG_TRANSFORM(VisualLoggerObject, LogLearning, Display,
+			VisualLoggerRotationLocation,
+			LocalRotation.Rotator(),
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
 
-				UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset,
-					Actor->GetActorLocation() + Offset + 10.0f * Direction,
-					VisualLogColor.ToFColor(true),
-					TEXT(""));
-
-				UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset + 10.0f * Direction,
-					VisualLogColor.ToFColor(true),
-					TEXT("Direction %i: [% 6.3f % 6.3f % 6.3f]\nLocal Direction: [% 6.3f % 6.3f % 6.3f]"),
-					DirectionIdx,
-					Direction.X, Direction.Y, Direction.Z,
-					LocalDirection.X, LocalDirection.Y, LocalDirection.Z);
-			}
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nRotation: [% 6.1f % 6.1f % 6.1f % 6.1f]\nLocal Rotation: [% 6.1f % 6.1f % 6.1f % 6.1f]\nEncoded Forward: [% 6.2f % 6.2f % 6.2f]\nEncoded Right: [% 6.2f % 6.2f % 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Rotation.W, Rotation.X, Rotation.Y, Rotation.Z,
+			LocalRotation.W, LocalRotation.X, LocalRotation.Y, LocalRotation.Z,
+			LocalAxisForward.X, LocalAxisForward.Y, LocalAxisForward.Z,
+			LocalAxisRight.X, LocalAxisRight.Y, LocalAxisRight.Z);
 	}
-}
 #endif
 
-UPlanarDirectionObservation* UPlanarDirectionObservation::AddPlanarDirectionObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale, const FVector Axis0, const FVector Axis1)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPlanarDirectionObservation, UE::Learning::FPlanarDirectionFeature>(
-		InInteractor, 
-		Name, 
-		TEXT("AddPlanarDirectionObservation"), 
-		1, 
-		Scale, 
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector), 
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
+	return MakeContinuousObservationFromArrayView(Object, {
+		(float)LocalAxisForward.X,
+		(float)LocalAxisForward.Y,
+		(float)LocalAxisForward.Z,
+		(float)LocalAxisRight.X,
+		(float)LocalAxisRight.Y,
+		(float)LocalAxisRight.Z,
+		}, Tag);
 }
 
-void UPlanarDirectionObservation::SetPlanarDirectionObservation(const int32 AgentId, const FVector Direction, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeScaleObservation(
+	ULearningAgentsObservationObject* Object,
+	const FVector Scale,
+	const FVector RelativeScale,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerScaleLocation,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->DirectionHandle)[AgentId][0] = Direction;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
-}
+	const FVector LocalLogScale = 
+		UE::Learning::Agents::Observation::Private::VectorLogSafe(Scale) - 
+		UE::Learning::Agents::Observation::Private::VectorLogSafe(RelativeScale);
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarDirectionObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarDirectionObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> DirectionView = FeatureObject->InstanceData->ConstView(FeatureObject->DirectionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const FVector Direction = DirectionView[Instance][0];
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-			const FVector LocalDirection = RelativeRotation.UnrotateVector(Direction);
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				Actor->GetActorLocation() + 100.0f * Direction,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation() + 100.0f * Direction,
-				VisualLogColor.ToFColor(true),
-				TEXT("Direction: [% 6.3f % 6.3f % 6.3f]\nLocal Direction: [% 6.3f % 6.3f % 6.3f]"),
-				Direction.X, Direction.Y, Direction.Z,
-				LocalDirection.X, LocalDirection.Y, LocalDirection.Z);
-
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				FeatureObject->Axis0,
-				FeatureObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nScale: [% 6.1f % 6.1f % 6.1f]\nEncoded: [% 6.2f % 6.2f % 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Scale.X, Scale.Y, Scale.Z,
+			LocalLogScale.X, LocalLogScale.Y, LocalLogScale.Z);
 	}
-}
 #endif
 
-UPlanarDirectionArrayObservation* UPlanarDirectionArrayObservation::AddPlanarDirectionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 DirectionNum, const float Scale, const FVector Axis0, const FVector Axis1)
-{
-	if (DirectionNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddPlanarDirectionArrayObservation: Number of elements in array must be at least 1, got %i."), DirectionNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPlanarDirectionArrayObservation, UE::Learning::FPlanarDirectionFeature>(
-		InInteractor, 
-		Name, 
-		TEXT("AddPlanarDirectionArrayObservation"), 
-		DirectionNum, 
-		Scale, 
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector),
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
+	return MakeContinuousObservationFromArrayView(Object, {
+		(float)LocalLogScale.X,
+		(float)LocalLogScale.Y,
+		(float)LocalLogScale.Z,
+		}, Tag);
 }
 
-void UPlanarDirectionArrayObservation::SetPlanarDirectionArrayObservation(const int32 AgentId, const TArray<FVector>& Directions, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeTransformObservation(
+	ULearningAgentsObservationObject* Object,
+	const FTransform Transform,
+	const FTransform RelativeTransform,
+	const float LocationScale,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, FVector> DirectionView = FeatureObject->InstanceData->View(FeatureObject->DirectionHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Directions.Num() != DirectionView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), DirectionView.Num<1>(), Directions.Num());
-		return;
-	}
-
-	UE::Learning::Array::Copy<1, FVector>(DirectionView[AgentId], Directions);
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarDirectionArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarDirectionArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> DirectionView = FeatureObject->InstanceData->ConstView(FeatureObject->DirectionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 DirectionNum = DirectionView.Num<1>();
+	const FTransform LocalTransform = Transform * RelativeTransform.Inverse();
 	
-	for (const int32 Instance : Instances)
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			for (int32 DirectionIdx = 0; DirectionIdx < DirectionNum; DirectionIdx++)
-			{
-				const FVector Direction = DirectionView[Instance][0];
-				const FVector LocalDirection = RelativeRotation.UnrotateVector(Direction);
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(DirectionIdx, DirectionNum);
+		const FVector LocalLocation = LocalTransform.GetLocation();
+		const FRotator LocalRotation = LocalTransform.Rotator();
+		const FVector LocalScale = LocalTransform.GetScale3D();
 
-				UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset,
-					Actor->GetActorLocation() + Offset + 10.0f * Direction,
-					VisualLogColor.ToFColor(true),
-					TEXT(""));
+		const FVector Location = Transform.GetLocation();
+		const FRotator Rotation = Transform.Rotator();
+		const FVector Scale = Transform.GetScale3D();
 
-				UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset + 10.0f * Direction,
-					VisualLogColor.ToFColor(true),
-					TEXT("Direction %i: [% 6.3f % 6.3f % 6.3f]\nLocal Direction: [% 6.3f % 6.3f % 6.3f]"),
-					DirectionIdx,
-					Direction.X, Direction.Y, Direction.Z,
-					LocalDirection.X, LocalDirection.Y, LocalDirection.Z);
-			}
+		UE_LEARNING_AGENTS_VLOG_TRANSFORM(VisualLoggerObject, LogLearning, Display,
+			Location,
+			Rotation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
 
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Actor->GetActorLocation() + FVector(0.0f, 0.0f, 20.0f),
-				RelativeRotation,
-				FeatureObject->Axis0,
-				FeatureObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nLocation: [% 6.1f % 6.1f % 6.1f]\nLocal Location: [% 6.1f % 6.1f % 6.1f]\nRotation: [% 6.1f % 6.1f % 6.1f]\nLocal Rotation: [% 6.1f % 6.1f % 6.1f]\nScale: [% 6.1f % 6.1f % 6.1f]\nLocal Scale: [% 6.1f % 6.1f % 6.1f]\nLocation Scale: [% 6.1f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Location.X, Location.Y, Location.Z,
+			LocalLocation.X, LocalLocation.Y, LocalLocation.Z,
+			Rotation.Roll, Rotation.Pitch, Rotation.Yaw,
+			LocalRotation.Roll, LocalRotation.Pitch, LocalRotation.Yaw,
+			Scale.X, Scale.Y, Scale.Z,
+			LocalScale.X, LocalScale.Y, LocalScale.Z,
+			LocationScale);
 	}
-}
 #endif
 
-
-
-//------------------------------------------------------------------
-
-UPositionObservation* UPositionObservation::AddPositionObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPositionObservation, UE::Learning::FPositionFeature>(InInteractor, Name, TEXT("AddPositionObservation"), 1, Scale);
+	return MakeStructObservationFromArrayViews(Object,
+		{
+			TEXT("Location"),
+			TEXT("Rotation"),
+			TEXT("Scale")
+		},
+		{
+			MakeLocationObservation(Object, LocalTransform.GetLocation(), FTransform::Identity, LocationScale),
+			MakeRotationObservationFromQuat(Object, LocalTransform.GetRotation(), FQuat::Identity),
+			MakeScaleObservation(Object, LocalTransform.GetScale3D(), FVector::OneVector)
+		},
+		Tag);
 }
 
-void UPositionObservation::SetPositionObservation(const int32 AgentId, const FVector Position, const FVector RelativePosition, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeAngleObservation(
+	ULearningAgentsObservationObject* Object, 
+	const float Angle, 
+	const float RelativeAngle, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->PositionHandle)[AgentId][0] = Position;
-	FeatureObject->InstanceData->View(FeatureObject->RelativePositionHandle)[AgentId] = RelativePosition;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
-}
+	const float LocalAngle = FMath::FindDeltaAngleDegrees(RelativeAngle, Angle);
+	const float EncodedX = FMath::Sin(FMath::DegreesToRadians(Angle));
+	const float EncodedY = FMath::Cos(FMath::DegreesToRadians(Angle));
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPositionObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPositionObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> PositionView = FeatureObject->InstanceData->ConstView(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, const FVector> RelativePositionView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		const FVector Position = PositionView[Instance][0];
-		const FVector RelativePosition = RelativePositionView[Instance];
-		const FQuat RelativeRotation = RelativeRotationView[Instance];
-		const FVector LocalPosition = RelativeRotation.UnrotateVector(Position - RelativePosition);
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-		UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-			Position,
+		UE_LEARNING_AGENTS_VLOG_ANGLE_DEGREES(VisualLoggerObject, LogLearning, Display,
+			Angle,
+			RelativeAngle,
+			VisualLoggerLocation,
 			10.0f,
-			VisualLogColor.ToFColor(true),
-			TEXT("Position: [% 6.1f % 6.1f % 6.1f]\nLocal Position: [% 6.1f % 6.1f % 6.1f]"),
-			Position.X, Position.Y, Position.Z,
-			LocalPosition.X, LocalPosition.Y, LocalPosition.Z);
-
-		UE_LEARNING_AGENTS_VLOG_SEGMENT(this, LogLearning, Display,
-			RelativePosition,
-			Position,
-			VisualLogColor.ToFColor(true),
+			VisualLoggerColor.ToFColor(true),
 			TEXT(""));
 
-		UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-			RelativePosition,
-			RelativeRotation,
-			VisualLogColor.ToFColor(true),
-			TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-			Instance,
-			FeatureObject->Scale,
-			*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nAngle: [% 6.1f]\nRelative Angle: [% 6.1f]\nLocal Angle: [% 6.1f]\nEncoded: [% 6.2f % 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Angle,
+			RelativeAngle,
+			LocalAngle,
+			EncodedX, EncodedY);
 	}
-}
 #endif
 
-UPositionArrayObservation* UPositionArrayObservation::AddPositionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 PositionNum, const float Scale)
-{
-	if (PositionNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddPositionArrayObservation: Number of elements in array must be at least 1, got %i."), PositionNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPositionArrayObservation, UE::Learning::FPositionFeature>(InInteractor, Name, TEXT("AddPositionArrayObservation"), PositionNum, Scale);
+	return MakeContinuousObservationFromArrayView(Object, { EncodedX, EncodedY }, Tag);
 }
 
-void UPositionArrayObservation::SetPositionArrayObservation(const int32 AgentId, const TArray<FVector>& Positions, const FVector RelativePosition, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeAngleObservationRadians(
+	ULearningAgentsObservationObject* Object, 
+	const float Angle, 
+	const float RelativeAngle, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, FVector> PositionView = FeatureObject->InstanceData->View(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, FVector> RelativePositionView = FeatureObject->InstanceData->View(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Positions.Num() != PositionView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), PositionView.Num<1>(), Positions.Num());
-		return;
-	}
-
-	RelativePositionView[AgentId] = RelativePosition;
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	UE::Learning::Array::Copy<1, FVector>(PositionView[AgentId], Positions);
-	AgentIteration[AgentId]++;
+	return MakeAngleObservation(
+		Object, 
+		FMath::RadiansToDegrees(Angle), 
+		FMath::RadiansToDegrees(RelativeAngle), 
+		Tag, 
+		bVisualLoggerEnabled, 
+		VisualLoggerListener, 
+		VisualLoggerAgentId, 
+		VisualLoggerLocation, 
+		VisualLoggerColor);
 }
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeVelocityObservation(
+	ULearningAgentsObservationObject* Object, 
+	const FVector Velocity, 
+	const FTransform RelativeTransform, 
+	const float VelocityScale, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerVelocityLocation,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	const FVector LocalVelocity = RelativeTransform.InverseTransformVectorNoScale(Velocity);
+	const FVector EncodedVelocity = FVector(
+		LocalVelocity.X / FMath::Max(VelocityScale, UE_SMALL_NUMBER),
+		LocalVelocity.Y / FMath::Max(VelocityScale, UE_SMALL_NUMBER),
+		LocalVelocity.Z / FMath::Max(VelocityScale, UE_SMALL_NUMBER));
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPositionArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPositionArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> PositionView = FeatureObject->InstanceData->ConstView(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, const FVector> RelativePositionView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 PositionNum = PositionView.Num<1>();
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		const FVector RelativePosition = RelativePositionView[Instance];
-		const FQuat RelativeRotation = RelativeRotationView[Instance];
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-		for (int32 PositionIdx = 0; PositionIdx < PositionNum; PositionIdx++)
-		{
-			const FVector LocalPosition = RelativeRotation.UnrotateVector(PositionView[Instance][PositionIdx] - RelativePosition);
-
-			UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-				PositionView[Instance][PositionIdx],
-				10.0f,
-				VisualLogColor.ToFColor(true),
-				TEXT("Position: [% 6.1f % 6.1f % 6.1f]\nLocal Position: [% 6.1f % 6.1f % 6.1f]"),
-				PositionView[Instance][PositionIdx].X,
-				PositionView[Instance][PositionIdx].Y,
-				PositionView[Instance][PositionIdx].Z,
-				LocalPosition.X, LocalPosition.Y, LocalPosition.Z);
-
-			UE_LEARNING_AGENTS_VLOG_SEGMENT(this, LogLearning, Display,
-				RelativePosition,
-				PositionView[Instance][PositionIdx],
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-		}
-
-		UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-			RelativePosition,
-			RelativeRotation,
-			VisualLogColor.ToFColor(true),
-			TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-			Instance,
-			FeatureObject->Scale,
-			*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-	}
-}
-#endif
-
-UScalarPositionObservation* UScalarPositionObservation::AddScalarPositionObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UScalarPositionObservation, UE::Learning::FScalarPositionFeature>(InInteractor, Name, TEXT("AddScalarPositionObservation"), 1, Scale);
-}
-
-void UScalarPositionObservation::SetScalarPositionObservation(const int32 AgentId, const float Position, const float RelativePosition)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->PositionHandle)[AgentId][0] = Position;
-	FeatureObject->InstanceData->View(FeatureObject->RelativePositionHandle)[AgentId] = RelativePosition;
-	AgentIteration[AgentId]++;
-}
-
-void UScalarPositionObservation::SetScalarPositionObservationWithAxis(const int32 AgentId, const FVector Position, const FVector RelativePosition, const FVector Axis)
-{
-	SetScalarPositionObservation(Position.Dot(Axis), RelativePosition.Dot(Axis));
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UScalarPositionObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UScalarPositionObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> PositionView = FeatureObject->InstanceData->ConstView(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, const float> RelativePositionView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRelative Position [% 6.1f]\nLocal Position: [% 6.1f]\nPosition: [% 6.1f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				RelativePositionView[Instance],
-				PositionView[Instance][0] - RelativePositionView[Instance],
-				PositionView[Instance][0],
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
-	}
-}
-#endif
-
-UScalarPositionArrayObservation* UScalarPositionArrayObservation::AddScalarPositionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 PositionNum, const float Scale)
-{
-	if (PositionNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddScalarPositionArrayObservation: Number of elements in array must be at least 1, got %i."), PositionNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<UScalarPositionArrayObservation, UE::Learning::FScalarPositionFeature>(InInteractor, Name, TEXT("AddScalarPositionArrayObservation"), PositionNum, Scale);
-}
-
-void UScalarPositionArrayObservation::SetScalarPositionArrayObservation(const int32 AgentId, const TArray<float>& Positions, const float RelativePosition)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> PositionView = FeatureObject->InstanceData->View(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, float> RelativePositionView = FeatureObject->InstanceData->View(FeatureObject->RelativePositionHandle);
-
-	if (Positions.Num() != PositionView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), PositionView.Num<1>(), Positions.Num());
-		return;
-	}
-
-	RelativePositionView[AgentId] = RelativePosition;
-	UE::Learning::Array::Copy<1, float>(PositionView[AgentId], Positions);
-	AgentIteration[AgentId]++;
-}
-
-void UScalarPositionArrayObservation::SetScalarPositionArrayObservationWithAxis(const int32 AgentId, const TArray<FVector>& Positions, const FVector RelativePosition, const FVector Axis)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> PositionView = FeatureObject->InstanceData->View(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, float> RelativePositionView = FeatureObject->InstanceData->View(FeatureObject->RelativePositionHandle);
-
-	if (Positions.Num() != PositionView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), PositionView.Num<1>(), Positions.Num());
-		return;
-	}
-
-	RelativePositionView[AgentId] = RelativePosition.Dot(Axis);
-	for (int32 PositionIdx = 0; PositionIdx < PositionView.Num<1>(); PositionIdx++)
-	{
-		PositionView[AgentId][PositionIdx] = Positions[PositionIdx].Dot(Axis);
-	}
-
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UScalarPositionArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UScalarPositionArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> PositionView = FeatureObject->InstanceData->ConstView(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, const float> RelativePositionView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 PositionNum = PositionView.Num<1>();
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nRelative Position: [% 6.2f]\nPositions: %s\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				RelativePositionView[Instance],
-				*UE::Learning::Array::FormatFloat(PositionView[Instance]),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
-		}
-	}
-}
-#endif
-
-UPlanarPositionObservation* UPlanarPositionObservation::AddPlanarPositionObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale, const FVector Axis0, const FVector Axis1)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPlanarPositionObservation, UE::Learning::FPlanarPositionFeature>(
-		InInteractor, 
-		Name, 
-		TEXT("AddPlanarPositionObservation"), 
-		1, 
-		Scale, 
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector),
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
-}
-
-void UPlanarPositionObservation::SetPlanarPositionObservation(const int32 AgentId, const FVector Position, const FVector RelativePosition, const FRotator RelativeRotation)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->PositionHandle)[AgentId][0] = Position;
-	FeatureObject->InstanceData->View(FeatureObject->RelativePositionHandle)[AgentId] = RelativePosition;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarPositionObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarPositionObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> PositionView = FeatureObject->InstanceData->ConstView(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, const FVector> RelativePositionView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		const FVector Position = PositionView[Instance][0];
-		const FVector RelativePosition = RelativePositionView[Instance];
-		const FQuat RelativeRotation = RelativeRotationView[Instance];
-		const FVector LocalPosition = RelativeRotation.UnrotateVector(Position - RelativePosition);
-
-		UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-			Position,
-			10.0f,
-			VisualLogColor.ToFColor(true),
-			TEXT("Position: [% 6.1f % 6.1f % 6.1f]\nLocal Position: [% 6.1f % 6.1f % 6.1f]"),
-			Position.X, Position.Y, Position.Z,
-			LocalPosition.X, LocalPosition.Y, LocalPosition.Z);
-
-		UE_LEARNING_AGENTS_VLOG_SEGMENT(this, LogLearning, Display,
-			RelativePosition,
-			Position,
-			VisualLogColor.ToFColor(true),
+		UE_LEARNING_AGENTS_VLOG_ARROW(VisualLoggerObject, LogLearning, Display,
+			VisualLoggerVelocityLocation,
+			VisualLoggerVelocityLocation + Velocity,
+			VisualLoggerColor.ToFColor(true),
 			TEXT(""));
 
-		UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-			RelativePosition,
-			RelativeRotation,
-			FeatureObject->Axis0,
-			FeatureObject->Axis1,
-			VisualLogColor.ToFColor(true),
+		UE_LEARNING_AGENTS_VLOG_TRANSFORM(VisualLoggerObject, LogLearning, Display,
+			RelativeTransform.GetTranslation(),
+			RelativeTransform.GetRotation(),
+			VisualLoggerColor.ToFColor(true),
 			TEXT(""));
 
-		UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-			RelativePosition,
-			RelativeRotation,
-			VisualLogColor.ToFColor(true),
-			TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-			Instance,
-			FeatureObject->Scale,
-			*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nVelocity: [% 6.1f % 6.1f % 6.1f]\nLocal Velocity: [% 6.1f % 6.1f % 6.1f]\nEncoded: [% 6.2f % 6.2f % 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Velocity.X, Velocity.Y, Velocity.Z,
+			LocalVelocity.X, LocalVelocity.Y, LocalVelocity.Z,
+			EncodedVelocity.X, EncodedVelocity.Y, EncodedVelocity.Z);
 	}
-}
 #endif
 
-UPlanarPositionArrayObservation* UPlanarPositionArrayObservation::AddPlanarPositionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 PositionNum, const float Scale, const FVector Axis0, const FVector Axis1)
-{
-	if (PositionNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddPlanarPositionArrayObservation: Number of elements in array must be at least 1, got %i."), PositionNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPlanarPositionArrayObservation, UE::Learning::FPlanarPositionFeature>(
-		InInteractor, 
-		Name, 
-		TEXT("AddPlanarPositionArrayObservation"), 
-		PositionNum, 
-		Scale, 
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector),
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
+	return MakeContinuousObservationFromArrayView(Object, { (float)EncodedVelocity.X, (float)EncodedVelocity.Y, (float)EncodedVelocity.Z }, Tag);
 }
 
-void UPlanarPositionArrayObservation::SetPlanarPositionArrayObservation(const int32 AgentId, const TArray<FVector>& Positions, const FVector RelativePosition, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeDirectionObservation(
+	ULearningAgentsObservationObject* Object,
+	const FVector Direction,
+	const FTransform RelativeTransform,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerDirectionLocation,
+	const FVector VisualLoggerLocation,
+	const float VisualLoggerArrowLength,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, FVector> PositionView = FeatureObject->InstanceData->View(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, FVector> RelativePositionView = FeatureObject->InstanceData->View(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Positions.Num() != PositionView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), PositionView.Num<1>(), Positions.Num());
-		return;
-	}
-
-	RelativePositionView[AgentId] = RelativePosition;
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	UE::Learning::Array::Copy<1, FVector>(PositionView[AgentId], Positions);
-	AgentIteration[AgentId]++;
-}
+	const FVector LocalDirection = RelativeTransform.InverseTransformVectorNoScale(Direction).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarPositionArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarPositionArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> PositionView = FeatureObject->InstanceData->ConstView(FeatureObject->PositionHandle);
-	const TLearningArrayView<1, const FVector> RelativePositionView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativePositionHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 PositionNum = PositionView.Num<1>();
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		const FVector RelativePosition = RelativePositionView[Instance];
-		const FQuat RelativeRotation = RelativeRotationView[Instance];
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-		for (int32 PositionIdx = 0; PositionIdx < PositionNum; PositionIdx++)
-		{
-			const FVector LocalPosition = RelativeRotation.UnrotateVector(PositionView[Instance][PositionIdx] - RelativePosition);
-
-			UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-				PositionView[Instance][PositionIdx],
-				10.0f,
-				VisualLogColor.ToFColor(true),
-				TEXT("Position: [% 6.1f % 6.1f % 6.1f]\nLocal Position: [% 6.1f % 6.1f % 6.1f]"),
-				PositionView[Instance][PositionIdx].X, 
-				PositionView[Instance][PositionIdx].Y, 
-				PositionView[Instance][PositionIdx].Z,
-				LocalPosition.X, LocalPosition.Y, LocalPosition.Z);
-
-			UE_LEARNING_AGENTS_VLOG_SEGMENT(this, LogLearning, Display,
-				RelativePosition,
-				PositionView[Instance][PositionIdx],
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-		}
-
-		UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-			RelativePosition,
-			RelativeRotation,
-			FeatureObject->Axis0,
-			FeatureObject->Axis1,
-			VisualLogColor.ToFColor(true),
+		UE_LEARNING_AGENTS_VLOG_ARROW(VisualLoggerObject, LogLearning, Display,
+			VisualLoggerDirectionLocation,
+			VisualLoggerDirectionLocation + VisualLoggerArrowLength * Direction,
+			VisualLoggerColor.ToFColor(true),
 			TEXT(""));
 
+		UE_LEARNING_AGENTS_VLOG_TRANSFORM(VisualLoggerObject, LogLearning, Display,
+			RelativeTransform.GetTranslation(),
+			RelativeTransform.GetRotation(),
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
 
-		UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-			RelativePosition,
-			RelativeRotation,
-			VisualLogColor.ToFColor(true),
-			TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-			Instance,
-			FeatureObject->Scale,
-			*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nDirection: [% 6.1f % 6.1f % 6.1f]\nLocal Direction: [% 6.1f % 6.1f % 6.1f]\nEncoded: [% 6.2f % 6.2f % 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Direction.X, Direction.Y, Direction.Z,
+			LocalDirection.X, LocalDirection.Y, LocalDirection.Z,
+			LocalDirection.X, LocalDirection.Y, LocalDirection.Z); // We don't have a scaling so the encoded value is the same
 	}
-}
 #endif
 
-//------------------------------------------------------------------
-
-UVelocityObservation* UVelocityObservation::AddVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UVelocityObservation, UE::Learning::FVelocityFeature>(InInteractor, Name, TEXT("AddVelocityObservation"), 1, Scale);
+	return MakeContinuousObservationFromArrayView(Object, {
+		(float)LocalDirection.X,
+		(float)LocalDirection.Y,
+		(float)LocalDirection.Z,
+		}, Tag);
 }
 
-void UVelocityObservation::SetVelocityObservation(const int32 AgentId, const FVector Velocity, const FRotator RelativeRotation)
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeLocationAlongSplineObservation(
+	ULearningAgentsObservationObject* Object,
+	const USplineComponent* SplineComponent,
+	const float DistanceAlongSpline,
+	const FTransform RelativeTransform,
+	const float LocationScale,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!Interactor->HasAgent(AgentId))
+	if (!SplineComponent)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		UE_LOG(LogLearning, Error, TEXT("MakeLocationAlongSplineObservation: SplineComponent was nullptr."));
+		return FLearningAgentsObservationObjectElement();
 	}
 
-	FeatureObject->InstanceData->View(FeatureObject->VelocityHandle)[AgentId][0] = Velocity;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
+	const float TotalDistance = SplineComponent->GetSplineLength();
+	const float LoopedDistance = SplineComponent->IsClosedLoop() ? FMath::Wrap(DistanceAlongSpline, 0.0f, TotalDistance) : FMath::Clamp(DistanceAlongSpline, 0.0f, TotalDistance);
+
+	return MakeLocationObservation(
+		Object, 
+		SplineComponent->GetLocationAtDistanceAlongSpline(LoopedDistance, ESplineCoordinateSpace::World), 
+		RelativeTransform, 
+		LocationScale, 
+		Tag, 
+		bVisualLoggerEnabled, 
+		VisualLoggerListener, 
+		VisualLoggerAgentId, 
+		VisualLoggerLocation, 
+		VisualLoggerColor);
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UVelocityObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeProportionAlongSplineObservation(
+	ULearningAgentsObservationObject* Object, 
+	const USplineComponent* SplineComponent, 
+	const float DistanceAlongSpline, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UVelocityObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> VelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->VelocityHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	if (!SplineComponent)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
-		{
-			const FVector Velocity = VelocityView[Instance][0];
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-			const FVector LocalVelocity = RelativeRotation.UnrotateVector(Velocity);
+		UE_LOG(LogLearning, Error, TEXT("MakeProportionAlongSplineObservation: SplineComponent was nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
 
-			UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				Actor->GetActorLocation() + Velocity,
-				VisualLogColor.ToFColor(true),
+	if (SplineComponent->IsClosedLoop())
+	{
+		const float TotalDistance = SplineComponent->GetSplineLength();
+		const float WrapDistance = FMath::Wrap(DistanceAlongSpline, 0.0f, TotalDistance);
+		const float Proportion = WrapDistance / FMath::Max(TotalDistance, UE_SMALL_NUMBER);
+		const float Angle = FMath::Wrap(UE_TWO_PI * Proportion, -UE_PI, UE_PI);
+		
+		return MakeExclusiveUnionObservation(Object, TEXT("Angle"), MakeAngleObservationRadians(
+			Object, 
+			Angle,
+			0.0f,
+			TEXT("AngleObservation"),
+			bVisualLoggerEnabled,
+			VisualLoggerListener,
+			VisualLoggerAgentId,
+			VisualLoggerLocation,
+			VisualLoggerColor), Tag);
+	}
+	else
+	{
+		const float Proportion = FMath::Clamp(DistanceAlongSpline / FMath::Max(SplineComponent->GetSplineLength(), UE_SMALL_NUMBER), 0.0f, 1.0f);
+
+		return MakeExclusiveUnionObservation(Object, TEXT("Proportion"), MakeFloatObservation(
+			Object, 
+			Proportion, 
+			1.0f, 
+			TEXT("FloatObservation"),
+			bVisualLoggerEnabled, 
+			VisualLoggerListener, 
+			VisualLoggerAgentId, 
+			VisualLoggerLocation, 
+			VisualLoggerColor), Tag);
+	}
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeDirectionAlongSplineObservation(
+	ULearningAgentsObservationObject* Object,
+	const USplineComponent* SplineComponent,
+	const float DistanceAlongSpline,
+	const FTransform RelativeTransform,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const float VisualLoggerArrowLength,
+	const FLinearColor VisualLoggerColor)
+{
+	if (!SplineComponent)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeDirectionAlongSplineObservation: SplineComponent was nullptr."));
+		return FLearningAgentsObservationObjectElement();
+	}
+
+	const float TotalDistance = SplineComponent->GetSplineLength();
+	const float LoopedDistance = SplineComponent->IsClosedLoop() ? FMath::Wrap(DistanceAlongSpline, 0.0f, TotalDistance) : FMath::Clamp(DistanceAlongSpline, 0.0f, TotalDistance);
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	const FVector VisualLoggerDirectionLocation = 
+		(bVisualLoggerEnabled && VisualLoggerListener) ?
+		SplineComponent->GetLocationAtDistanceAlongSpline(LoopedDistance, ESplineCoordinateSpace::World) :
+		FVector::ZeroVector;
+#else
+	const FVector VisualLoggerDirectionLocation = FVector::ZeroVector;
+#endif
+
+	return MakeDirectionObservation(
+		Object, 
+		SplineComponent->GetDirectionAtDistanceAlongSpline(LoopedDistance, ESplineCoordinateSpace::World), 
+		RelativeTransform, 
+		Tag, 
+		bVisualLoggerEnabled, 
+		VisualLoggerListener, 
+		VisualLoggerAgentId, 
+		VisualLoggerDirectionLocation, 
+		VisualLoggerLocation, 
+		VisualLoggerArrowLength, 
+		VisualLoggerColor);
+}
+
+FLearningAgentsObservationObjectElement ULearningAgentsObservations::MakeProportionAlongRayObservation(
+	ULearningAgentsObservationObject* Object, 
+	const FVector RayStart, 
+	const FVector RayEnd, 
+	const FTransform RayTransform, 
+	const ECollisionChannel CollisionChannel, 
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	const FVector RayStartWorld = RayTransform.TransformPosition(RayStart);
+	const FVector RayEndWorld = RayTransform.TransformPosition(RayEnd);
+	const float RayDistance = FVector::Distance(RayStartWorld, RayEndWorld);
+
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(CollisionChannel);
+
+	FHitResult TraceHit;
+	const bool bHit = Object->GetWorld()->LineTraceSingleByObjectType(TraceHit, RayStartWorld, RayEndWorld, ObjectQueryParams);
+
+	const float Encoded = bHit ? 1.0f - TraceHit.Time : 0.0f;
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_SEGMENT(VisualLoggerObject, LogLearning, Display,
+			RayStartWorld,
+			RayEndWorld,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		if (bHit)
+		{
+			UE_LEARNING_AGENTS_VLOG_LOCATION(VisualLoggerObject, LogLearning, Display,
+				RayStartWorld + TraceHit.Time * (RayEndWorld - RayStartWorld),
+				10.f,
+				VisualLoggerColor.ToFColor(true),
 				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation() + Velocity,
-				VisualLogColor.ToFColor(true),
-				TEXT("Velocity: [% 6.3f % 6.3f % 6.3f]\nLocal Velocity: [% 6.3f % 6.3f % 6.3f]"),
-				Velocity.X, Velocity.Y, Velocity.Z,
-				LocalVelocity.X, LocalVelocity.Y, LocalVelocity.Z);
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
 		}
+
+		UE_LEARNING_AGENTS_VLOG_TRANSFORM(VisualLoggerObject, LogLearning, Display,
+			RayTransform.GetTranslation(),
+			RayTransform.GetRotation(),
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nRay Start: [% 6.1f % 6.1f % 6.1f]\nRay End: [% 6.1f % 6.1f % 6.1f]\nRay Start World: [% 6.1f % 6.1f % 6.1f]\nRay End World: [% 6.1f % 6.1f % 6.1f]\nCollision Channel: [%s]\nHit: [%s]\nEncoded: [% 6.2f]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			RayStart.X, RayStart.Y, RayStart.Z,
+			RayEnd.X, RayEnd.Y, RayEnd.Z,
+			RayStartWorld.X, RayStartWorld.Y, RayStartWorld.Z,
+			RayEndWorld.X, RayEndWorld.Y, RayEndWorld.Z,
+			*StaticEnum<ECollisionChannel>()->GetNameStringByValue(CollisionChannel),
+			bHit ? TEXT("true") : TEXT("false"),
+			Encoded);
 	}
-}
 #endif
 
-UVelocityArrayObservation* UVelocityArrayObservation::AddVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 VelocityNum, const float Scale)
-{
-	if (VelocityNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddVelocityArrayObservation: Number of elements in array must be at least 1, got %i."), VelocityNum);
-		return nullptr;
-	}
-
-	return UE::Learning::Agents::Observations::Private::AddObservation<UVelocityArrayObservation, UE::Learning::FVelocityFeature>(InInteractor, Name, TEXT("AddVelocityArrayObservation"), VelocityNum, Scale);
+	return MakeFloatObservation(Object, Encoded, 1.0f, Tag);
 }
 
-void UVelocityArrayObservation::SetVelocityArrayObservation(const int32 AgentId, const TArray<FVector>& Velocities, const FRotator RelativeRotation)
+
+bool ULearningAgentsObservations::GetNullObservation(const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	if (!Object)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetNullObservation: Object is nullptr."));
+		return false;
 	}
 
-	const TLearningArrayView<2, FVector> VelocityView = FeatureObject->InstanceData->View(FeatureObject->VelocityHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Velocities.Num() != VelocityView.Num<1>())
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), VelocityView.Num<1>(), Velocities.Num());
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetNullObservation: Invalid Observation Object."));
+		return false;
 	}
 
-	UE::Learning::Array::Copy<1, FVector>(VelocityView[AgentId], Velocities);
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetNullObservation: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Null)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetNullObservation: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Null));
+		return false;
+	}
+
+	return true;
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UVelocityArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+bool ULearningAgentsObservations::GetContinuousObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UVelocityArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> VelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->VelocityHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 VelocityNum = VelocityView.Num<1>();
-
-	for (const int32 Instance : Instances)
+	if (!Object)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		UE_LOG(LogLearning, Error, TEXT("GetContinuousObservationNum: Object is nullptr."));
+		OutNum = 0;
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetContinuousObservationNum: Invalid Observation Object."));
+		OutNum = 0;
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetContinuousObservationNum: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Continuous)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetContinuousObservationNum: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Continuous));
+		OutNum = 0;
+		return false;
+	}
+
+	OutNum = Object->ObservationObject.GetContinuous(Element.ObjectElement).Values.Num();
+	return true;
+}
+
+bool ULearningAgentsObservations::GetContinuousObservation(TArray<float>& OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 OutValueNum = 0;
+	if (!GetContinuousObservationNum(OutValueNum, Object, Element, Tag))
+	{
+		OutValues.Empty();
+		return false;
+	}
+
+	OutValues.SetNumUninitialized(OutValueNum);
+
+	if (!GetContinuousObservationToArrayView(OutValues, Object, Element, Tag))
+	{
+		OutValues.Empty();
+		return false;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetContinuousObservationToArrayView(TArrayView<float> OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetContinuousObservationToArrayView: Object is nullptr."));
+		UE::Learning::Array::Zero<1, float>(OutValues);
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetContinuousObservationToArrayView: Invalid Observation Object."));
+		UE::Learning::Array::Zero<1, float>(OutValues);
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetContinuousObservationToArrayView: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Continuous)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetContinuousObservationToArrayView: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Continuous));
+		UE::Learning::Array::Zero<1, float>(OutValues);
+		return false;
+	}
+
+	const TArrayView<const float> Values = Object->ObservationObject.GetContinuous(Element.ObjectElement).Values;
+
+	if (Values.Num() != OutValues.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetContinuousObservationToArrayView: Observation '%s' size does not match. Observation is '%i' values but asked for '%i'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			Values.Num(), OutValues.Num());
+		UE::Learning::Array::Zero<1, float>(OutValues);
+		return false;
+	}
+
+	UE::Learning::Array::Copy<1, float>(OutValues, Values);
+	return true;
+}
+
+bool ULearningAgentsObservations::GetExclusiveDiscreteObservation(int32& OutIndex, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 DiscreteValueNum;
+	if (!GetContinuousObservationNum(DiscreteValueNum, Object, Element, Tag))
+	{
+		OutIndex = INDEX_NONE;
+		return false;
+	}
+
+	TArray<float, TInlineAllocator<32>> OneHot;
+	OneHot.SetNumUninitialized(DiscreteValueNum);
+	if (!GetContinuousObservationToArrayView(OneHot, Object, Element, Tag))
+	{
+		OutIndex = INDEX_NONE;
+		return false;
+	}
+
+	OutIndex = INDEX_NONE;
+	for (int32 Idx = 0; Idx < DiscreteValueNum; Idx++)
+	{
+		if (OneHot[Idx])
 		{
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-				
-			for (int32 VelocityIdx = 0; VelocityIdx < VelocityNum; VelocityIdx++)
-			{
-				const FVector Velocity = VelocityView[Instance][0];
-				const FVector LocalVelocity = RelativeRotation.UnrotateVector(Velocity);
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(VelocityIdx, VelocityNum);
-
-				UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset,
-					Actor->GetActorLocation() + Offset + Velocity,
-					VisualLogColor.ToFColor(true),
-					TEXT(""));
-
-				UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset + Velocity,
-					VisualLogColor.ToFColor(true),
-					TEXT("Velocity %i: [% 6.3f % 6.3f % 6.3f]\nLocal Velocity: [% 6.3f % 6.3f % 6.3f]"),
-					VelocityIdx,
-					Velocity.X, Velocity.Y, Velocity.Z,
-					LocalVelocity.X, LocalVelocity.Y, LocalVelocity.Z);
-			}
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			OutIndex = Idx;
+			break;
 		}
 	}
-}
-#endif
 
-UScalarVelocityObservation* UScalarVelocityObservation::AddScalarVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UScalarVelocityObservation, UE::Learning::FScalarVelocityFeature>(InInteractor, Name, TEXT("AddScalarVelocityObservation"), 1, Scale);
+	return OutIndex != INDEX_NONE;
 }
 
-void UScalarVelocityObservation::SetScalarVelocityObservation(const int32 AgentId, const float Velocity)
+bool ULearningAgentsObservations::GetInclusiveDiscreteObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	int32 DiscreteValueNum;
+	if (!GetContinuousObservationNum(DiscreteValueNum, Object, Element, Tag))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		OutNum = 0;
+		return false;
 	}
 
-	FeatureObject->InstanceData->View(FeatureObject->VelocityHandle)[AgentId][0] = Velocity;
-	AgentIteration[AgentId]++;
-}
-
-void UScalarVelocityObservation::SetScalarVelocityObservationWithAxis(const int32 AgentId, const FVector Velocity, const FVector Axis)
-{
-	SetScalarVelocityObservation(AgentId, Velocity.Dot(Axis));
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UScalarVelocityObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UScalarVelocityObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> VelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->VelocityHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	TArray<float, TInlineAllocator<32>> OneHot;
+	OneHot.SetNumUninitialized(DiscreteValueNum);
+	if (!GetContinuousObservationToArrayView(OneHot, Object, Element, Tag))
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		OutNum = 0;
+		return false;
+	}
+
+	OutNum = 0;
+	for (int32 Idx = 0; Idx < DiscreteValueNum; Idx++)
+	{
+		if (OneHot[Idx]) { OutNum++; }
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetInclusiveDiscreteObservation(TArray<int32>& OutIndices, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 OutIndicesNum;
+	if (!GetInclusiveDiscreteObservationNum(OutIndicesNum, Object, Element, Tag))
+	{
+		OutIndices.Empty();
+		return false;
+	}
+
+	OutIndices.SetNumUninitialized(OutIndicesNum);
+	return GetInclusiveDiscreteObservationToArrayView(OutIndices, Object, Element, Tag);
+}
+
+bool ULearningAgentsObservations::GetInclusiveDiscreteObservationToArrayView(TArrayView<int32> OutIndices, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveDiscreteObservationToArrayView: Object is nullptr."));
+		return false;
+	}
+
+	int32 DiscreteValueNum;
+	if (!GetContinuousObservationNum(DiscreteValueNum, Object, Element, Tag))
+	{
+		return false;
+	}
+
+	TArray<float, TInlineAllocator<32>> OneHot;
+	OneHot.SetNumUninitialized(DiscreteValueNum);
+	if (!GetContinuousObservationToArrayView(OneHot, Object, Element, Tag))
+	{
+		return false;
+	}
+
+	int32 IndicesNum = 0;
+	for (int32 Idx = 0; Idx < DiscreteValueNum; Idx++)
+	{
+		if (OneHot[Idx]) { IndicesNum++; }
+	}
+
+	if (IndicesNum != OutIndices.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveDiscreteObservationToArrayView: Observation '%s' size does not match. Observation is '%i' indices but asked for '%i'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			IndicesNum, OutIndices.Num());
+		UE::Learning::Array::Zero<1, int32>(OutIndices);
+		return false;
+	}
+
+	int32 Offset = 0;
+	for (int32 Idx = 0; Idx < DiscreteValueNum; Idx++)
+	{
+		if (OneHot[Idx]) { OutIndices[Offset] = Idx; Offset++; }
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetCountObservation(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const int32 MaxNum, const FName Tag)
+{
+	float FloatNum = 0.0f;
+	if (!GetContinuousObservationToArrayView(MakeArrayView(&FloatNum, 1), Object, Element, Tag))
+	{
+		OutNum = -1;
+		return false;
+	}
+
+	OutNum = FMath::RoundToInt(FloatNum * MaxNum);
+	return true;
+}
+
+bool ULearningAgentsObservations::GetStructObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationNum: Object is nullptr."));
+		OutNum = 0;
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationNum: Invalid Observation Object."));
+		OutNum = 0;
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetStructObservationNum: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::And)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationNum: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::And));
+		OutNum = 0;
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectAndParameters Parameters = Object->ObservationObject.GetAnd(Element.ObjectElement);
+
+	OutNum = Parameters.Elements.Num();
+	return true;
+}
+
+bool ULearningAgentsObservations::GetStructObservation(TMap<FName, FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 OutElementNum = 0;
+	if (!GetStructObservationNum(OutElementNum, Object, Element, Tag))
+	{
+		OutElements.Empty();
+		return false;
+	}
+
+	TArray<FName, TInlineAllocator<16>> SubElementNames;
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> SubElements;
+	SubElementNames.SetNumUninitialized(OutElementNum);
+	SubElements.SetNumUninitialized(OutElementNum);
+
+	if (!GetStructObservationToArrayViews(SubElementNames, SubElements, Object, Element, Tag))
+	{
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElements.Empty(OutElementNum);
+	for (int32 ElementIdx = 0; ElementIdx < OutElementNum; ElementIdx++)
+	{
+		OutElements.Add(SubElementNames[ElementIdx], SubElements[ElementIdx]);
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetStructObservationToArrays(TArray<FName>& OutElementNames, TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 OutElementNum = 0;
+	if (!GetStructObservationNum(OutElementNum, Object, Element, Tag))
+	{
+		OutElementNames.Empty();
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElementNames.SetNumUninitialized(OutElementNum);
+	OutElements.SetNumUninitialized(OutElementNum);
+
+	if (!GetStructObservationToArrayViews(OutElementNames, OutElements, Object, Element, Tag))
+	{
+		OutElementNames.Empty();
+		OutElements.Empty();
+		return false;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetStructObservationToArrayViews(TArrayView<FName> OutElementNames, TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Object is nullptr."));
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Invalid Observation Object."));
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetStructObservationToArrayViews: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::And)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::And));
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectAndParameters Parameters = Object->ObservationObject.GetAnd(Element.ObjectElement);
+
+	if (Parameters.Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetStructObservationToArrayViews: Getting zero-sized And Observation."));
+	}
+
+	if (Parameters.Elements.Num() != OutElements.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Observation '%s' size does not match. Observation is '%i' elements but asked for '%i'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			Parameters.Elements.Num(), OutElements.Num());
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	for (int32 ElementIdx = 0; ElementIdx < Parameters.Elements.Num(); ElementIdx++)
+	{
+		if (!Object->ObservationObject.IsValid(Parameters.Elements[ElementIdx]))
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nVelocity: [% 6.1f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				VelocityView[Instance][0],
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Invalid Observation Object."));
+			UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+			return false;
 		}
-	}
-}
-#endif
 
-
-UScalarVelocityArrayObservation* UScalarVelocityArrayObservation::AddScalarVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 VelocityNum, const float Scale)
-{
-	if (VelocityNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddScalarVelocityArrayObservation: Number of elements in array must be at least 1, got %i."), VelocityNum);
-		return nullptr;
+		OutElementNames[ElementIdx] = Parameters.ElementNames[ElementIdx];
+		OutElements[ElementIdx] = { Parameters.Elements[ElementIdx] };
 	}
 
-	return UE::Learning::Agents::Observations::Private::AddObservation<UScalarVelocityArrayObservation, UE::Learning::FScalarVelocityFeature>(InInteractor, Name, TEXT("AddScalarVelocityArrayObservation"), VelocityNum, Scale);
+	return true;
 }
 
-void UScalarVelocityArrayObservation::SetScalarVelocityArrayObservation(const int32 AgentId, const TArray<float>& Velocities)
+bool ULearningAgentsObservations::GetExclusiveUnionObservation(FName& OutElementName, FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	if (!Object)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Object is nullptr."));
+		OutElementName = NAME_None;
+		OutElement = FLearningAgentsObservationObjectElement();
+		return false;
 	}
 
-	const TLearningArrayView<2, float> VelocityView = FeatureObject->InstanceData->View(FeatureObject->VelocityHandle);
-
-	if (Velocities.Num() != VelocityView.Num<1>())
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), VelocityView.Num<1>(), Velocities.Num());
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Invalid Observation Object."));
+		OutElementName = NAME_None;
+		OutElement = FLearningAgentsObservationObjectElement();
+		return false;
 	}
 
-	UE::Learning::Array::Copy<1, float>(VelocityView[AgentId], Velocities);
-	AgentIteration[AgentId]++;
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetStructObservationToArrayViews: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::OrExclusive)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStructObservationToArrayViews: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::OrExclusive));
+		OutElementName = NAME_None;
+		OutElement = FLearningAgentsObservationObjectElement();
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectOrExclusiveParameters Parameters = Object->ObservationObject.GetOrExclusive(Element.ObjectElement);
+	OutElementName = Parameters.ElementName;
+	OutElement = { Parameters.Element };
+	return true;
 }
 
-void UScalarVelocityArrayObservation::SetScalarVelocityArrayObservationWithAxis(const int32 AgentId, const TArray<FVector>& Velocities, const FVector Axis)
+bool ULearningAgentsObservations::GetInclusiveUnionObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	if (!Object)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationNum: Object is nullptr."));
+		OutNum = 0;
+		return false;
 	}
 
-	const TLearningArrayView<2, float> VelocityView = FeatureObject->InstanceData->View(FeatureObject->VelocityHandle);
-
-	if (Velocities.Num() != VelocityView.Num<1>())
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), VelocityView.Num<1>(), Velocities.Num());
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationNum: Invalid Observation Object."));
+		OutNum = 0;
+		return false;
 	}
 
-	for (int32 VelocityIdx = 0; VelocityIdx < VelocityView.Num<1>(); VelocityIdx++)
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
 	{
-		VelocityView[AgentId][VelocityIdx] = Velocities[VelocityIdx].Dot(Axis);
+		UE_LOG(LogLearning, Warning, TEXT("GetInclusiveUnionObservationNum: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
 	}
 
-	AgentIteration[AgentId]++;
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::OrInclusive)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationNum: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::OrInclusive));
+		OutNum = 0;
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectOrInclusiveParameters Parameters = Object->ObservationObject.GetOrInclusive(Element.ObjectElement);
+
+	OutNum = Parameters.Elements.Num();
+	return true;
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UScalarVelocityArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+bool ULearningAgentsObservations::GetInclusiveUnionObservation(TMap<FName, FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UScalarVelocityArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> VelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->VelocityHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 VelocityNum = VelocityView.Num<1>();
-
-	for (const int32 Instance : Instances)
+	int32 OutElementNum = 0;
+	if (!GetInclusiveUnionObservationNum(OutElementNum, Object, Element, Tag))
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		OutElements.Empty();
+		return false;
+	}
+
+	TArray<FName, TInlineAllocator<16>> SubElementNames;
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> SubElements;
+	SubElementNames.SetNumUninitialized(OutElementNum);
+	SubElements.SetNumUninitialized(OutElementNum);
+
+	if (!GetInclusiveUnionObservationToArrayViews(SubElementNames, SubElements, Object, Element, Tag))
+	{
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElements.Empty(OutElementNum);
+	for (int32 ElementIdx = 0; ElementIdx < OutElementNum; ElementIdx++)
+	{
+		OutElements.Add(SubElementNames[ElementIdx], SubElements[ElementIdx]);
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetInclusiveUnionObservationToArrays(TArray<FName>& OutElementNames, TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 OutElementNum = 0;
+	if (!GetInclusiveUnionObservationNum(OutElementNum, Object, Element, Tag))
+	{
+		OutElementNames.Empty();
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElementNames.SetNumUninitialized(OutElementNum);
+	OutElements.SetNumUninitialized(OutElementNum);
+
+	if (!GetInclusiveUnionObservationToArrayViews(OutElementNames, OutElements, Object, Element, Tag))
+	{
+		OutElementNames.Empty();
+		OutElements.Empty();
+		return false;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetInclusiveUnionObservationToArrayViews(TArrayView<FName> OutElementNames, TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationToArrayViews: Object is nullptr."));
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationToArrayViews: Invalid Observation Object."));
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetInclusiveUnionObservationToArrayViews: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::OrInclusive)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationToArrayViews: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::OrInclusive));
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectOrInclusiveParameters Parameters = Object->ObservationObject.GetOrInclusive(Element.ObjectElement);
+
+	if (Parameters.Elements.Num() != OutElements.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationToArrayViews: Observation '%s' size does not match. Observation is '%i' elements but asked for '%i'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			Parameters.Elements.Num(), OutElements.Num());
+		UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	for (int32 ElementIdx = 0; ElementIdx < Parameters.Elements.Num(); ElementIdx++)
+	{
+		if (!Object->ObservationObject.IsValid(Parameters.Elements[ElementIdx]))
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nVelocities: %s\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(VelocityView[Instance]),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LOG(LogLearning, Error, TEXT("GetInclusiveUnionObservationToArrayViews: Invalid Observation Object."));
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+			UE::Learning::Array::Set<1, FName>(OutElementNames, NAME_None);
+			return false;
 		}
-	}
-}
-#endif
 
-
-UPlanarVelocityObservation* UPlanarVelocityObservation::AddPlanarVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale, const FVector Axis0, const FVector Axis1)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPlanarVelocityObservation, UE::Learning::FPlanarVelocityFeature>(
-		InInteractor, 
-		Name, 
-		TEXT("AddPlanarVelocityObservation"), 
-		1, 
-		Scale, 
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector),
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
-}
-
-void UPlanarVelocityObservation::SetPlanarVelocityObservation(const int32 AgentId, const FVector Velocity, const FRotator RelativeRotation)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		OutElementNames[ElementIdx] = Parameters.ElementNames[ElementIdx];
+		OutElements[ElementIdx] = { Parameters.Elements[ElementIdx] };
 	}
 
-	FeatureObject->InstanceData->View(FeatureObject->VelocityHandle)[AgentId][0] = Velocity;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
+	return true;
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarVelocityObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+bool ULearningAgentsObservations::GetStaticArrayObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarVelocityObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> VelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->VelocityHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	if (!Object)
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationNum: Object is nullptr."));
+		OutNum = 0;
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationNum: Invalid Observation Object."));
+		OutNum = 0;
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetStaticArrayObservationNum: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Array)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationNum: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Array));
+		OutNum = 0;
+		return false;
+	}
+
+	OutNum = Object->ObservationObject.GetArray(Element.ObjectElement).Elements.Num();
+	return true;
+}
+
+bool ULearningAgentsObservations::GetStaticArrayObservation(TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 OutElementNum = 0;
+	if (!GetStaticArrayObservationNum(OutElementNum, Object, Element, Tag))
+	{
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElements.SetNumUninitialized(OutElementNum);
+
+	if (!GetStaticArrayObservationToArrayView(OutElements, Object, Element, Tag))
+	{
+		OutElements.Empty();
+		return false;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetStaticArrayObservationToArrayView(TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationNum: Object is nullptr."));
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationToArrayView: Invalid Observation Object."));
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetStaticArrayObservationToArrayView: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Array)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationToArrayView: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Array));
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectArrayParameters Parameters = Object->ObservationObject.GetArray(Element.ObjectElement);
+
+	if (Parameters.Elements.Num() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetStaticArrayObservationToArrayView: Getting zero-sized Static Array Observation."));
+	}
+
+	if (Parameters.Elements.Num() != OutElements.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationToArrayView: Observation '%s' size does not match. Observation is '%i' elements but asked for '%i'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			Parameters.Elements.Num(), OutElements.Num());
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	for (int32 ElementIdx = 0; ElementIdx < Parameters.Elements.Num(); ElementIdx++)
+	{
+		if (!Object->ObservationObject.IsValid(Parameters.Elements[ElementIdx]))
 		{
-			const FVector Velocity = VelocityView[Instance][0];
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-			const FVector LocalVelocity = RelativeRotation.UnrotateVector(Velocity);
-
-			UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				Actor->GetActorLocation() + Velocity,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation() + Velocity,
-				VisualLogColor.ToFColor(true),
-				TEXT("Velocity: [% 6.3f % 6.3f % 6.3f]\nLocal Velocity: [% 6.3f % 6.3f % 6.3f]"),
-				Velocity.X, Velocity.Y, Velocity.Z,
-				LocalVelocity.X, LocalVelocity.Y, LocalVelocity.Z);
-
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				FeatureObject->Axis0,
-				FeatureObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LOG(LogLearning, Error, TEXT("GetStaticArrayObservationToArrayView: Invalid Observation Object."));
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+			return false;
 		}
-	}
-}
-#endif
 
-
-UPlanarVelocityArrayObservation* UPlanarVelocityArrayObservation::AddPlanarVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 VelocityNum, const float Scale, const FVector Axis0, const FVector Axis1)
-{
-	if (VelocityNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddPlanarVelocityArrayObservation: Number of elements in array must be at least 1, got %i."), VelocityNum);
-		return nullptr;
+		OutElements[ElementIdx] = { Parameters.Elements[ElementIdx] };
 	}
 
-	return UE::Learning::Agents::Observations::Private::AddObservation<UPlanarVelocityArrayObservation, UE::Learning::FPlanarVelocityFeature>(
-		InInteractor, 
-		Name, 
-		TEXT("AddPlanarVelocityArrayObservation"), 
-		VelocityNum, 
-		Scale, 
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector),
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
+	return true;
 }
 
-void UPlanarVelocityArrayObservation::SetPlanarVelocityArrayObservation(const int32 AgentId, const TArray<FVector>& Velocities, const FRotator RelativeRotation)
+bool ULearningAgentsObservations::GetSetObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	if (!Object)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservationNum: Object is nullptr."));
+		OutNum = 0;
+		return false;
 	}
 
-	const TLearningArrayView<2, FVector> VelocityView = FeatureObject->InstanceData->View(FeatureObject->VelocityHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (Velocities.Num() != VelocityView.Num<1>())
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), VelocityView.Num<1>(), Velocities.Num());
-		return;
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservationNum: Invalid Observation Object."));
+		OutNum = 0;
+		return false;
 	}
 
-	UE::Learning::Array::Copy<1, FVector>(VelocityView[AgentId], Velocities);
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetSetObservationNum: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Set)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservationNum: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Set));
+		OutNum = 0;
+		return false;
+	}
+
+	OutNum = Object->ObservationObject.GetSet(Element.ObjectElement).Elements.Num();
+	return true;
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarVelocityArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+bool ULearningAgentsObservations::GetSetObservation(TSet<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarVelocityArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> VelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->VelocityHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 VelocityNum = VelocityView.Num<1>();
-
-	for (const int32 Instance : Instances)
+	int32 OutElementNum = 0;
+	if (!GetSetObservationNum(OutElementNum, Object, Element, Tag))
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		OutElements.Empty();
+		return false;
+	}
+
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservation: Object is nullptr."));
+		OutElements.Empty();
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservation: Invalid Observation Object."));
+		OutElements.Empty();
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetSetObservation: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Set)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservation: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Set));
+		OutElements.Empty();
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectSetParameters Parameters = Object->ObservationObject.GetSet(Element.ObjectElement);
+
+	if (Parameters.Elements.Num() != OutElements.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservation: Observation '%s' size does not match. Observation is '%i' elements but asked for '%i'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			Parameters.Elements.Num(), OutElements.Num());
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElements.Empty(Parameters.Elements.Num());
+	for (int32 ElementIdx = 0; ElementIdx < Parameters.Elements.Num(); ElementIdx++)
+	{
+		if (!Object->ObservationObject.IsValid(Parameters.Elements[ElementIdx]))
 		{
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-
-			for (int32 VelocityIdx = 0; VelocityIdx < VelocityNum; VelocityIdx++)
-			{
-				const FVector Velocity = VelocityView[Instance][0];
-				const FVector LocalVelocity = RelativeRotation.UnrotateVector(Velocity);
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(VelocityIdx, VelocityNum);
-
-				UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-					Actor->GetActorLocation(),
-					Actor->GetActorLocation() + Velocity,
-					VisualLogColor.ToFColor(true),
-					TEXT(""));
-
-				UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-					Actor->GetActorLocation() + Velocity,
-					VisualLogColor.ToFColor(true),
-					TEXT("Velocity %i: [% 6.3f % 6.3f % 6.3f]\nLocal Velocity: [% 6.3f % 6.3f % 6.3f]"),
-					VelocityIdx,
-					Velocity.X, Velocity.Y, Velocity.Z,
-					LocalVelocity.X, LocalVelocity.Y, LocalVelocity.Z);
-			}
-
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				FeatureObject->Axis0,
-				FeatureObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LOG(LogLearning, Error, TEXT("GetSetObservation: Invalid Observation Object."));
+			OutElements.Empty();
+			return false;
 		}
-	}
-}
-#endif
 
-//------------------------------------------------------------------
-
-UAngularVelocityObservation* UAngularVelocityObservation::AddAngularVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UAngularVelocityObservation, UE::Learning::FAngularVelocityFeature>(InInteractor, Name, TEXT("AddAngularVelocityObservation"), 1, Scale);
-}
-
-void UAngularVelocityObservation::SetAngularVelocityObservation(const int32 AgentId, const FVector AngularVelocity, const FRotator RelativeRotation)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		OutElements.Add({ Parameters.Elements[ElementIdx] });
 	}
 
-	FeatureObject->InstanceData->View(FeatureObject->AngularVelocityHandle)[AgentId][0] = AngularVelocity;
-	FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle)[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
+	return true;
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UAngularVelocityObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+bool ULearningAgentsObservations::GetSetObservationToArray(TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UAngularVelocityObservation::VisualLog);
-
-	const TLearningArrayView<2, const FVector> AngularVelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->AngularVelocityHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
+	int32 OutElementNum = 0;
+	if (!GetSetObservationNum(OutElementNum, Object, Element, Tag))
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElements.SetNumUninitialized(OutElementNum);
+
+	if (!GetSetObservationToArrayView(OutElements, Object, Element, Tag))
+	{
+		OutElements.Empty();
+		return false;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetSetObservationToArrayView(TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservationToArrayView: Object is nullptr."));
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservationToArrayView: Invalid Observation Object."));
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetSetObservationToArrayView: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Set)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservationToArrayView: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Set));
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	const UE::Learning::Observation::FObjectSetParameters Parameters = Object->ObservationObject.GetSet(Element.ObjectElement);
+
+	if (Parameters.Elements.Num() != OutElements.Num())
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetSetObservationToArrayView: Observation '%s' size does not match. Observation is '%i' elements but asked for '%i'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			Parameters.Elements.Num(), OutElements.Num());
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	for (int32 ElementIdx = 0; ElementIdx < Parameters.Elements.Num(); ElementIdx++)
+	{
+		if (!Object->ObservationObject.IsValid(Parameters.Elements[ElementIdx]))
 		{
-			const FVector AngularVelocity = AngularVelocityView[Instance][0];
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-			const FVector LocalAngularVelocity = RelativeRotation.UnrotateVector(AngularVelocity);
-
-			UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				Actor->GetActorLocation() + AngularVelocity,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation() + AngularVelocity,
-				VisualLogColor.ToFColor(true),
-				TEXT("Angular Velocity: [% 6.3f % 6.3f % 6.3f]\nLocal Angular Velocity: [% 6.3f % 6.3f % 6.3f]"),
-				AngularVelocity.X, AngularVelocity.Y, AngularVelocity.Z,
-				LocalAngularVelocity.X, LocalAngularVelocity.Y, LocalAngularVelocity.Z);
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE_LOG(LogLearning, Error, TEXT("GetSetObservationToArrayView: Invalid Observation Object."));
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+			return false;
 		}
-	}
-}
-#endif
 
-UAngularVelocityArrayObservation* UAngularVelocityArrayObservation::AddAngularVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 AngularVelocityNum, const float Scale)
-{
-	if (AngularVelocityNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddAngularVelocityArrayObservation: Number of elements in array must be at least 1, got %i."), AngularVelocityNum);
-		return nullptr;
+		OutElements[ElementIdx] = { Parameters.Elements[ElementIdx] };
 	}
 
-	return UE::Learning::Agents::Observations::Private::AddObservation<UAngularVelocityArrayObservation, UE::Learning::FAngularVelocityFeature>(InInteractor, Name, TEXT("AddAngularVelocityArrayObservation"), AngularVelocityNum, Scale);
+	return true;
 }
 
-void UAngularVelocityArrayObservation::SetAngularVelocityArrayObservation(const int32 AgentId, const TArray<FVector>& AngularVelocities, const FRotator RelativeRotation)
+bool ULearningAgentsObservations::GetPairObservation(FLearningAgentsObservationObjectElement& OutKey, FLearningAgentsObservationObjectElement& OutValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	TStaticArray<FName, 2> OutElementNames;
+	TStaticArray<FLearningAgentsObservationObjectElement, 2> OutElements;
+	if (!GetStructObservationToArrayViews(OutElementNames, OutElements, Object, Element, Tag))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		OutKey = FLearningAgentsObservationObjectElement();
+		OutValue = FLearningAgentsObservationObjectElement();
+		return false;
 	}
 
-	const TLearningArrayView<2, FVector> AngularVelocityView = FeatureObject->InstanceData->View(FeatureObject->AngularVelocityHandle);
-	const TLearningArrayView<1, FQuat> RelativeRotationView = FeatureObject->InstanceData->View(FeatureObject->RelativeRotationHandle);
-
-	if (AngularVelocities.Num() != AngularVelocityView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), AngularVelocityView.Num<1>(), AngularVelocities.Num());
-		return;
-	}
-
-	UE::Learning::Array::Copy<1, FVector>(AngularVelocityView[AgentId], AngularVelocities);
-	RelativeRotationView[AgentId] = RelativeRotation.Quaternion();
-	AgentIteration[AgentId]++;
+	OutKey = OutElements[MakeArrayView(OutElementNames).Find(TEXT("Key"))];
+	OutValue = OutElements[MakeArrayView(OutElementNames).Find(TEXT("Value"))];
+	return true;
 }
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UAngularVelocityArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
+bool ULearningAgentsObservations::GetArrayObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UAngularVelocityArrayObservation::VisualLog);
+	return GetSetObservationNum(OutNum, Object, Element, Tag);
+}
 
-	const TLearningArrayView<2, const FVector> AngularVelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->AngularVelocityHandle);
-	const TLearningArrayView<1, const FQuat> RelativeRotationView = FeatureObject->InstanceData->ConstView(FeatureObject->RelativeRotationHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	const int32 AngularVelocityNum = AngularVelocityView.Num<1>();
-
-	for (const int32 Instance : Instances)
+bool ULearningAgentsObservations::GetArrayObservation(TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const int32 MaxNum, const FName Tag)
+{
+	int32 OutElementNum = 0;
+	if (!GetArrayObservationNum(OutElementNum, Object, Element, Tag))
 	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		OutElements.Empty();
+		return false;
+	}
+
+	OutElements.SetNumUninitialized(OutElementNum);
+
+	if (!GetArrayObservationToArrayView(OutElements, Object, Element, MaxNum, Tag))
+	{
+		OutElements.Empty();
+		return false;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetArrayObservationToArrayView(TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const int32 MaxNum, const FName Tag)
+{
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> Pairs;
+	Pairs.SetNumUninitialized(OutElements.Num());
+	if (!GetSetObservationToArrayView(Pairs, Object, Element, Tag))
+	{
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	for (int32 PairIdx = 0; PairIdx < Pairs.Num(); PairIdx++)
+	{
+		FLearningAgentsObservationObjectElement Key, Value;
+		if (!GetPairObservation(Key, Value, Object, Pairs[PairIdx]))
 		{
-			const FQuat RelativeRotation = RelativeRotationView[Instance];
-
-			for (int32 AngularVelocityIdx = 0; AngularVelocityIdx < AngularVelocityNum; AngularVelocityIdx++)
-			{
-				const FVector AngularVelocity = AngularVelocityView[Instance][0];
-				const FVector LocalAngularVelocity = RelativeRotation.UnrotateVector(AngularVelocity);
-				const FVector Offset = UE::Learning::Agents::Debug::GridOffsetForIndex(AngularVelocityIdx, AngularVelocityNum);
-
-				UE_LEARNING_AGENTS_VLOG_ARROW(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset,
-					Actor->GetActorLocation() + Offset + AngularVelocity,
-					VisualLogColor.ToFColor(true),
-					TEXT(""));
-
-				UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-					Actor->GetActorLocation() + Offset + AngularVelocity,
-					VisualLogColor.ToFColor(true),
-					TEXT("Angular Velocity %i: [% 6.3f % 6.3f % 6.3f]\nLocal Angular Velocity: [% 6.3f % 6.3f % 6.3f]"),
-					AngularVelocityIdx,
-					AngularVelocity.X, AngularVelocity.Y, AngularVelocity.Z,
-					LocalAngularVelocity.X, LocalAngularVelocity.Y, LocalAngularVelocity.Z);
-			}
-
-			UE_LEARNING_AGENTS_VLOG_TRANSFORM(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				RelativeRotation,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+			return false;
 		}
-	}
-}
-#endif
 
-UScalarAngularVelocityObservation* UScalarAngularVelocityObservation::AddScalarAngularVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const float Scale)
-{
-	return UE::Learning::Agents::Observations::Private::AddObservation<UScalarAngularVelocityObservation, UE::Learning::FScalarAngularVelocityFeature>(InInteractor, Name, TEXT("AddScalarAngularVelocityObservation"), 1, Scale);
-}
-
-void UScalarAngularVelocityObservation::SetScalarAngularVelocityObservation(const int32 AgentId, const float AngularVelocity)
-{
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	FeatureObject->InstanceData->View(FeatureObject->AngularVelocityHandle)[AgentId][0] = AngularVelocity;
-	AgentIteration[AgentId]++;
-}
-
-void UScalarAngularVelocityObservation::SetScalarAngularVelocityObservationWithAxis(const int32 AgentId, const FVector AngularVelocity, const FVector Axis)
-{
-	SetScalarAngularVelocityObservation(AgentId, AngularVelocity.Dot(Axis));
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UScalarAngularVelocityObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UScalarAngularVelocityObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> AngularVelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->AngularVelocityHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		int32 Index = INDEX_NONE;
+		if (!GetCountObservation(Index, Object, Key, MaxNum))
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nAngular Velocity: [% 6.1f]\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				AngularVelocityView[Instance][0],
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutElements, FLearningAgentsObservationObjectElement());
+			return false;
 		}
-	}
-}
-#endif
+		Index = FMath::Clamp(Index, 0, OutElements.Num() - 1);
 
-
-UScalarAngularVelocityArrayObservation* UScalarAngularVelocityArrayObservation::AddScalarAngularVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name, const int32 AngularVelocityNum, const float Scale)
-{
-	if (AngularVelocityNum < 1)
-	{
-		UE_LOG(LogLearning, Error, TEXT("AddScalarAngularVelocityArrayObservation: Number of elements in array must be at least 1, got %i."), AngularVelocityNum);
-		return nullptr;
+		OutElements[Index] = Value;
 	}
 
-	return UE::Learning::Agents::Observations::Private::AddObservation<UScalarAngularVelocityArrayObservation, UE::Learning::FScalarAngularVelocityFeature>(InInteractor, Name, TEXT("AddScalarAngularVelocityArrayObservation"), AngularVelocityNum, Scale);
+	return true;
 }
 
-void UScalarAngularVelocityArrayObservation::SetScalarAngularVelocityArrayObservation(const int32 AgentId, const TArray<float>& AngularVelocities)
+bool ULearningAgentsObservations::GetMapObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	const TLearningArrayView<2, float> AngularVelocityView = FeatureObject->InstanceData->View(FeatureObject->AngularVelocityHandle);
-
-	if (AngularVelocities.Num() != AngularVelocityView.Num<1>())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), AngularVelocityView.Num<1>(), AngularVelocities.Num());
-		return;
-	}
-
-	UE::Learning::Array::Copy<1, float>(AngularVelocityView[AgentId], AngularVelocities);
-	AgentIteration[AgentId]++;
+	return GetSetObservationNum(OutNum, Object, Element, Tag);
 }
 
-void UScalarAngularVelocityArrayObservation::SetScalarAngularVelocityArrayObservationWithAxis(const int32 AgentId, const TArray<FVector>& AngularVelocities, const FVector Axis)
+bool ULearningAgentsObservations::GetMapObservation(TMap<FLearningAgentsObservationObjectElement, FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
 {
-	if (!Interactor->HasAgent(AgentId))
+	int32 OutElementNum = 0;
+	if (!GetMapObservationNum(OutElementNum, Object, Element, Tag))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		OutElements.Empty();
+		return false;
 	}
 
-	const TLearningArrayView<2, float> AngularVelocityView = FeatureObject->InstanceData->View(FeatureObject->AngularVelocityHandle);
-
-	if (AngularVelocities.Num() != AngularVelocityView.Num<1>())
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> Pairs;
+	Pairs.SetNumUninitialized(OutElementNum);
+	if (!GetSetObservationToArrayView(Pairs, Object, Element, Tag))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Got wrong number of elements in array. Expected %i, got %i."), *GetName(), AngularVelocityView.Num<1>(), AngularVelocities.Num());
-		return;
+		OutElements.Empty();
+		return false;
 	}
 
-	for (int32 AngularVelocityIdx = 0; AngularVelocityIdx < AngularVelocityView.Num<1>(); AngularVelocityIdx++)
+	OutElements.Empty(OutElementNum);
+	for (int32 PairIdx = 0; PairIdx < OutElementNum; PairIdx++)
 	{
-		AngularVelocityView[AgentId][AngularVelocityIdx] = AngularVelocities[AngularVelocityIdx].Dot(Axis);
-	}
-	AgentIteration[AgentId]++;
-}
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UScalarAngularVelocityArrayObservation::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UScalarAngularVelocityArrayObservation::VisualLog);
-
-	const TLearningArrayView<2, const float> AngularVelocityView = FeatureObject->InstanceData->ConstView(FeatureObject->AngularVelocityHandle);
-	const TLearningArrayView<2, const float> FeatureView = FeatureObject->InstanceData->ConstView(FeatureObject->FeatureHandle);
-
-	for (const int32 Instance : Instances)
-	{
-		if (const AActor* Actor = Cast<AActor>(Interactor->GetAgent(Instance)))
+		FLearningAgentsObservationObjectElement Key, Value;
+		if (!GetPairObservation(Key, Value, Object, Pairs[PairIdx]))
 		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nScale: [% 6.2f]\nAngular Velocities: %s\nEncoded: %s"),
-				Instance,
-				FeatureObject->Scale,
-				*UE::Learning::Array::FormatFloat(AngularVelocityView[Instance]),
-				*UE::Learning::Array::FormatFloat(FeatureView[Instance]));
+			OutElements.Empty();
+			return false;
+		}
+
+		OutElements.Add(Key, Value);
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetMapObservationToArrays(TArray<FLearningAgentsObservationObjectElement>& OutKeys, TArray<FLearningAgentsObservationObjectElement>& OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	int32 OutElementNum = 0;
+	if (!GetMapObservationNum(OutElementNum, Object, Element, Tag))
+	{
+		OutKeys.Empty();
+		OutValues.Empty();
+		return false;
+	}
+
+	OutKeys.SetNumUninitialized(OutElementNum);
+	OutValues.SetNumUninitialized(OutElementNum);
+	if (!GetMapObservationToArrayViews(OutKeys, OutValues, Object, Element, Tag))
+	{
+		OutKeys.Empty();
+		OutValues.Empty();
+		return false;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetMapObservationToArrayViews(TArrayView<FLearningAgentsObservationObjectElement> OutKeys, TArrayView<FLearningAgentsObservationObjectElement> OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	TArray<FLearningAgentsObservationObjectElement, TInlineAllocator<16>> Pairs;
+	Pairs.SetNumUninitialized(OutKeys.Num());
+	if (!GetSetObservationToArrayView(Pairs, Object, Element, Tag))
+	{
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutKeys, FLearningAgentsObservationObjectElement());
+		UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutValues, FLearningAgentsObservationObjectElement());
+		return false;
+	}
+
+	for (int32 PairIdx = 0; PairIdx < Pairs.Num(); PairIdx++)
+	{
+		FLearningAgentsObservationObjectElement Key, Value;
+		if (!GetPairObservation(Key, Value, Object, Pairs[PairIdx]))
+		{
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutKeys, FLearningAgentsObservationObjectElement());
+			UE::Learning::Array::Set<1, FLearningAgentsObservationObjectElement>(OutValues, FLearningAgentsObservationObjectElement());
+			return false;
+		}
+
+		OutKeys[PairIdx] = Key;
+		OutValues[PairIdx] = Value;
+	}
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetEnumObservation(uint8& OutEnumValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const UEnum* Enum, const FName Tag)
+{
+	if (!Enum)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetEnumObservation: Enum is nullptr."));
+		OutEnumValue = 0;
+		return false;
+	}
+
+	int32 EnumValueNum;
+	if (!GetContinuousObservationNum(EnumValueNum, Object, Element, Tag))
+	{
+		OutEnumValue = 0;
+		return false;
+	}
+	
+	if (EnumValueNum != Enum->NumEnums() - 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetEnumObservation: Too many values for Enum '%s'. Expected %i, got %i."), *Enum->GetName(), Enum->NumEnums() - 1, EnumValueNum);
+		OutEnumValue = 0;
+		return false;
+	}
+
+	TArray<float, TInlineAllocator<32>> OneHot;
+	OneHot.SetNumUninitialized(EnumValueNum);
+	if (!GetContinuousObservationToArrayView(OneHot, Object, Element, Tag))
+	{
+		OutEnumValue = 0;
+		return false;
+	}
+
+	int32 EnumValueIndex = INDEX_NONE;
+	for (int32 EnumIdx = 0; EnumIdx < EnumValueNum; EnumIdx++)
+	{
+		if (OneHot[EnumIdx])
+		{
+			EnumValueIndex = EnumIdx;
+			break;
 		}
 	}
+
+	if (EnumValueIndex == INDEX_NONE)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetEnumObservation: Index not found."));
+		OutEnumValue = 0;
+		return false;
+	}
+
+	const int32 EnumValue = Enum->GetValueByIndex(EnumValueIndex);
+
+	if (EnumValue == INDEX_NONE)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetEnumObservation: Enum Value not found for index %i."), EnumValueIndex);
+		OutEnumValue = 0;
+		return false;
+	}
+
+	OutEnumValue = (uint8)EnumValue;
+	return true;
 }
-#endif
+
+bool ULearningAgentsObservations::GetBitmaskObservation(int32& OutBitmaskValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const UEnum* Enum, const FName Tag)
+{
+	if (!Enum)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetBitmaskObservation: Enum is nullptr."));
+		OutBitmaskValue = 0;
+		return false;
+	}
+
+	if (Enum->NumEnums() - 1 > 32)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetBitmaskObservation: Too many values in Enum to use as Bitmask (%i)."), Enum->NumEnums() - 1);
+		OutBitmaskValue = 0;
+		return false;
+	}
+
+	int32 EnumValueNum;
+	if (!GetContinuousObservationNum(EnumValueNum, Object, Element, Tag))
+	{
+		OutBitmaskValue = 0;
+		return false;
+	}
+
+	if (EnumValueNum != Enum->NumEnums() - 1)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetBitmaskObservation: Too many values for Enum '%s'. Expected %i, got %i."), *Enum->GetName(), Enum->NumEnums() - 1, EnumValueNum);
+		OutBitmaskValue = 0;
+		return false;
+	}
+
+	TArray<float, TInlineAllocator<32>> OneHot;
+	OneHot.Init(0.0f, EnumValueNum);
+	if (!GetContinuousObservationToArrayView(OneHot, Object, Element, Tag))
+	{
+		OutBitmaskValue = 0;
+		return false;
+	}
+
+	OutBitmaskValue = 0;
+	for (int32 OneHotIdx = 0; OneHotIdx < EnumValueNum; OneHotIdx++)
+	{
+		if (OneHot[OneHotIdx])
+		{
+			OutBitmaskValue |= (1 << OneHotIdx);
+		}
+	}
+	return true;
+}
+
+
+bool ULearningAgentsObservations::GetOptionalObservation(ELearningAgentsOptionalObservation& OutOption, FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	FName OutName = NAME_None;
+	if (!GetExclusiveUnionObservation(OutName, OutElement, Object, Element, Tag))
+	{
+		OutOption = ELearningAgentsOptionalObservation::Null;
+		return false;
+	}
+
+	OutOption = OutName == TEXT("Null") ? ELearningAgentsOptionalObservation::Null : ELearningAgentsOptionalObservation::Valid;
+	return true;
+}
+
+bool ULearningAgentsObservations::GetEitherObservation(ELearningAgentsEitherObservation& OutEither, FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	FName OutName = NAME_None;
+	if (!GetExclusiveUnionObservation(OutName, OutElement, Object, Element, Tag))
+	{
+		OutEither = ELearningAgentsEitherObservation::A;
+		return false;
+	}
+
+	OutEither = OutName == TEXT("A") ? ELearningAgentsEitherObservation::A : ELearningAgentsEitherObservation::B;
+	return true;
+}
+
+bool ULearningAgentsObservations::GetEncodingObservation(FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!Object)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetEncodingObservation: Object is nullptr."));
+		OutElement = FLearningAgentsObservationObjectElement();
+		return false;
+	}
+
+	if (!Object->ObservationObject.IsValid(Element.ObjectElement))
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetEncodingObservation: Invalid Observation Object."));
+		OutElement = FLearningAgentsObservationObjectElement();
+		return false;
+	}
+
+	if (Object->ObservationObject.GetTag(Element.ObjectElement) != Tag)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("GetEncodingObservation: Observation tag does not match. Observation is '%s' but asked for '%s'."), *Object->ObservationObject.GetTag(Element.ObjectElement).ToString(), *Tag.ToString());
+	}
+
+	if (Object->ObservationObject.GetType(Element.ObjectElement) != UE::Learning::Observation::EType::Encoding)
+	{
+		UE_LOG(LogLearning, Error, TEXT("GetEncodingObservation: Observation '%s' type does not match. Observation is '%s' but asked for '%s'."),
+			*Object->ObservationObject.GetTag(Element.ObjectElement).ToString(),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(Object->ObservationObject.GetType(Element.ObjectElement)),
+			UE::Learning::Agents::Observation::Private::GetObservationTypeString(UE::Learning::Observation::EType::Encoding));
+		OutElement = FLearningAgentsObservationObjectElement();
+		return false;
+	}
+
+	OutElement = { Object->ObservationObject.GetEncoding(Element.ObjectElement).Element };
+
+	return true;
+}
+
+bool ULearningAgentsObservations::GetBoolObservation(bool& bOutValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	float OutValue = 0.0f;
+	if (!GetFloatObservation(OutValue, Object, Element, 1.0f, Tag))
+	{
+		bOutValue = false;
+		return false;
+	}
+
+	bOutValue = OutValue >= 0.0f;
+	return true;
+}
+
+bool ULearningAgentsObservations::GetFloatObservation(float& OutValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const float FloatScale, const FName Tag)
+{
+	float OutValuesData;
+	if (!GetContinuousObservationToArrayView(MakeArrayView(&OutValuesData, 1), Object, Element, Tag))
+	{
+		OutValue = 0.0f;
+		return false;
+	}
+
+	OutValue = OutValuesData * FloatScale;
+	return true;
+}
+
+bool ULearningAgentsObservations::GetLocationObservation(FVector& OutLocation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform, const float LocationScale, const FName Tag)
+{
+	TStaticArray<float, 3> OutValues;
+	if (!GetContinuousObservationToArrayView(OutValues, Object, Element, Tag))
+	{
+		OutLocation = FVector::ZeroVector;
+		return false;
+	}
+
+	OutLocation = RelativeTransform.TransformPosition(LocationScale * FVector(OutValues[0], OutValues[1], OutValues[2]));
+	return true;
+}
+
+bool ULearningAgentsObservations::GetRotationObservation(FRotator& OutRotation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FRotator RelativeRotation, const FName Tag)
+{
+	FQuat OutRotationQuat;
+	if (!GetRotationObservationAsQuat(OutRotationQuat, Object, Element, FQuat::MakeFromRotator(RelativeRotation), Tag))
+	{
+		OutRotation = FRotator::ZeroRotator;
+		return false;
+	}
+
+	OutRotation = OutRotationQuat.Rotator();
+	return true;
+}
+
+bool ULearningAgentsObservations::GetRotationObservationAsQuat(FQuat& OutRotation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FQuat RelativeRotation, const FName Tag)
+{
+	TStaticArray<float, 6> OutValues;
+	if (!GetContinuousObservationToArrayView(OutValues, Object, Element, Tag))
+	{
+		OutRotation = FQuat::Identity;
+		return false;
+	}
+
+	const FVector LocalAxisForward = FVector(OutValues[0], OutValues[1], OutValues[2]);
+	const FVector LocalAxisRight = FVector(OutValues[3], OutValues[4], OutValues[5]);
+	const FVector AxisUp = LocalAxisForward.Cross(LocalAxisRight).GetSafeNormal(UE_SMALL_NUMBER, FVector::UpVector);
+	const FVector AxisRight = AxisUp.Cross(LocalAxisForward).GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector);
+	const FVector AxisForward = LocalAxisForward.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+
+	FMatrix RotationMatrix = FMatrix::Identity;
+	RotationMatrix.SetAxis(0, AxisForward);
+	RotationMatrix.SetAxis(1, AxisRight);
+	RotationMatrix.SetAxis(2, AxisUp);
+
+	OutRotation = RelativeRotation * RotationMatrix.ToQuat();
+	return true;
+}
+
+bool ULearningAgentsObservations::GetScaleObservation(FVector& OutScale, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FVector RelativeScale, const FName Tag)
+{
+	TStaticArray<float, 3> OutValues;
+	if (!GetContinuousObservationToArrayView(OutValues, Object, Element, Tag))
+	{
+		OutScale = FVector::OneVector;
+		return false;
+	}
+
+	OutScale = RelativeScale * UE::Learning::Agents::Observation::Private::VectorExp(FVector(OutValues[0], OutValues[1], OutValues[2]));
+	return true;
+}
+
+bool ULearningAgentsObservations::GetTransformObservation(FTransform& OutTransform, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform, const float LocationScale, const FName Tag)
+{
+	TStaticArray<FName, 3> OutElementNames;
+	TStaticArray<FLearningAgentsObservationObjectElement, 3> OutElements;
+	if (!GetStructObservationToArrayViews(OutElementNames, OutElements, Object, Element, Tag))
+	{
+		OutTransform = FTransform::Identity;
+		return false;
+	}
+
+	const int32 LocationElement = MakeArrayView(OutElementNames).Find(TEXT("Location"));
+	FVector OutLocation;
+	if (LocationElement == INDEX_NONE || !GetLocationObservation(OutLocation, Object, OutElements[LocationElement], RelativeTransform, LocationScale))
+	{
+		OutTransform = FTransform::Identity;
+		return false;
+	}
+
+	const int32 RotationElement = MakeArrayView(OutElementNames).Find(TEXT("Rotation"));
+	FQuat OutRotation;
+	if (RotationElement == INDEX_NONE || !GetRotationObservationAsQuat(OutRotation, Object, OutElements[RotationElement], RelativeTransform.GetRotation()))
+	{
+		OutTransform = FTransform::Identity;
+		return false;
+	}
+
+	const int32 ScaleElement = MakeArrayView(OutElementNames).Find(TEXT("Scale"));
+	FVector OutScale;
+	if (ScaleElement == INDEX_NONE || !GetScaleObservation(OutScale, Object, OutElements[ScaleElement], RelativeTransform.GetScale3D()))
+	{
+		OutTransform = FTransform::Identity;
+		return false;
+	}
+
+	OutTransform = FTransform(OutRotation, OutLocation, OutScale);
+	return true;
+}
+
+bool ULearningAgentsObservations::GetAngleObservationRadians(float& OutAngle, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const float RelativeAngle, const FName Tag)
+{
+	TStaticArray<float, 2> OutValues;
+	if (!GetContinuousObservationToArrayView(OutValues, Object, Element, Tag))
+	{
+		OutAngle = 0.0f;
+		return false;
+	}
+
+	OutAngle = RelativeAngle + FMath::Atan2(OutValues[0], OutValues[1]);
+	return true;
+}
+
+
+bool ULearningAgentsObservations::GetAngleObservation(float& OutAngle, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const float RelativeAngle, const FName Tag)
+{
+	if (!GetAngleObservationRadians(OutAngle, Object, Element, FMath::DegreesToRadians(RelativeAngle), Tag))
+	{
+		return false;
+	}
+
+	OutAngle = FMath::RadiansToDegrees(OutAngle);
+	return true;
+}
+
+bool ULearningAgentsObservations::GetVelocityObservation(FVector& OutVelocity, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform, const float VelocityScale, const FName Tag)
+{
+	TStaticArray<float, 3> OutValues;
+	if (!GetContinuousObservationToArrayView(OutValues, Object, Element, Tag))
+	{
+		OutVelocity = FVector::ZeroVector;
+		return false;
+	}
+
+	OutVelocity = RelativeTransform.TransformVectorNoScale(VelocityScale * FVector(OutValues[0], OutValues[1], OutValues[2]));
+	return true;
+}
+
+bool ULearningAgentsObservations::GetDirectionObservation(FVector& OutDirection, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform, const FName Tag)
+{
+	TStaticArray<float, 3> OutValues;
+	if (!GetContinuousObservationToArrayView(OutValues, Object, Element, Tag))
+	{
+		OutDirection = FVector::ForwardVector;
+		return false;
+	}
+
+	OutDirection = RelativeTransform.TransformVectorNoScale(FVector(OutValues[0], OutValues[1], OutValues[2]).GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector));
+	return true;
+}
+
+bool ULearningAgentsObservations::GetLocationAlongSplineObservation(FVector& OutLocation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform, const float LocationScale, const FName Tag)
+{
+	return GetLocationObservation(OutLocation, Object, Element, RelativeTransform, LocationScale, Tag);
+}
+
+bool ULearningAgentsObservations::GetProportionAlongSplineObservation(bool& bOutIsClosedLoop, float& OutAngle, float& OutPropotion, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	FName SubName;
+	FLearningAgentsObservationObjectElement SubElement;
+	if (!GetExclusiveUnionObservation(SubName, SubElement, Object, Element, Tag))
+	{
+		bOutIsClosedLoop = false;
+		OutAngle = 0.0f;
+		OutPropotion = 0.0;
+		return false;
+	}
+
+	if (SubName == TEXT("Angle"))
+	{
+		bOutIsClosedLoop = true;
+		OutPropotion = 0.0f;
+		return GetAngleObservation(OutAngle, Object, SubElement);
+	}
+	else
+	{
+		bOutIsClosedLoop = false;
+		OutAngle = 0.0f;
+		return GetFloatObservation(OutPropotion, Object, SubElement);
+	}
+}
+
+bool ULearningAgentsObservations::GetDirectionAlongSplineObservation(FVector& OutDirection, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform, const FName Tag)
+{
+	return GetDirectionObservation(OutDirection, Object, Element, RelativeTransform, Tag);
+}
+
+bool ULearningAgentsObservations::GetProportionAlongRayObservation(float& OutProportion, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag)
+{
+	if (!GetFloatObservation(OutProportion, Object, Element, 1.0f, Tag))
+	{
+		OutProportion = 0.0f;
+		return false;
+	}
+
+	OutProportion = 1.0f - OutProportion;
+	return true;
+}
+

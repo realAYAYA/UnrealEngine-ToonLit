@@ -111,9 +111,15 @@ FString FUnrealInsightsLauncher::GetInsightsApplicationPath()
 
 void FUnrealInsightsLauncher::StartUnrealInsights(const FString& Path, const FString& Parameters)
 {
+	auto Callback = [](const EStartInsightsResult Result) {};
+	StartUnrealInsights(Path, Parameters, Callback);
+}
+
+void FUnrealInsightsLauncher::StartUnrealInsights(const FString& Path, const FString& Parameters, StartUnrealInsightsCallback Callback)
+{
     if (!FPaths::FileExists(Path))
     {
-    	TryBuildUnrealInsightsExe(Path, Parameters);
+    	BuildUnrealInsights(Path, Parameters, Callback);
     	return;
     }
 	
@@ -128,22 +134,35 @@ void FUnrealInsightsLauncher::StartUnrealInsights(const FString& Path, const FSt
 
 	void* PipeWriteChild = nullptr;
 	void* PipeReadChild = nullptr;
-	FProcHandle Handle = FPlatformProcess::CreateProc(*Path, *Parameters, bLaunchDetached, bLaunchHidden, bLaunchReallyHidden, &ProcessID, PriorityModifier, OptionalWorkingDirectory, PipeWriteChild, PipeReadChild);
+	UnrealInsightsHandle = FPlatformProcess::CreateProc(*Path, *Parameters, bLaunchDetached, bLaunchHidden, bLaunchReallyHidden, &ProcessID, PriorityModifier, OptionalWorkingDirectory, PipeWriteChild, PipeReadChild);
 
-	if (Handle.IsValid())
+	if (UnrealInsightsHandle.IsValid())
 	{
 		UE_LOG(LogTraceUtilities, Log, TEXT("Launched Unreal Insights executable: %s %s"), *Path, *Parameters);
+		Callback(EStartInsightsResult::Completed);
 	}
 	else
 	{
 		const FText	MessageBoxTextFmt = LOCTEXT("ExecutableNotFound_TextFmt", "Could not start Unreal Insights executable at path: {0}");
 		const FText MessageBoxText = FText::Format(MessageBoxTextFmt, FText::FromString(Path));
 		LogMessageOnGameThread(MessageBoxText);
+		Callback(EStartInsightsResult::LaunchFailed);
 	}
 }
 
+void FUnrealInsightsLauncher::CloseUnrealInsights()
+{
+	if (UnrealInsightsHandle.IsValid())
+	{
+		FPlatformProcess::TerminateProc(UnrealInsightsHandle);
+	}
+	else
+	{
+		UE_LOG(LogTraceUtilities, Log, TEXT("Could not find the Unreal Insights process handler"));
+	}
+}
 
-void FUnrealInsightsLauncher::TryBuildUnrealInsightsExe(const FString& Path, const FString& LaunchParameters)
+void FUnrealInsightsLauncher::BuildUnrealInsights(const FString& Path, const FString& LaunchParameters, StartUnrealInsightsCallback Callback)
 {
 	UE_LOG(LogTraceUtilities, Log, TEXT("Could not find the Unreal Insights executable: %s. Attempting to build UnrealInsights."), *Path);
 
@@ -160,17 +179,22 @@ void FUnrealInsightsLauncher::TryBuildUnrealInsightsExe(const FString& Path, con
 #endif
 
 	IUATHelperModule::Get().CreateUatTask(Arguments, PlatformName, LOCTEXT("BuildingUnrealInsights", "Building Unreal Insights"),
-		LOCTEXT("BuildUnrealInsightsTask", "Build Unreal Insights Task"), FAppStyle::GetBrush(TEXT("MainFrame.CookContent")), nullptr, [this, Path, LaunchParameters](FString Result, double Time)
+		LOCTEXT("BuildUnrealInsightsTask", "Build Unreal Insights Task"), FAppStyle::GetBrush(TEXT("MainFrame.CookContent")), nullptr,
+		[this, Path, LaunchParameters, Callback](FString Result, double Time)
 		{
 			if (Result.Equals(TEXT("Completed")))
 			{
 #if PLATFORM_MAC
 				// On Mac we genereate the path again so that it includes the newly built executable.
 				FString NewPath = GetInsightsApplicationPath();
-				this->StartUnrealInsights(NewPath, LaunchParameters);
+				this->StartUnrealInsights(NewPath, LaunchParameters, Callback);
 #else
-				this->StartUnrealInsights(Path, LaunchParameters);
+				this->StartUnrealInsights(Path, LaunchParameters, Callback);
 #endif
+			}
+			else
+			{
+				Callback(EStartInsightsResult::BuildFailed);
 			}
 		});
 }

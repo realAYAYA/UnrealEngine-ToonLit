@@ -18,7 +18,7 @@ namespace UE::ConcertSyncTests::AnalysisTests
 	/**
 	 * Runs through a couple of use cases of unmuting an activity.
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBottomUpUseCase, "Concert.History.Analysis.BottomUpUseCase", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBottomUpUseCase, "Editor.Concert.History.Analysis.BottomUpUseCase", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FBottomUpUseCase::RunTest(const FString& Parameters)
 	{
 		using namespace RenameEditAndDeleteMapsFlowTest;
@@ -70,7 +70,7 @@ namespace UE::ConcertSyncTests::AnalysisTests
 	 * The test: unmute L.
 	 * We want R to be marked has a hard dependency.
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBottomUpDiamond, "Concert.History.Analysis.BottomUpDiamond", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBottomUpDiamond, "Editor.Concert.History.Analysis.BottomUpDiamond", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FBottomUpDiamond::RunTest(const FString& Parameters)
 	{
 		using namespace ConcertSyncCore;

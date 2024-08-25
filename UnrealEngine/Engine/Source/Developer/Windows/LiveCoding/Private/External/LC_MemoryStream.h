@@ -5,7 +5,7 @@
 // BEGIN EPIC MOD
 #include "CoreTypes.h"
 #include "LC_Platform.h"
-#include LC_PLATFORM_INCLUDE(LC_Foundation)
+#include "LC_Foundation_Windows.h"
 // END EPIC MOD
 
 namespace memoryStream

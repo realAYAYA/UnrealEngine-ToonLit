@@ -5,6 +5,7 @@
 #include "AssetViewUtils.h"
 #include "FileHelpers.h"
 #include "ISourceControlModule.h"
+#include "ISourceControlWindowsModule.h"
 #include "SourceControlHelpers.h"
 #include "SourceControlOperations.h"
 #include "Framework/Application/SlateApplication.h"
@@ -14,7 +15,7 @@
 #include "Misc/MessageDialog.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "SourceControlSettings.h"
-
+#include "Bookmarks/BookmarkScoped.h"
 
 #if SOURCE_CONTROL_WITH_SLATE
 
@@ -28,6 +29,34 @@ FCheckinResultInfo::FCheckinResultInfo()
 	: Result(ECommandResult::Failed)
 	, bAutoCheckedOut(false)
 {
+}
+
+
+//---------------------------------------------------------------------------------------
+// Helper function(s)
+
+static bool SaveDirtyPackages(bool bUseDialog)
+{
+	const bool bPromptUserToSave = bUseDialog;
+	const bool bSaveMapPackages = true;
+	const bool bSaveContentPackages = true;
+	const bool bFastSave = false;
+	const bool bNotifyNoPackagesSaved = false;
+	const bool bCanBeDeclined = true; // If the user clicks "don't save" this will continue and lose their changes
+
+	bool bSaved = FEditorFileUtils::SaveDirtyPackages(bPromptUserToSave, bSaveMapPackages, bSaveContentPackages, bFastSave, bNotifyNoPackagesSaved, bCanBeDeclined);
+
+	// bSaved can be true if the user selects to not save an asset by unchecking it and clicking "save"
+	if (bSaved)
+	{
+		TArray<UPackage*> DirtyPackages;
+		FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
+		FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
+
+		bSaved = DirtyPackages.Num() == 0;
+	}
+
+	return bSaved;
 }
 
 
@@ -60,6 +89,11 @@ bool FSourceControlWindows::ChoosePackagesToCheckIn(const FSourceControlWindowsO
 		OnCompleteDelegate.ExecuteIfBound(ResultInfo);
 
 		return false;
+	}
+
+	if (ISourceControlModule::Get().GetProvider().UsesSnapshots())
+	{
+		SaveDirtyPackages(/*bUseDialog=*/false);
 	}
 
 	// Start selection process...
@@ -129,31 +163,17 @@ bool FSourceControlWindows::CanChoosePackagesToCheckIn()
 
 bool FSourceControlWindows::ShouldChoosePackagesToCheckBeVisible()
 {
-	return GetDefault<USourceControlSettings>()->bEnableSubmitContentMenuAction && !ISourceControlModule::Get().GetProvider().UsesSnapshots();
+	return GetDefault<USourceControlSettings>()->bEnableSubmitContentMenuAction;
 }
 
-
-static bool SaveDirtyPackages()
+bool FSourceControlWindows::SyncLatest()
 {
-	const bool bPromptUserToSave = true;
-	const bool bSaveMapPackages = true;
-	const bool bSaveContentPackages = true;
-	const bool bFastSave = false;
-	const bool bNotifyNoPackagesSaved = false;
-	const bool bCanBeDeclined = true; // If the user clicks "don't save" this will continue and lose their changes
+	return SyncRevision(TEXT(""));
+}
 
-	bool bHadPackagesToSave = false;
-	bool bSaved = FEditorFileUtils::SaveDirtyPackages(bPromptUserToSave, bSaveMapPackages, bSaveContentPackages, bFastSave, bNotifyNoPackagesSaved, bCanBeDeclined, &bHadPackagesToSave);
-
-	// bSaved can be true if the user selects to not save an asset by unchecking it and clicking "save"
-	if (bSaved)
-	{
-		TArray<UPackage*> DirtyPackages;
-		FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
-		FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
-
-		bSaved = DirtyPackages.Num() == 0;
-	}
+bool FSourceControlWindows::SyncRevision(const FString& InRevision)
+{
+	bool bSaved = SaveDirtyPackages(/*bUseDialog=*/true);
 
 	// if not properly saved, ask for confirmation from the user before continuing.
 	if (!bSaved)
@@ -165,18 +185,11 @@ static bool SaveDirtyPackages()
 
 		bSaved = (DialogResult == EAppReturnType::Yes);
 	}
-	
-	return bSaved;
-}
-
-bool FSourceControlWindows::SyncLatest()
-{
-	bool bSaved = SaveDirtyPackages();
 
 	// if properly saved or confirmation given, find all packages and use source control to update them.
 	if (bSaved)
 	{
-		bool bSuccess = AssetViewUtils::SyncLatestFromSourceControl();
+		bool bSuccess = AssetViewUtils::SyncRevisionFromSourceControl(InRevision);
 		if (!bSuccess)
 		{
 			FText Message(LOCTEXT("SCC_Sync_Failed", "Failed to sync files!"));
@@ -311,6 +324,37 @@ bool FSourceControlWindows::PromptForCheckin(FCheckinResultInfo& OutResultInfo, 
 		return false;
 	}
 
+	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	// Sync to latest if using snapshots.
+	if (ISourceControlModule::Get().GetProvider().UsesSnapshots())
+	{
+		const bool bSyncNeeded = FSourceControlWindows::CanSyncLatest();
+		if (bSyncNeeded)
+		{
+			FBookmarkScoped BookmarkScoped; // Preserve viewport camera orientation.
+
+			if (!FSourceControlWindows::SyncLatest())
+			{
+				OutResultInfo.Description = LOCTEXT("SCC_Checkin_Aborted_Sync", "File check in aborted because the sync to the latest snapshot failed.");
+				return false;
+			}
+
+			TArray<FSourceControlStateRef> Conflicts = ISourceControlModule::Get().GetProvider().GetCachedStateByPredicate(
+				[](const FSourceControlStateRef& State)
+				{
+					return State->IsConflicted();
+				}
+			);
+
+			const bool bConflictsRemaining = (Conflicts.Num() > 0);
+			if (bConflictsRemaining)
+			{
+				OutResultInfo.Description = LOCTEXT("SCC_Checkin_Aborted_Conflicts", "File check in aborted because the sync to the latest snapshot resulted in conflicts that need to be resolved.");
+				return false;
+			}
+		}
+	}
+
 
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// Get description from the dialog
@@ -380,6 +424,40 @@ bool FSourceControlWindows::PromptForCheckin(FCheckinResultInfo& OutResultInfo, 
 		}
 
 		return bSuccess;
+	}
+
+	// first check if there is a submit override bound
+	if (ISourceControlWindowsModule::Get().SubmitOverrideDelegate.IsBound())
+	{
+		SSubmitOverrideParameters SubmitOverrideParameters;
+		SubmitOverrideParameters.Description = Description.Description.ToString();
+		SubmitOverrideParameters.ToSubmit.SetSubtype<TArray<FString>>(CombinedFileList);
+
+		FSubmitOverrideReply SubmitOverrideReply = ISourceControlWindowsModule::Get().SubmitOverrideDelegate.Execute(SubmitOverrideParameters);
+		switch (SubmitOverrideReply)
+		{
+			//////////////////////////////////////////////////////////
+			case FSubmitOverrideReply::Handled:
+			{
+				OutResultInfo.Result = ECommandResult::Succeeded;
+				OutResultInfo.Description = LOCTEXT("SCC_Checkin_SubmitOverride_Succeeded", "Successfully invoked the submit override!");
+				return true;
+			}
+
+			//////////////////////////////////////////////////////////
+			case FSubmitOverrideReply::Error:
+			{
+				OutResultInfo.Result = ECommandResult::Failed;
+				OutResultInfo.Description = LOCTEXT("SCC_Checkin_SubmitOverride_Failed", "Failed to invoke the submit override!");
+				return false;
+			}
+			
+			//////////////////////////////////////////////////////////
+			case FSubmitOverrideReply::ProviderNotSupported:
+			default:
+				// continue default flow
+				break;
+		}
 	}
 
 	FText VirtualizationFailureMsg;

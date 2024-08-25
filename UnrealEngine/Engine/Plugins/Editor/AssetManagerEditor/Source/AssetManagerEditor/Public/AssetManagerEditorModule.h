@@ -381,8 +381,6 @@ public:
 	static const FName TotalUsageName;
 	static const FName CookRuleName;
 	static const FName ChunksName;
-	static const FName StageChunkSizeName;
-	static const FName StageChunkCompressedSizeName;
 	static const FName PluginName;
 
 	/** Gets the value of a "virtual" column for an asset data, this will query the AssetManager for you and takes current platform into account. Returns true and sets out parameter if found */
@@ -406,8 +404,8 @@ public:
 	/** Sets the current registry source, this loads the asset registry state if needed and may spawn a file load dialog for custom */
 	virtual void SetCurrentRegistrySource(const FString& SourceName) = 0;
 
-	/** Sets up a registry source. If InOutRegistrySource->SourceName is CustomSourceName, a dialog will be presented to select the asset registry to load */
-	virtual bool PopulateRegistrySource(FAssetManagerEditorRegistrySource* InOutRegistrySource) = 0;
+	/** Sets up a registry source. If InOutRegistrySource->SourceName is CustomSourceName, a dialog will be presented to select the asset registry to load. If OptInFilePath is provided, it will be used instead of opening a dialog. */
+	virtual bool PopulateRegistrySource(FAssetManagerEditorRegistrySource* InOutRegistrySource, const FString* OptInFilePath = nullptr) = 0;
 
 	/** Refreshes the management dictionary and all sources */
 	virtual void RefreshRegistryData() = 0;

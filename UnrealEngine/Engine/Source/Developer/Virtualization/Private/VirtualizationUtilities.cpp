@@ -4,6 +4,7 @@
 
 #include "HAL/PlatformProcess.h"
 #include "IO/IoHash.h"
+#include "Misc/App.h"
 #include "Misc/Paths.h"
 #include "Misc/StringBuilder.h"
 #include "UObject/PackageFileSummary.h"
@@ -137,6 +138,33 @@ bool ExpandEnvironmentVariables(FStringView InputPath, FStringBuilderBase& OutEx
 
 		InputPath = InputPath.Mid(EnvVarEnd + 1);
 	}
+}
+
+bool IsProcessInteractive()
+{
+	if (FApp::IsUnattended())
+	{
+		return false;
+	}
+
+	if (IsRunningCommandlet())
+	{
+		return false;
+	}
+
+	// We used to check 'GIsRunningUnattendedScript' here as well but there
+	// are a number of places in the editor enabling this global during which
+	// the editor does stay interactive, such as when rendering thumbnail
+	// images for the content browser.
+	// Leaving this comment block here to show why we are not checking this
+	// value anymore.
+
+	if (IS_PROGRAM)
+	{
+		return false;
+	}
+
+	return true;
 }
 
 } // namespace UE::Virtualization::Utils

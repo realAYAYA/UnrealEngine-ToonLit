@@ -35,7 +35,7 @@ bool FInputActionGraphActions::TryCreatingAssetNode(const FAssetData& AssetData,
 	{
 		if (const UInputAction* Action = Cast<const UInputAction>(AssetData.GetAsset()))
 		{
-			for (TObjectPtr<UEdGraphNode> Node : ParentGraph->Nodes)
+			for (const TObjectPtr<UEdGraphNode>& Node : ParentGraph->Nodes)
 			{
 				if(const UK2Node_EnhancedInputAction* InputActionNode = Cast<UK2Node_EnhancedInputAction>(Node))
 				{

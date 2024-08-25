@@ -19,26 +19,7 @@ public:
 	
 	virtual bool GetValue(FChooserEvaluationContext& Context, const FChooserRandomizationContext*& OutResult) const override;
 
-#if WITH_EDITOR
-	static bool CanBind(const FProperty& Property)
-	{
-		static FString RandomizeTypeName = "bool";
-		return Property.GetCPPType() == RandomizeTypeName;
-	}
-
-	void SetBinding(const TArray<FBindingChainElement>& InBindingChain)
-	{
-		UE::Chooser::CopyPropertyChain(InBindingChain, Binding);
-	}
-
-	virtual void GetDisplayName(FText& OutName) const override
-	{
-		if (!Binding.PropertyBindingChain.IsEmpty())
-		{
-			OutName = FText::FromName(Binding.PropertyBindingChain.Last());
-		}
-	}
-#endif
+	CHOOSER_PARAMETER_BOILERPLATE();
 };
 
 USTRUCT()
@@ -63,7 +44,7 @@ struct CHOOSER_API FRandomizeColumn : public FChooserColumnBase
 	UPROPERTY(EditAnywhere, Category= "Data", DisplayName="RowValues");
 	TArray<float> RowValues; 
 	
-	virtual void Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const override;
+	virtual void Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const override;
 	virtual void SetOutputs(FChooserEvaluationContext& Context, int RowIndex) const override;
 	
 	virtual bool HasFilters() const override { return true; }
@@ -74,6 +55,9 @@ struct CHOOSER_API FRandomizeColumn : public FChooserColumnBase
     	{
     		return true;
     	}
+
+		virtual void AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
+		virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
     #endif
 
 	virtual void PostLoad() override

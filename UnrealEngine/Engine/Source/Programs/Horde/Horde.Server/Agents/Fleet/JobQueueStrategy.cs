@@ -5,7 +5,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Horde.Agents.Pools;
+using EpicGames.Horde.Streams;
 using Horde.Server.Agents.Pools;
 using Horde.Server.Jobs;
 using Horde.Server.Jobs.Graphs;
@@ -29,8 +32,8 @@ namespace Horde.Server.Agents.Fleet
 		/// The result is always rounded up to nearest integer. 
 		/// Example: if there are 20 jobs in queue, a factor 0.25 will result in 5 new agents being added (20 * 0.25)
 		/// </summary>
-		public double ScaleOutFactor { get; set;  } = 0.25;
-		
+		public double ScaleOutFactor { get; set; } = 0.25;
+
 		/// <summary>
 		/// Factor by which to shrink the pool size with when queue is empty
 		/// The result is always rounded up to nearest integer.
@@ -41,7 +44,7 @@ namespace Horde.Server.Agents.Fleet
 		/// <summary>
 		/// How far back in time to look for job batches (that potentially are in the queue)
 		/// </summary>
-		public int SamplePeriodMin { get; set; } = 60 * 24 * 2; // 2 days
+		public int SamplePeriodMin { get; set; } = 60 * 24 * 1; // 1 day
 
 		/// <summary>
 		/// Time spent in ready state before considered truly waiting for an agent
@@ -58,7 +61,7 @@ namespace Horde.Server.Agents.Fleet
 		public JobQueueSettings()
 		{
 		}
-		
+
 		/// <summary>
 		/// Constructor
 		/// </summary>
@@ -69,11 +72,11 @@ namespace Horde.Server.Agents.Fleet
 			ScaleOutFactor = scaleOutFactor.GetValueOrDefault(ScaleOutFactor);
 			ScaleInFactor = scaleInFactor.GetValueOrDefault(ScaleInFactor);
 		}
-		
+
 		/// <inheritdoc />
 		public override string ToString()
 		{
-			StringBuilder sb = new (50);
+			StringBuilder sb = new(50);
 			sb.AppendFormat("{0}={1} ", nameof(ScaleOutFactor), ScaleOutFactor);
 			sb.AppendFormat("{0}={1} ", nameof(ScaleInFactor), ScaleInFactor);
 			sb.AppendFormat("{0}={1} ", nameof(SamplePeriodMin), SamplePeriodMin);
@@ -81,7 +84,7 @@ namespace Horde.Server.Agents.Fleet
 			return sb.ToString();
 		}
 	}
-	
+
 	/// <summary>
 	/// Calculate pool size by observing the number of jobs in waiting state
 	///
@@ -92,12 +95,13 @@ namespace Horde.Server.Agents.Fleet
 	{
 		private const string CacheKey = nameof(JobQueueStrategy);
 		internal JobQueueSettings Settings { get; }
-		
+
 		private readonly IJobCollection _jobs;
 		private readonly IGraphCollection _graphs;
 		private readonly IStreamCollection _streamCollection;
 		private readonly IClock _clock;
 		private readonly IMemoryCache _cache;
+		private readonly bool _isDowntimeActive;
 		private readonly IOptionsMonitor<GlobalConfig> _globalConfig;
 
 		/// <summary>
@@ -108,15 +112,17 @@ namespace Horde.Server.Agents.Fleet
 		/// <param name="streamCollection"></param>
 		/// <param name="clock"></param>
 		/// <param name="cache"></param>
+		/// <param name="isDowntimeActive"></param>
 		/// <param name="globalConfig"></param>
 		/// <param name="settings"></param>
-		public JobQueueStrategy(IJobCollection jobs, IGraphCollection graphs, IStreamCollection streamCollection, IClock clock, IMemoryCache cache, IOptionsMonitor<GlobalConfig> globalConfig, JobQueueSettings? settings = null)
+		public JobQueueStrategy(IJobCollection jobs, IGraphCollection graphs, IStreamCollection streamCollection, IClock clock, IMemoryCache cache, bool isDowntimeActive, IOptionsMonitor<GlobalConfig> globalConfig, JobQueueSettings? settings = null)
 		{
 			_jobs = jobs;
 			_graphs = graphs;
 			_streamCollection = streamCollection;
 			_clock = clock;
 			_cache = cache;
+			_isDowntimeActive = isDowntimeActive;
 			_globalConfig = globalConfig;
 			Settings = settings ?? new JobQueueSettings();
 		}
@@ -129,10 +135,11 @@ namespace Horde.Server.Agents.Fleet
 		/// </summary>
 		/// <param name="job">Job to extract from</param>
 		/// <param name="streams">Cached lookup table of streams</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		private async Task<List<(IJob Job, IJobStepBatch Batch, PoolId PoolId)>> GetJobBatchesWithPools(IJob job, Dictionary<StreamId, StreamConfig> streams)
+		private async Task<List<(IJob Job, IJobStepBatch Batch, PoolId PoolId)>> GetJobBatchesWithPoolsAsync(IJob job, Dictionary<StreamId, StreamConfig> streams, CancellationToken cancellationToken)
 		{
-			IGraph graph = await _graphs.GetAsync(job.GraphHash);
+			IGraph graph = await _graphs.GetAsync(job.GraphHash, cancellationToken);
 
 			List<(IJob Job, IJobStepBatch Batch, PoolId PoolId)> jobBatches = new();
 			foreach (IJobStepBatch batch in job.Batches)
@@ -141,7 +148,7 @@ namespace Horde.Server.Agents.Fleet
 				{
 					continue;
 				}
-				
+
 				TimeSpan? waitTime = _clock.UtcNow - batch.ReadyTimeUtc;
 				if (waitTime == null)
 				{
@@ -162,55 +169,62 @@ namespace Horde.Server.Agents.Fleet
 				{
 					continue;
 				}
-				
+
 				jobBatches.Add((job, batch, agentType.Pool));
 			}
 
 			return jobBatches;
 		}
 
-		internal async Task<Dictionary<PoolId, int>> GetPoolQueueSizesAsync(DateTimeOffset jobsCreatedAfter)
+		internal async Task<Dictionary<PoolId, int>> GetPoolQueueSizesAsync(DateTimeOffset jobsCreatedAfter, CancellationToken cancellationToken = default)
 		{
 			using TelemetrySpan span = OpenTelemetryTracers.Horde.StartActiveSpan($"{nameof(JobQueueStrategy)}.{nameof(GetPoolQueueSizesAsync)}");
 			span.SetAttribute("after", jobsCreatedAfter);
 
 			Dictionary<StreamId, StreamConfig> streams = _globalConfig.CurrentValue.Streams.ToDictionary(x => x.Id, x => (StreamConfig)x);
-			List<IJob> recentJobs = await _jobs.FindAsync(minCreateTime: jobsCreatedAfter, batchState: JobStepBatchState.Ready);
+			IReadOnlyList<IJob> recentJobs = await _jobs.FindAsync(minCreateTime: jobsCreatedAfter, batchState: JobStepBatchState.Ready, cancellationToken: cancellationToken);
 			span.SetAttribute("numJobs", recentJobs.Count);
 			span.SetAttribute("numUniqueGraphs", recentJobs.Select(x => x.GraphHash).Distinct().Count());
 
 			List<(IJob Job, IJobStepBatch Batch, PoolId PoolId)> jobBatches = new();
 			foreach (IJob job in recentJobs)
 			{
-				jobBatches.AddRange(await GetJobBatchesWithPools(job, streams));
+				jobBatches.AddRange(await GetJobBatchesWithPoolsAsync(job, streams, cancellationToken));
 			}
 
 			List<(PoolId PoolId, int QueueSize)> poolsWithQueueSize = jobBatches.GroupBy(t => t.PoolId).Select(t => (t.Key, t.Count())).ToList();
 
 			span.SetAttribute("numPools", poolsWithQueueSize.Count);
+
+			if (_isDowntimeActive)
+			{
+				// As an optimization, assume queue size is zero during maintenance windows.
+				return poolsWithQueueSize.ToDictionary(x => x.PoolId, x => 0);
+			}
+
 			return poolsWithQueueSize.ToDictionary(x => x.PoolId, x => x.QueueSize);
 		}
 
 		/// <inheritdoc/>
-		public async Task<PoolSizeResult> CalculatePoolSizeAsync(IPool pool, List<IAgent> agents)
+		public async Task<PoolSizeResult> CalculatePoolSizeAsync(IPoolConfig pool, List<IAgent> agents, CancellationToken cancellationToken = default)
 		{
 			using TelemetrySpan span = OpenTelemetryTracers.Horde.StartActiveSpan($"{nameof(JobQueueStrategy)}.{nameof(CalculatePoolSizeAsync)}");
 			span.SetAttribute(OpenTelemetryTracers.DatadogResourceAttribute, pool.Id.ToString());
 			span.SetAttribute("currentAgentCount", agents.Count);
 			span.SetAttribute("samplePeriodMin", Settings.SamplePeriodMin);
-			
+
 			DateTimeOffset minCreateTime = _clock.UtcNow - TimeSpan.FromMinutes(Settings.SamplePeriodMin);
 
 			// Cache pool queue sizes for a short while for faster runs when many pools are scaled
-			if (!_cache.TryGetValue(CacheKey, out Dictionary<PoolId, int> poolQueueSizes))
+			if (!_cache.TryGetValue(CacheKey, out Dictionary<PoolId, int>? poolQueueSizes) || poolQueueSizes == null)
 			{
 				// Pool sizes haven't been cached, update them (might happen from multiple tasks but that is fine)
-				poolQueueSizes = await GetPoolQueueSizesAsync(minCreateTime);
+				poolQueueSizes = await GetPoolQueueSizesAsync(minCreateTime, cancellationToken);
 				_cache.Set(CacheKey, poolQueueSizes, TimeSpan.FromSeconds(60));
 			}
 
 			poolQueueSizes.TryGetValue(pool.Id, out int queueSize);
-			
+
 			Dictionary<string, object> status = new()
 			{
 				["Name"] = GetType().Name,
@@ -220,7 +234,7 @@ namespace Horde.Server.Agents.Fleet
 				["SamplePeriodMin"] = Settings.SamplePeriodMin,
 				["ReadyTimeThresholdSec"] = Settings.ReadyTimeThresholdSec,
 			};
-			
+
 			if (queueSize > 0)
 			{
 				int additionalAgentCount = (int)Math.Ceiling(queueSize * Settings.ScaleOutFactor);

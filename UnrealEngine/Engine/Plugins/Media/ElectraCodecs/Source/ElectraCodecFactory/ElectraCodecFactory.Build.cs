@@ -36,7 +36,7 @@ namespace UnrealBuildTool.Rules
 			return Target.IsInPlatformGroup(UnrealPlatformGroup.Windows)
 				|| Target.IsInPlatformGroup(UnrealPlatformGroup.Android)
 				|| Target.IsInPlatformGroup(UnrealPlatformGroup.Unix)
-				|| Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS || Target.Platform == UnrealTargetPlatform.Mac
+		        || Target.IsInPlatformGroup(UnrealPlatformGroup.Apple)
 				|| false
 				;
 		}

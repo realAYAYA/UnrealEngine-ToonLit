@@ -52,6 +52,10 @@ public:
 #if WITH_EDITOR
 	/** Called when a section in this track is moved. Updates the actual Notify the section is representing */
 	virtual EMovieSceneSectionMovedResult OnSectionMoved(UMovieSceneSection& Section, const FMovieSceneSectionMovedParams& Params) override;
+
+	virtual FSlateColor GetLabelColor(const FMovieSceneLabelParams& LabelParams) const override;
+	virtual FText GetDisplayNameToolTipText(const FMovieSceneLabelParams& LabelParams) const override;
+
 #endif
 
 	virtual bool SupportsMultipleRows() const override { return true; }
@@ -65,7 +69,6 @@ private:
 	/** Role this track represents */
 	UPROPERTY()
 	FName Role = NAME_None;
-
 };
 
 

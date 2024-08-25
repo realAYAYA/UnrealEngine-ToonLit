@@ -72,4 +72,13 @@ class EpicStageAppAPIVersion implements Comparable<EpicStageAppAPIVersion> {
 
   /// Whether the engine API correctly handles HTTP property set calls as part of a manual transaction.
   bool get bCanHttpSetPropertyInManualTransaction => this >= const EpicStageAppAPIVersion(1, 6, 0);
+
+  /// Whether the engine API allows for query parameters in URLs passed to the HTTP WebSocket route.
+  bool get bCanUseQueryParamsInWebSocketHttpUrl => this >= const EpicStageAppAPIVersion(1, 7, 0);
+
+  /// Whether the initial actor position passed to the ndisplay.preview.actor.create route is applied correctly.
+  bool get bIsNewActorOverridePositionAccurate => this >= const EpicStageAppAPIVersion(1, 8, 0);
+
+  /// Whether compression of WebSocket traffic can be enabled in the engine.
+  bool get bIsWebSocketCompressionAvailable => this >= const EpicStageAppAPIVersion(1, 9, 0);
 }

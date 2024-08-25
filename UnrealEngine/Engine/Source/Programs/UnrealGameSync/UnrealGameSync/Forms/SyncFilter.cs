@@ -61,7 +61,7 @@ namespace UnrealGameSync
 		private static void SetExcludedCategories(CheckedListBox listBox, Dictionary<Guid, WorkspaceSyncCategory> uniqueIdToFilter, Dictionary<Guid, bool> categoryIdToSetting)
 		{
 			listBox.Items.Clear();
-			foreach(WorkspaceSyncCategory filter in uniqueIdToFilter.Values)
+			foreach (WorkspaceSyncCategory filter in uniqueIdToFilter.Values)
 			{
 				if (!filter.Hidden)
 				{
@@ -99,7 +99,7 @@ namespace UnrealGameSync
 		private Dictionary<Guid, bool> GetCategorySettings(CheckedListBox listBox, IEnumerable<KeyValuePair<Guid, bool>> originalSettings)
 		{
 			Dictionary<Guid, bool> result = new Dictionary<Guid, bool>();
-			for(int idx = 0; idx < listBox.Items.Count; idx++)
+			for (int idx = 0; idx < listBox.Items.Count; idx++)
 			{
 				Guid uniqueId = ((WorkspaceSyncCategory)listBox.Items[idx]).UniqueId;
 				if (!result.ContainsKey(uniqueId))
@@ -121,9 +121,9 @@ namespace UnrealGameSync
 		{
 			GetSettings(out FilterSettings newGlobalFilter, out FilterSettings newWorkspaceFilter);
 
-			if(newGlobalFilter.View.Any(x => x.Contains("//", StringComparison.Ordinal)) || newWorkspaceFilter.View.Any(x => x.Contains("//", StringComparison.Ordinal)))
+			if (newGlobalFilter.View.Any(x => x.Contains("//", StringComparison.Ordinal)) || newWorkspaceFilter.View.Any(x => x.Contains("//", StringComparison.Ordinal)))
 			{
-				if(MessageBox.Show(this, "Custom views should be relative to the stream root (eg. -/Engine/...).\r\n\r\nFull depot paths (eg. //depot/...) will not match any files.\r\n\r\nAre you sure you want to continue?", "Invalid view", MessageBoxButtons.OKCancel) != System.Windows.Forms.DialogResult.OK)
+				if (MessageBox.Show(this, "Custom views should be relative to the stream root (eg. -/Engine/...).\r\n\r\nFull depot paths (eg. //depot/...) will not match any files.\r\n\r\nAre you sure you want to continue?", "Invalid view", MessageBoxButtons.OKCancel) != System.Windows.Forms.DialogResult.OK)
 				{
 					return;
 				}
@@ -145,9 +145,9 @@ namespace UnrealGameSync
 			GetSettings(out FilterSettings newGlobalFilter, out FilterSettings newWorkspaceFilter);
 
 			string[] filter = UserSettings.GetCombinedSyncFilter(_uniqueIdToCategory, newGlobalFilter, newWorkspaceFilter, _perforceSection);
-			if(filter.Length == 0)
+			if (filter.Length == 0)
 			{
-				filter = new string[]{ "All files will be synced." };
+				filter = new string[] { "All files will be synced." };
 			}
 			MessageBox.Show(String.Join("\r\n", filter), "Combined View");
 		}

@@ -1,25 +1,36 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import React from 'react';
-import { mergeStyleSets, getTheme } from '@fluentui/react/lib/Styling';
+import { mergeStyleSets } from '@fluentui/react/lib/Styling';
 import { Stack, Text } from '@fluentui/react';
 import { Link } from 'react-router-dom';
-import { hordeClasses } from '../styles/Styles';
 import { TestData } from '../backend/Api';
 import hordePlugins, { PluginMount } from  '../Plugins';
 import { ComponentMount } from './TestReportView';
+import { getHordeStyling } from '../styles/Styles';
+import { getHordeTheme } from '../styles/theme';
 
-const theme = getTheme();
 
-const styles = mergeStyleSets({
-    item: {
-        padding: 8,
-        borderBottom: '1px solid '+theme.palette.neutralLighter,
-        selectors: {
-            ':hover': {background: theme.palette.neutralLight}
-        }
-    }
-});
+let _styles: any;
+const getStyles = () => {
+
+   const theme = getHordeTheme();
+
+   const styles = _styles ?? mergeStyleSets({
+       item: {
+           padding: 8,
+           borderBottom: '1px solid '+theme.palette.neutralLighter,
+           selectors: {
+               ':hover': {background: theme.palette.neutralLight}
+           }
+       }
+   });
+
+   _styles = styles;
+   return styles;
+   
+}
+
 
 type ComponentItem = {
     hasComponent: boolean;
@@ -34,6 +45,9 @@ type TestDataItem = ComponentItem & {
 const testReportComponentTypes : Map<string, ComponentItem> = new Map();
 
 export const TestReportPanel: React.FC<{ testdata: TestData[] }> = ({ testdata }) => {
+
+   const { hordeClasses } = getHordeStyling();
+   const styles = getStyles();
 
     const testdataItems : TestDataItem[] = [];
     testdata.forEach((test) => {

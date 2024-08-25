@@ -5,6 +5,7 @@
 #include "Containers/ChunkedArray.h"
 #include "HAL/CriticalSection.h"
 #include "IO/IoDispatcher.h"
+#include "IO/IoOffsetLength.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Timespan.h"
 #include "ProfilingDebugging/CountersTrace.h"
@@ -16,8 +17,15 @@
 
 //////////////////////////////////////////////////////////////////////////////
 
-TRACE_DECLARE_INT_COUNTER(BulkDataBatchRequest_Count, TEXT("BulkData/BatchRequest/Count"));
-TRACE_DECLARE_INT_COUNTER(BulkDataBatchRequest_PendingCount, TEXT("BulkData/BatchRequest/Pending"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(BulkDataBatchRequest_Count, TEXT("BulkData/BatchRequest/Count"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(BulkDataBatchRequest_PendingCount, TEXT("BulkData/BatchRequest/Pending"));
+
+/**
+ * When enabled calls to FChunkReadFileHandle::ReadRequest will validate that the request
+ * is within the bulkdata payload bounds. Currently disabled as FFileCache still uses the
+ * handle to represent the entire .ubulk file rather than the specific bulkdata payload.
+ */
+#define UE_ENABLE_BULKDATA_RANGE_TEST 0
 
 FBulkDataIORequest::FBulkDataIORequest(IAsyncReadFileHandle* InFileHandle)
 	: FileHandle(InFileHandle)
@@ -205,6 +213,7 @@ public:
 	virtual ~FChunkReadFileRequest();
 	
 	virtual void WaitCompletionImpl(float TimeLimitSeconds) override;
+
 	virtual void CancelImpl() override;
 	virtual void ReleaseMemoryOwnershipImpl() override;
 	virtual void HandleChunkResult(TIoStatusOr<FIoBuffer>&& Result) override;
@@ -258,15 +267,13 @@ void FChunkReadFileRequest::HandleChunkResult(TIoStatusOr<FIoBuffer>&& Result)
 class FChunkFileSizeRequest : public IAsyncReadRequest
 {
 public:
-	FChunkFileSizeRequest(const FIoChunkId& ChunkId, FAsyncFileCallBack* Callback)
+	FChunkFileSizeRequest(const FIoChunkId& ChunkId, uint64 ChunkSize, FAsyncFileCallBack* Callback)
 		: IAsyncReadRequest(Callback, true, nullptr)
 	{
-		TIoStatusOr<uint64> Result = FIoDispatcher::Get().GetSizeForChunk(ChunkId);
-		if (Result.IsOk())
+		if (ChunkSize > 0)
 		{
-			Size = Result.ValueOrDie();
+			Size = static_cast<int64>(ChunkSize);
 		}
-
 		SetComplete();
 	}
 
@@ -295,8 +302,11 @@ private:
 class FChunkReadFileHandle : public IAsyncReadFileHandle
 {
 public:
-	FChunkReadFileHandle(const FIoChunkId& InChunkId) 
+	FChunkReadFileHandle(const FIoChunkId& InChunkId, const FIoOffsetAndLength& InChunkRange, uint64 InChunkSize, uint64 InAvailableChunkSize) 
 		: ChunkId(InChunkId)
+		, ChunkRange(InChunkRange)
+		, ChunkSize(InChunkSize)
+		, AvailableChunkSize(InAvailableChunkSize)
 	{
 	}
 
@@ -313,11 +323,14 @@ public:
 
 private:
 	FIoChunkId ChunkId;
+	FIoOffsetAndLength ChunkRange;
+	uint64 ChunkSize;
+	uint64 AvailableChunkSize;
 };
 
 IAsyncReadRequest* FChunkReadFileHandle::SizeRequest(FAsyncFileCallBack* CompleteCallback)
 {
-	return new FChunkFileSizeRequest(ChunkId, CompleteCallback);
+	return new FChunkFileSizeRequest(ChunkId, ChunkSize, CompleteCallback);
 }
 
 IAsyncReadRequest* FChunkReadFileHandle::ReadRequest(
@@ -327,6 +340,17 @@ IAsyncReadRequest* FChunkReadFileHandle::ReadRequest(
 	FAsyncFileCallBack* CompleteCallback,
 	uint8* UserSuppliedMemory)
 {
+#if UE_ENABLE_BULKDATA_RANGE_TEST
+	const bool bIsOutsideBulkDataRange =
+		(Offset < static_cast<int64>(ChunkRange.GetOffset())) ||
+		((Offset + BytesToRead) > static_cast<int64>(ChunkRange.GetOffset() + AvailableChunkSize));
+
+
+	UE_CLOG(bIsOutsideBulkDataRange, LogSerialization, Warning,
+		TEXT("Reading outside of bulk data range, RequestRange='%lld, %lld', BulkDataRange='%llu, %llu', ChunkId='%s'"),
+		Offset, BytesToRead, ChunkRange.GetOffset(), ChunkRange.GetLength(), *LexToString(ChunkId));
+#endif //UE_ENABLE_BULKDATA_RANGE_TEST
+
 	FIoBuffer Buffer = UserSuppliedMemory ? FIoBuffer(FIoBuffer::Wrap, UserSuppliedMemory, BytesToRead) : FIoBuffer(BytesToRead);
 	FChunkReadFileRequest* Request = new FChunkReadFileRequest(CompleteCallback, MoveTemp(Buffer));
 
@@ -463,6 +487,20 @@ bool OpenReadBulkData(
 
 //////////////////////////////////////////////////////////////////////////////
 
+TUniquePtr<IAsyncReadFileHandle> OpenAsyncReadBulkData(
+	const FBulkMetaData& BulkMeta,
+	const FIoChunkId& BulkChunkId,
+	uint64 ChunkSize,
+	uint64 AvailableChunkSize)
+{
+	if (BulkChunkId.IsValid() == false)
+	{
+		return TUniquePtr<IAsyncReadFileHandle>();
+	}
+
+	return MakeUnique<FChunkReadFileHandle>(BulkChunkId, BulkMeta.GetOffsetAndLength(), ChunkSize, AvailableChunkSize);
+}
+
 TUniquePtr<IAsyncReadFileHandle> OpenAsyncReadBulkData(const FBulkMetaData& BulkMeta, const FIoChunkId& BulkChunkId)
 {
 	if (BulkChunkId.IsValid() == false)
@@ -470,7 +508,9 @@ TUniquePtr<IAsyncReadFileHandle> OpenAsyncReadBulkData(const FBulkMetaData& Bulk
 		return TUniquePtr<IAsyncReadFileHandle>();
 	}
 
-	return MakeUnique<FChunkReadFileHandle>(BulkChunkId);
+	TIoStatusOr<uint64> Status = FIoDispatcher::Get().GetSizeForChunk(BulkChunkId); 
+	const uint64 ChunkSize = Status.IsOk() ? Status.ValueOrDie() : 0;
+	return MakeUnique<FChunkReadFileHandle>(BulkChunkId, BulkMeta.GetOffsetAndLength(), ChunkSize, ChunkSize);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -494,13 +534,6 @@ TUniquePtr<IBulkDataIORequest> CreateStreamingRequest(
 	Request->Issue(BulkChunkId, FIoReadOptions(Offset, Size), ConvertToIoDispatcherPriority(Priority));
 	
 	return TUniquePtr<IBulkDataIORequest>(Request);
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
-bool DoesBulkDataExist(const FIoChunkId& BulkChunkId)
-{
-	return FIoDispatcher::Get().DoesChunkExist(BulkChunkId);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1174,3 +1207,5 @@ FBulkDataRequest::EStatus FBulkDataBatchRequest::FScatterGatherBuilder::Issue(FI
 }
 
 //////////////////////////////////////////////////////////////////////////////
+
+#undef UE_ENABLE_BULKDATA_RANGE_TEST

@@ -115,8 +115,8 @@ private:
 
 	// Source Control Cache
 
-	// List of currently unsaved assets
-	TArray<FString> UnsavedAssets;
+	// List of currently unsaved assets. Using a set here because it can grow a lot and impact performances when looking up in the list.
+	TSet<FString> UnsavedAssets;
 
 	// List of uncontrolled changelist state
 	TArray<TSharedRef<FUncontrolledChangelistState>> UncontrolledChangelistStates;

@@ -23,7 +23,7 @@ class DATASMITHINTERCHANGE_API UInterchangeDatasmithAreaLightNode : public UInte
 
 public:
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -55,36 +55,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
 	bool SetCustomColor(const FLinearColor& AttributeValue, bool bAddApplyDelegate = true);
 
-	/**
-	 * Get the NodeUid of the imported IES Texture.
-	 */
-	//UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool GetCustomIESTexture(FString& AttributeValue) const;
-
-	/**
-	 * Set the NodeUid of the imported IES Texture.
-	 */
-	//UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool SetCustomIESTexture(const FString& AttributeValue);
-
-	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool GetCustomUseIESBrightness(bool& AttributeValue) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool SetCustomUseIESBrightness(const bool& AttributeValue, bool bAddApplyDelegate = true);
-
-	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool GetCustomIESBrightnessScale(float& AttributeValue) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool SetCustomIESBrightnessScale(const float& AttributeValue, bool bAddApplyDelegate = true);
-
-	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool GetCustomRotation(FRotator& AttributeValue) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
-	bool SetCustomRotation(const FRotator& AttributeValue, bool bAddApplyDelegate = true);
-
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Datasmith")
 	bool GetCustomSourceRadius(float& AttributeValue) const;
 
@@ -114,10 +84,6 @@ private:
 	static  UE::Interchange::FAttributeKey Macro_CustomLightShapeKey;
 	static  UE::Interchange::FAttributeKey Macro_CustomDimensionsKey;
 	static  UE::Interchange::FAttributeKey Macro_CustomColorKey;
-	static  UE::Interchange::FAttributeKey Macro_CustomIESTextureKey;
-	static  UE::Interchange::FAttributeKey Macro_CustomUseIESBrightnessKey;
-	static  UE::Interchange::FAttributeKey Macro_CustomIESBrightnessScaleKey;
-	static  UE::Interchange::FAttributeKey Macro_CustomRotationKey;
 	static  UE::Interchange::FAttributeKey Macro_CustomSourceRadiusKey;
 	static  UE::Interchange::FAttributeKey Macro_CustomSourceLengthKey;
 	static  UE::Interchange::FAttributeKey Macro_CustomSpotlightInnerAngleKey;

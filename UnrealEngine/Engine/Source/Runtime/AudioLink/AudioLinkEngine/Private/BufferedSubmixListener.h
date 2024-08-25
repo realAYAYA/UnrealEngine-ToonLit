@@ -7,15 +7,15 @@
 
 /** Concrete Submix Buffer Listener  
 */
-class FBufferedSubmixListener : public ISubmixBufferListener, 
-													public FBufferedListenerBase
+class FBufferedSubmixListener : public ISubmixBufferListener, public FBufferedListenerBase
 {
 public:
 	/** Constructor
 	 * @param  InDefaultCircularBufferSize: Size of the circular buffer in samples by default.
-	 * @param  bInZeroInputBuffer: The passed in buffer will be set zerod after we've buffered it. Not 
+	 * @param  bInZeroInputBuffer: The passed in buffer will be set zeroed after we've buffered it.
+	 * @param InName(Optional): Optional name to track listener lifetime with. 
 	 */
-	AUDIOLINKENGINE_API FBufferedSubmixListener(int32 InDefaultCircularBufferSize, bool bInZeroInputBuffer);
+	AUDIOLINKENGINE_API FBufferedSubmixListener(int32 InDefaultCircularBufferSize, bool bInZeroInputBuffer, const FString* InName);
 
 	AUDIOLINKENGINE_API virtual ~FBufferedSubmixListener();
 
@@ -35,8 +35,10 @@ private:
 	
 	//~ Begin ISubmixBufferListener
 	AUDIOLINKENGINE_API void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 InNumSamples, int32 InNumChannels, const int32 InSampleRate, double) override;
+	AUDIOLINKENGINE_API const FString& GetListenerName() const override;
 	//~ End ISubmixBufferListener
 
 	Audio::FDeviceId DeviceId;
 	bool bZeroInputBuffer = false;
+	FString Name;
 };

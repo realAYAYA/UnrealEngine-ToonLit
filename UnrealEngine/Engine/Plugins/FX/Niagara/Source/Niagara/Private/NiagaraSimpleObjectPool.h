@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/Class.h"
 
 /**
  * Very simple object pool that will hold weak references to objects that are returned, these can then be recycled rather than creating new objects.

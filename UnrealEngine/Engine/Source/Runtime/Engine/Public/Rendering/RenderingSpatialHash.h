@@ -28,13 +28,18 @@ struct TLocation
 	{
 	}
 
-	inline friend uint32 GetTypeHash(const TLocation& CellLocation)
+	template <typename ScalarBType>
+	inline explicit TLocation(const UE::Math::TIntVector3< ScalarBType>& InCoord, int32 InLevel)
+		: Coord(UE::Math::TIntVector3<ScalarType>(InCoord))
+		, Level(InLevel)
 	{
-		return HashCombineFast(GetTypeHash(CellLocation.Coord.X),
-			HashCombineFast(GetTypeHash(CellLocation.Coord.Y),
-				HashCombineFast(GetTypeHash(CellLocation.Coord.Z), CellLocation.Level)));
 	}
 
+	inline friend uint32 GetTypeHash(const TLocation& CellLocation)
+	{
+		return uint32(CellLocation.Coord.X * 1150168907 + CellLocation.Coord.Y * 1235029793 + CellLocation.Coord.Z * 1282581571 + CellLocation.Level * 1264559321);
+	}
+	
 	inline bool operator == (const TLocation& Other) const
 	{
 		return Level == Other.Level && Coord == Other.Coord;
@@ -75,14 +80,21 @@ inline int32 CalcLevel(double Size)
 	return int32(FMath::FloorLog2(uint32(Size)));
 };
 
-inline int32 CalcLevelFromRadius(double Radius)
+inline int32 CalcLevel(float Size)
 {
-	return CalcLevel(Radius * 2.0);
+	// TODO: using integer Log2 breaks down for small scales, where the level would need to go negative. It is however far faster and not expected to be useful.
+	return int32(FMath::FloorLog2(uint32(Size)));
+};
+
+inline int32 CalcLevelFromRadius(float Radius)
+{
+	return CalcLevel(Radius * 2.0f);
 };
 
 inline double GetCellSize(int32 Level)
 {
-	return FMath::Exp2(double(Level + 1));
+	checkSlow(Level >= 0);
+	return double(1ull << uint32(Level + 1));
 };
 
 inline double GetRecCellSize(int32 Level)

@@ -83,7 +83,7 @@ namespace BuildPatchServices
 				{
 					if (Matches.IsValidIndex(LastAcceptedIdx))
 					{
-						Matches.RemoveAt(LastAcceptedIdx, Matches.Num() - LastAcceptedIdx, false);
+						Matches.RemoveAt(LastAcceptedIdx, Matches.Num() - LastAcceptedIdx, EAllowShrinking::No);
 					}
 					Matches.Add(NewMatchMeta);
 					bAddedMatch = true;

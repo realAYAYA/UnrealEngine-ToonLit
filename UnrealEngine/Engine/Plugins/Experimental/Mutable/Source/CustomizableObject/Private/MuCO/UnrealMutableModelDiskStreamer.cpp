@@ -4,13 +4,15 @@
 
 #include "Async/AsyncFileHandle.h"
 #include "HAL/PlatformFile.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCO/CustomizableObjectSystem.h"
 #include "MuR/Model.h"
 #include "MuR/MutableTrace.h"
-
-#if WITH_EDITOR
+#include "MuCO/LogBenchmarkUtil.h"
 #include "HAL/PlatformFileManager.h"
-#endif
+
+
+DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Streaming Ops"), STAT_MutableStreamingOps, STATGROUP_Mutable);
 
 
 //-------------------------------------------------------------------------------------------------
@@ -46,15 +48,11 @@ void UnrealMutableInputStream::Read(void* pData, uint64 size)
 //-------------------------------------------------------------------------------------------------
 FUnrealMutableModelBulkReader::~FUnrealMutableModelBulkReader()
 {
-	EndStreaming();
 }
 
 
 bool FUnrealMutableModelBulkReader::PrepareStreamingForObject(UCustomizableObject* CustomizableObject)
 {
-	// This happens in the game thread
-	check(IsInGameThread());
-
 	if (!CustomizableObject)
 	{
 		check(false);
@@ -64,14 +62,11 @@ bool FUnrealMutableModelBulkReader::PrepareStreamingForObject(UCustomizableObjec
 	// See if we can free previuously allocated resources
 	for (int32 ObjectIndex = 0; ObjectIndex < Objects.Num(); )
 	{
-		if (!Objects[ObjectIndex].Model.Pin())
-		{
-			// The CustomizableObject is gone, so we won't be streaming for it anymore.
-			for (TPair<OPERATION_ID, FReadRequest>& it : Objects[ObjectIndex].CurrentReadRequests)
-			{
-				it.Value.ReadRequest->WaitCompletion();
-			}
+		// Close open file handles
+		Objects[ObjectIndex].ReadFileHandles.Empty();
 
+		if (!Objects[ObjectIndex].Model.Pin() && Objects[ObjectIndex].CurrentReadRequests.IsEmpty())
+		{
 			Objects.RemoveAtSwap(ObjectIndex);
 		}
 		else
@@ -83,48 +78,32 @@ bool FUnrealMutableModelBulkReader::PrepareStreamingForObject(UCustomizableObjec
 	// Is the object already prepared for streaming?
 	bool bAlreadyStreaming = Objects.FindByPredicate(
 		[CustomizableObject](const FObjectData& d)
-		{ return d.Model.Pin().Get() == CustomizableObject->GetModel().Get(); })
+		{ return d.Model.Pin().Get() == CustomizableObject->GetPrivate()->GetModel().Get(); })
 		!=
 		nullptr;
 
 	if (!bAlreadyStreaming)
 	{
 		FObjectData NewData;
-		NewData.Model = TWeakPtr<const mu::Model>(CustomizableObject->GetModel());
+		NewData.Model = TWeakPtr<const mu::Model>(CustomizableObject->GetPrivate()->GetModel());
 
 #if WITH_EDITOR
-		FString FolderPath = CustomizableObject->GetCompiledDataFolderPath(true);
-		FString FullFileName = FolderPath + CustomizableObject->GetCompiledDataFileName(false, nullptr, true);
-
-		const TSharedPtr<IAsyncReadFileHandle> ReadFileHandle = MakeShareable(FPlatformFileManager::Get().GetPlatformFile().OpenAsyncRead(*FullFileName));
-		if (!ReadFileHandle)
-		{
-			UE_LOG(LogMutable, Warning, TEXT("Streaming: Customizable Object %s is missing the Editor BulkData."), *CustomizableObject->GetName());
-			return false;
-		}
-
-		NewData.ReadFileHandles.Add(ReadFileHandle);
+		FString FolderPath = CustomizableObject->GetPrivate()->GetCompiledDataFolderPath();
+		FString FullFileName = FolderPath + CustomizableObject->GetPrivate()->GetCompiledDataFileName(false, nullptr, true);
+		NewData.BulkFilePrefix = *FullFileName;
 #else
-		const UCustomizableObjectBulk* BulkData = CustomizableObject->GetStreamableBulkData();
+		const UCustomizableObjectBulk* BulkData = CustomizableObject->GetPrivate()->GetStreamableBulkData();
 		if (!BulkData)
 		{
 			UE_LOG(LogMutable, Warning, TEXT("Streaming: Customizable Object %s is missing the BulkData export."), *CustomizableObject->GetName());
 			return false;
 		}
 
-		NewData.ReadFileHandles = BulkData->GetAsyncReadFileHandles();
+		NewData.BulkFilePrefix = BulkData->GetBulkFilePrefix();
 #endif
 
-
-		if (NewData.ReadFileHandles.IsEmpty())
-		{
-			UE_LOG(LogMutable, Warning, TEXT("Streaming: Customizable Object %s read file handles empty."), *CustomizableObject->GetName());
-
-			check(false);
-			return false;
-		}
-
-		NewData.StreamableBlocks = CustomizableObject->HashToStreamableBlock;
+		const FModelResources& ModelResources = CustomizableObject->GetPrivate()->GetModelResources();
+		NewData.StreamableBlocks = ModelResources.HashToStreamableBlock;
 		if (NewData.StreamableBlocks.IsEmpty())
 		{
 			UE_LOG(LogMutable, Warning, TEXT("Streaming: Customizable Object %s has no data to stream."), *CustomizableObject->GetName());
@@ -145,9 +124,6 @@ bool FUnrealMutableModelBulkReader::PrepareStreamingForObject(UCustomizableObjec
 #if WITH_EDITOR
 void FUnrealMutableModelBulkReader::CancelStreamingForObject(const UCustomizableObject* CustomizableObject)
 {
-	// This happens in the game thread
-	check(IsInGameThread());
-
 	if (!CustomizableObject)
 	{
 		check(false);
@@ -156,12 +132,9 @@ void FUnrealMutableModelBulkReader::CancelStreamingForObject(const UCustomizable
 	// See if we can free previuously allocated resources
 	for (int32 ObjectIndex = 0; ObjectIndex < Objects.Num(); ++ObjectIndex)
 	{
-		if (Objects[ObjectIndex].Model.Pin() == CustomizableObject->GetModel())
+		if (Objects[ObjectIndex].Model.Pin() == CustomizableObject->GetPrivate()->GetModel())
 		{
-			for (TPair<OPERATION_ID, FReadRequest>& it : Objects[ObjectIndex].CurrentReadRequests)
-			{
-				it.Value.ReadRequest->WaitCompletion();
-			}
+			check(Objects[ObjectIndex].CurrentReadRequests.IsEmpty());
 
 			Objects.RemoveAtSwap(ObjectIndex);
 			break;
@@ -183,7 +156,7 @@ bool FUnrealMutableModelBulkReader::AreTherePendingStreamingOperationsForObject(
 
 	for (int32 ObjectIndex = 0; ObjectIndex < Objects.Num(); ++ObjectIndex)
 	{
-		if (Objects[ObjectIndex].Model.Pin() == CustomizableObject->GetModel())
+		if (Objects[ObjectIndex].Model.Pin() == CustomizableObject->GetPrivate()->GetModel())
 		{
 			if (!Objects[ObjectIndex].CurrentReadRequests.IsEmpty())
 			{
@@ -240,8 +213,8 @@ mu::ModelReader::OPERATION_ID FUnrealMutableModelBulkReader::BeginReadBlock(cons
 		return -1;
 	}
 
-	// this generally cannot fail because it is async
-	if (!ObjectData->StreamableBlocks.Contains(Key))
+	const FMutableStreamableBlock* Block = ObjectData->StreamableBlocks.Find(Key);
+	if (!Block)
 	{
 		// File Handle not found! This shouldn't really happen.
 		UE_LOG(LogMutable, Error, TEXT("Streaming Block not found!"));
@@ -255,8 +228,6 @@ mu::ModelReader::OPERATION_ID FUnrealMutableModelBulkReader::BeginReadBlock(cons
 	}
 
 	OPERATION_ID Result = ++LastOperationID;
-
-	const FMutableStreamableBlock& Block = ObjectData->StreamableBlocks[Key];
 
 	int32 BulkDataOffsetInFile = 0;
 #if WITH_EDITOR
@@ -272,10 +243,35 @@ mu::ModelReader::OPERATION_ID FUnrealMutableModelBulkReader::BeginReadBlock(cons
 			CompletionCallbackCapture(!bWasCancelled);			
 		});		
 	}
+
+	TSharedPtr<IAsyncReadFileHandle> FileHandle;
+	{
+		FScopeLock Lock(&FileHandlesCritical);
+
+		TSharedPtr<IAsyncReadFileHandle>& Found = ObjectData->ReadFileHandles.FindOrAdd( Block->FileId );
+		if (!Found)
+		{
+#if WITH_EDITOR
+			FString FilePath = ObjectData->BulkFilePrefix;
+#else
+			FString FilePath = FString::Printf(TEXT("%s-%08x.mut"), *ObjectData->BulkFilePrefix, Block->FileId);
+#endif
+
+			Found = MakeShareable(FPlatformFileManager::Get().GetPlatformFile().OpenAsyncRead(*FilePath));
+
+			if (!Found)
+			{
+				UE_LOG(LogMutable, Error, TEXT("Failed to create AsyncReadFileHandle. File Path [%s]."), *FilePath);
+				check(false);
+				return -1;
+			}
+		}
+
+		FileHandle = Found;
+	}
 	
-	check(!ObjectData->ReadFileHandles.IsEmpty());
-	ReadRequest.ReadRequest = MakeShareable(ObjectData->ReadFileHandles[Block.FileIndex]->ReadRequest(
-		BulkDataOffsetInFile + Block.Offset,
+	ReadRequest.ReadRequest = MakeShareable(FileHandle->ReadRequest(
+		BulkDataOffsetInFile + Block->Offset,
 		size,
 		(EAsyncIOPriorityAndFlags)StreamPriority,
 		ReadRequest.FileCallback.Get(),

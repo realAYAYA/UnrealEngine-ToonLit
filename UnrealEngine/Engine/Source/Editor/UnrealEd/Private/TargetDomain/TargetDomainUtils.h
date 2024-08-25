@@ -19,7 +19,7 @@ template <typename FuncType> class TUniqueFunction;
 namespace UE::TargetDomain
 {
 
-void UtilsInitialize(bool bEditorDomainEnabled);
+void CookInitialize();
 
 /** Create the TargetDomainKey based on the EditorDomainKeys of the Package and its dependencies. */
 bool TryCreateKey(FName PackageName, TConstArrayView<FName> SortedBuildDependencies, FIoHash* OutHash, FString* OutErrorMessage);

@@ -67,7 +67,10 @@ namespace MenuExtension_TextureCubeArray
 					{
 						const TAttribute<FText> Label = LOCTEXT("Texture_TextureCubeArray", "Create Texture Cube Array");
 						const TAttribute<FText> ToolTip = LOCTEXT("Texture_CreateTextureCubeArrayTooltip", "Creates a new texture cube array.");
-						const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "ClassIcon.TextureCube");
+
+						//static const FName NameTextureCube("ClassIcon.TextureCube"); // <- doesn't exist! (FIXME)
+						static const FName NameTextureCube("ClassIcon.TextureRenderTargetCube"); // <- wrong (we are not a render target) but does exist
+						const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), NameTextureCube);
 						const FToolMenuExecuteAction UIAction = FToolMenuExecuteAction::CreateStatic(&ExecuteCreateTextureArray);
 
 						InSection.AddMenuEntry("Texture_TextureCubeArray", Label, ToolTip, Icon, UIAction);

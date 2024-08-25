@@ -19,7 +19,7 @@ class UE_DEPRECATED(4.26, "Please use the SkyAtmosphere actor instead.") AAtmosp
 
 private:
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const override { return true; }
+	virtual bool ActorTypeSupportsDataLayer() const override { return true; }
 #endif
 
 	/** Main fog component */

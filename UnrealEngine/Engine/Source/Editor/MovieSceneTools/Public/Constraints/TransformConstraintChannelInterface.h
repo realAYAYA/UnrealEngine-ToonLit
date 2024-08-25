@@ -46,7 +46,7 @@ struct ITransformConstraintChannelInterface
 		const EMovieSceneTransformChannel& InChannels) = 0;
 
 protected:
-	static MOVIESCENETOOLS_API bool CanAddKey(const FMovieSceneConstraintChannel& ActiveChannel, const FFrameNumber& InTime, bool& ActiveValue);
+	static MOVIESCENETOOLS_API bool CanAddKey(FMovieSceneConstraintChannel& ActiveChannel, const FFrameNumber& InTime, bool& ActiveValue);
 };
 
 /**

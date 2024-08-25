@@ -15,7 +15,8 @@ enum class ELoggerCategory
 {
 	General,
 	GraphSearch,
-	Compilation
+	Compilation,
+	COInstanceBaking
 };
 
 
@@ -41,9 +42,9 @@ public:
 
 	FLogParameters& Severity(EMessageSeverity::Type MessageSeverity);
 
-	FLogParameters& Nodes(const TArray<const UCustomizableObjectNode*>& Nodes);
+	FLogParameters& Context(const TArray<const UObject*>& Context);
 
-	FLogParameters& Node(const UCustomizableObjectNode& Node);
+	FLogParameters& Context(const UObject& Context);
 
 	FLogParameters& BaseObject(bool BaseObject = true);
 
@@ -77,7 +78,7 @@ private:
 	
 	EMessageSeverity::Type ParamSeverity = EMessageSeverity::Info;
 	
-	TArray<const UCustomizableObjectNode*> ParamNodes;
+	TArray<const UObject*> ParamContext;
 
 	bool bParamBaseObject = false;
 

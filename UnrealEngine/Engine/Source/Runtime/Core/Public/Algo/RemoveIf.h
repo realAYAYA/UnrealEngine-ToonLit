@@ -18,7 +18,7 @@ namespace Algo
 	 * @return The index of the first element after those which were not removed.
 	 */
 	template <typename RangeType, typename Predicate>
-	int32 RemoveIf(RangeType& Range, Predicate Pred)
+	[[nodiscard]] int32 RemoveIf(RangeType& Range, Predicate Pred)
 	{
 		auto* First = GetData(Range);
 		auto* Last  = First + GetNum(Range);
@@ -77,7 +77,7 @@ namespace Algo
 	 * @return The index of the first element after those which were not removed.
 	 */
 	template <typename RangeType, typename Predicate>
-	int32 StableRemoveIf(RangeType& Range, Predicate Pred)
+	[[nodiscard]] int32 StableRemoveIf(RangeType& Range, Predicate Pred)
 	{
 		auto* First = GetData(Range);
 		auto* Last  = First + GetNum(Range);

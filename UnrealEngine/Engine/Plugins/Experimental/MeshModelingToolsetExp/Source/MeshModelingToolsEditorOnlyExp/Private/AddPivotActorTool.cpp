@@ -120,7 +120,7 @@ void UAddPivotActorTool::Setup()
 		// and the rotation will either be identity, or the target's if there is
 		// only one.
 		FVector3d StartTranslation = FVector3d::Zero();
-		for (TObjectPtr<UToolTarget> Target : Targets)
+		for (const TObjectPtr<UToolTarget>& Target : Targets)
 		{
 			StartTranslation += UE::ToolTarget::GetLocalToWorldTransform(Target).GetTranslation();
 		}
@@ -257,7 +257,7 @@ void UAddPivotActorTool::OnShutdown(EToolShutdownType ShutdownType)
 			// Set the mobility of the pivot actor. It's usually Movable unless one of the actors is Static,
 			// because you can only nest Static under Static.
 			EComponentMobility::Type MobilityToUse = EComponentMobility::Movable;
-			for (TObjectPtr<UToolTarget> Target : Targets)
+			for (const TObjectPtr<UToolTarget>& Target : Targets)
 			{
 				AActor* TargetActor = UE::ToolTarget::GetTargetActor(Target);
 				if (TargetActor->GetRootComponent()->Mobility == EComponentMobility::Static)
@@ -283,7 +283,7 @@ void UAddPivotActorTool::OnShutdown(EToolShutdownType ShutdownType)
 			{
 				GEditor->ParentActors(ParentActor, NewActor, NAME_None);
 			}
-			for (TObjectPtr<UToolTarget> Target : Targets)
+			for (const TObjectPtr<UToolTarget>& Target : Targets)
 			{
 				TargetActor = UE::ToolTarget::GetTargetActor(Target);
 				GEditor->ParentActors(NewActor, TargetActor, NAME_None);

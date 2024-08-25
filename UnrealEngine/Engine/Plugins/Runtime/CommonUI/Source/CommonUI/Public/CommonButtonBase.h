@@ -500,6 +500,14 @@ protected:
 	const FText GetPaletteCategory() override;
 #endif // WITH_EDITOR
 
+	// In some scenarios, USoundBase* setters are bypassed, so standard setters must also be provided for sound override properties
+	void SetPressedSlateSoundOverride(const FSlateSound& InPressedSlateSoundOverride);
+	void SetHoveredSlateSoundOverride(const FSlateSound& InHoveredSlateSoundOverride);
+	void SetSelectedPressedSlateSoundOverride(const FSlateSound& InSelectedPressedSlateSoundOverride);
+	void SetSelectedHoveredSlateSoundOverride(const FSlateSound& InSelectedHoveredSlateSoundOverride);
+	void SetLockedPressedSlateSoundOverride(const FSlateSound& InLockedPressedSlateSoundOverride);
+	void SetLockedHoveredSlateSoundOverride(const FSlateSound& InLockedHoveredSlateSoundOverride);
+
 	/** Helper function to bind to input method change events */
 	virtual void BindInputMethodChangedDelegate();
 
@@ -591,6 +599,9 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = CommonButton, meta = (DisplayName = "On Double Clicked"))
 	void BP_OnDoubleClicked();
 	virtual void NativeOnDoubleClicked();
+
+	UFUNCTION(BlueprintImplementableEvent, Category = CommonButton, meta = (DisplayName = "On Input Action Triggered"))
+	void BP_OnInputActionTriggered();
 
 	/** Unless this is called, we will assume the double click should be converted into a normal click. */
 	UFUNCTION(BlueprintCallable, Category = CommonButton)
@@ -697,30 +708,30 @@ protected:
 	 * Optional override for the sound to play when this button is pressed.
 	 * Also used for the Selected and Locked Pressed state if their respective overrides are empty.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Sound, meta = (DisplayName = "Pressed Sound Override"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Setter, Category = Sound, meta = (DisplayName = "Pressed Sound Override"))
 	FSlateSound PressedSlateSoundOverride;
 
 	/**
 	 * Optional override for the sound to play when this button is hovered.
 	 * Also used for the Selected and Locked Hovered state if their respective overrides are empty.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Sound, meta = (DisplayName = "Hovered Sound Override"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Setter, Category = Sound, meta = (DisplayName = "Hovered Sound Override"))
 	FSlateSound HoveredSlateSoundOverride;
 
 	/** Optional override for the sound to play when this button is pressed while Selected */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Sound, meta = (DisplayName = "Selected Pressed Sound Override"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Setter, Category = Sound, meta = (DisplayName = "Selected Pressed Sound Override"))
 	FSlateSound SelectedPressedSlateSoundOverride;
 
 	/** Optional override for the sound to play when this button is hovered while Selected */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Sound, meta = (DisplayName = "Selected Hovered Sound Override"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Setter, Category = Sound, meta = (DisplayName = "Selected Hovered Sound Override"))
 	FSlateSound SelectedHoveredSlateSoundOverride;
 
 	/** Optional override for the sound to play when this button is pressed while Locked */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Sound, meta = (DisplayName = "Locked Pressed Sound Override"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Setter, Category = Sound, meta = (DisplayName = "Locked Pressed Sound Override"))
 	FSlateSound LockedPressedSlateSoundOverride;
 
 	/** Optional override for the sound to play when this button is hovered while Locked */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Sound, meta = (DisplayName = "Locked Hovered Sound Override"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Setter, Category = Sound, meta = (DisplayName = "Locked Hovered Sound Override"))
 	FSlateSound LockedHoveredSlateSoundOverride;
 
 	/** The type of mouse action required by the user to trigger the button's 'Click' */
@@ -838,19 +849,19 @@ public:
 #endif
 
 protected:
-	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true))
+	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true, DisplayName = "On Selected Changed"))
 	FCommonSelectedStateChangedBase OnSelectedChangedBase;
 
-	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true))
+	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true, DisplayName = "On Clicked"))
 	FCommonButtonBaseClicked OnButtonBaseClicked;
 
-	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true))
+	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true, DisplayName = "On Double Clicked"))
 	FCommonButtonBaseClicked OnButtonBaseDoubleClicked;
 
-	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true))
+	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true, DisplayName = "On Hovered"))
 	FCommonButtonBaseClicked OnButtonBaseHovered;
 
-	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true))
+	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true, DisplayName = "On Unhovered"))
 	FCommonButtonBaseClicked OnButtonBaseUnhovered;
 
 	FUIActionBindingHandle TriggeringBindingHandle;
@@ -867,6 +878,9 @@ protected:
 	
     /** Current hold time for this button */
     float CurrentHoldTime;
+
+	/** Current hold progress % for this button */
+	float CurrentHoldProgress;
 	
     /** Handle for ticker spawned for press and hold */
     FTSTicker::FDelegateHandle HoldTickerHandle;

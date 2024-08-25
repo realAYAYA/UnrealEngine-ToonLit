@@ -29,16 +29,22 @@ public:
 	ENGINE_API UClusterUnionReplicatedProxyComponent(const FObjectInitializer& ObjectInitializer);
 
 	UFUNCTION()
-	UClusterUnionComponent* GetParentClusterUnionComponent() const { return ParentClusterUnion.Get(); }
+	ENGINE_API UClusterUnionComponent* GetParentClusterUnionComponent() const { return ParentClusterUnion.Get(); }
 
 	UFUNCTION()
 	ENGINE_API void SetParentClusterUnion(UClusterUnionComponent* InComponent);
+
+	UFUNCTION()
+	ENGINE_API UPrimitiveComponent* GetChildClusteredComponent() const { return ChildClusteredComponent.Get(); }
 
 	UFUNCTION()
 	ENGINE_API void SetChildClusteredComponent(UPrimitiveComponent* InComponent);
 
 	UFUNCTION()
 	ENGINE_API void SetParticleBoneIds(const TArray<int32>& InIds);
+
+	UFUNCTION()
+	ENGINE_API const TArray<int32>& GetParticleBoneIds() const { return ParticleBoneIds; }
 
 	UFUNCTION()
 	ENGINE_API void SetParticleChildToParent(int32 BoneId, const FTransform& ChildToParent);
@@ -48,6 +54,11 @@ public:
 
 	UFUNCTION()
 	bool IsPendingDeletion() { return bIsPendingDeletion; }
+
+	/* reinitialize the internal transient state of the replicated proxy */
+	ENGINE_API void ResetTransientState();
+
+	ENGINE_API const TArray<FTransform>& GetParticleChildToParents() { return ParticleChildToParents; }
 
 protected:
 
@@ -78,6 +89,7 @@ private:
 
 	UPROPERTY(ReplicatedUsing=OnRep_ParticleBoneIds)
 	TArray<int32> ParticleBoneIds;
+	TSet<int32> LastSyncedBoneIds;
 
 	UPROPERTY()
 	bool bNetUpdateParticleBoneIds;
@@ -94,8 +106,7 @@ private:
 	FTimerHandle DeferSetChildToParentHandle;
 	ENGINE_API void DeferSetChildToParentChildUntilClusteredComponentInParentUnion();
 
-	FTimerHandle DeferAddComponentToClusterHandle;
-	ENGINE_API void DeferAddComponentToClusterHandleUntilInitialTransformUpdate();
+	ENGINE_API void AddComponentToCluster();
 
 	//~ Begin UActorComponent Interface
 public:
@@ -107,4 +118,7 @@ public:
 public:
 	ENGINE_API virtual void PostRepNotifies() override;
 	//~ End UObject Interface
+
+private:
+	void FlushNetDormancyIfNeeded();
 };

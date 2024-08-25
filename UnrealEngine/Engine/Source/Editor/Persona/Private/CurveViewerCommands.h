@@ -33,6 +33,9 @@ public:
 
 	/** Add curve */
 	TSharedPtr< FUICommandInfo > AddCurve;
+
+	/** Fund curve uses */
+	TSharedPtr< FUICommandInfo > FindCurveUses;
 };
 
 

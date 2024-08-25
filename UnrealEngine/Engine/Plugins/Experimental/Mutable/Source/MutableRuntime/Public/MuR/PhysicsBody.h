@@ -19,11 +19,9 @@
 
 namespace mu
 {
-	typedef std::string string;
-
 	struct FBodyShape
 	{
-		string Name;
+		FString Name;
 		uint32 Flags = 0;
 
 		bool operator==(const FBodyShape& Other) const 
@@ -281,11 +279,11 @@ namespace mu
 		uint32 GetSphylFlags(int32 B, int32 I) const;
 		uint32 GetTaperedCapsuleFlags(int32 B, int32 I) const;
 
-		const char* GetSphereName(int32 B, int32 I) const;
-		const char* GetBoxName(int32 B, int32 I) const;
-		const char* GetConvexName(int32 B, int32 I) const;
-		const char* GetSphylName(int32 B, int32 I) const;
-		const char* GetTaperedCapsuleName(int32 B, int32 I) const;
+		const FString& GetSphereName(int32 B, int32 I) const;
+		const FString& GetBoxName(int32 B, int32 I) const;
+		const FString& GetConvexName(int32 B, int32 I) const;
+		const FString& GetSphylName(int32 B, int32 I) const;
+		const FString& GetTaperedCapsuleName(int32 B, int32 I) const;
 
 	protected:
 		//! Forbidden. Manage with the Ptr<> template.

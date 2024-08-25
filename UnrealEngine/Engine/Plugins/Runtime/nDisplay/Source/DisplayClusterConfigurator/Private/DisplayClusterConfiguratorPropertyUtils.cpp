@@ -6,7 +6,7 @@
 
 #define LOCTEXT_NAMESPACE "DisplayClusterConfiguratorPropertyUtils"
 
-TSharedPtr<ISinglePropertyView> DisplayClusterConfiguratorPropertyUtils::GetPropertyView(UObject* Owner,
+TSharedPtr<ISinglePropertyView> UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(UObject* Owner,
 	const FName& FieldName)
 {
 	check(Owner);
@@ -21,7 +21,7 @@ TSharedPtr<ISinglePropertyView> DisplayClusterConfiguratorPropertyUtils::GetProp
 	return PropView;
 }
 
-UObject* DisplayClusterConfiguratorPropertyUtils::AddKeyWithInstancedValueToMap(UObject* MapOwner, const FName& FieldName,
+UObject* UE::DisplayClusterConfiguratorPropertyUtils::AddKeyWithInstancedValueToMap(UObject* MapOwner, const FName& FieldName,
                                                                                 const FString& Key, UObject* Value)
 {
 	check(MapOwner);
@@ -40,7 +40,7 @@ UObject* DisplayClusterConfiguratorPropertyUtils::AddKeyWithInstancedValueToMap(
 	return NewValue;
 }
 
-TSharedPtr<IPropertyHandle> DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(uint8* MapOwner, TSharedPtr<IPropertyHandle> PropertyHandle, const FString& Key, const FString& Value, EPropertyValueSetFlags::Type SetFlags)
+TSharedPtr<IPropertyHandle> UE::DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(uint8* MapOwner, TSharedPtr<IPropertyHandle> PropertyHandle, const FString& Key, const FString& Value, EPropertyValueSetFlags::Type SetFlags)
 {
 	check(MapOwner);
 	check(PropertyHandle.IsValid());
@@ -86,7 +86,7 @@ TSharedPtr<IPropertyHandle> DisplayClusterConfiguratorPropertyUtils::AddKeyValue
 	return PropertyHandle->GetChildHandle(IndexToModify);
 }
 
-bool DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(UObject* MapOwner, const FName& FieldName,
+bool UE::DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(UObject* MapOwner, const FName& FieldName,
                                                                const FString& Key)
 {
 	check(MapOwner);
@@ -98,7 +98,7 @@ bool DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(UObject* MapOwner
 	return RemoveKeyFromMap((uint8*)MapOwner, PropHandle, Key);
 }
 
-bool DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(uint8* MapOwner,
+bool UE::DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(uint8* MapOwner,
 	TSharedPtr<IPropertyHandle> PropertyHandle, const FString& Key)
 {
 	check(MapOwner);
@@ -128,7 +128,7 @@ bool DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(uint8* MapOwner,
 	return true;
 }
 
-bool DisplayClusterConfiguratorPropertyUtils::EmptyMap(uint8* MapOwner, TSharedPtr<IPropertyHandle> PropertyHandle)
+bool UE::DisplayClusterConfiguratorPropertyUtils::EmptyMap(uint8* MapOwner, TSharedPtr<IPropertyHandle> PropertyHandle)
 {
 	check(MapOwner);
 	check(PropertyHandle.IsValid());
@@ -151,7 +151,7 @@ bool DisplayClusterConfiguratorPropertyUtils::EmptyMap(uint8* MapOwner, TSharedP
 	return true;
 }
 
-int32 DisplayClusterConfiguratorPropertyUtils::FindMapHandleIndexFromKey(TSharedPtr<IPropertyHandleMap> MapHandle, FScriptMapHelper& MapHelper,
+int32 UE::DisplayClusterConfiguratorPropertyUtils::FindMapHandleIndexFromKey(TSharedPtr<IPropertyHandleMap> MapHandle, FScriptMapHelper& MapHelper,
 	const FString& Key)
 {
 	check(MapHandle.IsValid());

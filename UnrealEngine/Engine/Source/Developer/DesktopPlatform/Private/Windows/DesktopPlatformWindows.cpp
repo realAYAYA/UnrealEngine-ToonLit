@@ -257,7 +257,7 @@ bool FDesktopPlatformWindows::FileDialogShared(bool bSave, const void* ParentWin
 								int32 WildCardIndex = INDEX_NONE;
 								if (CleanExtension.FindChar(TEXT('*'), WildCardIndex))
 								{
-									CleanExtension.RightChopInline(WildCardIndex + 1, false);
+									CleanExtension.RightChopInline(WildCardIndex + 1, EAllowShrinking::No);
 								}
 							}
 
@@ -361,7 +361,7 @@ void FDesktopPlatformWindows::EnumerateEngineInstallations(TMap<FString, FString
 				int32 ValueDataLength = ValueDataSize / sizeof(TCHAR);
 				if(ValueDataLength > 0 && ValueData[ValueDataLength - 1] == 0) ValueDataLength--;
 
-				FString NormalizedInstalledDirectory(ValueDataLength, ValueData);
+				FString NormalizedInstalledDirectory = FString::ConstructFromPtrSize(ValueData, ValueDataLength);
 				FPaths::NormalizeDirectoryName(NormalizedInstalledDirectory);
 				FPaths::CollapseRelativeDirectories(NormalizedInstalledDirectory);
 

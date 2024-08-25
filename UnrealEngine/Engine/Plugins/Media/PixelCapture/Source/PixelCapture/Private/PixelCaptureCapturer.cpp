@@ -25,7 +25,6 @@ void FPixelCaptureCapturer::Capture(const IPixelCaptureInputFrame& InputFrame)
 	}
 
 	bBusy = true;
-
 	const int32 InputWidth = InputFrame.GetWidth();
 	const int32 InputHeight = InputFrame.GetHeight();
 
@@ -44,16 +43,18 @@ void FPixelCaptureCapturer::Capture(const IPixelCaptureInputFrame& InputFrame)
 	}
 
 	InitMetadata(InputFrame.Metadata.Copy());
-	StartTime = FPlatformTime::Cycles64();
+	StartTime = rtc::TimeMillis();
 	CPUStartTime = 0;
 	GPUEnqueueTime = 0;
 	GPUStartTime = 0;
 
+	// Todo (Luke.Bermingham) - Converting output buffer to raw ptr here seems error prone considering how Buffer->LockProduceBuffer() works.
 	BeginProcess(InputFrame, CurrentOutputBuffer.Get());
 }
 
 void FPixelCaptureCapturer::Initialize(int32 InputWidth, int32 InputHeight)
 {
+	checkf(InputWidth > 0 && InputHeight > 0, TEXT("Capture should be initialized with non-zero resolution."));
 	Buffer = MakeUnique<UE::PixelCapture::FOutputFrameBuffer>();
 	Buffer->Reset(3, 10, [this, InputWidth, InputHeight]() { return TSharedPtr<IPixelCaptureOutputFrame>(CreateOutputBuffer(InputWidth, InputHeight)); });
 	ExpectedInputWidth = InputWidth;
@@ -68,16 +69,16 @@ void FPixelCaptureCapturer::MarkCPUWorkStart()
 	{
 		MarkCPUWorkEnd();
 	}
-	CPUStartTime = FPlatformTime::Cycles64();
+	CPUStartTime = rtc::TimeMillis();
 }
 
 void FPixelCaptureCapturer::MarkCPUWorkEnd()
 {
 	check(CurrentOutputBuffer != nullptr);
-	CurrentOutputBuffer->Metadata.CaptureProcessCPUTime += FPlatformTime::Cycles64() - CPUStartTime;
+	CurrentOutputBuffer->Metadata.CaptureProcessCPUTime += rtc::TimeMillis() - CPUStartTime;
 	CPUStartTime = 0;
 
-	GPUEnqueueTime = FPlatformTime::Cycles64();
+	GPUEnqueueTime = rtc::TimeMillis();
 }
 
 void FPixelCaptureCapturer::MarkGPUWorkStart()
@@ -86,20 +87,21 @@ void FPixelCaptureCapturer::MarkGPUWorkStart()
 	{
 		MarkGPUWorkEnd();
 	}
-	GPUStartTime = FPlatformTime::Cycles64();
-	
+	GPUStartTime = rtc::TimeMillis();
+
 	CurrentOutputBuffer->Metadata.CaptureProcessGPUDelay += GPUStartTime - GPUEnqueueTime;
 	GPUEnqueueTime = 0;
 }
 
 void FPixelCaptureCapturer::MarkGPUWorkEnd()
 {
-	CurrentOutputBuffer->Metadata.CaptureProcessGPUTime += FPlatformTime::Cycles64() - GPUStartTime;
+	CurrentOutputBuffer->Metadata.CaptureProcessGPUTime += rtc::TimeMillis() - GPUStartTime;
 	GPUStartTime = 0;
 }
 
 void FPixelCaptureCapturer::InitMetadata(FPixelCaptureFrameMetadata Metadata)
 {
+	Metadata.Id = FrameId.Increment();
 	Metadata.ProcessName = GetCapturerName();
 	Metadata.CaptureTime = 0;
 	Metadata.CaptureProcessCPUTime = 0;
@@ -119,7 +121,7 @@ void FPixelCaptureCapturer::FinalizeMetadata()
 		MarkGPUWorkEnd();
 	}
 
-	CurrentOutputBuffer->Metadata.CaptureTime += FPlatformTime::Cycles64() - StartTime;
+	CurrentOutputBuffer->Metadata.CaptureTime += rtc::TimeMillis() - StartTime;
 }
 
 void FPixelCaptureCapturer::EndProcess()
@@ -127,7 +129,7 @@ void FPixelCaptureCapturer::EndProcess()
 	checkf(bBusy, TEXT("Capture process EndProcess called but we're not busy. Maybe double called?"));
 
 	FinalizeMetadata();
-	
+
 	CurrentOutputBuffer = nullptr;
 	Buffer->ReleaseProduceBuffer();
 	bBusy = false;

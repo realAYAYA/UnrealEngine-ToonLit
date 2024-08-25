@@ -182,20 +182,19 @@ void FSourceControlAssetDataCache::OnUpdateHistoryComplete(const TArray<FString>
 
 	for (const FString& Filename : InUpdatedFiles)
 	{
-		FSourceControlStatePtr FileState = SourceControlProvider.GetState(Filename, EStateCacheUsage::Use);
-		check(FileState.IsValid());
-
-		if (FileState->GetHistorySize() > 0)
+		// The AssetDataCache container entry might have been removed during FUpdateStatus.
+		if (FSourceControlAssetDataEntry* AssetDataEntry = AssetDataCache.Find(Filename))
 		{
-			AssetDataToFetch.Enqueue(FileState);
-		}
-		else
-		{
-			// History was not updated we probably cannot go further with this asset.
-			FSourceControlAssetDataEntry* AssetDataEntry = AssetDataCache.Find(Filename);
+			FSourceControlStatePtr FileState = SourceControlProvider.GetState(Filename, EStateCacheUsage::Use);
+			check(FileState.IsValid());
 
-			if (AssetDataEntry != nullptr)
+			if (FileState->GetHistorySize() > 0)
 			{
+				AssetDataToFetch.Enqueue(FileState);
+			}
+			else
+			{
+				// History was not updated we probably cannot go further with this asset.
 				AssetDataEntry->bInitialized = true;
 			}
 		}

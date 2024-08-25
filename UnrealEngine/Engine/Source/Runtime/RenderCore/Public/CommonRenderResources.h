@@ -131,7 +131,26 @@ class FInstancedScreenVertexShaderVS : public FScreenVertexShaderVS
 	}
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		END_SHADER_PARAMETER_STRUCT()
+	END_SHADER_PARAMETER_STRUCT()
+};
+
+/** Vertex shader to draw a quad covering all the viewports with mobile multi view (SV_RenderTargetArrayIndex is output for each SV_InstanceID if using the multi view fallback path). Does not have any shader parameters.
+ * The pixel shader should expect UV in TEXCOORD0 (and EyeIndex in TEXCOORD1 if using the mobile multi view fallback path). */
+class FMobileMultiViewVertexShaderVS : public FScreenVertexShaderVS
+{
+	DECLARE_EXPORTED_GLOBAL_SHADER(FMobileMultiViewVertexShaderVS, RENDERCORE_API);
+	SHADER_USE_PARAMETER_STRUCT(FMobileMultiViewVertexShaderVS, FScreenVertexShaderVS);
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FScreenVertexShaderVS::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("SCREEN_VS_FOR_MOBILE_MULTI_VIEW"), 1);
+	}
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+	END_SHADER_PARAMETER_STRUCT()
 };
 
 /** Pixel shader to copy pixels from src to dst performing a format change that works on all platforms. */

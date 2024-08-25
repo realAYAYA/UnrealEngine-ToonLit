@@ -12,6 +12,7 @@
 #include "Engine/NetConnection.h"
 #include "Engine/NetDriver.h"
 #include "GameFramework/GameMode.h"
+#include "Modules/ModuleManager.h"
 
 #include "GameMapsSettings.h"
 
@@ -27,7 +28,9 @@ FBasePIENetworkComponent::FBasePIENetworkComponent(FAutomationTestBase* InTestRu
 	}
 
 	CommandBuilder
-		->Do(TEXT("Start PIE"), [this]() { StartPie(); })
+		->Do(TEXT("Stop PIE"), [this]() { StopPie(); })
+		.Then(TEXT("Create New Map"), [this]() { FAutomationEditorCommonUtils::CreateNewMap(); })
+		.Then(TEXT("Start PIE"), [this]() { StartPie(); })
 		.Until(TEXT("Collect PIE Worlds"), [this]() { return CollectPieWorlds(); })
 		.Until(TEXT("Await Connections"), [this]() { return AwaitConnections(); })
 		.OnTearDown(TEXT("Restore Editor State"), [this]() { RestoreState(); });
@@ -78,7 +81,7 @@ FBasePIENetworkComponent& FBasePIENetworkComponent::StartWhen(TCHAR* Description
 	return *this;
 }
 
-void FBasePIENetworkComponent::StartPie()
+void FBasePIENetworkComponent::StopPie()
 {
 	if (ServerState == nullptr)
 	{
@@ -86,8 +89,10 @@ void FBasePIENetworkComponent::StartPie()
 		return;
 	}
 	GUnrealEd->RequestEndPlayMap();
-	FAutomationEditorCommonUtils::CreateNewMap();
+}
 
+void FBasePIENetworkComponent::StartPie()
+{
 	ULevelEditorPlaySettings* PlaySettings = NewObject<ULevelEditorPlaySettings>();
 	if (ServerState->bIsDedicatedServer)
 	{

@@ -10,7 +10,6 @@
 #include "Misc/App.h"
 #include "Windows/WindowsWindow.h"
 #include "Windows/WindowsCursor.h"
-#include "XInputInterface.h"
 #include "Features/IModularFeatures.h"
 #include "IInputDeviceModule.h"
 #include "IInputDevice.h"
@@ -118,7 +117,6 @@ FWindowsApplication::FWindowsApplication( const HINSTANCE HInstance, const HICON
 	, bForceActivateByMouse( false )
 	, bForceNoGamepads( false )
 	, bConsumeAltSpace( false )
-	, XInput( XInputInterface::Create( MessageHandler ) )
 	, bHasLoadedInputPlugins( false )
 	, bAllowedToDeferMessageProcessing(true)
 	, CVarDeferMessageProcessing( 
@@ -384,7 +382,6 @@ void FWindowsApplication::InitializeWindow( const TSharedRef< FGenericWindow >& 
 void FWindowsApplication::SetMessageHandler( const TSharedRef< FGenericApplicationMessageHandler >& InMessageHandler )
 {
 	GenericApplication::SetMessageHandler(InMessageHandler);
-	XInput->SetMessageHandler( InMessageHandler );
 
 	TArray<IInputDeviceModule*> PluginImplementations = IModularFeatures::Get().GetModularFeatureImplementations<IInputDeviceModule>( IInputDeviceModule::GetModularFeatureName() );
 	for( auto DeviceIt = ExternalInputDevices.CreateIterator(); DeviceIt; ++DeviceIt )
@@ -409,11 +406,6 @@ bool FWindowsApplication::IsGamepadAttached() const
 	if (bForceNoGamepads)
 	{
 		return false;
-	}
-
-	if (XInput->IsGamepadAttached())
-	{
-		return true;
 	}
 
 	for( auto DeviceIt = ExternalInputDevices.CreateConstIterator(); DeviceIt; ++DeviceIt )
@@ -698,7 +690,7 @@ inline bool GetSizeForDevID(const FString& TargetDevID, int32& Width, int32& Hei
 			if (CM_Get_Device_ID(DevInfoData.DevInst, Buffer, MAX_DEVICE_ID_LEN, 0) == CR_SUCCESS)
 			{
 				FString DevID(Buffer);
-				DevID.MidInline(8, DevID.Find(TEXT("\\"), ESearchCase::CaseSensitive, ESearchDir::FromStart, 9) - 8, false);
+				DevID.MidInline(8, DevID.Find(TEXT("\\"), ESearchCase::CaseSensitive, ESearchDir::FromStart, 9) - 8, EAllowShrinking::No);
 				if (DevID == TargetDevID)
 				{
 					HKEY hDevRegKey = SetupDiOpenDevRegKey(DevInfo, &DevInfoData, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
@@ -1076,6 +1068,12 @@ int32 FWindowsApplication::ProcessMessage( HWND hwnd, uint32 msg, WPARAM wParam,
 			}
 			break;
 
+		case WM_CLIPBOARDUPDATE:
+			{
+				OnClipboardContentChangedEvent.Broadcast();
+			}
+			break;
+		
 		case WM_KEYDOWN:
 		case WM_SYSKEYUP:
 		case WM_KEYUP:
@@ -1437,15 +1435,19 @@ int32 FWindowsApplication::ProcessMessage( HWND hwnd, uint32 msg, WPARAM wParam,
 					WindowInfo.cbSize = sizeof(WindowInfo);
 					::GetWindowInfo(hwnd, &WindowInfo);
 
-					RECT TestRect;
-					TestRect.left = TestRect.right = TestRect.top = TestRect.bottom = 0;
-					AdjustWindowRectEx(&TestRect, WindowInfo.dwStyle, false, WindowInfo.dwExStyle);
-
 					RECT* Rect = (RECT*)lParam;
-					Rect->left -= TestRect.left;
-					Rect->right -= TestRect.right;
-					Rect->top -= TestRect.top;
-					Rect->bottom -= TestRect.bottom;
+					if (CurrentNativeEventWindow->GetDefinition().HasOSWindowBorder)
+					{
+						RECT TestRect;
+						TestRect.left = TestRect.right = TestRect.top = TestRect.bottom = 0;
+						AdjustWindowRectEx(&TestRect, WindowInfo.dwStyle, false, WindowInfo.dwExStyle);
+
+					
+						Rect->left -= TestRect.left;
+						Rect->right -= TestRect.right;
+						Rect->top -= TestRect.top;
+						Rect->bottom -= TestRect.bottom;
+					}
 
 					const float AspectRatio = CurrentNativeEventWindowPtr->GetAspectRatio();
 					int32 NewWidth = Rect->right - Rect->left;
@@ -1554,7 +1556,10 @@ int32 FWindowsApplication::ProcessMessage( HWND hwnd, uint32 msg, WPARAM wParam,
 						}
 					}
 
-					AdjustWindowRectEx(Rect, WindowInfo.dwStyle, false, WindowInfo.dwExStyle);
+					if (CurrentNativeEventWindow->GetDefinition().HasOSWindowBorder)
+					{
+						AdjustWindowRectEx(Rect, WindowInfo.dwStyle, false, WindowInfo.dwExStyle);
+					}
 
 					return TRUE;
 				}
@@ -1883,7 +1888,14 @@ int32 FWindowsApplication::ProcessMessage( HWND hwnd, uint32 msg, WPARAM wParam,
 
 		case WM_DEVICECHANGE:
 			{
-				XInput->SetNeedsControllerStateUpdate(); 
+				static const FInputDeviceProperty RequestUpdateProp(TEXT("Request_Device_Update"));
+				for( auto DeviceIt = ExternalInputDevices.CreateIterator(); DeviceIt; ++DeviceIt )
+				{
+					// Pass in -1 because this isn't for any specific device, it is just a message requesting an update to any attached controllers.
+					// At the moment, this will only be listened for by XInput.
+					(*DeviceIt)->SetDeviceProperty(-1, &RequestUpdateProp);
+				}
+				
 				QueryConnectedMice();
 			}
 			break;
@@ -2808,9 +2820,6 @@ void FWindowsApplication::PollGameDeviceState( const float TimeDelta )
 		return; // do not proceed if the app uses VR focus but doesn't have it
 	}
 
-	// Poll game device states and send new events
-	XInput->SendControllerEvents();
-
 	// Poll externally-implemented devices
 	for( auto DeviceIt = ExternalInputDevices.CreateIterator(); DeviceIt; ++DeviceIt )
 	{
@@ -2841,8 +2850,6 @@ void FWindowsApplication::SetForceFeedbackChannelValues(int32 ControllerId, cons
 	}
 
 	const FForceFeedbackValues* InternalValues = &Values;
- 
-	XInput->SetChannelValues( ControllerId, *InternalValues );
  
 	// send vibration to externally-implemented devices
 	for( auto DeviceIt = ExternalInputDevices.CreateIterator(); DeviceIt; ++DeviceIt )

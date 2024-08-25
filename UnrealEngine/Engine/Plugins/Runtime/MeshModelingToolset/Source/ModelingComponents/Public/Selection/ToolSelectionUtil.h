@@ -48,7 +48,7 @@ namespace ToolSelectionUtil
 			const UE::Geometry::FGroupTopology* Topology = nullptr,
 			const FTransform* ApplyTransform = nullptr,
 			bool bMapFacesToEdges = false);
-
+	
 	/**
 	 * Render the given Elements using FPrimitiveDrawInterface
 	 */
@@ -56,6 +56,16 @@ namespace ToolSelectionUtil
 		IToolsContextRenderAPI* RenderAPI,
 		const UE::Geometry::FGeometrySelectionElements& Elements,
 		bool bIsPreview = false);
+
+	// todo [nickolas.drake]: remove this function when no longer used by GeometrySelectionManager
+	void DebugRender(
+		IToolsContextRenderAPI* RenderAPI,
+		const UE::Geometry::FGeometrySelectionElements& Elements,
+		float LineThickness,
+		FLinearColor LineColor,
+		float PointSize,
+		FLinearColor PointColor,
+		float DepthBias = 0.f);
 }
 
 namespace UE::Geometry

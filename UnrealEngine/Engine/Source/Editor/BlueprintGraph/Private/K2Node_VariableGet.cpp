@@ -549,7 +549,11 @@ void UK2Node_VariableGet::ExpandNode(class FKismetCompilerContext& CompilerConte
 		{
 			UClass* OwnerClass = VariableProperty->GetOwnerClass();
 			UFunction* GetFunction = OwnerClass->FindFunctionByName(*GetFunctionName);
-			check(GetFunction);
+			if (!GetFunction)
+			{
+				CompilerContext.MessageLog.Error(*LOCTEXT("MissingGetter", "Getter function not found for @@").ToString(), this);
+				return;
+			}
 
 			UK2Node_CallFunction* CallFuncNode = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(this, SourceGraph);
 			CallFuncNode->SetFromFunction(GetFunction);

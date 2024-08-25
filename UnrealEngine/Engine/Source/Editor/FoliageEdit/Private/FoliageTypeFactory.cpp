@@ -26,6 +26,11 @@ UObject* UFoliageType_InstancedStaticMeshFactory::FactoryCreateNew(UClass* Class
 	return NewObject<UFoliageType_InstancedStaticMesh>(InParent, Class, Name, Flags | RF_Transactional);
 }
 
+FString UFoliageType_InstancedStaticMeshFactory::GetDefaultNewAssetName() const
+{
+	return UFoliageType_InstancedStaticMesh::StaticClass()->GetDefaultObject<UFoliageType_InstancedStaticMesh>()->GetDefaultNewAssetName();
+}
+
 FText UFoliageType_InstancedStaticMeshFactory::GetToolTip() const
 {
 	return LOCTEXT("FoliageTypeStaticMeshToolTip", "Static Mesh Foliage is a foliage type that will use mesh instancing and is optimal for non-interactive foliage.");
@@ -42,6 +47,11 @@ UFoliageType_ActorFactory::UFoliageType_ActorFactory(const FObjectInitializer& O
 UObject* UFoliageType_ActorFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
 {
 	return NewObject<UFoliageType_Actor>(InParent, Class, Name, Flags | RF_Transactional);
+}
+
+FString UFoliageType_ActorFactory::GetDefaultNewAssetName() const
+{
+	return UFoliageType_Actor::StaticClass()->GetDefaultObject<UFoliageType_Actor>()->GetDefaultNewAssetName();
 }
 
 FText UFoliageType_ActorFactory::GetToolTip() const

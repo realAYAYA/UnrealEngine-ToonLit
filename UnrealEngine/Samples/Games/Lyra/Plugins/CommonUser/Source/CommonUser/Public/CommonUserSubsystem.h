@@ -200,7 +200,7 @@ struct COMMONUSER_API FCommonUserInitializeParams
  * One subsystem is created for each game instance and can be accessed from blueprints or C++ code.
  * If a game-specific subclass exists, this base subsystem will not be created.
  */
-UCLASS(BlueprintType, Config=Game)
+UCLASS(BlueprintType, Config=Engine)
 class COMMONUSER_API UCommonUserSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()

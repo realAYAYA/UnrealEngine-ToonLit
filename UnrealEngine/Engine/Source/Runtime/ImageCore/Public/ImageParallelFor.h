@@ -32,9 +32,14 @@ ImageParallelFor.h: helper to run ParallelFor on images
 
 namespace FImageCore
 {
+	// ImageParallelFor treats the image as being 2d (no slices) but with *NumSlices rows
+	inline int64 ImageParallelForComputeNumRows(const FImageView & Image)
+	{
+		return (int64)Image.SizeY * Image.NumSlices;
+	}
 
 	IMAGECORE_API int32 ImageParallelForComputeNumJobs(const FImageView & Image,int64 * pRowsPerJob);
-	IMAGECORE_API void ImageParallelForMakePart(FImageView * Part,const FImageView & Whole,int64 JobIndex,int64 RowsPerJob);
+	IMAGECORE_API int64 ImageParallelForMakePart(FImageView * Part,const FImageView & Whole,int64 JobIndex,int64 RowsPerJob);
 
 	// Lambda is a functor that works on an FImageView()
 	//	it will be called with portions of the image
@@ -50,8 +55,8 @@ namespace FImageCore
 		ParallelFor(DebugName, NumJobs, 1, [=](int64 JobIndex)
 		{
 			FImageView Part;
-			ImageParallelForMakePart(&Part,Image,JobIndex,RowsPerJob);
-			Func(Part);
+			int64 StartY = ImageParallelForMakePart(&Part,Image,JobIndex,RowsPerJob);
+			Func(Part,StartY);
 		}, EParallelForFlags::Unbalanced);
 	}
 	
@@ -71,7 +76,7 @@ namespace FImageCore
 	 * your lambda will be called on one row at a time
 	 */
 	template <typename Lambda>
-	inline void ProcessLinearPixels(const FImageView & Image, const Lambda& Func)
+	inline void ProcessLinearPixels(const FImageView & Image, const Lambda& Func, int64 StartY)
 	{
 		if ( Image.Format == ERawImageFormat::RGBA32F )
 		{
@@ -79,10 +84,10 @@ namespace FImageCore
 			TArrayView64<FLinearColor> Colors = Image.AsRGBA32F();
 			FLinearColor * Start = &Colors[0];
 
-			for(int64 Y=0;Y<(int64)Image.SizeY*Image.NumSlices;Y++)
+			for(int64 Y=0;Y<ImageParallelForComputeNumRows(Image);Y++)
 			{
 				TArrayView64<FLinearColor> RowColors(Start+Y*Image.SizeX,Image.SizeX);
-				Func(RowColors);
+				Func(RowColors,StartY+Y);
 			}
 		}
 		else
@@ -91,7 +96,7 @@ namespace FImageCore
 			FImage LinearRow(Image.SizeX,1,1,ERawImageFormat::RGBA32F,EGammaSpace::Linear);
 			TArrayView64<FLinearColor> RowColors = LinearRow.AsRGBA32F();
 			
-			for(int64 Y=0;Y<(int64)Image.SizeY*Image.NumSlices;Y++)
+			for(int64 Y=0;Y<ImageParallelForComputeNumRows(Image);Y++)
 			{
 				// point at one row of the image :
 				FImageView ImageRow = Image;
@@ -101,7 +106,7 @@ namespace FImageCore
 
 				CopyImage(ImageRow,LinearRow);
 			
-				ProcessLinearPixelsAction Action = Func(RowColors);
+				ProcessLinearPixelsAction Action = Func(RowColors,StartY+Y);
 
 				if ( Action == ProcessLinearPixelsAction::Modified )
 				{
@@ -117,15 +122,10 @@ namespace FImageCore
 	template <typename Lambda>
 	inline void ImageParallelProcessLinearPixels(const TCHAR* DebugName, const FImageView & Image, const Lambda& Func)
 	{
-		ImageParallelFor(DebugName,Image,[Func](const FImageView &Part) {
+		ImageParallelFor(DebugName,Image,[Func](const FImageView &Part,int64 StartY) {
 			// call ProcessLinearPixels on each part :
-			ProcessLinearPixels(Part,Func);
+			ProcessLinearPixels(Part,Func,StartY);
 		} );
 	}
 
-	// ComputeImageLinearAverage
-	// compute the average linear color of the image
-	//	image can be any pixel format
-	//	parallel processing is used, but the result is not machine-dependent
-	IMAGECORE_API FLinearColor ComputeImageLinearAverage(const FImageView & Image);
 };

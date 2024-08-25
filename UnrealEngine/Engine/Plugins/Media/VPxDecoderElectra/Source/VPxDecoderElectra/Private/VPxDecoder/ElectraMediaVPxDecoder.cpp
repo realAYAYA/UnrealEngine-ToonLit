@@ -16,8 +16,21 @@
 #include "ElectraDecodersUtils.h"
 #include "Utils/Google/ElectraUtilsVPxVideo.h"
 #include "Containers/Queue.h"
+#include <Stats/Stats.h>
+
+#include COMPILED_PLATFORM_HEADER(ElectraDecoderGPUBufferHelpers.h)
+
 #include <vpx/vpx_decoder.h>
 #include <vpx/vp8dx.h>
+
+/*********************************************************************************************************************/
+
+
+/*********************************************************************************************************************/
+
+DECLARE_CYCLE_STAT(TEXT("ElectraDecoder ConvertOutput"), STAT_ElectraDecoder_ConvertOutputVpx, STATGROUP_Media);
+
+/*********************************************************************************************************************/
 
 #define ERRCODE_INTERNAL_NO_ERROR							0
 #define ERRCODE_INTERNAL_ALREADY_CLOSED						1
@@ -40,9 +53,6 @@ public:
 	{ }
 
 };
-
-// This should really be handled differently...
-static bool ConvertDecodedImageToNV12(TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe>& OutNV12Buffer, const vpx_image_t* InDecodedImage);
 
 
 class FVideoDecoderOutputVPxElectra : public IElectraDecoderVideoOutput, public IElectraDecoderVideoOutputImageBuffers
@@ -107,7 +117,26 @@ public:
 		return nullptr;
 	}
 	void* GetBufferTextureByIndex(int32 InBufferIndex) const override
-	{ return nullptr; }
+	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			return GPUBuffer.Resource.GetReference();
+		}
+#endif
+		return nullptr;
+	}
+	virtual bool GetBufferTextureSyncByIndex(int32 InBufferIndex, FElectraDecoderOutputSync& SyncObject) const override
+	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			SyncObject = { GPUBuffer.Fence.GetReference(), GPUBuffer.FenceValue };
+			return true;
+		}
+#endif
+		return false;
+	}
 	EElectraDecoderPlatformPixelFormat GetBufferFormatByIndex(int32 InBufferIndex) const override
 	{
 		if (InBufferIndex == 0)
@@ -156,6 +185,9 @@ public:
 	EElectraDecoderPlatformPixelFormat ColorBufferFormat;
 	EElectraDecoderPlatformPixelEncoding ColorBufferEncoding;
 	int32 ColorPitch = 0;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	FElectraMediaDecoderOutputBufferPool_DX12::FOutputData GPUBuffer;
+#endif
 };
 
 
@@ -238,6 +270,9 @@ private:
 	};
 	EConvertResult ConvertDecoderOutput(vpx_image_t* InDecodedImage);
 
+	bool ConvertDecodedImageToNV12orP010(FVideoDecoderOutputVPxElectra* InNewOutput, const vpx_image_t* InDecodedImage, void* PlatformDevice, int32 PlatformDeviceVersion) const;
+
+	TWeakPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> ResourceDelegate;
 
 	TQueue<TSharedPtr<FDecoderInput, ESPMode::NotThreadSafe>, EQueueMode::Spsc> PendingDecoderInput;
 	TArray<TSharedPtr<FDecoderInput, ESPMode::NotThreadSafe>> InDecoderInput;
@@ -249,8 +284,14 @@ private:
 	vpx_codec_ctx_t DecoderContext;
 	vpx_codec_ctx_t* VideoDecoderHandle = nullptr;
 	vpx_codec_iter_t VideoDecoderOutputIterator = nullptr;
-};
 
+	uint32 MaxWidth;
+	uint32 MaxHeight;
+	uint32 MaxOutputBuffers;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	mutable TSharedPtr<FElectraMediaDecoderOutputBufferPool_DX12> D3D12ResourcePool;
+#endif
+};
 
 /*********************************************************************************************************************/
 /*********************************************************************************************************************/
@@ -339,6 +380,13 @@ void FElectraMediaVPxDecoder::Shutdown()
 FVideoDecoderVPxElectra::FVideoDecoderVPxElectra(const TMap<FString, FVariant>& InOptions, TSharedPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> InResourceDelegate)
 {
 	Codec4CC = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("codec_4cc"), 0);
+	ResourceDelegate = InResourceDelegate;
+
+	MaxWidth = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_width"), 1920);
+	MaxHeight = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_height"), 1080);
+
+	MaxOutputBuffers = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_output_buffers"), 5);
+	MaxOutputBuffers += kElectraDecoderPipelineExtraFrames;
 }
 
 FVideoDecoderVPxElectra::~FVideoDecoderVPxElectra()
@@ -426,6 +474,14 @@ IElectraDecoder::EDecoderError FVideoDecoderVPxElectra::DecodeAccessUnit(const F
 	{
 		return IElectraDecoder::EDecoderError::NoBuffer;
 	}
+
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	// If we will create a new resource pool or we have still buffers in an existing one, we can proceed, else we'd have no resources to output the data
+	if (D3D12ResourcePool.IsValid() && !D3D12ResourcePool->BufferAvailable())
+	{
+		return IElectraDecoder::EDecoderError::NoBuffer;
+	}
+#endif
 
 	// CSD only buffer is not handled at the moment.
 	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
@@ -756,6 +812,8 @@ FVideoDecoderVPxElectra::EConvertResult FVideoDecoderVPxElectra::ConvertDecoderO
 		return EConvertResult::GotEOS;
 	}
 
+	SCOPE_CYCLE_COUNTER(STAT_ElectraDecoder_ConvertOutputVpx);
+
 	// Find the input corresponding to this output.
 	TSharedPtr<FDecoderInput, ESPMode::NotThreadSafe> In;
 	for(int32 nInDec=0; nInDec<InDecoderInput.Num(); ++nInDec)
@@ -783,9 +841,20 @@ FVideoDecoderVPxElectra::EConvertResult FVideoDecoderVPxElectra::ConvertDecoderO
 	NewOutput->AspectW = 1;
 	NewOutput->AspectH = 1;
 
+	void* PlatformDevice = nullptr;
+	int32 PlatformDeviceVersion = 0;
+	bool bUseGPUBuffers = false;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	if (auto PinnedResourceDelegate = ResourceDelegate.Pin())
+	{
+		PinnedResourceDelegate->GetD3DDevice(&PlatformDevice, &PlatformDeviceVersion);
+		bUseGPUBuffers = (PlatformDevice && PlatformDeviceVersion >= 12000);
+	}
+#endif
+
 	if (InDecodedImage->fmt == VPX_IMG_FMT_I420)
 	{
-		if (!ConvertDecodedImageToNV12(NewOutput->ColorBuffer, InDecodedImage))
+		if (!ConvertDecodedImageToNV12orP010(NewOutput.Get(), InDecodedImage, PlatformDevice, PlatformDeviceVersion))
 		{
 			PostError(0, FString::Printf(TEXT("Failed to convert decoded image")), ERRCODE_INTERNAL_FAILED_TO_CONVERT_OUTPUT_SAMPLE);
 			return EConvertResult::Failure;
@@ -793,9 +862,25 @@ FVideoDecoderVPxElectra::EConvertResult FVideoDecoderVPxElectra::ConvertDecoderO
 		NewOutput->NumBuffers = 1;
 		NewOutput->ColorBufferFormat = EElectraDecoderPlatformPixelFormat::NV12;
 		NewOutput->ColorBufferEncoding = EElectraDecoderPlatformPixelEncoding::Native;
-		NewOutput->ColorPitch = NewOutput->Width;
 		NewOutput->DecodedWidth = NewOutput->Width;
-		NewOutput->DecodedHeight = NewOutput->Height * 3 / 2;
+		NewOutput->DecodedHeight = bUseGPUBuffers ? NewOutput->Height : (NewOutput->Height * 3 / 2);
+	}
+	else if (InDecodedImage->fmt == VPX_IMG_FMT_I42016)
+	{
+		check(NewOutput->NumBits == 10);
+		if (!ConvertDecodedImageToNV12orP010(NewOutput.Get(), InDecodedImage, PlatformDevice, PlatformDeviceVersion))
+		{
+			PostError(0, FString::Printf(TEXT("Failed to convert decoded image")), ERRCODE_INTERNAL_FAILED_TO_CONVERT_OUTPUT_SAMPLE);
+			return EConvertResult::Failure;
+		}
+		NewOutput->NumBuffers = 1;
+		NewOutput->ColorBufferFormat = EElectraDecoderPlatformPixelFormat::P010;
+		NewOutput->ColorBufferEncoding = EElectraDecoderPlatformPixelEncoding::Native;
+		NewOutput->DecodedWidth = NewOutput->Width;
+		NewOutput->DecodedHeight = bUseGPUBuffers ? NewOutput->Height : (NewOutput->Height * 3 / 2);
+
+		// VPx decoders return the 10-bit output in the lower bits, but the output pipe expects it in the upper bits. Post scale to compensate!
+		NewOutput->ExtraValues.Emplace(TEXT("pix_datascale"), FVariant(64.0));
 	}
 	else
 	{
@@ -822,24 +907,18 @@ FVideoDecoderVPxElectra::EConvertResult FVideoDecoderVPxElectra::ConvertDecoderO
 	return EConvertResult::Success;
 }
 
-
-static bool ConvertDecodedImageToNV12(TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe>& OutNV12Buffer, const vpx_image_t* InDecodedImage)
+bool FVideoDecoderVPxElectra::ConvertDecodedImageToNV12orP010(FVideoDecoderOutputVPxElectra* InNewOutput, const vpx_image_t* InDecodedImage, void* PlatformDevice, int32 PlatformDeviceVersion) const
 {
+	const bool bIsNV12 = (InDecodedImage->fmt == VPX_IMG_FMT_I420);
+
 	const int32 w = InDecodedImage->d_w;
 	const int32 h = InDecodedImage->d_h;
 	const int32 aw = Align(w, 2);
 	const int32 ah = Align(h, 2);
 
-	int32 AllocSize = aw * ah * 3 /2;
-
-	OutNV12Buffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
-	OutNV12Buffer->AddUninitialized(AllocSize);
-
-	uint8* DstY = OutNV12Buffer->GetData();
-	uint8* DstUV = DstY + aw * ah;
-	const uint8* SrcY = (const uint8*) InDecodedImage->planes[0];
-	const uint8* SrcU = (const uint8*) InDecodedImage->planes[1];
-	const uint8* SrcV = (const uint8*) InDecodedImage->planes[2];
+	const uint8* SrcY = (const uint8*)InDecodedImage->planes[0];
+	const uint8* SrcU = (const uint8*)InDecodedImage->planes[1];
+	const uint8* SrcV = (const uint8*)InDecodedImage->planes[2];
 	const int32 PitchY = InDecodedImage->stride[0];
 	const int32 PitchU = InDecodedImage->stride[1];
 	const int32 PitchV = InDecodedImage->stride[2];
@@ -847,23 +926,117 @@ static bool ConvertDecodedImageToNV12(TSharedPtr<TArray<uint8>, ESPMode::ThreadS
 	{
 		return false;
 	}
-	for(int32 y=0; y<h; ++y)
+
+	uint8* DstY;
+	uint8* DstUV;
+	uint32 DstPitch;
+
+	TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe>& OutNV12Buffer = InNewOutput->ColorBuffer;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	if (!PlatformDevice || PlatformDeviceVersion < 12000)
+#endif
 	{
-		FMemory::Memcpy(DstY, SrcY, w);
-		DstY += aw;
-		SrcY += PitchY;
+		uint32 Pitch = bIsNV12 ? aw : (aw * 2);
+		int32 AllocSize = Pitch * (ah * 3 / 2);
+
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		InNewOutput->GPUBuffer.Resource = nullptr;
+		InNewOutput->GPUBuffer.Fence = nullptr;
+#endif
+
+		OutNV12Buffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
+		OutNV12Buffer->AddUninitialized(AllocSize);
+		DstY = OutNV12Buffer->GetData();
+		DstUV = DstY + Pitch * ah;
+		DstPitch = Pitch;
 	}
-	int32 padUV = (aw - w) * 2;
-	for(int32 v=0; v<h/2; ++v)
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	else
 	{
-		for(int32 u=0; u<w/2; ++u)
+		TRefCountPtr D3D12Device(static_cast<ID3D12Device*>(PlatformDevice));
+
+		OutNV12Buffer.Reset();
+		InNewOutput->GPUBuffer.Resource = nullptr;
+
+		// Create the resource pool as needed...
+		if (!D3D12ResourcePool)
 		{
-			*DstUV++ = SrcU[u];
-			*DstUV++ = SrcV[u];
+			D3D12ResourcePool = MakeShared<FElectraMediaDecoderOutputBufferPool_DX12, ESPMode::ThreadSafe>(D3D12Device, MaxOutputBuffers, MaxWidth, MaxHeight * 3 / 2, bIsNV12 ? 1 : 2);
 		}
-		SrcU += PitchU;
-		SrcV += PitchV;
-		DstUV += padUV;
+
+		// Request resource and fence...
+		uint32 BufferPitch;
+		D3D12ResourcePool->AllocateOutputDataAsBuffer(InNewOutput->GPUBuffer, BufferPitch);
+
+		// Correct pitch ton reflect resource's setup
+		InNewOutput->ColorPitch = BufferPitch;
+
+		// Map the buffer so we can get a CPU address to the WC configured buffer
+		HRESULT Res = InNewOutput->GPUBuffer.Resource->Map(0, nullptr, (void**)&DstY);
+		check(SUCCEEDED(Res));
+		DstUV = DstY + BufferPitch * ah;
+		DstPitch = BufferPitch;
 	}
+#endif // ELECTRA_MEDIAGPUBUFFER_DX12
+
+	InNewOutput->ColorPitch = DstPitch;
+
+	if (bIsNV12)
+	{
+		for (int32 y = 0; y < h; ++y)
+		{
+			FMemory::Memcpy(DstY, SrcY, w);
+			SrcY += PitchY;
+			DstY += DstPitch;
+		}
+		for (int32 v = 0; v < h / 2; ++v)
+		{
+			uint8* DstUVLine = DstUV;
+			for (int32 u = 0; u < w / 2; ++u)
+			{
+				*DstUVLine++ = SrcU[u];
+				*DstUVLine++ = SrcV[u];
+			}
+			SrcU += PitchU;
+			SrcV += PitchV;
+			DstUV += DstPitch;
+		}
+	}
+	else
+	{
+		// note: data is delivered in the lower 10-bits, but expected in the upper
+		// -> instead of processing the data here, we provide a "data scale" attribute to be applied on conversion from YUV to RGB
+		for (int32 y = 0; y < h; ++y)
+		{
+			FMemory::Memcpy(DstY, SrcY, int64(w) << 1);
+			SrcY += PitchY;
+			DstY += DstPitch;
+		}
+		for (int32 v = 0; v < h / 2; ++v)
+		{
+			uint16* DstUVLine = (uint16*)DstUV;
+			const uint16* SrcU16 = (const uint16*)SrcU;
+			const uint16* SrcV16 = (const uint16*)SrcV;
+			for (int32 u = 0; u < w / 2; ++u)
+			{
+				*DstUVLine++ = SrcU16[u];
+				*DstUVLine++ = SrcV16[u];
+			}
+			SrcU += PitchU;
+			SrcV += PitchV;
+			DstUV += DstPitch;
+		}
+	}
+
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	if (InNewOutput->GPUBuffer.Resource.IsValid())
+	{
+		InNewOutput->GPUBuffer.Resource->Unmap(0, nullptr);
+		// To be compatible with implementations that might do the copy into the resource async, we also signal a fence
+		// (strictly speaking we would not need to as this is all 100% synchronous and done before the GPU ever attempts to read from the resource)
+		InNewOutput->GPUBuffer.Fence->Signal(InNewOutput->GPUBuffer.FenceValue);
+	}
+#endif
+
 	return true;
 }

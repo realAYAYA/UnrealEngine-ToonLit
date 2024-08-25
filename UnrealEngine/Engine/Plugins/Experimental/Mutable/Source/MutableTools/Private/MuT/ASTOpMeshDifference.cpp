@@ -10,8 +10,7 @@
 #include "MuT/ASTOpConditional.h"
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/ASTOpMeshRemoveMask.h"
-
-#include <memory>
+#include "MuT/ASTOpMeshAddTags.h"
 
 
 namespace mu
@@ -35,8 +34,10 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	bool ASTOpMeshDifference::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpMeshDifference* Other = dynamic_cast<const ASTOpMeshDifference*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpMeshDifference* Other = static_cast<const ASTOpMeshDifference*>(&otherUntyped);
+
 			return Base == Other->Base && Target == Other->Target
 				&& bIgnoreTextureCoords == Other->bIgnoreTextureCoords
 				&& Channels == Other->Channels;
@@ -132,8 +133,8 @@ namespace mu
 			case OP_TYPE::ME_SWITCH:
 			{
 				// If the switch variable and structure is the same
-				const ASTOpSwitch* BaseSwitch = reinterpret_cast<const ASTOpSwitch*>(BaseAt.get());
-				const ASTOpSwitch* TargetSwitch = reinterpret_cast<const ASTOpSwitch*>(TargetAt.get());
+				const ASTOpSwitch* BaseSwitch = static_cast<const ASTOpSwitch*>(BaseAt.get());
+				const ASTOpSwitch* TargetSwitch = static_cast<const ASTOpSwitch*>(TargetAt.get());
 				bool bIsSimilarSwitch = BaseSwitch->IsCompatibleWith(TargetSwitch);
 				if (!bIsSimilarSwitch)
 				{
@@ -169,8 +170,8 @@ namespace mu
 
 			case OP_TYPE::ME_CONDITIONAL:
 			{
-				const ASTOpConditional* BaseConditional = reinterpret_cast<const ASTOpConditional*>(BaseAt.get());
-				const ASTOpConditional* TargetConditional = reinterpret_cast<const ASTOpConditional*>(TargetAt.get());
+				const ASTOpConditional* BaseConditional = static_cast<const ASTOpConditional*>(BaseAt.get());
+				const ASTOpConditional* TargetConditional = static_cast<const ASTOpConditional*>(TargetAt.get());
 				bool bIsSimilar = BaseConditional->condition == TargetConditional->condition;
 				if (!bIsSimilar)
 				{
@@ -263,6 +264,21 @@ namespace mu
 				break;
 			}
 
+			case OP_TYPE::ME_ADDTAGS:
+			{
+				Ptr<ASTOpMeshAddTags> NewAdd = mu::Clone<ASTOpMeshAddTags>(BaseAt);
+
+				if (NewAdd->Source)
+				{
+					Ptr<ASTOpMeshDifference> NewDiff = mu::Clone<ASTOpMeshDifference>(this);
+					NewDiff->Base = NewAdd->Source.child();
+					NewAdd->Source = NewDiff;
+				}
+
+				NewOp = NewAdd;
+				break;
+			}
+
 			default:
 				break;
 
@@ -322,6 +338,17 @@ namespace mu
 				}
 
 				NewOp = NewConditional;
+				break;
+			}
+
+			case OP_TYPE::ME_ADDTAGS:
+			{
+				// Ignore tags in this branch
+				const ASTOpMeshAddTags* Add = static_cast<const ASTOpMeshAddTags*>(TargetAt.get());
+
+				Ptr<ASTOpMeshDifference> NewDiff = mu::Clone<ASTOpMeshDifference>(this);
+				NewDiff->Target = Add->Source.child();
+				NewOp = NewDiff;
 				break;
 			}
 

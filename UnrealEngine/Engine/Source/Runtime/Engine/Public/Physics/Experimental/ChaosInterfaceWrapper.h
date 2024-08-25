@@ -39,6 +39,7 @@ inline FQueryFilterData MakeQueryFilterData(const FCollisionFilterData& FilterDa
 
 FBodyInstance* GetUserData(const Chaos::FGeometryParticle& Actor);
 UPhysicalMaterial* GetUserData(const Chaos::FChaosPhysicsMaterial& Material);
+UPrimitiveComponent* GetPrimitiveComponentFromUserData(const Chaos::FGeometryParticle& Actor);
 
 }
 

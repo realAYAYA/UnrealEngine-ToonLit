@@ -4,7 +4,8 @@
 #include "PhysicsControlProfileAsset.h"
 
 //======================================================================================================================
-UPhysicsControlProfileAssetFactory::UPhysicsControlProfileAssetFactory()
+UPhysicsControlProfileAssetFactory::UPhysicsControlProfileAssetFactory(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
 	SupportedClass = UPhysicsControlProfileAsset::StaticClass();
 	bCreateNew = true;

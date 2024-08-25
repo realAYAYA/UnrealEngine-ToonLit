@@ -10,16 +10,10 @@ FAnimNode_CustomProperty::FAnimNode_CustomProperty()
 	: FAnimNode_Base()
 	, TargetInstance(nullptr)
 {
-#if WITH_EDITOR
-	FCoreUObjectDelegates::OnObjectsReinstanced.AddRaw(this, &FAnimNode_CustomProperty::HandleObjectsReinstanced);
-#endif // WITH_EDITOR
 }
 
 FAnimNode_CustomProperty::~FAnimNode_CustomProperty()
 {
-#if WITH_EDITOR
-	FCoreUObjectDelegates::OnObjectsReinstanced.RemoveAll(this);
-#endif // WITH_EDITOR
 }
 
 void FAnimNode_CustomProperty::SetTargetInstance(UObject* InInstance)

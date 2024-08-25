@@ -259,6 +259,15 @@ static IOSAppDelegate* CachedDelegate = nil;
 
 -(id)init
 {
+#if UE_USE_SWIFT_UI_MAIN
+
+	NSArray* Arguments = [[NSProcessInfo processInfo] arguments];
+	Arguments = [Arguments subarrayWithRange:NSMakeRange(1, [Arguments count] - 1)];
+	FString CmdLine = [Arguments componentsJoinedByString:@" "];
+
+	FIOSCommandLineHelper::InitCommandArgs(*CmdLine);
+
+#endif
 	self = [super init];
 	CachedDelegate = self;
 	memset(GEnabledAudioFeatures, 0, sizeof(GEnabledAudioFeatures));
@@ -608,20 +617,21 @@ static IOSAppDelegate* CachedDelegate = nil;
 	
 	self.bAudioActive = bActive;
 	
-    // get the category and settings to use
-        NSString* Category = AVAudioSessionCategoryAmbient;
-        if([self IsFeatureActive:EAudioFeature::DoNotMixWithOthers])
-        {
-            Category = AVAudioSessionCategorySoloAmbient;
-        }
-    #if !PLATFORM_TVOS
-        bool bSupportsBackgroundAudio = GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsBackgroundAudio"), bSupportsBackgroundAudio, GEngineIni);
-        if (bSupportsBackgroundAudio)
-        {
-            Category = AVAudioSessionCategoryPlayback;
-        }
-    #endif
-    
+	// get the category and settings to use
+	NSString* Category = AVAudioSessionCategoryAmbient;
+	if([self IsFeatureActive:EAudioFeature::DoNotMixWithOthers])
+	{
+		Category = AVAudioSessionCategorySoloAmbient;
+	}
+#if !PLATFORM_TVOS
+	bool bSupportsBackgroundAudio = false;
+	GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsBackgroundAudio"), bSupportsBackgroundAudio, GEngineIni);
+	if (bSupportsBackgroundAudio)
+	{
+		Category = AVAudioSessionCategoryPlayback;
+	}
+#endif
+	
 	NSString* Mode = AVAudioSessionModeDefault;
 	AVAudioSessionCategoryOptions Options = 0;
 	if (self.bAudioActive || [self IsBackgroundAudioPlaying] || [self IsFeatureActive:EAudioFeature::BackgroundAudio])
@@ -726,7 +736,7 @@ static IOSAppDelegate* CachedDelegate = nil;
 
 -(bool)HasRecordPermission
 {
-#if PLATFORM_TVOS
+#if PLATFORM_TVOS || PLATFORM_VISIONOS
 	// TVOS does not have sound recording capabilities.
 	return false;
 #elif (defined(__IPHONE_17_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_17_0)
@@ -843,9 +853,14 @@ static IOSAppDelegate* CachedDelegate = nil;
 
 - (void)LoadScreenResolutionModifiers
 {
+#if PLATFORM_VISIONOS
+	self.ScreenScale = 1.0f;
+	self.NativeScale = 1.0f;
+#else
 	// cache these UI thread sensitive vars for later use
 	self.ScreenScale = (float)[[UIScreen mainScreen] scale];
 	self.NativeScale = (float)[[UIScreen mainScreen] nativeScale];
+#endif
 
 	// need to cache the MobileContentScaleFactor for framebuffer creation.
 	static IConsoleVariable* CVarScale = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MobileContentScaleFactor"));
@@ -1005,14 +1020,18 @@ static FAutoConsoleVariableRef CVarGEnableThermalsReport(
 
 #if !BUILD_EMBEDDED_APP
     
-    
-    CGRect MainFrame = [[UIScreen mainScreen] bounds];
+#if PLATFORM_VISIONOS
+    CGRect MainFrame = CGRectMake(0, 0, 1000, 1000);
+#else
+	CGRect MainFrame = [[UIScreen mainScreen] bounds];
+#endif
     self.Window = [[UIWindow alloc] initWithFrame:MainFrame];
 
     [self.Window makeKeyAndVisible];
 
     FAppEntry::PreInit(self, application);
 
+#if !PLATFORM_VISIONOS
     UIStoryboard *storyboard = [UIStoryboard storyboardWithName:@"LaunchScreen" bundle:nil];
     if (storyboard != nil)
     {
@@ -1021,7 +1040,7 @@ static FAutoConsoleVariableRef CVarGEnableThermalsReport(
         [self.Window addSubview: self.viewController.view];
         GShowSplashScreen = true;
     }
-
+#endif
 
     timer = [NSTimer scheduledTimerWithTimeInterval: 0.05f target:self selector:@selector(timerForSplashScreen) userInfo:nil repeats:YES];
 
@@ -1031,7 +1050,7 @@ static FAutoConsoleVariableRef CVarGEnableThermalsReport(
 
 #endif
 	
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
 	UNUserNotificationCenter *Center = [UNUserNotificationCenter currentNotificationCenter];
 	Center.delegate = self;
 	// Register for device orientation changes
@@ -1303,7 +1322,7 @@ static FAutoConsoleVariableRef CVarGEnableThermalsReport(
 
 - (void) didRotate:(NSNotification *)notification
 {   
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS &&!PLATFORM_VISIONOS
 	// get the interface orientation
 	
 	NSLog(@"didRotate orientation = %d", (int)[self.Window.windowScene interfaceOrientation]);
@@ -1410,10 +1429,11 @@ FCriticalSection RenderSuspend;
 		}
 		UE_LOG(LogTemp, Display, TEXT("Done with entering background tasks time."));
     }
-    bool bSupportsBackgroundAudio = GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsBackgroundAudio"), bSupportsBackgroundAudio, GEngineIni);
     
 // fix for freeze on tvOS, moving to applicationDidEnterBackground. Not making the changes for iOS platforms as the bug does not happen and could bring some side effets.
 #if !PLATFORM_TVOS
+	bool bSupportsBackgroundAudio = false;
+	GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsBackgroundAudio"), bSupportsBackgroundAudio, GEngineIni);
     if (!bSupportsBackgroundAudio)
     {
         [self ToggleSuspend:true];
@@ -1642,7 +1662,7 @@ extern double GCStartTime;
 
 #endif
 
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
 
 +(EDeviceScreenOrientation) ConvertFromUIInterfaceOrientation:(UIInterfaceOrientation)Orientation
 {

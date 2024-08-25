@@ -554,6 +554,20 @@ void SGraphNode::SetOwner( const TSharedRef<SGraphPanel>& OwnerPanel )
 		this->RightNodeBox->ClearChildren();
 		CreatePinWidgets();
 	}
+
+	if (TitleLODBranchNode.IsValid())
+	{
+		TitleLODBranchNode->RefreshLODSlotContent();
+	}
+	
+	for (TSharedRef<SGraphPin> Pin : InputPins)
+	{
+		Pin->RefreshLOD();
+	}
+	for (TSharedRef<SGraphPin> Pin : OutputPins)
+	{
+		Pin->RefreshLOD();
+	}
 }
 
 /** @param NewPosition  The Node should be relocated to this position in the graph panel */
@@ -579,22 +593,14 @@ FVector2D SGraphNode::GetPosition() const
 
 FString SGraphNode::GetEditableNodeTitle() const
 {
-	if (GraphNode != NULL)
+	if (GraphNode != nullptr)
 	{
 		// Trying to catch a non-reproducible crash in this function
 		check(GraphNode->IsValidLowLevel());
-	}
-
-	if(GraphNode)
-	{
 		return GraphNode->GetNodeTitle(ENodeTitleType::EditableTitle).ToString();
 	}
-	return NSLOCTEXT("GraphEditor", "NullNode", "Null Node").ToString();
 
-	// Get the portion of the node that is actually editable text (may be a subsection of the title, or something else entirely)
-	return (GraphNode != NULL)
-		? GraphNode->GetNodeTitle(ENodeTitleType::EditableTitle).ToString()
-		: NSLOCTEXT("GraphEditor", "NullNode", "Null Node").ToString();
+	return NSLOCTEXT("GraphEditor", "NullNode", "Null Node").ToString();
 }
 
 FText SGraphNode::GetEditableNodeTitleAsText() const
@@ -810,7 +816,8 @@ TSharedRef<SWidget> SGraphNode::CreateTitleWidget(TSharedPtr<SNodeTitle> NodeTit
 		.OnVerifyTextChanged(this, &SGraphNode::OnVerifyNameTextChanged)
 		.OnTextCommitted(this, &SGraphNode::OnNameTextCommited)
 		.IsReadOnly(this, &SGraphNode::IsNameReadOnly)
-		.IsSelected(this, &SGraphNode::IsSelectedExclusively);
+		.IsSelected(this, &SGraphNode::IsSelectedExclusively)
+		.OverflowPolicy(GetNameOverflowPolicy());
 	InlineEditableText->SetColorAndOpacity(TAttribute<FLinearColor>::Create(TAttribute<FLinearColor>::FGetter::CreateSP(this, &SGraphNode::GetNodeTitleTextColor)));
 
 	return InlineEditableText.ToSharedRef();
@@ -876,9 +883,7 @@ void SGraphNode::UpdateGraphNode()
 			[
 				SNew(SBorder)
 				.BorderImage( FAppStyle::GetBrush("Graph.Node.ColorSpill") )
-				// The extra margin on the right
-				// is for making the color spill stretch well past the node title
-				.Padding( FMargin(10,5,30,3) )
+				.Padding(TitleBorderMargin)
 				.BorderBackgroundColor( this, &SGraphNode::GetNodeTitleColor )
 				[
 					SNew(SHorizontalBox)
@@ -931,20 +936,19 @@ void SGraphNode::UpdateGraphNode()
 
 	SetDefaultTitleAreaWidget(DefaultTitleAreaWidget);
 
-	TSharedRef<SWidget> TitleAreaWidget = 
-		SNew(SLevelOfDetailBranchNode)
-		.UseLowDetailSlot(this, &SGraphNode::UseLowDetailNodeTitles)
-		.LowDetail()
-		[
-			SNew(SBorder)
-			.BorderImage( FAppStyle::GetBrush("Graph.Node.ColorSpill") )
-			.Padding( FMargin(75.0f, 22.0f) ) // Saving enough space for a 'typical' title so the transition isn't quite so abrupt
-			.BorderBackgroundColor( this, &SGraphNode::GetNodeTitleColor )
-		]
-		.HighDetail()
-		[
-			DefaultTitleAreaWidget
-		];
+	SAssignNew(TitleLODBranchNode, SLevelOfDetailBranchNode)
+	.UseLowDetailSlot(this, &SGraphNode::UseLowDetailNodeTitles)
+	.LowDetail()
+	[
+		SNew(SBorder)
+		.BorderImage( FAppStyle::GetBrush("Graph.Node.ColorSpill") )
+		.Padding( FMargin(75.0f, 22.0f) ) // Saving enough space for a 'typical' title so the transition isn't quite so abrupt
+		.BorderBackgroundColor( this, &SGraphNode::GetNodeTitleColor )
+	]
+	.HighDetail()
+	[
+		DefaultTitleAreaWidget
+	];
 
 	
 	if (!SWidget::GetToolTip().IsValid())
@@ -968,7 +972,7 @@ void SGraphNode::UpdateGraphNode()
 		.VAlign(VAlign_Top)
 		.Padding(Settings->GetNonPinNodeBodyPadding())
 		[
-			TitleAreaWidget
+			TitleLODBranchNode.ToSharedRef()
 		]
 
 		+SVerticalBox::Slot()

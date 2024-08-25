@@ -93,8 +93,6 @@ FStreamableTextureResource::FStreamableTextureResource(UTexture* InOwner, const 
 	, LODGroup(InOwner->LODGroup)
 	, PixelFormat(InPlatformData->PixelFormat)
 {
-	// HDR images are stored in linear but still require gamma correction to display correctly.
-	bIgnoreGammaConversions = !InOwner->SRGB && !IsHDR(PixelFormat);
 	bSRGB = InOwner->SRGB;
 	bGreyScaleFormat = UE::TextureDefines::ShouldUseGreyScaleEditorVisualization( InOwner->CompressionSettings );
 

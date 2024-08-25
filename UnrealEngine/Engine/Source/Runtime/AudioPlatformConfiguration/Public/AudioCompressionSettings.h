@@ -80,8 +80,13 @@ struct FPlatformAudioCookOverrides
 	// If StreamCaching is set to true, this will be used 
 	float AutoStreamingThreshold;
 
-	// Whether to put streamed audio chunks inline in the Pak file or not (only matters if bUseStreamCaching is true)
-	bool bInlineStreamedAudioChunks;
+	// Wether to inline the first "Audio" chunk, which is typically chunk 1. (Only on assets marked retain-on-load with a size of audio in secs set) 
+	bool bInlineFirstAudioChunk = false;
+
+	// This will decide how much data to put in the first audio chunk. Anything <= 0 will be ignored.
+	// Must be combined with bInlineFirstAudioChunk, this will decide how much data to put in the first chunk.
+	// NOTE: This is platform default and can be overriden by each asset or soundclass.
+	float LengthOfFirstAudioChunkInSecs = 0.f;
 
 	// If Load On Demand is enabled, these settings are used to determine chunks and cache sizes.
 	FAudioStreamCachingSettings StreamCachingSettings;
@@ -90,7 +95,8 @@ struct FPlatformAudioCookOverrides
 		: bResampleForDevice(false)
 		, CompressionQualityModifier(1.0f)
 		, AutoStreamingThreshold(0.0f)
-		, bInlineStreamedAudioChunks(false)
+		, bInlineFirstAudioChunk(false)
+		, LengthOfFirstAudioChunkInSecs(0.f)
 	{
 		PlatformSampleRates.Add(ESoundwaveSampleRateSettings::Max, 48000);
 		PlatformSampleRates.Add(ESoundwaveSampleRateSettings::High, 32000);

@@ -17,6 +17,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "IPersonaPreviewScene.h"
 #include "IPersonaToolkit.h"
+#include "SClothPaintTab.h"
 #include "Misc/CoreMiscDefines.h"
 #include "Misc/Guid.h"
 #include "ShowFlags.h"
@@ -60,6 +61,12 @@ TSharedPtr<class FModeToolkit> FClothingPaintEditMode::GetToolkit()
 void FClothingPaintEditMode::SetPersonaToolKit(class TSharedPtr<IPersonaToolkit> InToolkit)
 {
 	PersonaToolkit = InToolkit;
+}
+
+void FClothingPaintEditMode::SetupClothPaintTab(TSharedPtr<SClothPaintTab> InClothPaintTab)
+{
+	ClothPaintTab = InClothPaintTab;
+	ClothPaintTab.Pin().Get()->EnterPaintMode();
 }
 
 void FClothingPaintEditMode::Enter()
@@ -149,6 +156,11 @@ void FClothingPaintEditMode::Exit()
 	}
 
 	ClothPainter->ExitPaintMode();
+
+	if (ClothPaintTab.IsValid())
+	{
+		ClothPaintTab.Pin().Get()->ExitPaintMode();	
+	}
 
 	IMeshPaintEdMode::Exit();
 }

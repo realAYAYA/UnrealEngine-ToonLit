@@ -618,9 +618,9 @@ bool FCEFWebBrowserWindow::BlockInputInDirectHwndMode() const
 	return bInDirectHwndMode;
 #elif PLATFORM_MAC
 	return bInDirectHwndMode;
-#endif
-
+#else
 	return false;
+#endif
 }
 
 void FCEFWebBrowserWindow::SetViewportSize(FIntPoint WindowSize, FIntPoint WindowPos)
@@ -2301,7 +2301,6 @@ EWebTransitionSource TransitionTypeToSourceEnum(const CefRequest::TransitionType
 		case TT_RELOAD:			return EWebTransitionSource::Reload;
 		default:				return EWebTransitionSource::Unknown;
 	}
-	return EWebTransitionSource::Unknown;
 }
 
 EWebTransitionSourceQualifier TransitionTypeToSourceQualifierEnum(const CefRequest::TransitionType& Type)
@@ -2317,7 +2316,6 @@ EWebTransitionSourceQualifier TransitionTypeToSourceQualifierEnum(const CefReque
 		case TT_SERVER_REDIRECT_FLAG:	return EWebTransitionSourceQualifier::ServerRedirect;
 		default:						return EWebTransitionSourceQualifier::Unknown;
 	}
-	return EWebTransitionSourceQualifier::Unknown;
 }
 
 bool FCEFWebBrowserWindow::OnBeforeBrowse( CefRefPtr<CefBrowser> Browser, CefRefPtr<CefFrame> Frame, CefRefPtr<CefRequest> Request, bool user_gesture, bool bIsRedirect )

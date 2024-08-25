@@ -74,8 +74,8 @@ void PolygonTriangulation::TriangulateSimplePolygon(const TArray<TVector2<T>>& V
 	// in the polygon.  This will just save us having to iterate later on.
 	TArray<int32> PrevVertexNumbers, NextVertexNumbers;
 
-	PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
-	NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
+	PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
+	NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
 
 	for (int32 VertexNumber = 0; VertexNumber < PolygonVertexCount; ++VertexNumber)
 	{
@@ -277,8 +277,8 @@ void PolygonTriangulation::TriangulateSimplePolygon(const TArray<TVector<T>>& Ve
 	// in the polygon.  This will just save us having to iterate later on.
 	TArray<int32> PrevVertexNumbers, NextVertexNumbers;
 
-	PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
-	NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
+	PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
+	NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
 
 	for (int32 VertexNumber = 0; VertexNumber < PolygonVertexCount; ++VertexNumber)
 	{

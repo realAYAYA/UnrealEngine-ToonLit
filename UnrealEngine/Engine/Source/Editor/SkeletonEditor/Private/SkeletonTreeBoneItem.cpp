@@ -371,7 +371,7 @@ FText FSkeletonTreeBoneItem::GetBoneToolTip()
 			}
 			else
 			{
-				ToolTip = LOCTEXT( "BoneToolTipWeighted", "This bone has vertices weighted against it" );
+				ToolTip = LOCTEXT( "BoneToolTipWeighted", "This bone (or one of its children) has vertices weighted against it" );
 			}
 		}
 	}

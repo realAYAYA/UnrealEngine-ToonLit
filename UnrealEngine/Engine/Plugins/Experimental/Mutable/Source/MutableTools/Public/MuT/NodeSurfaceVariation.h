@@ -40,14 +40,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        virtual int GetInputCount() const override;
-        virtual Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -64,7 +58,7 @@ namespace mu
 		int GetVariationCount() const;
 
         //!
-        enum class VariationType : uint8_t
+        enum class VariationType : uint8
         {
             //! The variation selection is controlled by tags defined in other surfaces.
             //! Default value.
@@ -78,7 +72,7 @@ namespace mu
         void SetVariationType(VariationType);
 
         //! Set the tag or state name that will enable a specific vartiation
-		void SetVariationTag(int index, const char* strTag);
+		void SetVariationTag(int index, const FString& Tag);
 
 		//! 
         void AddVariationSurface(int index, NodeSurface* surface);
@@ -92,7 +86,7 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 		class Private;
 		Private* GetPrivate() const;
-                Node::Private* GetBasePrivate() const override;
+        Node::Private* GetBasePrivate() const override;
 
 	protected:
 

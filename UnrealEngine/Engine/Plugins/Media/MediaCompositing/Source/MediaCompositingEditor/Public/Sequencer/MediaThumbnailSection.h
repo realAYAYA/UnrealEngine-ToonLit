@@ -56,7 +56,7 @@ public:
 	//~ FThumbnailSection interface
 
 	virtual FMargin GetContentPadding() const override;
-	virtual float GetSectionHeight() const override;
+	virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const override;
 	virtual FText GetSectionTitle() const override;
 	virtual void SetSingleTime(double GlobalTime) override;
 	virtual int32 OnPaintSection(FSequencerSectionPainter& InPainter) const override;

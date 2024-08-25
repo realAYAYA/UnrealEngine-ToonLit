@@ -38,11 +38,11 @@ static const TArray<FString>& GetDataDrivenIniFilenames()
 
 		// manually look through the platform directories - we can't use GetExtensionDirs(), since that function uses the results of this function 
 		TArray<FString> PlatformDirs;
-		IFileManager::Get().FindFiles(PlatformDirs, *FPaths::Combine(FPaths::EnginePlatformExtensionsDir(), TEXT("*")), false, true);
+		IFileManager::Get().FindFiles(PlatformDirs, *FPaths::Combine(FPaths::EngineDir(), TEXT("Platforms"), TEXT("*")), false, true);
 
 		for (const FString& PlatformDir : PlatformDirs)
 		{
-			FString IniPath = FPaths::Combine(FPaths::EnginePlatformExtensionsDir(), PlatformDir, TEXT("Config/DataDrivenPlatformInfo.ini"));
+			FString IniPath = FPaths::Combine(FPaths::EnginePlatformExtensionDir(*PlatformDir), TEXT("Config/DataDrivenPlatformInfo.ini"));
 			if (IFileManager::Get().FileExists(*IniPath))
 			{
 				DataDrivenIniFilenames.Add(IniPath);
@@ -54,10 +54,10 @@ static const TArray<FString>& GetDataDrivenIniFilenames()
 		IFileManager::Get().FindFiles(ProjectPlatformDirs, *FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("*")), false, true);
 		for (const FString& PlatformDir : ProjectPlatformDirs)
 		{
-			FString IniPath = FPaths::Combine(FPaths::ProjectPlatformExtensionsDir(), PlatformDir, TEXT("Config/DataDrivenPlatformInfo.ini"));
+			FString IniPath = FPaths::Combine(FPaths::ProjectPlatformExtensionDir(*PlatformDir), TEXT("Config/DataDrivenPlatformInfo.ini"));
 			if (IFileManager::Get().FileExists(*IniPath))
 			{
-				DataDrivenIniFilenames.Add(IniPath);
+				DataDrivenIniFilenames.AddUnique(IniPath); // need AddUnique because if there's no project specified then ProjectConfigDir will be EngineConfigDir
 			}
 		}
 	}
@@ -86,11 +86,11 @@ bool FDataDrivenPlatformInfoRegistry::LoadDataDrivenIniFile(int32 Index, FConfig
 		IniFile.ProcessInputFileContents(IniContents, IniFilenames[Index]);
 
 		// platform extension paths are different (engine/platforms/platform/config, not engine/config/platform)
-		if (IniFilenames[Index].StartsWith(FPaths::EnginePlatformExtensionsDir()))
+		if (IniFilenames[Index].StartsWith(FPaths::EnginePlatformExtensionDir(TEXT("")).TrimChar('/')))
 		{
 			PlatformName = FPaths::GetCleanFilename(FPaths::GetPath(FPaths::GetPath(IniFilenames[Index])));
 		}
-		else if (IniFilenames[Index].StartsWith(FPaths::ProjectPlatformExtensionsDir()))
+		else if (IniFilenames[Index].StartsWith(FPaths::ProjectPlatformExtensionDir(TEXT("")).TrimChar('/')))
 		{
 			PlatformName = FPaths::GetCleanFilename(FPaths::GetPath(FPaths::GetPath(IniFilenames[Index])));
 		}
@@ -240,7 +240,8 @@ static void DDPIGetStringArray(const FConfigFile& IniFile, const TCHAR* Key, TAr
 // Gets a string from a section, or empty string if it didn't exist
 static FString GetSectionString(const FConfigSection& Section, FName Key)
 {
-	return Section.FindRef(Key).GetValue();
+	const FConfigValue* Value = Section.Find(Key);
+	return Value ? Value->GetValue() : FString();
 }
 
 #if DDPI_HAS_EXTENDED_PLATFORMINFO_DATA
@@ -276,7 +277,7 @@ static void ParsePreviewPlatforms(const FConfigFile& IniFile)
 
 				FName PlatformName = *GetSectionString(Section.Value, FName("PlatformName"));
 				checkf(PlatformName != NAME_None, TEXT("DataDrivenPlatformInfo section [%s] must specify a PlatformName"), *SectionName);
-
+				
 				FPreviewPlatformMenuItem Item;
 				Item.PlatformName = PlatformName;
 				Item.PreviewShaderPlatformName = PreviewPlatformName;
@@ -286,13 +287,40 @@ static void ParsePreviewPlatforms(const FConfigFile& IniFile)
 				Item.ActiveIconName = *GetSectionString(Section.Value, FName("ActiveIconName"));
 				Item.InactiveIconPath = GetSectionString(Section.Value, FName("InactiveIconPath"));
 				Item.InactiveIconName = *GetSectionString(Section.Value, FName("InactiveIconName"));
-				Item.DeviceProfileName = *GetSectionString(Section.Value, FName("DeviceProfileName"));
 				Item.ShaderPlatformToPreview = *GetSectionString(Section.Value, FName("ShaderPlatform"));
+				Item.PreviewFeatureLevelName = *GetSectionString(Section.Value, FName("PreviewFeatureLevel"));
+
 				checkf(Item.ShaderPlatformToPreview != NAME_None, TEXT("DataDrivenPlatformInfo section [PreviewPlatform %s] must specify a ShaderPlatform"), *SectionName);
-				FTextStringHelper::ReadFromBuffer(*GetSectionString(Section.Value, FName("FriendlyName")), Item.OptionalFriendlyNameOverride);
 				FTextStringHelper::ReadFromBuffer(*GetSectionString(Section.Value, FName("MenuTooltip")), Item.MenuTooltip);
 				FTextStringHelper::ReadFromBuffer(*GetSectionString(Section.Value, FName("IconText")), Item.IconText);
-				PreviewPlatformMenuItems.Add(Item);
+
+
+				FString AllDeviceProfiles = GetSectionString(Section.Value, FName("DeviceProfileName"));
+				FString AllFriendlyName = GetSectionString(Section.Value, FName("FriendlyName"));
+				TArray<FString> DeviceProfileNames, FriendlyNames;
+				AllDeviceProfiles.ParseIntoArray(DeviceProfileNames, TEXT(","));
+				AllFriendlyName.ParseIntoArray(FriendlyNames, TEXT(","));
+				
+				if (DeviceProfileNames.Num() == 0)
+				{
+					DeviceProfileNames.Add(TEXT(""));
+					FriendlyNames.Add(TEXT(""));
+				}
+
+				for (int DPIndex = 0; DPIndex < DeviceProfileNames.Num(); DPIndex++)
+				{
+					Item.DeviceProfileName = *DeviceProfileNames[DPIndex].TrimStartAndEnd();
+					if (DPIndex < FriendlyNames.Num())
+					{
+						Item.OptionalFriendlyNameOverride = FText::FromString(FriendlyNames[DPIndex].TrimStartAndEnd());
+					}
+					else if (DeviceProfileNames.Num() > 1)
+					{
+						Item.OptionalFriendlyNameOverride = FText::FromString(Item.DeviceProfileName.ToString());
+					}
+									
+					PreviewPlatformMenuItems.Add(Item);
+				}
 			}
 		}
 	}
@@ -332,6 +360,8 @@ static void LoadDDPIIniSettings(const FConfigFile& IniFile, FDataDrivenPlatformI
 	DDPIGetBool(IniFile, TEXT("bSupportsGamepad"), Info.bSupportsGamepad);
 	DDPIGetBool(IniFile, TEXT("bCanChangeGamepadType"), Info.bCanChangeGamepadType);
 	DDPIGetBool(IniFile, TEXT("bSupportsTouch"), Info.bSupportsTouch);
+
+	DDPIGetName(IniFile, TEXT("OverrideCookPlatformName"), Info.OverrideCookPlatformName);
 
 #if DDPI_HAS_EXTENDED_PLATFORMINFO_DATA
 
@@ -485,15 +515,17 @@ const TArray<const FDataDrivenPlatformInfo*>& FDataDrivenPlatformInfoRegistry::G
 	return PlatformType == EPlatformInfoType::AllPlatformInfos ? AllSortedPlatformInfos : SortedPlatformInfos;
 }
 
-
-const TArray<FString>& FDataDrivenPlatformInfoRegistry::GetValidPlatformDirectoryNames()
+const TArray<FString>& FDataDrivenPlatformInfoRegistry::GetPlatformDirectoryNames(bool bCheckValid)
 {
-	static bool bHasSearchedForPlatforms = false;
-	static TArray<FString> ValidPlatformDirectories;
+	static bool bHasSearchedForPlatforms[2] = { false, false };
+	static TArray<FString> PlatformDirectories[2];
 
-	if (bHasSearchedForPlatforms == false)
+	// Which PlatformDirectories cache to use
+	int32 CacheIndex = bCheckValid ? 1 : 0;
+
+	if (bHasSearchedForPlatforms[CacheIndex] == false)
 	{
-		bHasSearchedForPlatforms = true;
+		bHasSearchedForPlatforms[CacheIndex] = true;
 
 		// look for possible platforms
 		const TMap<FName, FDataDrivenPlatformInfo>& Infos = GetAllPlatformInfos();
@@ -501,26 +533,25 @@ const TArray<FString>& FDataDrivenPlatformInfoRegistry::GetValidPlatformDirector
 		{
 #if DDPI_HAS_EXTENDED_PLATFORMINFO_DATA
 			// if the editor hasn't compiled in support for the platform, it's not "valid"
-			if (!HasCompiledSupportForPlatform(Pair.Key, EPlatformNameType::Ini))
+			if (bCheckValid && !HasCompiledSupportForPlatform(Pair.Key, EPlatformNameType::Ini))
 			{
 				continue;
 			}
 #endif
 
 			// add ourself as valid
-			ValidPlatformDirectories.AddUnique(Pair.Key.ToString());
+			PlatformDirectories[CacheIndex].AddUnique(Pair.Key.ToString());
 
 			// now add additional directories
 			for (FString& AdditionalDir : Pair.Value.AdditionalRestrictedFolders)
 			{
-				ValidPlatformDirectories.AddUnique(AdditionalDir);
+				PlatformDirectories[CacheIndex].AddUnique(AdditionalDir);
 			}
 		}
 	}
 
-	return ValidPlatformDirectories;
+	return PlatformDirectories[CacheIndex];
 }
-
 
 const FDataDrivenPlatformInfo& FDataDrivenPlatformInfoRegistry::GetPlatformInfo(FName PlatformName)
 {

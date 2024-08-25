@@ -16,34 +16,12 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeImageConstant::Private::s_type =
-		NODE_TYPE("ImageConstant", NodeImage::GetStaticType());
+	FNodeType NodeImageConstant::Private::s_type =
+		FNodeType("ImageConstant", NodeImage::GetStaticType());
 
 
 	//---------------------------------------------------------------------------------------------
 	MUTABLE_IMPLEMENT_NODE(NodeImageConstant, EType::Constant, Node, Node::EType::Image);
-
-
-	//---------------------------------------------------------------------------------------------
-	int NodeImageConstant::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeImageConstant::GetInputNode(int) const
-	{
-		check(false);
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeImageConstant::SetInputNode(int, NodePtr)
-	{
-		check(false);
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -56,9 +34,9 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeImageConstant::SetValue(Ptr<const Image> pValue)
+	void NodeImageConstant::SetValue(const Image* Value)
 	{
-		m_pD->m_pProxy = new ResourceProxyMemory<Image>(pValue);
+		m_pD->m_pProxy = new ResourceProxyMemory<Image>(Value);
 	}
 
 

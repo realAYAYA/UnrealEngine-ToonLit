@@ -43,6 +43,7 @@ void UOptimusNode_GetVariable::PreDuplicateRequirementActions(
 	bool bFoundDuplicate = false;
 	do
 	{
+		bFoundDuplicate = false;
 		for (const UOptimusVariableDescription* ExistingVariableDesc: Deformer->GetVariables())
 		{
 			if (ExistingVariableDesc->VariableName == DuplicationInfo.VariableName)
@@ -183,7 +184,7 @@ UOptimusVariableDescription* UOptimusNode_GetVariable::GetVariableDescription() 
 }
 
 
-TOptional<FText> UOptimusNode_GetVariable::ValidateForCompile() const
+TOptional<FText> UOptimusNode_GetVariable::ValidateForCompile(const FOptimusPinTraversalContext& InContext) const
 {
 	const UOptimusVariableDescription* VariableDescription = GetVariableDescription();
 	if (!VariableDescription)
@@ -198,7 +199,7 @@ FString UOptimusNode_GetVariable::GetValueName() const
 {
 	if (const UOptimusVariableDescription* Var = VariableDesc.Get())
 	{
-		return Var->VariableName.GetPlainNameString();
+		return Var->VariableName.ToString();
 	}
 
 	return {};

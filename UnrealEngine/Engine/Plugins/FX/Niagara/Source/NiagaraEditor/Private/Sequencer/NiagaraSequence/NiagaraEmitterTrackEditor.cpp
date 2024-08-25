@@ -22,6 +22,12 @@
 #include "Modules/ModuleManager.h"
 #include "ViewModels/Stack/NiagaraStackRendererItem.h"
 
+#include "MVVM/ViewModelPtr.h"
+#include "MVVM/Extensions/ITrackExtension.h"
+#include "MVVM/ViewModels/OutlinerColumns/OutlinerColumnTypes.h"
+#include "MVVM/Views/SOutlinerItemViewBase.h"
+#include "MVVM/Views/SOutlinerTrackColorPicker.h"
+
 #define LOCTEXT_NAMESPACE "NiagaraEmitterTrackEditor"
 
 class SEmitterTrackWidget : public SCompoundWidget
@@ -92,8 +98,11 @@ public:
 		// Due to delegate bind order, the item creation happens after the refresh. To solve this, we just wait a frame. 
 		UNiagaraEmitter* NiagaraEmitter = EmitterTrack->GetEmitterHandleViewModel()->GetEmitterViewModel()->GetEmitter().Emitter;
 		WeakNiagaraEmitter = NiagaraEmitter;
-		NiagaraEmitter->OnRenderersChanged().AddSP(this, &SEmitterTrackWidget::RefreshRenderers);
-
+		//-TODO:Stateless: Add support for stateless
+		if (NiagaraEmitter)
+		{
+			NiagaraEmitter->OnRenderersChanged().AddSP(this, &SEmitterTrackWidget::RefreshRenderers);
+		}
 
 		// Enabled checkbox.
 		TrackBox->AddSlot()
@@ -309,9 +318,34 @@ void FNiagaraEmitterTrackEditor::BuildTrackContextMenu( FMenuBuilder& MenuBuilde
 	}
 }
 
-TSharedPtr<SWidget> FNiagaraEmitterTrackEditor::BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params)
+TSharedPtr<SWidget> FNiagaraEmitterTrackEditor::BuildOutlinerColumnWidget(const FBuildColumnWidgetParams& Params, const FName& ColumnName)
 {
-	return SNew(SEmitterTrackWidget, *CastChecked<UMovieSceneNiagaraEmitterTrack>(Track));
+	using namespace UE::Sequencer;
+
+	TViewModelPtr<IOutlinerExtension> OutlinerItem = Params.ViewModel.ImplicitCast();
+	if (!OutlinerItem)
+	{
+		return nullptr;
+	}
+
+	if (ColumnName == FCommonOutlinerNames::Edit)
+	{
+		UMovieSceneNiagaraEmitterTrack* Track = CastChecked<UMovieSceneNiagaraEmitterTrack>(Params.TrackModel->GetTrack());
+		return SNew(SEmitterTrackWidget, *Track);
+	}
+
+	if (ColumnName == FCommonOutlinerNames::Label)
+	{
+		return SNew(SOutlinerItemViewBase, OutlinerItem, Params.Editor, Params.TreeViewRow);
+	}
+
+	if (ColumnName == FCommonOutlinerNames::ColorPicker)
+	{
+		return SNew(SOutlinerTrackColorPicker, OutlinerItem, Params.Editor);
+	}
+
+
+	return SNullWidget::NullWidget;
 }
 
 #undef LOCTEXT_NAMESPACE

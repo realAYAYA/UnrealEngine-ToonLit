@@ -219,10 +219,27 @@ EGLTFJsonShadingModel FGLTFCoreUtilities::ConvertShadingModel(EMaterialShadingMo
 {
 	switch (ShadingModel)
 	{
-		case MSM_Unlit:      return EGLTFJsonShadingModel::Unlit;
-		case MSM_DefaultLit: return EGLTFJsonShadingModel::Default;
-		case MSM_ClearCoat:  return EGLTFJsonShadingModel::ClearCoat;
-		default:             return EGLTFJsonShadingModel::None;
+		case MSM_Unlit:                return EGLTFJsonShadingModel::Unlit;
+		case MSM_DefaultLit:           return EGLTFJsonShadingModel::Default;
+		case MSM_ClearCoat:            return EGLTFJsonShadingModel::ClearCoat;
+		case MSM_Cloth:                return EGLTFJsonShadingModel::Sheen;
+		case MSM_ThinTranslucent:      return EGLTFJsonShadingModel::Transmission;
+		default:                       return EGLTFJsonShadingModel::None;
+	}
+}
+
+FString FGLTFCoreUtilities::GetShadingModelString(EGLTFJsonShadingModel ShadingModel)
+{
+	switch (ShadingModel)
+	{
+		case EGLTFJsonShadingModel::None:               return TEXT("Unknown");
+		case EGLTFJsonShadingModel::Default:            return TEXT("Default");
+		case EGLTFJsonShadingModel::Unlit:              return TEXT("Unlit");
+		case EGLTFJsonShadingModel::ClearCoat:          return TEXT("ClearCoat");
+		case EGLTFJsonShadingModel::Sheen:              return TEXT("Cloth");
+		case EGLTFJsonShadingModel::Transmission:       return TEXT("ThinTranslucent");
+		case EGLTFJsonShadingModel::NumShadingModels:   return TEXT("Unknown");
+		default:                                        return TEXT("Unknown");
 	}
 }
 

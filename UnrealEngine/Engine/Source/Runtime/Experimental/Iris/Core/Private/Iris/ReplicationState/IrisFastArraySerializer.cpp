@@ -107,7 +107,7 @@ void FIrisFastArraySerializerPrivateAccessor::MarkAllArrayItemsDirty(FIrisFastAr
 	FNetBitArrayView MemberChangeMask = UE::Net::Private::FIrisFastArraySerializerPrivateAccessor::GetChangeMask(Array);
 	if (!MemberChangeMask.GetBit(FIrisFastArraySerializer::IrisFastArrayPropertyBitIndex))
 	{
-		MarkNetObjectStateDirty(Array.ReplicationStateHeader);
+		MarkNetObjectStateHeaderDirty(Array.ReplicationStateHeader);
 	}
 	if (StartingIndex == 0)
 	{
@@ -130,7 +130,7 @@ void FIrisFastArraySerializerPrivateAccessor::MarkArrayDirty(FIrisFastArraySeria
 	if (!MemberChangeMask.GetBit(FIrisFastArraySerializer::IrisFastArrayPropertyBitIndex))
 	{
 		MemberChangeMask.SetBit(FIrisFastArraySerializer::IrisFastArrayPropertyBitIndex);
-		MarkNetObjectStateDirty(Array.ReplicationStateHeader);
+		MarkNetObjectStateHeaderDirty(Array.ReplicationStateHeader);
 	}
 }
 
@@ -147,7 +147,7 @@ void FIrisFastArraySerializerPrivateAccessor::MarkArrayItemDirty(FIrisFastArrayS
 	if (!MemberChangeMask.GetBit(FIrisFastArraySerializer::IrisFastArrayPropertyBitIndex))
 	{
 		MemberChangeMask.SetBit(FIrisFastArraySerializer::IrisFastArrayPropertyBitIndex);
-		MarkNetObjectStateDirty(Array.ReplicationStateHeader);
+		MarkNetObjectStateHeaderDirty(Array.ReplicationStateHeader);
 	}
 }
 

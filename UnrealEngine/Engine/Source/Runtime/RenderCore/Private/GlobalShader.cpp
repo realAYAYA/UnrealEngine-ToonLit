@@ -249,7 +249,7 @@ private:
 					if (DefineName.FindChar(TCHAR('='), EqualsIndex))
 					{
 						DefineValue = DefineName.Mid(EqualsIndex + 1);
-						DefineName.MidInline(0, EqualsIndex, false);
+						DefineName.MidInline(0, EqualsIndex, EAllowShrinking::No);
 					}
 
 					const FShaderType* ShaderType = FindShaderTypeByName(ShaderName);

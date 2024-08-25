@@ -394,7 +394,7 @@ FRHIGPUBufferReadback* FLumenSurfaceCacheFeedback::GetLatestReadbackBuffer()
 	return LatestReadbackBuffer;
 }
 
-void FLumenSceneData::UpdateSurfaceCacheFeedback(FFeedbackData FeedbackData, const TArray<FVector, TInlineAllocator<2>>& LumenSceneCameraOrigins, TArray<FSurfaceCacheRequest, SceneRenderingAllocator>& SurfaceCacheRequests, const FViewFamilyInfo& ViewFamily)
+void FLumenSceneData::UpdateSurfaceCacheFeedback(FFeedbackData FeedbackData, const TArray<FVector, TInlineAllocator<2>>& LumenSceneCameraOrigins, TArray<FSurfaceCacheRequest>& SurfaceCacheRequests, const FViewFamilyInfo& ViewFamily, int32 RequestHistogram[Lumen::NumDistanceBuckets])
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UpdateSurfaceCacheFeedback);
 
@@ -466,6 +466,9 @@ void FLumenSceneData::UpdateSurfaceCacheFeedback(FFeedbackData FeedbackData, con
 					Request.LocalPageIndex = PageIndex.LocalPageIndex;
 					Request.Distance = Distance;
 					SurfaceCacheRequests.Add(Request);
+
+					uint32 Bin = Lumen::GetMeshCardDistanceBin(Distance);
+					RequestHistogram[Bin]++;
 
 					ensure(!Request.IsLockedMip());
 

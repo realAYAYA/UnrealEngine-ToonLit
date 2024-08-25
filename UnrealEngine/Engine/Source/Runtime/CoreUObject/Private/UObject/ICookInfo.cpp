@@ -45,6 +45,10 @@ FString FInstigator::ToString() const
 	return FString(Result);
 }
 
+FCookInfoEvent FDelegates::CookByTheBookStarted;
+FCookInfoEvent FDelegates::CookByTheBookFinished;
+FValidateSourcePackage FDelegates::ValidateSourcePackage;
+
 }
 
 static thread_local ECookLoadType GCookLoadType = ECookLoadType::Unexpected;

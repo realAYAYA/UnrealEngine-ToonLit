@@ -94,6 +94,9 @@ public:
 	void HideAllCpuTracks() { SetAllCpuTracksToggle(false); }
 	void ShowHideAllCpuTracks() { SetAllCpuTracksToggle(!IsAllCpuTracksToggleOn()); }
 
+	TSharedPtr<const ITimingEvent> FindMaxEventInstance(uint32 TimerId, double StartTime, double EndTime);
+	TSharedPtr<const ITimingEvent> FindMinEventInstance(uint32 TimerId, double StartTime, double EndTime);
+
 private:
 	void CreateThreadGroupsMenu(FMenuBuilder& MenuBuilder);
 
@@ -117,20 +120,6 @@ private:
 
 	uint64 TimingProfilerTimelineCount;
 	uint64 LoadTimeProfilerTimelineCount;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-enum class EFilterField : int32
-{
-	StartTime = 0,
-	EndTime = 1,
-	Duration = 2,
-	TrackName = 3,
-	TimerId = 4,
-	TimerName = 5,
-	CoreEventName = 6,
-	RegionName = 7,
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -186,7 +175,10 @@ public:
 
 	int32 GetDepthAt(double Time) const;
 
-	virtual void SetFilterConfigurator(TSharedPtr<Insights::FFilterConfigurator> InFilterConfigurator);
+	virtual void SetFilterConfigurator(TSharedPtr<Insights::FFilterConfigurator> InFilterConfigurator) override;
+
+	TSharedPtr<const ITimingEvent> FindMaxEventInstance(uint32 TimerId, double StartTime, double EndTime) const;
+	TSharedPtr<const ITimingEvent> FindMinEventInstance(uint32 TimerId, double StartTime, double EndTime) const;
 
 protected:
 	virtual bool HasCustomFilter() const override;
@@ -199,8 +191,6 @@ private:
 						  TSharedPtr<FThreadTrackEvent>& OutParentTimingEvent,
 						  TSharedPtr<FThreadTrackEvent>& OutRootTimingEvent) const;
 
-	void OnFilterTrackClicked();
-
 	static void CreateFThreadTrackEventFromInfo(const TimelineEventInfo& InEventInfo, const TSharedRef<const FBaseTimingTrack> InTrack, int32 InDepth, TSharedPtr<FThreadTrackEvent> &OutTimingEvent);
 	static bool TimerIndexToTimerId(uint32 InTimerIndex, uint32 & OutTimerId);
 
@@ -212,7 +202,6 @@ private:
 	FThreadTimingSharedState& SharedState;
 
 	TSharedPtr<Insights::FFilterConfigurator> FilterConfigurator;
-	FDelegateHandle OnFilterChangesCommittedHandle;
 
 	// Search cache
 	mutable TTimingEventSearchCache<TraceServices::FTimingProfilerEvent> SearchCache;

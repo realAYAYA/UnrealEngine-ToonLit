@@ -20,27 +20,15 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 
-void UE::Interchange::FTaskPreAsyncCompletion::DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FTaskPreAsyncCompletion::DoTask")
-#if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
-	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(PreAsyncCompletion)
-#endif
-	FGCScopeGuard GCScopeGuard;
-
-	TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
-	check(AsyncHelper.IsValid());
-
-	//No need anymore of the translators sources
-	AsyncHelper->ReleaseTranslatorsSource();
-}
-
 void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FTaskPreCompletion::DoTask")
+	TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FTaskPreCompletion::DoTask)
 #if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
 	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(PreCompletion)
 #endif
+	
+	LLM_SCOPE_BYNAME(TEXT("Interchange"));
+
 	TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
 	check(AsyncHelper.IsValid());
 
@@ -50,6 +38,7 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 
 	auto IterationCallback = [&AsyncHelper, &Results, &bIsAsset](int32 SourceIndex, const TArray<FImportAsyncHelper::FImportedObjectInfo>& ImportedObjects)
 	{
+		LLM_SCOPE_BYNAME(TEXT("Interchange"));
 		//Verify if the task was cancel
 		if (AsyncHelper->bCancel)
 		{
@@ -67,6 +56,13 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 
 		const bool bCallPostImportGameThreadCallback = ensure(AsyncHelper->SourceDatas.IsValidIndex(SourceIndex));
 
+		UInterchangeFactoryBase::FSetupObjectParams Arguments;
+		Arguments.SourceData = AsyncHelper->SourceDatas[SourceIndex];
+		Arguments.NodeContainer = AsyncHelper->BaseNodeContainers[SourceIndex].Get();
+		Arguments.Pipelines = AsyncHelper->Pipelines;
+		Arguments.OriginalPipelines = AsyncHelper->OriginalPipelines;
+		Arguments.Translator = AsyncHelper->Translators[SourceIndex];
+
 		//First iteration to call SetupObject_GameThread and pipeline ExecutePostFactoryPipeline
 		for (const FImportAsyncHelper::FImportedObjectInfo& ObjectInfo : ImportedObjects)
 		{
@@ -74,16 +70,10 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 			//In case Some factory code cannot run outside of the main thread we offer this callback to finish the work before calling post edit change (building the asset)
 			if (bCallPostImportGameThreadCallback && ObjectInfo.Factory)
 			{
-				UInterchangeFactoryBase::FSetupObjectParams Arguments;
 				Arguments.ImportedObject = ImportedObject;
-				Arguments.SourceData = AsyncHelper->SourceDatas[SourceIndex];
-				Arguments.FactoryNode = ObjectInfo.FactoryNode;
 				// Should we assert if there is no factory node?
+				Arguments.FactoryNode = ObjectInfo.FactoryNode;
 				Arguments.NodeUniqueID = ObjectInfo.FactoryNode ? ObjectInfo.FactoryNode->GetUniqueID() : FString();
-				Arguments.NodeContainer = AsyncHelper->BaseNodeContainers[SourceIndex].Get();
-				Arguments.Pipelines = ObjectPtrDecay(AsyncHelper->Pipelines);
-				Arguments.Pipelines = AsyncHelper->Pipelines;
-				Arguments.OriginalPipelines = AsyncHelper->OriginalPipelines;
 				Arguments.bIsReimport = ObjectInfo.bIsReimport;
 				ObjectInfo.Factory->SetupObject_GameThread(Arguments);
 			}
@@ -117,6 +107,9 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 			{
 				if (AActor* Actor = Cast<AActor>(ImportedObject))
 				{
+#if WITH_EDITOR
+					Message->AssetFriendlyName = Actor->GetActorLabel();
+#endif
 					Actor->RegisterAllComponents();
 				}
 				else if (UActorComponent* Component = Cast<UActorComponent>(ImportedObject))
@@ -147,7 +140,7 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 		}
 #endif //WITH_EDITOR
 
-		//Third iteration to call FinalizeObject_GameThread
+		//Third iteration to register the assets
 		for (const FImportAsyncHelper::FImportedObjectInfo& ObjectInfo : ImportedObjects)
 		{
 			UObject* ImportedObject = ObjectInfo.ImportedObject;
@@ -155,7 +148,7 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 			{
 				continue;
 			}
-			//Post import broadcast
+			//Register the assets
 			if (bIsAsset)
 			{
 				AsyncHelper->AssetImportResult->AddImportedObject(ImportedObject);
@@ -169,23 +162,6 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 			else
 			{
 				AsyncHelper->SceneImportResult->AddImportedObject(ImportedObject);
-			}
-
-			//In case Some factory code cannot run outside of the main thread we offer this callback to finish the work after calling post edit change (building the asset)
-			//Its possible the build of the asset to be asynchronous, the factory must handle is own asset correctly
-			if (bCallPostImportGameThreadCallback && ObjectInfo.Factory)
-			{
-				UInterchangeFactoryBase::FSetupObjectParams Arguments;
-				Arguments.ImportedObject = ImportedObject;
-				Arguments.SourceData = AsyncHelper->SourceDatas[SourceIndex];
-				Arguments.FactoryNode = ObjectInfo.FactoryNode;
-				Arguments.NodeUniqueID = ObjectInfo.FactoryNode ? ObjectInfo.FactoryNode->GetUniqueID() : FString();
-				Arguments.NodeContainer = AsyncHelper->BaseNodeContainers[SourceIndex].Get();
-				Arguments.Pipelines = ObjectPtrDecay(AsyncHelper->Pipelines);
-				Arguments.Pipelines = AsyncHelper->Pipelines;
-				Arguments.OriginalPipelines = AsyncHelper->OriginalPipelines;
-				Arguments.bIsReimport = ObjectInfo.bIsReimport;
-				ObjectInfo.Factory->FinalizeObject_GameThread(Arguments);
 			}
 		}
 	};
@@ -202,10 +178,13 @@ void UE::Interchange::FTaskPreCompletion::DoTask(ENamedThreads::Type CurrentThre
 
 void UE::Interchange::FTaskCompletion::DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FTaskCompletion::DoTask")
+	TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FTaskCompletion::DoTask)
 #if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
 	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(Completion)
 #endif
+
+	LLM_SCOPE_BYNAME(TEXT("Interchange"));
+
 	TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
 	check(AsyncHelper.IsValid());
 
@@ -228,6 +207,8 @@ void UE::Interchange::FTaskCompletion::DoTask(ENamedThreads::Type CurrentThread,
 					//We broadcast this event for both import and reimport.
 					UInterchangeManager::GetInterchangeManager().OnAssetPostImport.Broadcast(Asset);
 				}
+
+				UE_LOG(LogInterchangeEngine, Display, TEXT("Interchange import completed [%s]"), *AsyncHelper->SourceDatas[SourceIndex]->ToDisplayString());
 			});
 	}
 	else
@@ -250,7 +231,7 @@ void UE::Interchange::FTaskCompletion::DoTask(ENamedThreads::Type CurrentThread,
 			});
 
 		//If task is canceled, remove all actors from their world
-		AsyncHelper->IterateImportedSceneObjectsPerSourceIndex([](int32 SourceIndex, const TArray<FImportAsyncHelper::FImportedObjectInfo>& AssetInfos)
+		AsyncHelper->IterateImportedSceneObjectsPerSourceIndex([AsyncHelper](int32 SourceIndex, const TArray<FImportAsyncHelper::FImportedObjectInfo>& AssetInfos)
 			{
 				for (const FImportAsyncHelper::FImportedObjectInfo& SceneObjectInfo : AssetInfos)
 				{
@@ -263,6 +244,8 @@ void UE::Interchange::FTaskCompletion::DoTask(ENamedThreads::Type CurrentThread,
 						}
 					}
 				}
+
+				UE_LOG(LogInterchangeEngine, Display, TEXT("Interchange import cancelled [%s]"), *AsyncHelper->SourceDatas[SourceIndex]->ToDisplayString());
 			});
 	}
 

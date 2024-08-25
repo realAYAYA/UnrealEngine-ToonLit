@@ -2,75 +2,42 @@
 
 #include "MuCOE/Nodes/CustomizableObjectNodeMaterialVariation.h"
 
+#include "MuCOE/CustomizableObjectEditor_Deprecated.h"
 #include "MuCOE/EdGraphSchema_CustomizableObject.h"
 
-class UCustomizableObjectNodeRemapPins;
 
-#define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
-
-
-UCustomizableObjectNodeMaterialVariation::UCustomizableObjectNodeMaterialVariation()
-	: Super()
+void UCustomizableObjectNodeMaterialVariation::BackwardsCompatibleFixup()
 {
+	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
 
-}
-
-
-void UCustomizableObjectNodeMaterialVariation::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
-{
-	FProperty* PropertyThatChanged = PropertyChangedEvent.Property;
-	if ( PropertyThatChanged 
-		//&& PropertyThatChanged->GetName() == TEXT("Variations")
-		)
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::NodeVariationSerializationIssue)
 	{
-		ReconstructNode();
+		for (const FCustomizableObjectMaterialVariation& OldVariation : Variations_DEPRECATED)
+		{
+			FCustomizableObjectVariation Variation;
+			Variation.Tag = OldVariation.Tag;
+			
+			VariationsData.Add(Variation);
+		}
 	}
 
-	Super::PostEditChangeProperty(PropertyChangedEvent);
+	Super::BackwardsCompatibleFixup();
 }
 
 
-void UCustomizableObjectNodeMaterialVariation::AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins)
+FName UCustomizableObjectNodeMaterialVariation::GetCategory() const
 {
-	const UEdGraphSchema_CustomizableObject* Schema = GetDefault<UEdGraphSchema_CustomizableObject>();
-
-	FString PinName = TEXT("Material");
-	UEdGraphPin* OutputPin = CustomCreatePin(EGPD_Output, Schema->PC_Material, FName(*PinName));
-	OutputPin->bDefaultValueIsIgnored = true;
-
-	for ( int VariationIndex = Variations.Num() - 1; VariationIndex >= 0; --VariationIndex)
-	{
-		PinName = FString::Printf( TEXT("Variation %d"), VariationIndex);
-		UEdGraphPin* VariationPin = CustomCreatePin(EGPD_Input, Schema->PC_Material, FName(*PinName), true);
-		VariationPin->bDefaultValueIsIgnored = true;
-
-		FString FriendlyName = FString::Printf(TEXT("Variation %d [%s]"), VariationIndex, *Variations[VariationIndex].Tag);
-		VariationPin->PinFriendlyName = FText::FromString(FriendlyName);
-	}
-
-	PinName = TEXT("Default");
-	UEdGraphPin* DefaultVariation = CustomCreatePin(EGPD_Input, Schema->PC_Material, FName(*PinName), true);
-	DefaultVariation->bDefaultValueIsIgnored = true;
+	return UEdGraphSchema_CustomizableObject::PC_Material;
 }
 
 
-FText UCustomizableObjectNodeMaterialVariation::GetNodeTitle(ENodeTitleType::Type TitleType) const
+bool UCustomizableObjectNodeMaterialVariation::IsInputPinArray() const
 {
-	return LOCTEXT("Material_Variation", "Material Variation");
+	return true;
 }
 
 
-FLinearColor UCustomizableObjectNodeMaterialVariation::GetNodeTitleColor() const
+bool UCustomizableObjectNodeMaterialVariation::IsSingleOutputNode() const
 {
-	const UEdGraphSchema_CustomizableObject* Schema = GetDefault<UEdGraphSchema_CustomizableObject>();
-	return Schema->GetPinTypeColor(Schema->PC_Material);
+	return true;
 }
-
-
-FText UCustomizableObjectNodeMaterialVariation::GetTooltipText() const
-{
-	return LOCTEXT("Material_Variation_Tooltip", "Changes the materials given depending on what tags or state is active.");
-}
-
-#undef LOCTEXT_NAMESPACE
-

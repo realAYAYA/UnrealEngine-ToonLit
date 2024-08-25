@@ -103,7 +103,8 @@ void UNiagaraStackSimulationStagePropertiesItem::RefreshChildrenInternal(const T
 	{
 		SimulationStageObject = NewObject<UNiagaraStackObject>(this);
 		bool bIsTopLevelObject = true;
-		SimulationStageObject->Initialize(CreateDefaultChildRequiredData(), SimulationStage.Get(), bIsTopLevelObject, GetStackEditorDataKey());
+		bool bHideTopLevelCategories = false;
+		SimulationStageObject->Initialize(CreateDefaultChildRequiredData(), SimulationStage.Get(), bIsTopLevelObject, bHideTopLevelCategories, GetStackEditorDataKey());
 		SimulationStageObject->SetObjectGuid(SimulationStage->GetMergeId());
 	}
 
@@ -122,11 +123,16 @@ void UNiagaraStackSimulationStagePropertiesItem::RefreshChildrenInternal(const T
 				FStackIssueFixDelegate::CreateLambda(
 					[WeakEmitter=GetEmitterViewModel()->GetEmitter().ToWeakPtr()]()
 					{
-						if (WeakEmitter.IsValid())
+						const FVersionedNiagaraEmitter VersionedEmitter = WeakEmitter.ResolveWeakPtr();
+						if (VersionedEmitter.Emitter && VersionedEmitter.GetEmitterData() )
 						{
 							FScopedTransaction Transaction(LOCTEXT("SetGpuSimulation", "Set Gpu Simulation"));
-							WeakEmitter.Emitter.Get()->Modify();
-							WeakEmitter.GetEmitterData()->SimTarget = ENiagaraSimTarget::GPUComputeSim;
+							VersionedEmitter.Emitter->Modify();
+							VersionedEmitter.GetEmitterData()->SimTarget = ENiagaraSimTarget::GPUComputeSim;
+
+							FProperty* SimTargetProperty = FindFProperty<FProperty>(FVersionedNiagaraEmitterData::StaticStruct(), GET_MEMBER_NAME_CHECKED(FVersionedNiagaraEmitterData, SimTarget));
+							FPropertyChangedEvent PropertyChangedEvent(SimTargetProperty);
+							VersionedEmitter.Emitter->PostEditChangeVersionedProperty(PropertyChangedEvent, VersionedEmitter.Version);
 						}
 					}
 				)

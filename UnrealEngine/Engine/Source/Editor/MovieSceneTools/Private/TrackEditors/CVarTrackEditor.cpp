@@ -7,6 +7,7 @@
 #include "Styling/AppStyle.h"
 #include "Sections/MovieSceneCVarSection.h"
 #include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "MovieSceneToolHelpers.h"
 
 #include "SequencerSectionPainter.h"
@@ -50,17 +51,8 @@ TSharedPtr<SWidget> FCVarTrackEditor::BuildOutlinerEditWidget(const FGuid& Objec
 		FSequencerUtilities::CreateNewSection(Track, WeakSequencer, RowIndex, EMovieSceneBlendType::Absolute);
 		return FReply::Handled();
 	};
-	
-	// Create a container edit box
-	return SNew(SHorizontalBox)
 
-	// Add the camera combo box
-	+ SHorizontalBox::Slot()
-	.AutoWidth()
-	.VAlign(VAlign_Center)
-	[
-		FSequencerUtilities::MakeAddButton(LOCTEXT("VarText", "Section"), FOnClicked::CreateLambda(OnClickedCallback), Params.NodeIsHovered, GetSequencer())
-	];
+	return UE::Sequencer::MakeAddButton(LOCTEXT("VarText", "Section"), FOnClicked::CreateLambda(OnClickedCallback), Params.ViewModel);
 }
 
 

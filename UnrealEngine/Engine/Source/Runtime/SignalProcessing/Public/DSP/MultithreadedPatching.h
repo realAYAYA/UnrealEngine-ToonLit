@@ -111,6 +111,9 @@ namespace Audio
 		 */
 		SIGNALPROCESSING_API int32 PushAudio(const float* InBuffer, int32 NumSamples);
 
+		/** Returns the current number of samples buffered in this input. */
+		SIGNALPROCESSING_API int32 GetNumSamplesAvailable() const;
+
 		SIGNALPROCESSING_API void SetGain(float InGain);
 
 		/** Returns false if this output was removed, either because someone called FPatchMixer::RemoveTap with this FPatchInput, or the FPatchMixer was destroyed. */

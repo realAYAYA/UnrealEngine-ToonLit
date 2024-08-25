@@ -76,6 +76,7 @@ namespace UnrealBuildTool
 		public SNDBS(List<TargetDescriptor> InTargetDescriptors, ILogger Logger)
 			: base(Logger)
 		{
+			XmlConfig.ApplyTo(this);
 			TargetDescriptors = InTargetDescriptors;
 		}
 
@@ -265,6 +266,25 @@ namespace UnrealBuildTool
 						{
 							["filename"] = i.AbsolutePath
 						}).ToList();
+					}
+
+					// Add PCH source file dependencies for clang or clang-cl
+					if (a.bIsGCCCompiler)
+					{
+						// Look for any prerequisite actions that produce .pch files and add any .cpp files they depend on
+						var ExplicitInputFiles = Job["explicit_input_files"] as List<Dictionary<string, object>>;
+
+						if (ExplicitInputFiles != null)
+						{
+							ExplicitInputFiles.AddRange(a.PrerequisiteActions
+								.Where(Prereq => Prereq.ProducedItems.Any(Produced => Produced.AbsolutePath.EndsWith(".gch")))
+								.SelectMany(Prereq => Prereq.PrerequisiteItems, (_, PrereqFile) => PrereqFile.AbsolutePath)
+								.Where(Path => Path.EndsWith(".cpp"))
+								.Select(Path => new Dictionary<string, object>()
+								{
+									["filename"] = Path
+								}));
+						}
 					}
 
 					string CommandDescription = String.IsNullOrWhiteSpace(a.CommandDescription) ? a.ActionType.ToString() : a.CommandDescription;

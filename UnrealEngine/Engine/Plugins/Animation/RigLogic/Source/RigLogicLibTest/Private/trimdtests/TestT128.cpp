@@ -4,16 +4,29 @@
 
 #include "trimd/TRiMD.h"
 
+using T128Types = ::testing::Types<
+    trimd::scalar::F128
 #ifdef TRIMD_ENABLE_SSE
-    using T128Types = ::testing::Types<trimd::scalar::F128, trimd::sse::F128>;
+        , trimd::sse::F128
+#endif  // TRIMD_ENABLE_SSE
+#ifdef TRIMD_ENABLE_NEON
+        , trimd::neon::F128
+#endif  // TRIMD_ENABLE_NEON
+    >;
 
+#ifdef TRIMD_ENABLE_SSE
     bool equal(const trimd::sse::F128& lhs, const trimd::sse::F128& rhs) {
         return (std::memcmp(&lhs.data, &rhs.data, sizeof(lhs.data)) == 0);
     }
 
-#else
-    using T128Types = ::testing::Types<trimd::scalar::F128>;
 #endif  // TRIMD_ENABLE_SSE
+
+#ifdef TRIMD_ENABLE_NEON
+    bool equal(const trimd::neon::F128& lhs, const trimd::neon::F128& rhs) {
+        return (std::memcmp(&lhs.data, &rhs.data, sizeof(lhs.data)) == 0);
+    }
+
+#endif  // TRIMD_ENABLE_NEON
 
 template<typename TF128>
 static TF128 frombits(uint32_t bits0, uint32_t bits1, uint32_t bits2, uint32_t bits3) {
@@ -415,7 +428,7 @@ TEST(T128Test, AndNotScalar) {
     }
 
     #ifdef TRIMD_ENABLE_F16C
-        TEST(T128Test, LoadAlignedHalfFloats) {
+        TEST(T128Test, LoadAlignedHalfFloatsSSE) {
             alignas(trimd::sse::F128::alignment()) const std::uint16_t halfFloats[] = {15360, 16384, 16896, 17408};
             trimd::sse::F128 expected{1.0f, 2.0f, 3.0f, 4.0f};
 
@@ -427,7 +440,7 @@ TEST(T128Test, AndNotScalar) {
             ASSERT_TRUE(equal(v2, expected));
         }
 
-        TEST(T128Test, LoadUnalignedHalfFloats) {
+        TEST(T128Test, LoadUnalignedHalfFloatsSSE) {
             const std::uint16_t halfFloats[] = {15360, 16384, 16896, 17408};
             trimd::sse::F128 expected{1.0f, 2.0f, 3.0f, 4.0f};
 
@@ -439,7 +452,7 @@ TEST(T128Test, AndNotScalar) {
             ASSERT_TRUE(equal(v2, expected));
         }
 
-        TEST(T128Test, StoreAlignedHalfFloats) {
+        TEST(T128Test, StoreAlignedHalfFloatsSSE) {
             const std::uint16_t expected[] = {15360, 16384, 16896, 17408};
 
             alignas(trimd::sse::F128::alignment()) std::uint16_t halfFloats[4ul] = {};
@@ -449,7 +462,7 @@ TEST(T128Test, AndNotScalar) {
             ASSERT_ELEMENTS_EQ(halfFloats, expected, 4ul);
         }
 
-        TEST(T128Test, StoreUnalignedHalfFloats) {
+        TEST(T128Test, StoreUnalignedHalfFloatsSSE) {
             const std::uint16_t expected[] = {15360, 16384, 16896, 17408};
 
             std::uint16_t halfFloats[4ul] = {};
@@ -460,3 +473,89 @@ TEST(T128Test, AndNotScalar) {
         }
     #endif  // TRIMD_ENABLE_F16C
 #endif  // TRIMD_ENABLE_SSE
+
+#ifdef TRIMD_ENABLE_NEON
+    TEST(T128Test, TransposeSquareNEON) {
+        trimd::neon::F128 v1{1.0f, 2.0f, 3.0f, 4.0f};
+        trimd::neon::F128 v2{1.0f, 2.0f, 3.0f, 4.0f};
+        trimd::neon::F128 v3{1.0f, 2.0f, 3.0f, 4.0f};
+        trimd::neon::F128 v4{1.0f, 2.0f, 3.0f, 4.0f};
+
+        trimd::neon::transpose(v1, v2, v3, v4);
+
+        trimd::neon::F128 e1{1.0f, 1.0f, 1.0f, 1.0f};
+        trimd::neon::F128 e2{2.0f, 2.0f, 2.0f, 2.0f};
+        trimd::neon::F128 e3{3.0f, 3.0f, 3.0f, 3.0f};
+        trimd::neon::F128 e4{4.0f, 4.0f, 4.0f, 4.0f};
+
+        ASSERT_TRUE(equal(v1, e1));
+        ASSERT_TRUE(equal(v2, e2));
+        ASSERT_TRUE(equal(v3, e3));
+        ASSERT_TRUE(equal(v4, e4));
+    }
+
+    TEST(T128Test, AbsNEON) {
+        trimd::neon::F128 v{-1.0f, 2.0f, -3.0f, 0.0f};
+        v = trimd::neon::abs(v);
+        trimd::neon::F128 e{1.0f, 2.0f, 3.0f, 0.0f};
+        ASSERT_TRUE(equal(v, e));
+    }
+
+    TEST(T128Test, AndNotNEON) {
+        trimd::neon::F128 v{1.0f, 2.0f, 3.0f, 4.0f};
+        trimd::neon::F128 mask1 = frombits<trimd::neon::F128>(0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u);
+        trimd::neon::F128 mask2 = frombits<trimd::neon::F128>(0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu);
+        trimd::neon::F128 result1 = trimd::neon::andnot(mask1, v);
+        trimd::neon::F128 result2 = trimd::neon::andnot(mask2, v);
+        trimd::neon::F128 e1{1.0f, 2.0f, 3.0f, 4.0f};
+        trimd::neon::F128 e2{0.0f, 0.0f, 0.0f, 0.0f};
+        ASSERT_TRUE(equal(result1, e1));
+        ASSERT_TRUE(equal(result2, e2));
+    }
+
+    #ifdef TRIMD_ENABLE_NEON_FP16
+        TEST(T128Test, LoadAlignedHalfFloatsNEON) {
+            alignas(trimd::neon::F128::alignment()) const std::uint16_t halfFloats[] = {15360, 16384, 16896, 17408};
+            trimd::neon::F128 expected{1.0f, 2.0f, 3.0f, 4.0f};
+
+            auto v = trimd::neon::F128::fromAlignedSource(halfFloats);
+            ASSERT_TRUE(equal(v, expected));
+
+            trimd::neon::F128 v2;
+            v2.alignedLoad(halfFloats);
+            ASSERT_TRUE(equal(v2, expected));
+        }
+
+        TEST(T128Test, LoadUnalignedHalfFloatsNEON) {
+            const std::uint16_t halfFloats[] = {15360, 16384, 16896, 17408};
+            trimd::neon::F128 expected{1.0f, 2.0f, 3.0f, 4.0f};
+
+            auto v = trimd::neon::F128::fromUnalignedSource(halfFloats);
+            ASSERT_TRUE(equal(v, expected));
+
+            trimd::neon::F128 v2;
+            v2.unalignedLoad(halfFloats);
+            ASSERT_TRUE(equal(v2, expected));
+        }
+
+        TEST(T128Test, StoreAlignedHalfFloatsNEON) {
+            const std::uint16_t expected[] = {15360, 16384, 16896, 17408};
+
+            alignas(trimd::neon::F128::alignment()) std::uint16_t halfFloats[4ul] = {};
+            const trimd::neon::F128 v{1.0f, 2.0f, 3.0f, 4.0f};
+            v.alignedStore(halfFloats);
+
+            ASSERT_ELEMENTS_EQ(halfFloats, expected, 4ul);
+        }
+
+        TEST(T128Test, StoreUnalignedHalfFloatsNEON) {
+            const std::uint16_t expected[] = {15360, 16384, 16896, 17408};
+
+            std::uint16_t halfFloats[4ul] = {};
+            const trimd::neon::F128 v{1.0f, 2.0f, 3.0f, 4.0f};
+            v.unalignedStore(halfFloats);
+
+            ASSERT_ELEMENTS_EQ(halfFloats, expected, 4ul);
+        }
+    #endif  // TRIMD_ENABLE_NEON_FP16
+#endif  // TRIMD_ENABLE_NEON

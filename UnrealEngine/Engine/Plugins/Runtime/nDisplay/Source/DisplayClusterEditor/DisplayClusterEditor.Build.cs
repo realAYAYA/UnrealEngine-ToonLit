@@ -17,8 +17,5 @@ public class DisplayClusterEditor : ModuleRules
 				"Engine",
 				"UnrealEd"
 			});
-
-		// TODO: Should not be including private headers from other modules
-		PrivateIncludePaths.Add(Path.Combine(GetModuleDirectory("DisplayCluster"), "Private")); // For IPDisplayCluster.h
 	}
 }

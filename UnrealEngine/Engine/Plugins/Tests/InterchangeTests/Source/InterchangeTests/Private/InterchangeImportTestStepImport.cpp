@@ -1,6 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "InterchangeImportTestStepImport.h"
+
+#include "Engine/Engine.h"
+#include "Engine/Level.h"
+#include "Engine/World.h"
+#include "GameFramework/WorldSettings.h"
 #include "HAL/FileManager.h"
 #include "InterchangeImportTestData.h"
 #include "Misc/PackageName.h"
@@ -42,6 +47,25 @@ TTuple<UE::Interchange::FAssetImportResultPtr, UE::Interchange::FSceneImportResu
 
 	if (bImportIntoLevel)
 	{
+		// Create transient world to host data from producer
+		TransientWorld = TStrongObjectPtr<UWorld>(NewObject<UWorld>(GetTransientPackage()));
+		TransientWorld->WorldType = EWorldType::EditorPreview;
+
+		FWorldContext& WorldContext = GEngine->CreateNewWorldContext(TransientWorld->WorldType);
+		WorldContext.SetCurrentWorld(TransientWorld.Get());
+
+		TransientWorld->InitializeNewWorld(UWorld::InitializationValues()
+			.AllowAudioPlayback(false)
+			.CreatePhysicsScene(false)
+			.RequiresHitProxies(false)
+			.CreateNavigation(false)
+			.CreateAISystem(false)
+			.ShouldSimulatePhysics(false)
+			.SetTransactional(false)
+		);
+
+		Params.ImportLevel = TransientWorld->GetCurrentLevel();
+
 		return InterchangeManager.ImportSceneAsync(Data.DestAssetPackagePath, ScopedSourceData.GetSourceData(), Params);
 	}
 	else
@@ -120,6 +144,26 @@ FTestStepResults UInterchangeImportTestStepImport::FinishStep(FInterchangeImport
 
 	// Run all the tests
 	bool bSuccess = PerformTests(Data, ExecutionInfo);
+
+	if (TransientWorld)
+	{
+		// Only keep assets as result objects since the world and its actors are being destroyed
+		TArray<UObject*> ResultObjects = MoveTemp(Data.ResultObjects);
+		Data.ResultObjects.Reset(ResultObjects.Num());
+
+		for (UObject* Object : ResultObjects)
+		{
+			if (!Object->IsA<AActor>())
+			{
+				Data.ResultObjects.Add(Object);
+			}
+		}
+
+		// Now delete world
+		GEngine->DestroyWorldContext(TransientWorld.Get());
+		TransientWorld->DestroyWorld(true);
+		TransientWorld.Reset();
+	}
 
 	Results.bTestStepSuccess = bSuccess;
 	return Results;

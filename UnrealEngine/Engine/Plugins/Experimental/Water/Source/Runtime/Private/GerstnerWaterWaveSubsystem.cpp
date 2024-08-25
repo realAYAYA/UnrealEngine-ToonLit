@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GerstnerWaterWaveSubsystem.h"
-#include "GerstnerWaterWaveViewExtension.h"
+#include "WaterViewExtension.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GerstnerWaterWaveSubsystem)
 
@@ -19,30 +19,30 @@ void UGerstnerWaterWaveSubsystem::Initialize(FSubsystemCollectionBase& Collectio
 
 void UGerstnerWaterWaveSubsystem::Deinitialize()
 {
-	GerstnerWaterWaveViewExtensions.Empty();
+	WaterViewExtensions.Empty();
 
 	FCoreDelegates::OnBeginFrame.RemoveAll(this);
 
 	Super::Deinitialize();
 }
 
-void UGerstnerWaterWaveSubsystem::Register(FGerstnerWaterWaveViewExtension* InViewExtension)
+void UGerstnerWaterWaveSubsystem::Register(FWaterViewExtension* InViewExtension)
 {
-	check(!GerstnerWaterWaveViewExtensions.Contains(InViewExtension));
-	GerstnerWaterWaveViewExtensions.Add(InViewExtension);
+	check(!WaterViewExtensions.Contains(InViewExtension));
+	WaterViewExtensions.Add(InViewExtension);
 }
 
-void UGerstnerWaterWaveSubsystem::Unregister(FGerstnerWaterWaveViewExtension* InViewExtension)
+void UGerstnerWaterWaveSubsystem::Unregister(FWaterViewExtension* InViewExtension)
 {
-	check(GerstnerWaterWaveViewExtensions.Contains(InViewExtension));
-	GerstnerWaterWaveViewExtensions.Remove(InViewExtension);
+	check(WaterViewExtensions.Contains(InViewExtension));
+	WaterViewExtensions.Remove(InViewExtension);
 }
 
 void UGerstnerWaterWaveSubsystem::GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize)
 {
 	Super::GetResourceSizeEx(CumulativeResourceSize);
 
-	CumulativeResourceSize.AddDedicatedSystemMemoryBytes(GerstnerWaterWaveViewExtensions.GetAllocatedSize());
+	CumulativeResourceSize.AddDedicatedSystemMemoryBytes(WaterViewExtensions.GetAllocatedSize());
 }
 
 void UGerstnerWaterWaveSubsystem::BeginFrameCallback()
@@ -50,9 +50,9 @@ void UGerstnerWaterWaveSubsystem::BeginFrameCallback()
 	// In case there was a change, all registered view extensions need to update their GPU data : 
 	if (bRebuildGPUData)
 	{
-		for (FGerstnerWaterWaveViewExtension* GerstnerWaterWaveViewExtension : GerstnerWaterWaveViewExtensions)
+		for (FWaterViewExtension* WaterViewExtension : WaterViewExtensions)
 		{
-			GerstnerWaterWaveViewExtension->bRebuildGPUData = true;
+			WaterViewExtension->MarkGPUDataDirty();
 		}
 	}
 	bRebuildGPUData = false;

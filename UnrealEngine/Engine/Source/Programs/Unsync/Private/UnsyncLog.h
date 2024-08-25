@@ -8,10 +8,12 @@ namespace unsync {
 
 extern thread_local bool   GLogVerbose;
 extern bool				   GLogVeryVerbose;
+extern bool				   GLogSilent;
 extern bool				   GBreakOnError;
 extern bool				   GBreakOnWarning;
 extern thread_local uint32 GLogIndent;
-extern bool				   GLogProgress;
+extern bool				   GLogProgress;		 // Whether to output @progress and @status markers to stdout
+extern bool				   GLogMachineReadable;	 // Whether output is intended for other programs rather than humans
 
 struct FError;
 
@@ -63,6 +65,10 @@ enum class ELogLevel
 	Info	= 2,
 	Debug	= 3,
 	Trace	= 4,
+
+	// Special log level to signify output that's intended to be machine-readable.
+	// This is always written to stdout, while other modes may be written to stderr in some cases.
+	MachineReadable = 5,
 };
 
 void LogFlush();
@@ -87,6 +93,8 @@ LogGlobalStatus(const wchar_t* Status)
 void SetCrashDumpPath(const FPath& Path);
 bool GetCrashDumpPath(FPath& OutPath);
 bool LogWriteCrashDump(void* ExceptionPointers);
+
+void LogSaveCommandLineUtf8(int Argc, char** Argv);
 
 #define UNSYNC_LOG_INDENT		FLogIndentScope UNSYNC_CONCAT(log_indent_, __LINE__);
 #define UNSYNC_LOG_INDENT_N(N)  FLogIndentScope UNSYNC_CONCAT(log_indent_, __LINE__)(N);

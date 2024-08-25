@@ -493,6 +493,9 @@ namespace Metasound
 
 				virtual TSharedRef<IGraphController> GetRootGraph() override;
 				virtual TSharedRef<const IGraphController> GetRootGraph() const override;
+				virtual FDocumentAccessPtr GetDocumentPtr() override;
+				virtual const FDocumentAccessPtr GetDocumentPtr() const override;
+
 				virtual bool ExportToJSONAsset(const FString& InAbsolutePath) const override { return false; }
 				virtual FString ExportToJSON() const override { return FString(); }
 

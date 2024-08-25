@@ -91,7 +91,7 @@ namespace UnrealBuildTool
 					RulesAssembly RulesAssembly = RulesCompiler.CreateTargetRulesAssembly(TargetDescriptor.ProjectFile, TargetDescriptor.Name, bSkipRulesCompile, BuildConfiguration.bForceRulesCompile, BuildConfiguration.bUsePrecompiled, TargetDescriptor.ForeignPlugin, TargetDescriptor.bBuildPluginAsLocal, Logger);
 
 					// Create the rules object
-					ReadOnlyTargetRules Target = new ReadOnlyTargetRules(RulesAssembly.CreateTargetRules(TargetDescriptor.Name, TargetDescriptor.Platform, TargetDescriptor.Configuration, TargetDescriptor.Architectures, TargetDescriptor.ProjectFile, TargetDescriptor.AdditionalArguments, Logger));
+					ReadOnlyTargetRules Target = new ReadOnlyTargetRules(RulesAssembly.CreateTargetRules(TargetDescriptor.Name, TargetDescriptor.Platform, TargetDescriptor.Configuration, TargetDescriptor.Architectures, TargetDescriptor.ProjectFile, TargetDescriptor.AdditionalArguments, Logger, TargetDescriptor.IsTestsTarget));
 
 					// Get the intermediate environment for this target
 					UnrealIntermediateEnvironment IntermediateEnvironment = TargetDescriptor.IntermediateEnvironment != UnrealIntermediateEnvironment.Default ? TargetDescriptor.IntermediateEnvironment : Target.IntermediateEnvironment;

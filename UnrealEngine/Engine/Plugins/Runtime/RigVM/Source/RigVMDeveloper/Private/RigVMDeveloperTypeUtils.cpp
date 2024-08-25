@@ -3,8 +3,12 @@
 #include "RigVMDeveloperTypeUtils.h"
 
 #include "Internationalization/StringTableCore.h"
+#include "RigVMFunctions/RigVMDispatch_CastEnum.h"
+#include "RigVMFunctions/RigVMDispatch_CastObject.h"
 #include "RigVMModel/RigVMController.h"
 #include "RigVMModel/RigVMVariableDescription.h"
+
+#define LOCTEXT_NAMESPACE "RigVMTypeUtils"
 
 #if WITH_EDITOR
 
@@ -100,6 +104,12 @@ FEdGraphPinType RigVMTypeUtils::PinTypeFromCPPType(const FName& InCPPType, UObje
 		PinType.PinCategory = UEdGraphSchema_K2::PC_Byte;
 		PinType.PinSubCategoryObject = InCPPTypeObject;
 	}
+	else if (Cast<UClass>(InCPPTypeObject))
+	{
+		const bool bIsClass = RigVMTypeUtils::IsUClassType(InCPPType.ToString());
+		PinType.PinCategory = bIsClass ? UEdGraphSchema_K2::PC_Class : UEdGraphSchema_K2::PC_Object;
+		PinType.PinSubCategoryObject = InCPPTypeObject;
+	}
 
 	return PinType;
 }
@@ -144,6 +154,11 @@ FEdGraphPinType RigVMTypeUtils::PinTypeFromExternalVariable(const FRigVMExternal
 	else if (Cast<UEnum>(InExternalVariable.TypeObject))
 	{
 		PinType.PinCategory = UEdGraphSchema_K2::PC_Byte;
+		PinType.PinSubCategoryObject = InExternalVariable.TypeObject;
+	}
+	else if (Cast<UClass>(InExternalVariable.TypeObject))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
 		PinType.PinSubCategoryObject = InExternalVariable.TypeObject;
 	}
 
@@ -497,7 +512,14 @@ bool RigVMTypeUtils::CPPTypeFromExternalVariable(const FRigVMExternalVariable& I
 	{
 		OutCPPType = Prefix + Enum->GetFName().ToString() + Suffix;
 		*OutCPPTypeObject = Enum;
-	}	
+	}
+	else if (UClass* Class = Cast<UClass>(InExternalVariable.TypeObject))
+	{
+		Prefix += TEXT("TObjectPtr<U");
+		Suffix += TEXT(">");
+		OutCPPType = Prefix + Class->GetFName().ToString() + Suffix;
+		*OutCPPTypeObject = Class;
+	}
 	else
 	{
 		check(false);
@@ -587,14 +609,16 @@ const TArray<TRigVMTypeIndex>& RigVMTypeUtils::GetAvailableCasts(const TRigVMTyp
 		{
 			TArray<TRigVMTypeIndex>& AvailableCasts = AvailableCastMap.Add(InTypeIndex);
 			
-			for(int32 Index = 0; Index < ArgumentA->GetTypeIndices().Num(); Index++)
+			int32 Index = 0;
+			ArgumentA->ForEachType([&](const TRigVMTypeIndex TypeIndexA)
 			{
-				const TRigVMTypeIndex& TypeIndexA = ArgumentA->GetTypeIndices()[Index];
 				if(TypeIndexA == InTypeIndex)
 				{
-					AvailableCasts.Add(ArgumentB->GetTypeIndices()[Index]);
+					AvailableCasts.Add(ArgumentB->GetTypeIndex(Index));
 				}
-			}
+				Index++;
+				return true;
+			});
 
 			return AvailableCasts;
 		}
@@ -612,21 +636,38 @@ bool RigVMTypeUtils::CanCastTypes(const TRigVMTypeIndex& InSourceTypeIndex, cons
 const FRigVMFunction* RigVMTypeUtils::GetCastForTypeIndices(const TRigVMTypeIndex& InSourceTypeIndex, const TRigVMTypeIndex& InTargetTypeIndex)
 {
 	const FRigVMRegistry& Registry = FRigVMRegistry::Get();
-	if(const FRigVMTemplate* CastTemplate = Registry.FindTemplate(CastTemplateNotation))
-	{
-		const FRigVMTemplateArgument* SourceArgument = CastTemplate->FindArgument(CastTemplateValueName);
-		const FRigVMTemplateArgument* TargetArgument = CastTemplate->FindArgument(CastTemplateResultName);
 
-		if(SourceArgument && TargetArgument)
+	const FRigVMTemplate* CastTemplates[] =
+	{
+		Registry.FindTemplate(CastTemplateNotation),
+		Registry.FindTemplate(FRigVMDispatch_CastObject().GetTemplateNotation()),
+		Registry.FindTemplate(FRigVMDispatch_CastIntToEnum().GetTemplateNotation()),
+		Registry.FindTemplate(FRigVMDispatch_CastEnumToInt().GetTemplateNotation())
+	};
+
+	for(const FRigVMTemplate* CastTemplate : CastTemplates)
+	{
+		if(CastTemplate)
 		{
-			for(int32 Index = 0; Index < SourceArgument->GetTypeIndices().Num(); Index++)
+			const FRigVMTemplateArgument* SourceArgument = CastTemplate->FindArgument(CastTemplateValueName);
+			const FRigVMTemplateArgument* TargetArgument = CastTemplate->FindArgument(CastTemplateResultName);
+
+			if(SourceArgument && TargetArgument)
 			{
-				const TRigVMTypeIndex& SourceTypeIndex = SourceArgument->GetTypeIndices()[Index];
-				const TRigVMTypeIndex& TargetTypeIndex = TargetArgument->GetTypeIndices()[Index];
-				if(SourceTypeIndex == InSourceTypeIndex &&
-					TargetTypeIndex == InTargetTypeIndex)
+				const TArray<int32>& SourcePermutations = SourceArgument->GetPermutations(InSourceTypeIndex);
+				const TArray<int32>& TargetPermutations = TargetArgument->GetPermutations(InTargetTypeIndex);
+				if(!SourcePermutations.IsEmpty() && !TargetPermutations.IsEmpty())
 				{
-					return CastTemplate->GetPermutation(Index);
+					for(int32 SourceIndex = 0, SourceCount = SourcePermutations.Num(); SourceIndex < SourceCount; ++SourceIndex)
+					{
+						for(int32 TargetIndex = 0, TargetCount = TargetPermutations.Num(); TargetIndex < TargetCount; ++TargetIndex)
+						{
+							if(SourcePermutations[SourceIndex] == TargetPermutations[TargetIndex])
+							{
+								return const_cast<FRigVMTemplate*>(CastTemplate)->GetOrCreatePermutation(SourcePermutations[SourceIndex]);
+							}
+						}
+					}
 				}
 			}
 		}
@@ -649,4 +690,63 @@ const FName& RigVMTypeUtils::GetCastTemplateNotation()
 	return CastTemplateNotation;
 }
 
+FText RigVMTypeUtils::GetDisplayTextForArgumentType(const FRigVMTemplateArgumentType& InType)
+{
+	if(UObject* CPPTypeObject = InType.CPPTypeObject)
+	{
+		if (const UClass* Class = Cast<UClass>(CPPTypeObject))
+		{
+			return Class->GetDisplayNameText();
+		}
+		if(const UScriptStruct* ScriptStruct = Cast<UScriptStruct>(CPPTypeObject))
+		{
+			return ScriptStruct->GetDisplayNameText();
+		}
+		if(const UEnum* Enum = Cast<UEnum>(CPPTypeObject))
+		{
+			return Enum->GetDisplayNameText();
+		}
+	}
+	else
+	{
+		FString CPPType = InType.CPPType.ToString();
+		if(IsArrayType(CPPType))
+		{
+			CPPType = BaseTypeFromArrayType(CPPType);
+		}
+
+		static const FText BoolLabel = LOCTEXT("BoolLabel", "Boolean");
+		static const FText FloatLabel = LOCTEXT("FloatLabel", "Float");
+		static const FText Int32Label = LOCTEXT("Int32Label", "Integer");
+		static const FText FNameLabel = LOCTEXT("FNameLabel", "Name");
+		static const FText FStringLabel = LOCTEXT("FStringLabel", "String");
+
+		if(CPPType == BoolType)
+		{
+			return BoolLabel;
+		}
+		if(CPPType == FloatType || CPPType == DoubleType)
+		{
+			return FloatLabel;
+		}
+		if(CPPType == Int32Type)
+		{
+			return Int32Label;
+		}
+		if(CPPType == FNameType)
+		{
+			return FNameLabel;
+		}
+		if(CPPType == FStringType)
+		{
+			return FStringLabel;
+		}
+
+		return FText::FromString(CPPType);
+	}
+	return FText();
+}
+
 #endif
+
+#undef LOCTEXT_NAMESPACE

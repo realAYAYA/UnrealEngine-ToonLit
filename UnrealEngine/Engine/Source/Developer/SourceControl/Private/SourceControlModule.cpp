@@ -481,6 +481,11 @@ void FSourceControlModule::SetUseGlobalSettings(bool bIsUseGlobalSettings)
 	ShowLoginDialog(FSourceControlLoginClosed(), ELoginWindowMode::Modeless, EOnLoginWindowStartup::PreserveProvider);
 }	
 
+FSourceControlProviderChanging& FSourceControlModule::GetSourceControlProviderChanging()
+{
+	return OnSourceControlProviderChanging;
+}
+
 FDelegateHandle FSourceControlModule::RegisterProviderChanged(const FSourceControlProviderChanged::FDelegate& SourceControlProviderChanged)
 {
 	return OnSourceControlProviderChanged.Add(SourceControlProviderChanged);

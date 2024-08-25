@@ -2,10 +2,13 @@
 
 #pragma once
 
-#include "HAL/CriticalSection.h"
 #include "Misc/PackageAccessTracking.h"
+
+#if UE_WITH_PACKAGE_ACCESS_TRACKING
+#include "Async/Mutex.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/ObjectHandle.h"
+#endif
 
 #if UE_WITH_PACKAGE_ACCESS_TRACKING
 
@@ -42,9 +45,13 @@ private:
 	virtual ~FPackageBuildDependencyTracker();
 
 	/** Track object reference reads */
-	static void StaticOnObjectHandleRead(TArrayView<const UObject* const> Objects);
+	static void StaticOnObjectHandleRead(const TArrayView<const UObject* const>& Objects);
 
-	mutable FCriticalSection RecordsLock;
+	// Use a mutex rather than a critical section for synchronization.  Calls into system libraries, such as windows critical section
+	// functions, are 50 times more expensive on build farm VMs, radically affecting cook times, which this avoids.  Saves 5% of total
+	// cook time for shader invalidation on a large project.
+	mutable UE::FMutex RecordsLock;
+
 	TMap<FName, TSet<FBuildDependencyAccessData>> Records;
 	FName LastReferencer = NAME_None;
 	FBuildDependencyAccessData LastAccessData{ NAME_None, nullptr };

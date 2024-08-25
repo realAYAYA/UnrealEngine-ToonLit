@@ -66,7 +66,7 @@ void FToolDataVisualizer::PushTransform(const FTransform& Transform)
 
 void FToolDataVisualizer::PopTransform()
 {
-	TransformStack.Pop(false);
+	TransformStack.Pop(EAllowShrinking::No);
 	TotalTransform = FTransform::Identity;
 	for (const FTransform& Transform : TransformStack)
 	{

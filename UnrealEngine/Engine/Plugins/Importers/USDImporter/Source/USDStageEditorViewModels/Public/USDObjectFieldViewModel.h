@@ -26,14 +26,14 @@ namespace ObjectFieldColumnIds
 	inline const FName ValueColumn = TEXT("FieldValue");
 };
 
-class USDSTAGEEDITORVIEWMODELS_API FUsdObjectFieldViewModel : public TSharedFromThis< FUsdObjectFieldViewModel >
+class USDSTAGEEDITORVIEWMODELS_API FUsdObjectFieldViewModel : public TSharedFromThis<FUsdObjectFieldViewModel>
 {
 public:
-	explicit FUsdObjectFieldViewModel( FUsdObjectFieldsViewModel* InOwner );
+	explicit FUsdObjectFieldViewModel(FUsdObjectFieldsViewModel* InOwner);
 
 	// This member function is necessary because the no-RTTI slate module can't query USD for the available token options
-	TArray< TSharedPtr< FString > > GetDropdownOptions() const;
-	void SetAttributeValue( const UsdUtils::FConvertedVtValue& InValue );
+	TArray<TSharedPtr<FString>> GetDropdownOptions() const;
+	void SetAttributeValue(const UsdUtils::FConvertedVtValue& InValue);
 
 public:
 	EObjectFieldType Type;
@@ -45,7 +45,6 @@ public:
 private:
 	FUsdObjectFieldsViewModel* Owner;
 };
-
 
 class USDSTAGEEDITORVIEWMODELS_API FUsdObjectFieldsViewModel
 {
@@ -59,12 +58,7 @@ public:
 		const FString& ValueRole = FString(),
 		bool bReadOnly = false
 	);
-	void CreateField(
-		EObjectFieldType Type,
-		const FString& FieldName,
-		const UsdUtils::FConvertedVtValue& Value,
-		bool bReadOnly = false
-	);
+	void CreateField(EObjectFieldType Type, const FString& FieldName, const UsdUtils::FConvertedVtValue& Value, bool bReadOnly = false);
 
 	void SetFieldValue(const FString& FieldName, const UsdUtils::FConvertedVtValue& Value);
 

@@ -684,7 +684,14 @@ namespace AJA
 			 
 			// Todo jroy: Verify if Width needs to be fixed, by using the GPUTextureTransfer register struct directly, same for pixel format.
 			const ULWord Stride = FormatDescriptor.GetBytesPerRow();
-			const ULWord Width = GetOptions().PixelFormat == EPixelFormat::PF_8BIT_YCBCR ? Stride / 4 : Stride / 16;
+			ULWord Width = Stride / 4;
+
+			if (GetOptions().PixelFormat == EPixelFormat::PF_10BIT_YCBCR)
+			{
+				// YUV210 has a different stride.
+				Width /= 4;
+			}
+
 			const ULWord Height = FormatDescriptor.GetRasterHeight();
 
 			if (!bDMABuffersRegistered)
@@ -696,7 +703,18 @@ namespace AJA
 					Args.Width = Width;
 					Args.Stride = Stride;
 					Args.Buffer = IttFrame->VideoBuffer;
-					Args.PixelFormat = GetOptions().PixelFormat == EPixelFormat::PF_8BIT_YCBCR ? UE::GPUTextureTransfer::EPixelFormat::PF_8Bit : UE::GPUTextureTransfer::EPixelFormat::PF_10Bit;
+
+					if (GetOptions().PixelFormat == EPixelFormat::PF_8BIT_YCBCR || GetOptions().PixelFormat == EPixelFormat::PF_8BIT_ARGB
+						|| GetOptions().PixelFormat == EPixelFormat::PF_10BIT_RGB) // 10 Bit RGB should be considered as 8 bit as far as GPUDirect is concerned.
+					{
+
+						Args.PixelFormat = UE::GPUTextureTransfer::EPixelFormat::PF_8Bit;
+					}
+					else
+					{
+						Args.PixelFormat = UE::GPUTextureTransfer::EPixelFormat::PF_10Bit;
+					}
+
 					TextureTransfer->RegisterBuffer(Args);
 				}
 
@@ -1053,7 +1071,16 @@ namespace AJA
 				}
 				if (UseVideo())
 				{
-					AJA_CHECK(GetDevice().DMAWriteFrame(BaseFrameIndex + Index, reinterpret_cast<ULWord*>(CurrentFrame->VideoBuffer), CurrentFrame->CopiedVideoBufferSize));
+					uint32 FrameIndex = BaseFrameIndex + Index;
+
+					if (NTV2_IS_4K_VIDEO_FORMAT(GetOptions().VideoFormatIndex))
+					{
+						// 4K Format uses a different indexing.
+						FrameIndex *= 4;
+					}
+					
+					AJA_CHECK(GetDevice().DMAWriteFrame(FrameIndex, reinterpret_cast<ULWord*>(CurrentFrame->VideoBuffer), CurrentFrame->CopiedVideoBufferSize));
+
 					if (TextureTransfer && GetOptions().bUseGPUDMA)
 					{
 						TextureTransfer->EndSync(CurrentFrame->VideoBuffer);
@@ -1184,7 +1211,16 @@ namespace AJA
 							const UE::GPUTextureTransfer::ETransferDirection Direction = UE::GPUTextureTransfer::ETransferDirection::GPU_TO_CPU;
 							TextureTransfer->BeginSync(AvailableReadingFrame->VideoBuffer, Direction);
 						}
-						bRunning = bRunning && GetDevice().DMAWriteFrame(BaseFrameIndex + CurrentOutFrame, reinterpret_cast<ULWord*>(AvailableReadingFrame->VideoBuffer), AvailableReadingFrame->CopiedVideoBufferSize);
+
+						uint32 FrameIndex = BaseFrameIndex + CurrentOutFrame;
+						if (NTV2_IS_4K_VIDEO_FORMAT(GetOptions().VideoFormatIndex))
+						{
+							// 4K Format uses a different indexing.
+							FrameIndex *= 4;
+						}
+
+						bRunning = bRunning && GetDevice().DMAWriteFrame(FrameIndex, reinterpret_cast<ULWord*>(AvailableReadingFrame->VideoBuffer), AvailableReadingFrame->CopiedVideoBufferSize);
+
 						if (TextureTransfer && GetOptions().bUseGPUDMA)
 						{
 							TextureTransfer->EndSync(AvailableReadingFrame->VideoBuffer);

@@ -139,6 +139,11 @@ void UGameFeatureAction_AddWidgets::AddWidgets(AActor* Actor, FPerContextData& A
 {
 	ALyraHUD* HUD = CastChecked<ALyraHUD>(Actor);
 
+	if (!HUD->GetOwningPlayerController())
+	{
+		return;
+	}
+
 	if (ULocalPlayer* LocalPlayer = Cast<ULocalPlayer>(HUD->GetOwningPlayerController()->Player))
 	{
 		FPerActorData& ActorData = ActiveData.ActorData.FindOrAdd(HUD);

@@ -26,7 +26,7 @@ public:
 
 public:
 	// Reset actor layers visibility rules
-	void ResetConfiguration()
+	void BeginUpdateSettings()
 	{
 		LayersMode = EDisplayClusterViewport_VisibilityMode::None;
 
@@ -47,7 +47,7 @@ public:
 		return false;
 	}
 
-	void UpdateConfiguration(EDisplayClusterViewport_VisibilityMode InMode, const TArray<FName>& InActorLayers, const TSet<FPrimitiveComponentId>& InAdditionalComponentsList)
+	void UpdateVisibilitySettings(EDisplayClusterViewport_VisibilityMode InMode, const TArray<FName>& InActorLayers, const TSet<FPrimitiveComponentId>& InAdditionalComponentsList)
 	{
 
 		LayersMode = InMode;

@@ -5,15 +5,13 @@
 #include "CoreTypes.h"
 #include "Templates/IsPointer.h"
 #include "HAL/UnrealMemory.h"
-#include "Templates/EnableIf.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/CopyQualifiersAndRefsFromTo.h"
-#include "Templates/IsArithmetic.h"
 #include "Templates/UnrealTypeTraits.h"
 #include "Templates/RemoveReference.h"
 #include "Templates/TypeCompatibleBytes.h"
 #include "Templates/Identity.h"
 #include "Traits/IsContiguousContainer.h"
+#include "Traits/UseBitwiseSwap.h"
 #include <type_traits>
 
 /*-----------------------------------------------------------------------------
@@ -25,6 +23,7 @@
  * @return If the first parameter provided is non-nullptr, it is returned; otherwise the second parameter is returned.
  */
 template<typename ReferencedType>
+UE_DEPRECATED(5.4, "IfAThenAElseB has been deprecated - use regular C++ constructs instead")
 FORCEINLINE ReferencedType* IfAThenAElseB(ReferencedType* A,ReferencedType* B)
 {
 	return A ? A : B;
@@ -34,12 +33,14 @@ FORCEINLINE ReferencedType* IfAThenAElseB(ReferencedType* A,ReferencedType* B)
 * return PTRINT(Predicate) ? A : B;
 **/
 template<typename PredicateType,typename ReferencedType>
+UE_DEPRECATED(5.4, "IfPThenAElseB has been deprecated - use regular C++ constructs instead")
 FORCEINLINE ReferencedType* IfPThenAElseB(PredicateType Predicate,ReferencedType* A,ReferencedType* B)
 {
 	return Predicate ? A : B;
 }
 
 /** A logical exclusive or function. */
+UE_DEPRECATED(5.4, "XOR has been deprecated - use regular C++ constructs instead")
 inline bool XOR(bool A, bool B)
 {
 	return A != B;
@@ -70,7 +71,10 @@ FORCEINLINE void Move(T& A,typename TMoveSupportTraits<T>::Move B)
 /**
  * Generically gets the data pointer of a contiguous container
  */
-template<typename T, typename = typename TEnableIf<TIsContiguousContainer<T>::Value>::Type>
+template <
+	typename T
+	UE_REQUIRES(TIsContiguousContainer<T>::Value)
+>
 constexpr auto GetData(T&& Container) -> decltype(Container.GetData())
 {
 	return Container.GetData();
@@ -90,7 +94,10 @@ constexpr const T* GetData(std::initializer_list<T> List)
 /**
 * Generically gets the number of items in a contiguous container
 */
-template<typename T, typename = typename TEnableIf<TIsContiguousContainer<T>::Value>::Type>
+template <
+	typename T
+	UE_REQUIRES(TIsContiguousContainer<T>::Value)
+>
 constexpr auto GetNum(T&& Container) -> decltype(Container.Num())
 {
 	return Container.Num();
@@ -152,15 +159,24 @@ constexpr bool IntFitsIn(InType In)
 	{
 		return bRoundtrips && (In < InType{} == Out < OutType{});
 	}
-	
-	return bRoundtrips;
+	else
+	{
+		return bRoundtrips;
+	}
 }
 
 /** Cast and check that value fits in OutType */
 template<typename OutType, typename InType>
 OutType IntCastChecked(InType In)
 {
-	checkf(IntFitsIn<OutType>(In), TEXT("Loss of data caused by narrowing conversion"));
+	if constexpr (std::is_signed_v<InType>)
+	{
+		checkf(IntFitsIn<OutType>(In), TEXT("Loss of data caused by narrowing conversion, In = %" INT64_FMT), (int64)In);
+	}
+	else
+	{
+		checkf(IntFitsIn<OutType>(In), TEXT("Loss of data caused by narrowing conversion, In = %" UINT64_FMT), (uint64)In);
+	}
 	return static_cast<OutType>(In);
 }
 
@@ -186,8 +202,11 @@ OutType FloatCastChecked(InType In, InType Precision)
 ----------------------------------------------------------------------------*/
 
 #ifdef __clang__
-	template <typename T>
-	auto UEArrayCountHelper(T& t) -> typename TEnableIf<__is_array(T), char(&)[sizeof(t) / sizeof(t[0]) + 1]>::Type;
+	template <
+		typename T
+		UE_REQUIRES(__is_array(T))
+	>
+	auto UEArrayCountHelper(T& t) -> char(&)[sizeof(t) / sizeof(t[0]) + 1];
 #else
 	template <typename T, uint32 N>
 	char (&UEArrayCountHelper(const T (&)[N]))[N + 1];
@@ -324,7 +343,7 @@ private:
 template <typename RefType, typename AssignedType = RefType>
 struct TGuardValue : private FNoncopyable
 {
-	TGuardValue(RefType& ReferenceValue, const AssignedType& NewValue)
+	[[nodiscard]] TGuardValue(RefType& ReferenceValue, const AssignedType& NewValue)
 	: RefValue(ReferenceValue), OldValue(ReferenceValue)
 	{
 		RefValue = NewValue;
@@ -361,7 +380,7 @@ private:
 template <typename RefType, typename AssignedType = RefType>
 struct TOptionalGuardValue : private FNoncopyable
 {
-	TOptionalGuardValue(RefType& ReferenceValue, const AssignedType& NewValue)
+	[[nodiscard]] TOptionalGuardValue(RefType& ReferenceValue, const AssignedType& NewValue)
 		: RefValue(ReferenceValue), OldValue(ReferenceValue)
 	{
 		if (RefValue != NewValue)
@@ -396,7 +415,7 @@ private:
 template <typename FuncType>
 struct TGuardValue_Bitfield_Cleanup : public FNoncopyable
 {
-	explicit TGuardValue_Bitfield_Cleanup(FuncType&& InFunc)
+	[[nodiscard]] explicit TGuardValue_Bitfield_Cleanup(FuncType&& InFunc)
 		: Func(MoveTemp(InFunc))
 	{
 	}
@@ -426,7 +445,7 @@ private:
 template <typename Type>
 struct TScopeCounter : private FNoncopyable
 {
-	TScopeCounter(Type& ReferenceValue)
+	[[nodiscard]] explicit TScopeCounter(Type& ReferenceValue)
 		: RefValue(ReferenceValue)
 	{
 		++RefValue;
@@ -504,12 +523,12 @@ template <typename T> struct TRemovePointer<T*> { typedef T Type; };
  * const object, because we would prefer to be informed when MoveTemp will have no effect.
  */
 template <typename T>
-FORCEINLINE typename TRemoveReference<T>::Type&& MoveTemp(T&& Obj)
+UE_INTRINSIC_CAST FORCEINLINE std::remove_reference_t<T>&& MoveTemp(T&& Obj)
 {
-	typedef typename TRemoveReference<T>::Type CastType;
+	using CastType = std::remove_reference_t<T>;
 
 	// Validate that we're not being passed an rvalue or a const object - the former is redundant, the latter is almost certainly a mistake
-	static_assert(TIsLValueReferenceType<T>::Value, "MoveTemp called on an rvalue");
+	static_assert(std::is_lvalue_reference_v<T>, "MoveTemp called on an rvalue");
 	static_assert(!std::is_same_v<CastType&, const CastType&>, "MoveTemp called on a const object");
 
 	return (CastType&&)Obj;
@@ -522,9 +541,9 @@ FORCEINLINE typename TRemoveReference<T>::Type&& MoveTemp(T&& Obj)
  * where you can but not stop compilation.
  */
 template <typename T>
-FORCEINLINE typename TRemoveReference<T>::Type&& MoveTempIfPossible(T&& Obj)
+UE_INTRINSIC_CAST FORCEINLINE std::remove_reference_t<T>&& MoveTempIfPossible(T&& Obj)
 {
-	typedef typename TRemoveReference<T>::Type CastType;
+	using CastType = std::remove_reference_t<T>;
 	return (CastType&&)Obj;
 }
 
@@ -549,22 +568,6 @@ FORCEINLINE T CopyTemp(const T& Val)
 	return Val;
 }
 
-template <typename T>
-UE_DEPRECATED(5.2, "CopyTemp on an rvalue is deprecated and should be removed or replaced with CopyTempIfNecessary when the argument is unknown")
-FORCEINLINE T&& CopyTemp(T&& Val)
-{
-// Compile this block back in after removing the deprecation, rather than deleting the function entirely.
-// Also change the return type to `T`.
-#if 0
-	// Comment this in rather than deleting the function when removing the deprecation
-	static_assert(sizeof(T) == 0, "CopyTemp called on an rvalue");
-#endif
-
-	// Create a prvalue by move-constructing from the xvalue - wasteful if Val
-	// already refers to a prvalue, but we can't differentiate those.
-	return MoveTemp(Val);
-}
-
 /**
  * CopyTempIfNecessary will enforce the creation of a prvalue.
  * This is UE's equivalent of the exposition std::decay-copy:
@@ -584,27 +587,16 @@ FORCEINLINE std::decay_t<T> CopyTempIfNecessary(T&& Val)
  * This is UE's equivalent of std::forward.
  */
 template <typename T>
-FORCEINLINE T&& Forward(typename TRemoveReference<T>::Type& Obj)
+UE_INTRINSIC_CAST FORCEINLINE T&& Forward(std::remove_reference_t<T>& Obj)
 {
 	return (T&&)Obj;
 }
 
 template <typename T>
-FORCEINLINE T&& Forward(typename TRemoveReference<T>::Type&& Obj)
+UE_INTRINSIC_CAST FORCEINLINE T&& Forward(std::remove_reference_t<T>&& Obj)
 {
 	return (T&&)Obj;
 }
-
-/**
- * A traits class which specifies whether a Swap of a given type should swap the bits or use a traditional value-based swap.
- */
-template <typename T>
-struct TUseBitwiseSwap
-{
-	// We don't use bitwise swapping for 'register' types because this will force them into memory and be slower.
-	enum { Value = !(std::is_enum_v<T> || std::is_pointer_v<T> || std::is_arithmetic_v<T>) };
-};
-
 
 /**
  * Swap two values.  Assumes the types are trivially relocatable.
@@ -652,13 +644,16 @@ template <typename T> struct TRValueToLValueReference<T&&> { typedef T& Type; };
 
 /**
  * Reverses the order of the bits of a value.
- * This is an TEnableIf'd template to ensure that no undesirable conversions occur.  Overloads for other types can be added in the same way.
+ * This is a constrained template to ensure that no undesirable conversions occur.  Overloads for other types can be added in the same way.
  *
  * @param Bits - The value to bit-swap.
  * @return The bit-swapped value.
  */
-template <typename T>
-FORCEINLINE typename TEnableIf<std::is_same_v<T, uint32>, T>::Type ReverseBits( T Bits )
+template <
+	typename T
+	UE_REQUIRES(std::is_same_v<T, uint32>)
+>
+FORCEINLINE T ReverseBits( T Bits )
 {
 	Bits = ( Bits << 16) | ( Bits >> 16);
 	Bits = ( (Bits & 0x00ff00ff) << 8 ) | ( (Bits & 0xff00ff00) >> 8 );
@@ -743,7 +738,7 @@ T&& DeclVal();
 template <typename T>
 FORCEINLINE T ImplicitConv(typename TIdentity<T>::Type Obj)
 {
-    return Obj;
+	return Obj;
 }
 
 /**
@@ -753,9 +748,9 @@ FORCEINLINE T ImplicitConv(typename TIdentity<T>::Type Obj)
 template <
 	typename T,
 	typename Base,
-	decltype(ImplicitConv<const volatile Base*>((typename TRemoveReference<T>::Type*)nullptr))* = nullptr
+	decltype(ImplicitConv<const volatile Base*>((std::remove_reference_t<T>*)nullptr))* = nullptr
 >
-FORCEINLINE decltype(auto) ForwardAsBase(typename TRemoveReference<T>::Type& Obj)
+UE_INTRINSIC_CAST FORCEINLINE decltype(auto) ForwardAsBase(std::remove_reference_t<T>& Obj)
 {
 	return (TCopyQualifiersAndRefsFromTo_T<T&&, Base>)Obj;
 }
@@ -763,9 +758,15 @@ FORCEINLINE decltype(auto) ForwardAsBase(typename TRemoveReference<T>::Type& Obj
 template <
 	typename T,
 	typename Base,
-	decltype(ImplicitConv<const volatile Base*>((typename TRemoveReference<T>::Type*)nullptr))* = nullptr
+	decltype(ImplicitConv<const volatile Base*>((std::remove_reference_t<T>*)nullptr))* = nullptr
 >
-FORCEINLINE decltype(auto) ForwardAsBase(typename TRemoveReference<T>::Type&& Obj)
+UE_INTRINSIC_CAST FORCEINLINE decltype(auto) ForwardAsBase(std::remove_reference_t<T>&& Obj)
 {
 	return (TCopyQualifiersAndRefsFromTo_T<T&&, Base>)Obj;
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/AndOrNot.h"
+#include "Templates/EnableIf.h"
+#include "Templates/IsArithmetic.h"
+#endif

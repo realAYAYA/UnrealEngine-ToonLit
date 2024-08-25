@@ -10,8 +10,7 @@ import { DevicePoolTelemetryQuery, DevicePoolType, DeviceTelemetryQuery, GetDevi
 import dashboard, { StatusColor } from "../backend/Dashboard";
 import { projectStore } from "../backend/ProjectStore";
 import { getHumanTime, msecToElapsed } from "../base/utilities/timeUtils";
-import { hordeClasses, modeColors } from "../styles/Styles";
-
+import { getHordeStyling } from "../styles/Styles";
 
 type PoolId = string;
 
@@ -538,7 +537,7 @@ class PoolTelemetryGraph {
       if (this.hasRendered && !this.forceRender) {
          return;
       }
-
+      
       this.container = container;
       this.width = width;
       this.height = height;
@@ -555,6 +554,7 @@ class PoolTelemetryGraph {
 
       this.hasRendered = true;
       this.forceRender = false;
+      const { modeColors } = getHordeStyling();
 
       const xPlot = this.xPlot = this.xPlotMethod();
 
@@ -1012,6 +1012,8 @@ class PoolTelemetryGraph {
 
 const SummaryModal: React.FC<{ handler: PoolTelemetryHandler, selectedPlatform?: GetDevicePlatformResponse, onClose: () => void }> = ({ handler, selectedPlatform, onClose }) => {
 
+   const { hordeClasses, modeColors } = getHordeStyling();
+
    let platforms = Array.from(handler.platforms.values()).sort((a, b) => {
       if (a.id === selectedPlatform?.id) {
          return -1;
@@ -1262,6 +1264,7 @@ export const DevicePoolGraph: React.FC = observer(() => {
 
 export const DevicePoolTelemetryModal: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
 
+   const { hordeClasses, modeColors } = getHordeStyling();
 
    return <Stack>
       <Modal className={hordeClasses.modal} isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 1560, backgroundColor: modeColors.background, hasBeenOpened: false, top: "64px", position: "absolute", height: "760px" } }} onDismiss={() => { if (onClose) { onClose() } }}>

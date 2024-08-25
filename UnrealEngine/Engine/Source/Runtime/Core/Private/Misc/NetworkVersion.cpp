@@ -337,6 +337,6 @@ void FNetworkVersion::DescribeNetworkRuntimeFeaturesBitset(EEngineNetworkRuntime
 	}
 	else
 	{
-		OutVerboseDescription.Append(TEXT("LegacyReplication"));
+		OutVerboseDescription.Append(TEXT("GenericReplication"));
 	}
 }

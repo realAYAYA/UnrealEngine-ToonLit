@@ -11,7 +11,7 @@
 
 class IDisplayClusterViewport;
 class IDisplayClusterViewportManager;
-class FRenderTarget;
+class FDisplayClusterViewportResource;
 
 /**
  * nDisplay: DCViewport context for render in UE View
@@ -66,10 +66,12 @@ struct FDisplayClusterRenderFrameTarget
 	// required Render target size (resource can be bigger)
 	FIntPoint RenderTargetSize;
 
+	// Viewport capture mode
+	// This mode affects many viewport rendering settings.
 	EDisplayClusterViewportCaptureMode CaptureMode = EDisplayClusterViewportCaptureMode::Default;
 
 	// Render target resource ref
-	FRenderTarget* RenderTargetPtr = nullptr;
+	TSharedPtr<FDisplayClusterViewportResource, ESPMode::ThreadSafe> RenderTargetResource;
 
 	// Families, rendered on this target
 	TArray<FDisplayClusterRenderFrameTargetViewFamily> ViewFamilies;

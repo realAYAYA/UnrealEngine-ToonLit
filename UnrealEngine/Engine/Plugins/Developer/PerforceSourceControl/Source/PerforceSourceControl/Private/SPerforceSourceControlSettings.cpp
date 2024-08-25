@@ -2,6 +2,8 @@
 
 #include "SPerforceSourceControlSettings.h"
 
+#if SOURCE_CONTROL_WITH_SLATE
+
 #include "ISourceControlModule.h"
 #include "PerforceSourceControlInternalOperations.h"
 #include "PerforceSourceControlPrivate.h"
@@ -179,7 +181,7 @@ void SPerforceSourceControlSettings::Construct(const FArguments& InArgs, FPerfor
 			[
 				SAssignNew(WorkspaceCombo, SComboButton)
 				.OnGetMenuContent(this, &SPerforceSourceControlSettings::OnGetMenuContent)
-				.ContentPadding(1)
+				.ContentPadding(1.0f)
 				.ToolTipText( LOCTEXT("AutoWorkspaces_Tooltip", "Choose from a list of available workspaces. Requires a server and username before use.") )
 				.IsEnabled(this, &SPerforceSourceControlSettings::IsP4ConfigDisabled)
 				.ButtonContent()
@@ -476,3 +478,5 @@ FPerforceSourceControlProvider& SPerforceSourceControlSettings::GetSCCProvider()
 }
 
 #undef LOCTEXT_NAMESPACE
+
+#endif //SOURCE_CONTROL_WITH_SLATE

@@ -320,7 +320,7 @@ FFreeEntityOperation::FCommitData FFreeEntityOperation::Commit() const
 			}
 
 			// Remove current iteration
-			EntitiesScratch.RemoveAtSwap(0, StartNum, false);
+			EntitiesScratch.RemoveAtSwap(0, StartNum, EAllowShrinking::No);
 		}
 	};
 

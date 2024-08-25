@@ -29,7 +29,7 @@ void FMassExecutionContext::ClearExecutionData()
 	ChunkFragmentViews.Reset();
 	ConstSharedFragmentViews.Reset();
 	SharedFragmentViews.Reset();
-	CurrentArchetypesTagBitSet.Reset();
+	CurrentArchetypeCompositionDescriptor.Reset();
 	ChunkSerialModificationNumber = -1;
 }
 

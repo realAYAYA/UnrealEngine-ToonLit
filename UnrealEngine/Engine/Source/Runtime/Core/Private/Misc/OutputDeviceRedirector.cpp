@@ -754,7 +754,6 @@ void FOutputDeviceRedirector::Panic()
 		// or will resume and crash due to a race with the panic thread. Executing on this thread
 		// and having logging for most panic situations with a chance of a crash is preferable to
 		// the alternative of missing logging in a panic situation.
-		TRACE_CPUPROFILER_EVENT_SCOPE(FOutputDeviceRedirector::PanicWait);
 		constexpr double WaitTime = 1.0;
 		for (const double EndTime = FPlatformTime::Seconds() + WaitTime; FPlatformTime::Seconds() < EndTime;)
 		{

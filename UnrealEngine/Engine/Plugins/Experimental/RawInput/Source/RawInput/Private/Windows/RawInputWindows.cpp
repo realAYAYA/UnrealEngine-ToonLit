@@ -541,7 +541,7 @@ bool FRawInputWindows::ProcessMessage(const HWND hwnd, const uint32 Msg, const W
 
 				if (::GetRawInputDeviceInfo(RawInputDataBuffer->header.hDevice, RIDI_PREPARSEDDATA, nullptr, &BufferSize) != RAW_INPUT_ERROR)
 				{
-					PreParsedData.SetNumUninitialized(BufferSize + 1, false);
+					PreParsedData.SetNumUninitialized(BufferSize + 1, EAllowShrinking::No);
 							
 					if (::GetRawInputDeviceInfo(RawInputDataBuffer->header.hDevice, RIDI_PREPARSEDDATA, PreParsedData.GetData(), &BufferSize) != RAW_INPUT_ERROR)
 					{
@@ -771,7 +771,7 @@ void FRawInputWindows::QueryConnectedDevices()
 			continue;
 		}
 
-		DeviceNameBuffer.SetNumUninitialized(NameLen + 1, false);
+		DeviceNameBuffer.SetNumUninitialized(NameLen + 1, EAllowShrinking::No);
 
 		if (GetRawInputDeviceInfoA(Device.hDevice, RIDI_DEVICENAME, DeviceNameBuffer.GetData(), &NameLen) == RAW_INPUT_ERROR)
 		{

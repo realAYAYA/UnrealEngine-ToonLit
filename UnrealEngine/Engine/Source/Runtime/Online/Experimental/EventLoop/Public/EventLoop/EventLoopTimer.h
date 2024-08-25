@@ -354,7 +354,7 @@ void TTimerManager<Traits>::Tick(FTimespan DeltaTime)
 			int32 InternalHandleIndex = ActiveTimerHeap.Find(InternalHandle);
 			if (InternalHandleIndex != INDEX_NONE)
 			{
-				ActiveTimerHeap.HeapRemoveAt(InternalHandleIndex, FTimerHeapOrder(Storage), /*bAllowShrinking=*/ false);
+				ActiveTimerHeap.HeapRemoveAt(InternalHandleIndex, FTimerHeapOrder(Storage), EAllowShrinking::No);
 			}
 		}
 	}
@@ -392,14 +392,14 @@ void TTimerManager<Traits>::Tick(FTimespan DeltaTime)
 			if (TimerData->Status == ETimerStatus::PendingRemoval)
 			{
 				FInternalHandle TimerHandle;
-				ActiveTimerHeap.HeapPop(TimerHandle, FTimerHeapOrder(Storage), /*bAllowShrinking=*/ false);
+				ActiveTimerHeap.HeapPop(TimerHandle, FTimerHeapOrder(Storage), EAllowShrinking::No);
 				continue;
 			}
 
 			if (InternalTime >= TimerData->Expiration)
 			{
 				FInternalHandle TimerHandle;
-				ActiveTimerHeap.HeapPop(TimerHandle, FTimerHeapOrder(Storage), /*bAllowShrinking=*/ false);
+				ActiveTimerHeap.HeapPop(TimerHandle, FTimerHeapOrder(Storage), EAllowShrinking::No);
 
 				// Fire user timer callback.
 				TimerData->Status = ETimerStatus::Executing;

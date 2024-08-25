@@ -766,28 +766,27 @@ void GetMeshBoundsWS_{ParameterName}(out float3 Center, out float3 ExtentsMin, o
 // Experimental Distance Field Functions
 void QueryDistanceField_{ParameterName}(bool bExecute, float3 WorldPosition, bool bUseMaxDistance, float MaxDistance, out bool OutIsValid, out float OutDistance)
 {
-	const FLWCVector3 LWCWorldPosition = MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition);
-
 	if ( !bUseMaxDistance )
 	{
 		MaxDistance = 1e38;
 	}
 
 #if DISTATICMESH_ALLOWDISTANCEFIELD
-	OutIsValid = bExecute && {ParameterName}_InstanceDistanceFieldIndex != int(-1);
+	const int DFIndex = {ParameterName}_InstanceDistanceFieldIndex;
+	OutIsValid = bExecute && DFIndex >= 0 && DFIndex < NumSceneObjects;
 	OutDistance = MaxDistance;
 	if ( OutIsValid )
 	{
 		// Needs to be a smidge over 0.0 for DistanceToNearestSurfaceForObject to query the SDF
-		MaxDistance = max(0.001, MaxDistance);
-		OutDistance = DistanceToNearestSurfaceForObject({ParameterName}_InstanceDistanceFieldIndex, LWCWorldPosition, MaxDistance);
+		MaxDistance = max(0.001f, MaxDistance);
+		const FDFVector3 LWCWorldPosition = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition));
+		OutDistance = DistanceToNearestSurfaceForObject(DFIndex, LWCWorldPosition, MaxDistance);
 	}
 #else
 	OutIsValid = false;
 	OutDistance = MaxDistance;
 #endif
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Uv Mapping

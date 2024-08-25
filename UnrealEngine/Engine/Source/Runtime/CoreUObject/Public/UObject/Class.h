@@ -45,7 +45,6 @@
 #include "Serialization/StructuredArchive.h"
 #include "Serialization/StructuredArchiveAdapters.h"
 #include "Templates/AlignmentTemplates.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsAbstract.h"
 #include "Templates/IsEnum.h"
@@ -1458,7 +1457,12 @@ public:
 				if constexpr (TIsUECoreType<CPPSTRUCT>::Value)
 				{
 					// Custom version of SerializeFromMismatchedTag for core types, which don't have access to FPropertyTag.
-					return ((CPPSTRUCT*)Data)->SerializeFromMismatchedTag(Tag.StructName, Ar);
+					FName StructName;
+					if (Tag.GetType().GetName() == NAME_StructProperty && Tag.GetType().GetParameterCount() >= 1)
+					{
+						StructName = Tag.GetType().GetParameterName(0);
+					}
+					return ((CPPSTRUCT*)Data)->SerializeFromMismatchedTag(StructName, Ar);
 				}
 				else
 				{
@@ -1478,7 +1482,12 @@ public:
 				if constexpr (TIsUECoreType<CPPSTRUCT>::Value)
 				{
 					// Custom version of SerializeFromMismatchedTag for core types, which don't understand FPropertyTag.
-					return ((CPPSTRUCT*)Data)->SerializeFromMismatchedTag(Tag.StructName, Slot);
+					FName StructName;
+					if (Tag.GetType().GetName() == NAME_StructProperty && Tag.GetType().GetParameterCount() >= 1)
+					{
+						StructName = Tag.GetType().GetParameterName(0);
+					}
+					return ((CPPSTRUCT*)Data)->SerializeFromMismatchedTag(StructName, Slot);
 				}
 				else
 				{
@@ -1690,7 +1699,7 @@ public:
 	 * @param	bAllowNativeOverride If true, will try to run native version of export text on the struct
 	 * @return Buffer after parsing has succeeded, or NULL on failure
 	 */
-	COREUOBJECT_API const TCHAR* ImportText(const TCHAR* Buffer, void* Value, UObject* OwnerObject, int32 PortFlags, FOutputDevice* ErrorText, const FString& StructName, bool bAllowNativeOverride = true);
+	COREUOBJECT_API const TCHAR* ImportText(const TCHAR* Buffer, void* Value, UObject* OwnerObject, int32 PortFlags, FOutputDevice* ErrorText, const FString& StructName, bool bAllowNativeOverride = true) const;
 
 	/**
 	 * Sets value of script struct based on imported string
@@ -1704,7 +1713,7 @@ public:
 	 * @param	bAllowNativeOverride If true, will try to run native version of export text on the struct
 	 * @return Buffer after parsing has succeeded, or NULL on failure
 	 */
-	COREUOBJECT_API const TCHAR* ImportText(const TCHAR* Buffer, void* Value, UObject* OwnerObject, int32 PortFlags, FOutputDevice* ErrorText, const TFunctionRef<FString()>& StructNameGetter, bool bAllowNativeOverride = true);
+	COREUOBJECT_API const TCHAR* ImportText(const TCHAR* Buffer, void* Value, UObject* OwnerObject, int32 PortFlags, FOutputDevice* ErrorText, const TFunctionRef<FString()>& StructNameGetter, bool bAllowNativeOverride = true) const;
 
 	/**
 	 * Compare two script structs
@@ -1912,7 +1921,7 @@ public:
 	{
 		//@TODO: UCREMOVAL: CPF_ConstParm added as a hack to get blueprints compiling with a const DamageType parameter.
 		const uint64 IgnoreFlags = CPF_PersistentInstance | CPF_ExportObject | CPF_InstancedReference 
-			| CPF_ContainsInstancedReference | CPF_ComputedFlags | CPF_ConstParm | CPF_UObjectWrapper
+			| CPF_ContainsInstancedReference | CPF_ComputedFlags | CPF_ConstParm | CPF_UObjectWrapper | CPF_TObjectPtr
 			| CPF_NativeAccessSpecifiers | CPF_AdvancedDisplay | CPF_BlueprintVisible | CPF_BlueprintReadOnly;
 		return IgnoreFlags;
 	}
@@ -2731,6 +2740,7 @@ class UClass : public UStruct
 public:
 	friend class FRestoreClassInfo;
 	friend class FBlueprintEditorUtils;
+	friend class FBlueprintCompileReinstancer;
 
 	typedef void		(*ClassConstructorType)				(const FObjectInitializer&);
 	typedef UObject*	(*ClassVTableHelperCtorCallerType)	(FVTableHelper& Helper);
@@ -3038,6 +3048,8 @@ public:
 	static COREUOBJECT_API void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 	COREUOBJECT_API virtual FRestoreForUObjectOverwrite* GetRestoreForUObjectOverwrite() override;
 	COREUOBJECT_API virtual FString GetDesc() override;
+	COREUOBJECT_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	COREUOBJECT_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 #if WITH_EDITOR
 	COREUOBJECT_API virtual void PostLoadAssetRegistryTags(const FAssetData& InAssetData, TArray<FAssetRegistryTag>& OutTagsAndValuesToUpdate) const;
@@ -3446,7 +3458,7 @@ public:
 	 * @param InProperty	The property to check if it is contained in this or a parent class.
 	 * @return				True if the property exists on this or a parent class.
 	 */
-	COREUOBJECT_API virtual bool HasProperty(FProperty* InProperty) const;
+	COREUOBJECT_API virtual bool HasProperty(const FProperty* InProperty) const;
 
 	/** Finds the object that is used as the parent object when serializing properties, overridden for blueprints */
 	virtual UObject* FindArchetype(const UClass* ArchetypeClass, const FName ArchetypeName) const { return nullptr; }
@@ -3461,6 +3473,7 @@ public:
 	COREUOBJECT_API UScriptStruct* GetSparseClassDataArchetypeStruct() const;
 
 	/** Returns whether the sparse class data on this instance overrides that of its archetype (in type or value) */
+	UE_DEPRECATED(5.5, "Replace with UE::Reflection::DoesSparseClassDataOverrideArchetype(Class, [](const FProperty*){return true;})")
 	COREUOBJECT_API bool OverridesSparseClassDataArchetype() const;
 
 	/**
@@ -3535,57 +3548,6 @@ protected:
 	 * @return		the CDO for this class
 	 **/
 	COREUOBJECT_API virtual UObject* CreateDefaultObject();
-};
-
-// @todo: BP2CPP_remove
-/**
-* Dynamic class (can be constructed after initial startup)
-*/
-class COREUOBJECT_API UE_DEPRECATED(5.0, "Dynamic class types are no longer supported.") UDynamicClass : public UClass
-{
-	DECLARE_CASTED_CLASS_INTRINSIC_NO_CTOR(UDynamicClass, UClass, 0, TEXT("/Script/CoreUObject"), CASTCLASS_None, NO_API)
-	DECLARE_WITHIN_UPACKAGE()
-
-public:
-
-	typedef void (*DynamicClassInitializerType)	(UDynamicClass*);
-
-	UDynamicClass(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get()) {}
-	explicit UDynamicClass(const FObjectInitializer& ObjectInitializer, UClass* InSuperClass) {}
-	UDynamicClass(EStaticConstructor, FName InName, uint32 InSize, uint32 InAlignment, EClassFlags InClassFlags, EClassCastFlags InClassCastFlags,
-		const TCHAR* InClassConfigName, EObjectFlags InFlags, ClassConstructorType InClassConstructor,
-		ClassVTableHelperCtorCallerType InClassVTableHelperCtorCaller,
-		FUObjectCppClassStaticFunctions&& InCppClassStaticFunctions,
-		DynamicClassInitializerType InDynamicClassInitializer)
-	{}
-
-	/** Find a struct property, called from generated code */
-	FStructProperty* FindStructPropertyChecked(const TCHAR* PropertyName) const { return nullptr; }
-
-	/** Misc objects owned by the class. */
-	TArray<UObject*> MiscConvertedSubobjects;
-
-	/** Additional converted fields, that are used by the class. */
-	TArray<UField*> ReferencedConvertedFields;
-
-	/** Outer assets used by the class */
-	TArray<UObject*> UsedAssets;
-
-	/** Specialized sub-object containers */
-	TArray<UObject*> DynamicBindingObjects;
-	TArray<UObject*> ComponentTemplates;
-	TArray<UObject*> Timelines;
-
-	/** Array of blueprint overrides of component classes in parent classes */
-	TArray<TPair<FName, const UClass*>> ComponentClassOverrides;
-
-	/** IAnimClassInterface (UAnimClassData) or null */
-	UObject* AnimClassImplementation;
-
-	DynamicClassInitializerType DynamicClassInitializer;
-
-	/** Prefix for the temporary package where the dynamic classes are stored when being generated */
-	static const FString& GetTempPackagePrefix();
 };
 
 /**

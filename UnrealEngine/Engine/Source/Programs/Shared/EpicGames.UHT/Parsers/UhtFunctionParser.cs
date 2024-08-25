@@ -342,6 +342,8 @@ namespace EpicGames.UHT.Parsers
 							break;
 					}
 
+					topScope.TokenReader.OptionalAttributes(false);
+
 					if (topScope.TokenReader.TryOptional("static"))
 					{
 						function.FunctionFlags |= EFunctionFlags.Static;
@@ -356,6 +358,7 @@ namespace EpicGames.UHT.Parsers
 					if ((topScope.HeaderParser.GetCurrentCompositeCompilerDirective() & UhtCompilerDirective.WithEditor) != 0)
 					{
 						function.FunctionFlags |= EFunctionFlags.EditorOnly;
+						function.DefineScope |= UhtDefineScope.EditorOnlyData;
 					}
 
 					specifierParser.ParseDeferred();

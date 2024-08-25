@@ -13,6 +13,7 @@
 #include "Render/IDisplayClusterRenderManager.h"
 
 #include "Containers/Queue.h"
+#include "Templates/SharedPointer.h"
 
 class IDisplayClusterPostProcess;
 class FDisplayClusterPresentationBase;
@@ -26,6 +27,7 @@ class FSceneView;
 class FDisplayClusterDeviceBase
 	: public IStereoRenderTargetManager
 	, public IDisplayClusterRenderDevice
+	, public TSharedFromThis<FDisplayClusterDeviceBase, ESPMode::ThreadSafe>
 {
 public:
 	FDisplayClusterDeviceBase() = delete;

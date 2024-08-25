@@ -12,6 +12,8 @@ namespace UnrealBuildTool.Rules
 					"Core",
 					"Sockets"
 				});
+
+			UnsafeTypeCastWarningLevel = WarningLevel.Error;
 		}
 	}
 }

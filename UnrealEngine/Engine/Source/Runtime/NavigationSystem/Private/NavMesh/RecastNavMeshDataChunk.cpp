@@ -271,10 +271,11 @@ TArray<FNavTileRef> URecastNavMeshDataChunk::AttachTiles(ARecastNavMesh& NavMesh
 
 	if (DetourNavMesh != nullptr)
 	{
-		TArray<FIntPoint>* ActiveTiles = nullptr;
+		TSet<FIntPoint>* ActiveTiles = nullptr;
 		if (UE::NavMesh::Private::IsUsingActiveTileGeneration(NavMesh))
 		{
-			ActiveTiles = &NavMesh.GetActiveTiles();
+			ActiveTiles = &NavMesh.GetActiveTileSet();
+			ActiveTiles->Reserve(ActiveTiles->Num() + Tiles.Num());
 		}
 		
 		for (FRecastTileData& TileData : Tiles)
@@ -314,7 +315,7 @@ TArray<FNavTileRef> URecastNavMeshDataChunk::AttachTiles(ARecastNavMesh& NavMesh
 				{
 					if (dtStatusDetail(status, DT_OUT_OF_MEMORY))
 					{
-						UE_LOG(LogNavigation, Warning, TEXT("%s> Failed to add tile (%d,%d:%d), %d tile limit reached! (from: %s)"),
+						UE_LOG(LogNavigation, Warning, TEXT("%s> Failed to add tile (%d,%d:%d), %d tile limit reached! (from: %s). If using FixedTilePoolSize, try increasing the TilePoolSize or using bigger tiles."),
 							*NavMesh.GetName(), Header->x, Header->y, Header->layer, DetourNavMesh->getMaxTiles(), ANSI_TO_TCHAR(__FUNCTION__));
 					}
 					
@@ -335,7 +336,7 @@ TArray<FNavTileRef> URecastNavMeshDataChunk::AttachTiles(ARecastNavMesh& NavMesh
 				
 				if (ActiveTiles)
 				{
-					ActiveTiles->AddUnique(FIntPoint(TileData.X, TileData.Y));					
+					ActiveTiles->FindOrAdd(FIntPoint(TileData.X, TileData.Y));
 				}
 				
 				if (bKeepCopyOfData == false)
@@ -403,10 +404,10 @@ TArray<FNavTileRef> URecastNavMeshDataChunk::DetachTiles(ARecastNavMesh& NavMesh
 
 	if (DetourNavMesh != nullptr)
 	{
-		TArray<FIntPoint>* ActiveTiles = nullptr;
+		TSet<FIntPoint>* ActiveTiles = nullptr;
 		if (UE::NavMesh::Private::IsUsingActiveTileGeneration(NavMesh))
 		{
-			ActiveTiles = &NavMesh.GetActiveTiles();
+			ActiveTiles = &NavMesh.GetActiveTileSet();
 		}
 
 		TArray<const dtMeshTile*> ExtraMeshTiles;
@@ -450,7 +451,7 @@ TArray<FNavTileRef> URecastNavMeshDataChunk::DetachTiles(ARecastNavMesh& NavMesh
 
 					if (ActiveTiles)
 					{
-						ActiveTiles->RemoveSwap(FIntPoint(TileData.X, TileData.Y));	
+						ActiveTiles->Remove(FIntPoint(TileData.X, TileData.Y));
 					}
 						
 					Result.Add(FNavTileRef(TileRef));
@@ -462,7 +463,7 @@ TArray<FNavTileRef> URecastNavMeshDataChunk::DetachTiles(ARecastNavMesh& NavMesh
 					const int32 MaxTiles = DetourNavMesh->getTileCountAt(TileData.X, TileData.Y);
 					if (MaxTiles > 0)
 					{
-						ExtraMeshTiles.SetNumZeroed(MaxTiles, false);
+						ExtraMeshTiles.SetNumZeroed(MaxTiles, EAllowShrinking::No);
 						const int32 MeshTilesCount = DetourNavMesh->getTilesAt(TileData.X, TileData.Y, ExtraMeshTiles.GetData(), MaxTiles);
 						for (int32 i = 0; i < MeshTilesCount; ++i)
 						{

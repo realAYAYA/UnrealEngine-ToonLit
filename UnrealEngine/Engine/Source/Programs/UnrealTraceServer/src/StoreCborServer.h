@@ -28,6 +28,7 @@ public:
 	FRecorder&				GetRecorder() const;
 	FTraceRelay*			RelayTrace(uint32 Id);
 	void					OnSettingsChanged();
+	uint32					GetActivePeerCount() const { return Peers.Num(); }
 
 private:
 	virtual bool			OnAccept(asio::ip::tcp::socket& Socket) override;

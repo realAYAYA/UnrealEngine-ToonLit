@@ -11,7 +11,7 @@
 #include "Containers/Queue.h"
 
 #if PLATFORM_WINDOWS
-	#include "Video/Resources/Windows/VideoResourceD3D.h"
+	#include "Video/Resources/D3D/VideoResourceD3D.h"
 #endif // PLATFORM_WINDOWS
 
 /**

@@ -421,7 +421,7 @@ void FSubmixEffectMultibandCompressor::OnProcessAudio(const FSoundEffectSubmixIn
 			KeyPtr = &AudioExternal[KeySampleIdx];
 		}
 
-		ScratchBuffer.SetNumUninitialized(BlockSize, false /* bAllowShrinking */);
+		ScratchBuffer.SetNumUninitialized(BlockSize, EAllowShrinking::No);
 
 		BandSplitter.ProcessAudioBuffer(InPtr, MultiBandBuffer, NumBlockFrames);
 

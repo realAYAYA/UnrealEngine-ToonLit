@@ -62,7 +62,7 @@ void ScatterVoxels(
 
 				bool VoxelIndexLow = VoxelIndex < 32;
 				uint VoxelShift = VoxelIndex - ( VoxelIndexLow ? 0 : 32 );
-				uint VoxelMask = 1 << VoxelShift;
+				uint VoxelMask = 1u << VoxelShift;
 
 				bool bVoxelExists = ( VoxelIndexLow ? RootBlock.x : RootBlock.y ) & VoxelMask;
 
@@ -107,7 +107,7 @@ void ScatterVoxels(
 
 			bool VoxelIndexLow = VoxelIndex < 32;
 			uint VoxelShift = VoxelIndex - ( VoxelIndexLow ? 0 : 32 );
-			uint VoxelMask = 1 << VoxelShift;
+			uint VoxelMask = 1u << VoxelShift;
 
 			bool bVoxelExists = ( VoxelIndexLow ? RootBlock.x : RootBlock.y ) & VoxelMask;
 

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "AudioBusSubsystem.h"
 #include "AudioMixer.h"
 #include "AudioDefines.h"
 #include "CoreMinimal.h"
@@ -82,7 +83,7 @@ namespace Audio
 
 	class FMixerSubmix;
 
-	struct FChildSubmixInfo
+	struct FChildSubmixInfo : FNoncopyable
 	{
 		TWeakPtr<FMixerSubmix, ESPMode::ThreadSafe> SubmixPtr;
 
@@ -97,13 +98,6 @@ namespace Audio
 
 		FChildSubmixInfo()
 		{}
-
-		// TMap doesn't compile using non-copyable types as value types, though you can build and use a TMap without using the copy constructor.
-		FChildSubmixInfo(const FChildSubmixInfo& InInfo)
-			: FChildSubmixInfo()
-		{
-			checkf(false, TEXT("FChildSubmixInfo is not copyable. If you are using FChildSubmixInfo, consider using Emplace or Add(FChildSubmixInfo&&)."));
-		}
 
 		FChildSubmixInfo(TWeakPtr<FMixerSubmix, ESPMode::ThreadSafe> SubmixWeakPtr)
 			: SubmixPtr(SubmixWeakPtr)
@@ -123,6 +117,9 @@ namespace Audio
 		// Returns the mixer submix Id
 		uint32 GetId() const { return Id; }
 
+		// Return the owners name 
+		AUDIOMIXER_API const FString& GetName() const { return SubmixName; }
+
 		// Sets the parent submix to the given submix
 		AUDIOMIXER_API void SetParentSubmix(TWeakPtr<FMixerSubmix, ESPMode::ThreadSafe> Submix);
 
@@ -131,6 +128,12 @@ namespace Audio
 
 		// Removes the given submix from this submix's children
 		AUDIOMIXER_API void RemoveChildSubmix(TWeakPtr<FMixerSubmix, ESPMode::ThreadSafe> SubmixWeakPtr);
+
+		// Registers the given audiobus to this submix
+		AUDIOMIXER_API void RegisterAudioBus(const Audio::FAudioBusKey& InAudioBusKey, Audio::FPatchInput&& InPatchInput);
+
+		// Unregisters a registered audiobus from this submix (if any)
+		AUDIOMIXER_API void UnregisterAudioBus(const Audio::FAudioBusKey& InAudioBusKey);
 
 		// Sets the output level of the submix in linear gain
 		AUDIOMIXER_API void SetOutputVolume(float InOutputLevel);
@@ -146,6 +149,10 @@ namespace Audio
 
 		// Update modulation settings of the submix with Decibel values
 		AUDIOMIXER_API void SetModulationBaseLevels(float InVolumeModBaseDb, float InWetModeBaseDb, float InDryModBaseDb);
+
+		FModulationDestination* GetOutputVolumeDestination();
+
+		FModulationDestination* GetWetVolumeDestination();
 
 		// Gets the submix channels channels
 		AUDIOMIXER_API int32 GetSubmixChannels() const;
@@ -247,10 +254,16 @@ namespace Audio
 		AUDIOMIXER_API void ResumeRecordingOutput();
 
 		// Register buffer listener with this submix
+		// Unregister buffer listener with this submix
+
+		UE_DEPRECATED(5.4, "This function is deprecated. Use RegisterBufferListener version that is provided a shared reference to a listener.")
 		AUDIOMIXER_API void RegisterBufferListener(ISubmixBufferListener* BufferListener);
 		
-		// Unregister buffer listener with this submix
+		UE_DEPRECATED(5.4, "This function is deprecated. Use UnregisterBufferListener version that is provided a shared reference to a listener.")
 		AUDIOMIXER_API void UnregisterBufferListener(ISubmixBufferListener* BufferListener);
+
+		AUDIOMIXER_API void RegisterBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> BufferListener);
+		AUDIOMIXER_API void UnregisterBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> BufferListener);
 
 		// Starts envelope following with the given attack time and release time
 		AUDIOMIXER_API void StartEnvelopeFollowing(int32 AttackTime, int32 ReleaseTime);
@@ -320,6 +333,9 @@ namespace Audio
 
 		AUDIOMIXER_API FSoundfieldSpeakerPositionalData GetDefaultPositionalDataForAudioDevice();
 
+		AUDIOMIXER_API TWeakPtr<FMixerSubmix, ESPMode::ThreadSafe>  GetParent() const { return ParentSubmix; }
+		AUDIOMIXER_API const TMap<uint32, FChildSubmixInfo>& GetChildren() const { return ChildSubmixes; }
+
 	protected:
 		// Initialize the submix internal
 		AUDIOMIXER_API void InitInternal();
@@ -351,6 +367,11 @@ namespace Audio
 		AUDIOMIXER_API TUniquePtr<ISoundfieldTranscodeStream> GetTranscoderForChildSubmix(const TSharedPtr<Audio::FMixerSubmix, ESPMode::ThreadSafe>& InChildSubmix);
 
 	protected:
+		struct AUDIOMIXER_API FSubmixBufferListenerInfo
+		{
+			ISubmixBufferListener* Listener = nullptr;
+			FString Descriptor;
+		};
 
 		// Pump command queue
 		AUDIOMIXER_API void PumpCommandQueue();
@@ -361,6 +382,9 @@ namespace Audio
 		// Generates audio from the given effect chain into the given buffer
 		AUDIOMIXER_API bool GenerateEffectChainAudio(FSoundEffectSubmixInputData& InputData, const FAlignedFloatBuffer& InAudioBuffer, TArray<FSoundEffectSubmixPtr>& InEffectChain, FAlignedFloatBuffer& OutBuffer);
 
+		// The name of this submix (the owning USoundSubmix) (at top so we can see in debugger it's name)
+		FString SubmixName;
+		
 		// This mixer submix's Id
 		uint32 Id;
 
@@ -561,8 +585,8 @@ namespace Audio
 		// Submix command queue to shuffle commands from audio thread to audio render thread.
 		TQueue<TFunction<void()>> CommandQueue;
 
-		// List of submix buffer listeners
-		TArray<ISubmixBufferListener*> BufferListeners;
+		// List of submix buffer listeners.
+		TArray<TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe>> BufferListeners;
 
 		// Critical section used for modifying and interacting with buffer listeners
 		mutable FCriticalSection BufferListenerCriticalSection;
@@ -593,9 +617,6 @@ namespace Audio
 
 		// The time that the first full silent buffer was detected in the submix. Submix will auto-disable if the timeout is reached and the submix has bAutoDisable set to true.
 		double SilenceTimeStartSeconds;
-
-		// The name of this submix (the owning USoundSubmix)
-		FString SubmixName;
 
 		// Bool set to true when envelope following is enabled
 		FThreadSafeBool bIsEnvelopeFollowing;
@@ -656,5 +677,11 @@ namespace Audio
 		TUniquePtr<IAudioLink> AudioLinkInstance;
 
 		friend class FMixerDevice;
+
+	private:
+		AUDIOMIXER_API void SendAudioToRegisteredAudioBuses(FAlignedFloatBuffer& OutAudioBuffer);
+
+		// Registered audio buses
+		TMap<Audio::FAudioBusKey, Audio::FPatchInput> AudioBuses;
 	};
 }

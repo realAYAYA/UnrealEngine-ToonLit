@@ -3,6 +3,7 @@
 #include "IO/IoDispatcher.h"
 #include "IO/IoDispatcherPrivate.h"
 #include "IO/IoStore.h"
+#include "IO/IoOffsetLength.h"
 #include "Misc/ScopeRWLock.h"
 #include "Misc/CommandLine.h"
 #include "Misc/CoreDelegates.h"
@@ -94,7 +95,7 @@ public:
 
 	void OnBatchIssued(FIoBatch& Batch)
 	{
-		double StartTime = FPlatformTime::Seconds();
+		const uint64 StartTime = FPlatformTime::Cycles64();
 		FIoRequestImpl* Request = Batch.HeadRequest;
 		while (Request)
 		{
@@ -123,7 +124,8 @@ public:
 		}
 		FRequestCategory* Category = ChunkTypeToCategoryMap[static_cast<int32>(Request.ChunkId.GetChunkType())];
 		++Category->TotaRequestsCount;
-		Category->TotalRequestsTime += FPlatformTime::Seconds() - Request.StartTime;
+		const double Duration = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - Request.GetStartTime());
+		Category->TotalRequestsTime += Duration;
 #if COUNTERSTRACE_ENABLED
 		Category->TotalLoadedCounter.Add(Request.GetBuffer().DataSize());
 		Category->AverageDurationCounter.Set(Category->TotalRequestsTime / double(Category->TotaRequestsCount));
@@ -423,6 +425,7 @@ public:
 	{
 		if (ChunkId.IsValid())
 		{
+			FReadScopeLock _(BackendsLock);
 			for (const FBackendAndPriority& Backend : Backends)
 			{
 				TIoStatusOr<FIoMappedRegion> Result = Backend.Value->OpenMapped(ChunkId, Options);
@@ -443,23 +446,40 @@ public:
 	{
 		check(IsInGameThread());
 
-		int32 Index = Algo::LowerBoundBy(Backends, Priority, &FBackendAndPriority::Key, TGreater<>());
-		Backends.Insert(MakeTuple(Priority, Backend), Index);
 		if (bIsInitialized)
 		{
 			Backend->Initialize(BackendContext);
-			if (!Thread)
-			{
-				StartThread();
-			}
+		}
+		{
+			FWriteScopeLock _(BackendsLock);
+			int32 Index = Algo::LowerBoundBy(Backends, Priority, &FBackendAndPriority::Key, TGreater<>());
+			Backends.Insert(MakeTuple(Priority, Backend), Index);
+		}
+		if (bIsInitialized && !Thread)
+		{
+			StartThread();
 		}
 	}
 
 	bool DoesChunkExist(const FIoChunkId& ChunkId) const
 	{
+		FReadScopeLock _(BackendsLock);
 		for (const FBackendAndPriority& Backend : Backends)
 		{
 			if (Backend.Value->DoesChunkExist(ChunkId))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool DoesChunkExist(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange) const
+	{
+		FReadScopeLock _(BackendsLock);
+		for (const FBackendAndPriority& Backend : Backends)
+		{
+			if (Backend.Value->DoesChunkExist(ChunkId, ChunkRange))
 			{
 				return true;
 			}
@@ -472,9 +492,32 @@ public:
 		// Only attempt to find the size if the FIoChunkId is valid
 		if (ChunkId.IsValid())
 		{
+			FReadScopeLock _(BackendsLock);
 			for (const FBackendAndPriority& Backend : Backends)
 			{
 				TIoStatusOr<uint64> Result = Backend.Value->GetSizeForChunk(ChunkId);
+				if (Result.IsOk())
+				{
+					return Result;
+				}
+			}
+			return FIoStatus(EIoErrorCode::NotFound);
+		}
+		else
+		{
+			return FIoStatus(EIoErrorCode::InvalidParameter, TEXT("FIoChunkId is not valid"));
+		}	
+	}
+	
+	TIoStatusOr<uint64> GetSizeForChunk(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange, uint64& OutAvailable) const
+	{
+		// Only attempt to find the size if the FIoChunkId is valid
+		if (ChunkId.IsValid())
+		{
+			FReadScopeLock _(BackendsLock);
+			for (const FBackendAndPriority& Backend : Backends)
+			{
+				TIoStatusOr<uint64> Result = Backend.Value->GetSizeForChunk(ChunkId, ChunkRange, OutAvailable);
 				if (Result.IsOk())
 				{
 					return Result;
@@ -505,7 +548,7 @@ public:
 		}
 		check(Batch.TailRequest);
 
-		if (Backends.IsEmpty())
+		if (!HasMountedBackend())
 		{
 			FIoRequestImpl* Request = Batch.HeadRequest;
 			while (Request)
@@ -599,6 +642,7 @@ public:
 
 	bool HasMountedBackend() const
 	{
+		FReadScopeLock _(BackendsLock);
 		return Backends.Num() > 0;
 	}
 
@@ -616,6 +660,7 @@ private:
 	{
 		//TRACE_CPUPROFILER_EVENT_SCOPE(ProcessCompletedRequests);
 
+		FReadScopeLock _(BackendsLock);
 		for (const FBackendAndPriority& Backend : Backends)
 		{
 			FIoRequestImpl* CompletedRequestsHead = Backend.Value->GetCompletedRequests();
@@ -776,6 +821,7 @@ private:
 			{
 				TRACE_CPUPROFILER_EVENT_SCOPE(ResolveRequest);
 				bool bResolved = false;
+				FReadScopeLock _(BackendsLock);
 				for (const FBackendAndPriority& Backend : Backends)
 				{
 					if (Backend.Value->Resolve(Request))
@@ -847,6 +893,7 @@ private:
 
 	TSharedRef<FIoDispatcherBackendContext> BackendContext;
 	FDelegateHandle MemoryTrimDelegateHandle;
+	mutable FRWLock BackendsLock;
 	TArray<FBackendAndPriority> Backends;
 	FIoRequestAllocator* RequestAllocator = nullptr;
 	FBatchAllocator BatchAllocator;
@@ -901,10 +948,22 @@ FIoDispatcher::DoesChunkExist(const FIoChunkId& ChunkId) const
 	return Impl->DoesChunkExist(ChunkId);
 }
 
+bool
+FIoDispatcher::DoesChunkExist(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange) const
+{
+	return Impl->DoesChunkExist(ChunkId, ChunkRange);
+}
+
 TIoStatusOr<uint64>
 FIoDispatcher::GetSizeForChunk(const FIoChunkId& ChunkId) const
 {
 	return Impl->GetSizeForChunk(ChunkId);
+}
+
+TIoStatusOr<uint64>
+FIoDispatcher::GetSizeForChunk(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange, uint64& OutAvailable) const
+{
+	return Impl->GetSizeForChunk(ChunkId, ChunkRange, OutAvailable);
 }
 
 int64
@@ -924,19 +983,6 @@ HasScriptObjectsChunk(FIoDispatcher& Dispatcher)
 {
 	static bool bHasScriptObjectsChunk = Dispatcher.DoesChunkExist(CreateIoChunkId(0, 0, EIoChunkType::ScriptObjects));
 	return bHasScriptObjectsChunk;
-}
-
-static bool
-HasUseIoStoreParam()
-{
-#if UE_FORCE_USE_IOSTORE
-    return true;
-#elif WITH_IOSTORE_IN_EDITOR
-    static bool bForceIoStore = FParse::Param(FCommandLine::Get(), TEXT("UseIoStore"));
-    return bForceIoStore;
-#else
-    return false;
-#endif
 }
 
 bool

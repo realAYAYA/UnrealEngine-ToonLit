@@ -14,15 +14,20 @@
 #include "Templates/SharedPointer.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
-const FString FMainMRUFavoritesList::FAVORITES_INI_SECTION = TEXT("FavoriteFiles");
-
 FMainMRUFavoritesList::FMainMRUFavoritesList()
 	: FMRUList( TEXT("MRU") )
+	, INIFavoritesSection(TEXT("FavoriteFiles"))
+{
+}
+FMainMRUFavoritesList::FMainMRUFavoritesList(const FString& IniSectionOverride, const int32 InitMaxItems)
+	: FMRUList(IniSectionOverride, InitMaxItems)
+	, INIFavoritesSection(TEXT("FavoriteFiles"))
 {
 }
 
-FMainMRUFavoritesList::FMainMRUFavoritesList(const FString& IniSectionOverride, const int32 InitMaxItems)
-	:FMRUList(IniSectionOverride, InitMaxItems)
+FMainMRUFavoritesList::FMainMRUFavoritesList(const FString& IniSectionOverride, const FString& IniFavoritesSectionOverride, const int32 InitMaxItems)
+	: FMRUList(IniSectionOverride, InitMaxItems)
+	, INIFavoritesSection(IniFavoritesSectionOverride)
 {
 }
 
@@ -39,14 +44,14 @@ void FMainMRUFavoritesList::ReadFromINI()
 	InternalReadINI( Items, INISection, TEXT("MRUItem"), GetMaxItems() );
 
 	// Read in the Favorite items
-	InternalReadINI( FavoriteItems, FAVORITES_INI_SECTION, TEXT("FavoritesItem"), MaxItems );	
+	InternalReadINI( FavoriteItems, INIFavoritesSection, TEXT("FavoritesItem"), MaxItems );
 }
 
 /** Save off the state of the MRU and favorites lists to the relevant INI file */
 void FMainMRUFavoritesList::WriteToINI() const
 {
 	InternalWriteINI( Items, INISection, TEXT("MRUItem") );
-	InternalWriteINI( FavoriteItems, FAVORITES_INI_SECTION, TEXT("FavoritesItem") );
+	InternalWriteINI( FavoriteItems, INIFavoritesSection, TEXT("FavoritesItem") );
 }
 
 /**

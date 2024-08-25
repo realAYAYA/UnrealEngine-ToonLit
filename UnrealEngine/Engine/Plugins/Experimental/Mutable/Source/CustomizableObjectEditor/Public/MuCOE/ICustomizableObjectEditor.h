@@ -32,7 +32,7 @@ public:
 	virtual void UpdateObjectProperties() {}
 
 	// Make sure the graph editor selects a specific node
-	virtual void SelectNode(const UCustomizableObjectNode* Node) {}
+	virtual void SelectNode(const UEdGraphNode* Node) {}
 
 	virtual void ReconstructNode(UEdGraphNode* Node) {}
 

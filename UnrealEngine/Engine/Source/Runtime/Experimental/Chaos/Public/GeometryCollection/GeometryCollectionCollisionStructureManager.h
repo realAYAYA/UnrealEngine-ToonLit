@@ -78,7 +78,7 @@ public:
 	 *	\p CollisionType - param forwarded to \c UpdateImplictFlags().
 	 *	\p ImplicitType - type of implicit shape to build.
 	 */
-	static CHAOS_API FImplicit * NewImplicit(
+	static CHAOS_API Chaos::FImplicitObjectRef NewImplicit(
 		Chaos::FErrorReporter ErrorReporter,
 		const Chaos::FParticles& MeshParticles,
 		const Chaos::FTriangleMesh& TriMesh,
@@ -90,36 +90,36 @@ public:
 		const ECollisionTypeEnum CollisionType,
 		const EImplicitTypeEnum ImplicitType);
 
-	static CHAOS_API FImplicit* NewImplicitBox(
+	static CHAOS_API Chaos::FImplicitObjectRef NewImplicitBox(
 		const FBox& CollisionBounds,
 		const float CollisionObjectReduction,
 		const ECollisionTypeEnum CollisionType);
 
-	static CHAOS_API FImplicit* NewImplicitSphere(
+	static CHAOS_API Chaos::FImplicitObjectRef NewImplicitSphere(
 		const Chaos::FReal Radius,
 		const float CollisionObjectReduction,
 		const ECollisionTypeEnum CollisionType);
 
-	static CHAOS_API FImplicit* NewImplicitCapsule(
+	static CHAOS_API Chaos::FImplicitObjectRef NewImplicitCapsule(
 		const Chaos::FReal Radius,
 		const Chaos::FReal Length,
 		const float CollisionObjectReduction,
 		const ECollisionTypeEnum CollisionType);
 
-	static CHAOS_API FImplicit* NewImplicitCapsule(
+	static CHAOS_API Chaos::FImplicitObjectRef NewImplicitCapsule(
 		const FBox& CollisionBounds,
 		const float CollisionObjectReduction,
 		const ECollisionTypeEnum CollisionType);
 
-	static CHAOS_API FImplicit* NewImplicitConvex(
+	static CHAOS_API Chaos::FImplicitObjectRef NewImplicitConvex(
 		const TArray<int32>& ConvexIndices,
-		const TManagedArray<TUniquePtr<Chaos::FConvex>>* ConvexGeometry,
+		const TManagedArray<Chaos::FConvexPtr>* ConvexGeometry,
 		const ECollisionTypeEnum CollisionType,
 		const FTransform& MassTransform,
 		const Chaos::FReal CollisionMarginFraction,
 		const float CollisionObjectReduction);
 
-	static CHAOS_API FImplicit* NewImplicitLevelset(
+	static CHAOS_API Chaos::FImplicitObjectRef NewImplicitLevelset(
 		Chaos::FErrorReporter ErrorReporter,
 		const Chaos::FParticles& MeshParticles,
 		const Chaos::FTriangleMesh& TriMesh,
@@ -129,7 +129,7 @@ public:
 		const float CollisionObjectReduction,
 		const ECollisionTypeEnum CollisionType);
 
-	static CHAOS_API Chaos::FLevelSet* NewLevelset(
+	static CHAOS_API Chaos::FLevelSetRef NewLevelset(
 		Chaos::FErrorReporter ErrorReporter,
 		const Chaos::FParticles& MeshParticles,
 		const Chaos::FTriangleMesh& TriMesh,

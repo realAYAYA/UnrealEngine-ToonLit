@@ -63,6 +63,8 @@ struct FCompositePrimitiveInputs
 
 	// [Required] The scene depth to composite with editor primitives.
 	FScreenPassTexture SceneDepth;
+
+	bool bUseMetalMSAAHDRDecode = false;
 };
 
 // Constructs a new view suitable for rendering debug primitives.
@@ -86,6 +88,7 @@ void PopulateDepthPass(FRDGBuilder& GraphBuilder,
 	FRDGTextureRef OutPopDepth, 
 	const FVector2f& SceneDepthJitter,
 	uint32 NumMSAASamples,
-	bool bForceDrawColor = false);
+	bool bForceDrawColor = false,
+	bool bUseMetalPlatformHDRDecode = false);
 
 #endif //#if UE_ENABLE_DEBUG_DRAWING

@@ -2,10 +2,10 @@
 
 #include "Video/Encoders/VideoEncoderAMF.h"
 
-#include "Video/Resources/VideoResourceVulkan.h"
+#include "Video/Resources/Vulkan/VideoResourceVulkan.h"
 
 #if PLATFORM_WINDOWS
-	#include "Video/Resources/Windows/VideoResourceD3D.h"
+	#include "Video/Resources/D3D/VideoResourceD3D.h"
 #endif
 
 REGISTER_TYPEID(amf::AMFSurfacePtr);

@@ -13,7 +13,6 @@
 #include "Insights/InsightsManager.h"
 #include "Insights/ViewModels/FilterConfigurator.h"
 #include "Insights/ViewModels/Filters.h"
-#include "Insights/ViewModels/ThreadTimingTrack.h"
 #include "Insights/ViewModels/TimingTrackViewport.h"
 #include "Insights/ViewModels/TimingViewDrawHelper.h"
 #include "Insights/ViewModels/TooltipDrawState.h"
@@ -27,6 +26,26 @@ namespace Insights
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 INSIGHTS_IMPLEMENT_RTTI(FCpuCoreTimingTrack)
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+FCpuCoreTimingTrack::FCpuCoreTimingTrack(FContextSwitchesSharedState& InSharedState, const FString& InName, uint32 InCoreNumber)
+	: FTimingEventsTrack(InName)
+	, SharedState(InSharedState)
+	, CoreNumber(InCoreNumber)
+	, NonTargetProcessEventsDrawState(MakeShared<FTimingEventsTrackDrawState>())
+{
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FCpuCoreTimingTrack::Reset()
+{
+	NonTargetProcessEventsMaxDepth = -1;
+	NonTargetProcessEventsDrawState->Reset();
+
+	FTimingEventsTrack::Reset();
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -47,14 +66,25 @@ void FCpuCoreTimingTrack::BuildDrawState(ITimingEventsTrackDrawStateBuilder& Bui
 	}
 
 	const FTimingTrackViewport& Viewport = Context.GetViewport();
-
+	FTimingEventsTrackDrawStateBuilder NonTargetProcessEventsBuilder(*NonTargetProcessEventsDrawState, Viewport, Context.GetGeometry().Scale);
+	bool bShowNonTargetProcessEvents = SharedState.AreNonTargetProcessEventsVisible();
 	ContextSwitchesProvider->EnumerateCpuCoreEvents(CoreNumber, Viewport.GetStartTime(), Viewport.GetEndTime(), 
-		[&Builder, ContextSwitchesProvider, this](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
+		[&Builder, &NonTargetProcessEventsBuilder, ContextSwitchesProvider, bShowNonTargetProcessEvents, this](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
 		{
-			this->AddCoreTimingEvent(Builder, CpuCoreEvent);
+			uint32 ThreadId = 0;
+			if (ContextSwitchesProvider->GetThreadId(CpuCoreEvent.SystemThreadId, ThreadId))
+			{
+				this->AddCoreTimingEvent(Builder, CpuCoreEvent);
+			}
+			else if(bShowNonTargetProcessEvents)
+			{
+				this->AddCoreTimingEvent(NonTargetProcessEventsBuilder, CpuCoreEvent);
+			}
 
 			return TraceServices::EContextSwitchEnumerationResult::Continue;
 		});
+
+	NonTargetProcessEventsMaxDepth = NonTargetProcessEventsBuilder.GetMaxDepth();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -84,10 +114,17 @@ void FCpuCoreTimingTrack::BuildFilteredDrawState(ITimingEventsTrackDrawStateBuil
 
 			if (bFilterOnlyByEventType)
 			{
+				bool bShowNonTargetProcessEvents = SharedState.AreNonTargetProcessEventsVisible();
 				ContextSwitchesProvider->EnumerateCpuCoreEvents(CoreNumber, Viewport.GetStartTime(), Viewport.GetEndTime(), 
-					[&Builder, ContextSwitchesProvider, FilterEventType, this](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
+					[&Builder, ContextSwitchesProvider, FilterEventType, this, bShowNonTargetProcessEvents](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
 					{
 						if (CpuCoreEvent.SystemThreadId != FilterEventType)
+						{
+							return TraceServices::EContextSwitchEnumerationResult::Continue;
+						}
+
+						uint32 ThreadId;
+						if (!bShowNonTargetProcessEvents && !ContextSwitchesProvider->GetThreadId(CpuCoreEvent.SystemThreadId, ThreadId))
 						{
 							return TraceServices::EContextSwitchEnumerationResult::Continue;
 						}
@@ -132,8 +169,10 @@ void FCpuCoreTimingTrack::BuildFilteredDrawState(ITimingEventsTrackDrawStateBuil
 		const TraceServices::IContextSwitchesProvider* ContextSwitchesProvider = TraceServices::ReadContextSwitchesProvider(*Session.Get());
 		const FTimingTrackViewport& Viewport = Context.GetViewport();
 
+		bool bShowNonTargetProcessEvents = SharedState.AreNonTargetProcessEventsVisible();
+
 		ContextSwitchesProvider->EnumerateCpuCoreEvents(CoreNumber, Viewport.GetStartTime(), Viewport.GetEndTime(), 
-			[&Builder, ContextSwitchesProvider, &FilterContext, &FilterConfigurator, this](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
+			[&Builder, ContextSwitchesProvider, &FilterContext, &FilterConfigurator, bShowNonTargetProcessEvents, this](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
 			{
 				FilterContext.SetFilterData<double>(static_cast<int32>(EFilterField::StartTime), CpuCoreEvent.Start);
 				FilterContext.SetFilterData<double>(static_cast<int32>(EFilterField::EndTime), CpuCoreEvent.End);
@@ -141,6 +180,12 @@ void FCpuCoreTimingTrack::BuildFilteredDrawState(ITimingEventsTrackDrawStateBuil
 				FilterContext.SetFilterData<int64>(static_cast<int32>(EFilterField::CoreEventName), CpuCoreEvent.SystemThreadId);
 
 				if (!FilterConfigurator->ApplyFilters(FilterContext))
+				{
+					return TraceServices::EContextSwitchEnumerationResult::Continue;
+				}
+
+				uint32 ThreadId;
+				if (!bShowNonTargetProcessEvents && !ContextSwitchesProvider->GetThreadId(CpuCoreEvent.SystemThreadId, ThreadId))
 				{
 					return TraceServices::EContextSwitchEnumerationResult::Continue;
 				}
@@ -165,7 +210,8 @@ void FCpuCoreTimingTrack::AddCoreTimingEvent(ITimingEventsTrackDrawStateBuilder&
 		{
 			FString EventName = GetThreadName(SystemThreadId);
 
-			if (Width > EventName.Len() * 4.0f + 32.0f)
+			const float MinWidth = static_cast<float>(EventName.Len()) * 4.0f + 32.0f;
+			if (Width > MinWidth)
 			{
 				const double Duration = CpuCoreEvent.End - CpuCoreEvent.Start;
 				FTimingEventsTrackDrawStateBuilder::AppendDurationToEventName(EventName, Duration);
@@ -179,6 +225,10 @@ void FCpuCoreTimingTrack::AddCoreTimingEvent(ITimingEventsTrackDrawStateBuilder&
 
 void FCpuCoreTimingTrack::Draw(const ITimingTrackDrawContext& Context) const
 {
+	const FTimingViewDrawHelper& Helper = *static_cast<const FTimingViewDrawHelper*>(&Context.GetHelper());
+
+	Helper.DrawFadedEvents(*NonTargetProcessEventsDrawState, *this, 1.0f, 0.1f);
+
 	FTimingEventsTrack::Draw(Context);
 }
 
@@ -227,11 +277,23 @@ const TSharedPtr<const ITimingEvent> FCpuCoreTimingTrack::GetEvent(double InTime
 
 	TraceServices::FCpuCoreEvent BestMatchEvent;
 	double Delta = 2 * SecondsPerPixel;
+	bool bShowNonTargetProcessEvents = SharedState.AreNonTargetProcessEventsVisible();
+
+	auto ShouldShowEvent = [bShowNonTargetProcessEvents, ContextSwitchesProvider](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
+	{
+		uint32 ThreadId;
+		if (!bShowNonTargetProcessEvents)
+		{
+			return ContextSwitchesProvider->GetThreadId(CpuCoreEvent.SystemThreadId, ThreadId);
+		}
+
+		return true;
+	};
 
 	ContextSwitchesProvider->EnumerateCpuCoreEvents(CoreNumber, InTime - Delta, InTime + Delta,
-		[InTime, &BestMatchEvent, &Delta](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
+		[InTime, &BestMatchEvent, &Delta, ShouldShowEvent](const TraceServices::FCpuCoreEvent& CpuCoreEvent)
 		{
-			if (CpuCoreEvent.Start <= InTime && CpuCoreEvent.End >= InTime)
+			if (CpuCoreEvent.Start <= InTime && CpuCoreEvent.End >= InTime && ShouldShowEvent(CpuCoreEvent))
 			{
 				BestMatchEvent = CpuCoreEvent;
 				Delta = 0.0f;
@@ -239,14 +301,14 @@ const TSharedPtr<const ITimingEvent> FCpuCoreTimingTrack::GetEvent(double InTime
 			}
 
 			double DeltaLeft = InTime - CpuCoreEvent.End;
-			if (DeltaLeft >= 0 && DeltaLeft < Delta)
+			if (DeltaLeft >= 0 && DeltaLeft < Delta && ShouldShowEvent(CpuCoreEvent))
 			{
 				Delta = DeltaLeft;
 				BestMatchEvent = CpuCoreEvent;
 			}
 
 			double DeltaRight = CpuCoreEvent.Start - InTime;
-			if (DeltaRight >= 0 && DeltaRight < Delta)
+			if (DeltaRight >= 0 && DeltaRight < Delta && ShouldShowEvent(CpuCoreEvent))
 			{
 				Delta = DeltaRight;
 				BestMatchEvent = CpuCoreEvent;

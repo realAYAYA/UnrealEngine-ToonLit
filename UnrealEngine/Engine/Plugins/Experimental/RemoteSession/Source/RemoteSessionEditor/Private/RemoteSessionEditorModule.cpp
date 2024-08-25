@@ -5,6 +5,9 @@
 
 #include "Modules/ModuleManager.h"
 #include "Widgets/SRemoteSessionStream.h"
+#include "WorkspaceMenuStructure.h"
+#include "WorkspaceMenuStructureModule.h"
+
 
 LLM_DEFINE_TAG(RemoteSession_RemoteSessionEditor);
 #define LOCTEXT_NAMESPACE "FRemoteSessionEditorModule"
@@ -17,7 +20,17 @@ public:
 		LLM_SCOPE_BYTAG(RemoteSession_RemoteSessionEditor);
 
 		FRemoteSessionEditorStyle::Register();
-		SRemoteSessionStream::RegisterNomadTabSpawner();
+
+		{
+			constexpr bool bSortChildren = true;
+			const IWorkspaceMenuStructure& MenuStructure = WorkspaceMenu::GetMenuStructure();
+			TSharedRef<FWorkspaceItem> MenuGroup = MenuStructure.GetLevelEditorVirtualProductionCategory()->AddGroup(
+				LOCTEXT("WorkspaceMenu_VirtualProductionCategory", "VirtualProduction"),
+				FSlateIcon(),
+				bSortChildren);
+
+			SRemoteSessionStream::RegisterNomadTabSpawner(MenuGroup);
+		}
 	}
 
 	virtual void ShutdownModule() override

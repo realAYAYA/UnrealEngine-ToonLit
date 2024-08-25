@@ -1384,15 +1384,16 @@ TFunction<TFuture<void>(TOnlineAsyncOp<OpType>&)> CaptureStepResult(TOnlineAsync
 		Func(MoveTempIfPossible(InParams))
 		.Then([Promise = MoveTemp(Promise), Op = InAsyncOp.AsShared(), ResultKey](TFuture<TOnlineResult<SecondaryOpType>>&& Future) mutable
 		{
-			if (Future.Get().IsError())
+			TOnlineResult<SecondaryOpType> Result = Future.Consume();
+			if (Result.IsError())
 			{
-				UE_LOG(LogOnlineServices, Log, TEXT("[LobbiesFunctionalTest::CaptureStepResult] Failed secondary operation %s. Error: %s"), SecondaryOpType::Name, *Future.Get().GetErrorValue().GetLogString());
-				Op->SetError(Errors::RequestFailure(MoveTempIfPossible(Future.Get().GetErrorValue())));
+				UE_LOG(LogOnlineServices, Log, TEXT("[LobbiesFunctionalTest::CaptureStepResult] Failed secondary operation %s. Error: %s"), SecondaryOpType::Name, *Result.GetErrorValue().GetLogString());
+				Op->SetError(Errors::RequestFailure(MoveTempIfPossible(Result.GetErrorValue())));
 			}
 			else
 			{
 				UE_LOG(LogOnlineServices, Log, TEXT("[LobbiesFunctionalTest::CaptureStepResult] Captured secondary operation %s as %s"), SecondaryOpType::Name, *ResultKey);
-				Op->Data.Set(ResultKey, MoveTempIfPossible(Future.Get().GetOkValue()));
+				Op->Data.Set(ResultKey, MoveTempIfPossible(Result.GetOkValue()));
 			}
 			Promise.EmplaceValue();
 		});
@@ -1747,7 +1748,7 @@ TFuture<TOnlineResult<FFunctionalTestLogoutAllUsers>> FunctionalTestLogoutAllUse
 	.Then([Promise = MoveTemp(Promise)](TFuture<TArray<TOnlineResult<FFunctionalTestLogoutUser>>>&& Results)
 	{
 		bool HasAnyError = false;
-		for (TOnlineResult<FFunctionalTestLogoutUser>& Result : Results.Get())
+		for (const TOnlineResult<FFunctionalTestLogoutUser>& Result : Results.Get())
 		{
 			HasAnyError |= Result.IsError();
 		}

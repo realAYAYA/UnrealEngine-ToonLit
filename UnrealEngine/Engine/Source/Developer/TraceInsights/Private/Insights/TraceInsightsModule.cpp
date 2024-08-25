@@ -185,7 +185,7 @@ void FTraceInsightsModule::CreateDefaultStore()
 	StoreServiceDesc.StoreDir = *StoreDir;
 	StoreServiceDesc.RecorderPort = 1981;
 	StoreServiceDesc.ThreadCount = 2;
-	StoreService = TUniquePtr<UE::Trace::FStoreService>(UE::Trace::FStoreService::Create(StoreServiceDesc));
+	StoreService.Reset(UE::Trace::FStoreService::Create(StoreServiceDesc));
 
 	if (StoreService.IsValid())
 	{
@@ -194,6 +194,30 @@ void FTraceInsightsModule::CreateDefaultStore()
 #else
 	ConnectToStore(TEXT("127.0.0.1"));
 #endif // WITH_TRACE_STORE
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+FString FTraceInsightsModule::GetDefaultStoreDir()
+{
+	using UE::Trace::FStoreClient;
+
+	TUniquePtr<FStoreClient> StoreClient(FStoreClient::Connect(TEXT("localhost")));
+
+	if (!StoreClient)
+	{
+		UE_LOG(TraceInsights, Error, TEXT("Failed to connect to the store client."));
+		return FString("");
+	}
+
+	const FStoreClient::FStatus* Status = StoreClient->GetStatus();
+	if (!StoreClient)
+	{
+		UE_LOG(TraceInsights, Error, TEXT("Failed to get the status of the store client."));
+		return FString("");
+	}
+
+	return FString(Status->GetStoreDir());
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -602,6 +626,24 @@ void FTraceInsightsModule::ScheduleCommand(const FString& InCmd)
 #endif
 
 	FInsightsManager::Get()->ScheduleCommand(ActualCmd);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FTraceInsightsModule::RunAutomationTest(const FString& InCmd)
+{
+#if !UE_BUILD_SHIPPING && !WITH_EDITOR
+	FString ActualCmd = InCmd;
+	ActualCmd.TrimCharInline(TEXT('\"'), nullptr);
+	ActualCmd.TrimCharInline(TEXT('\''), nullptr);
+
+	if (ActualCmd.StartsWith(TEXT("Automation RunTests")))
+	{
+		FInsightsTestRunner::Get()->ScheduleCommand(ActualCmd);
+		FInsightsTestRunner::Get()->RunTests();
+		return;
+	}
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

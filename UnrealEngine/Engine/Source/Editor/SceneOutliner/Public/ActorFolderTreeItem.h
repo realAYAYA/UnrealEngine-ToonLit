@@ -24,6 +24,7 @@ public:
 	virtual TSharedRef<SWidget> GenerateLabelWidget(ISceneOutliner& Outliner, const STableRow<FSceneOutlinerTreeItemPtr>& InRow) override;
 	virtual bool ShouldShowPinnedState() const override { return false; }
 	virtual bool ShouldShowVisibilityState() const override;
+	virtual bool ShouldRemoveOnceLastChildRemoved() const override;
 	virtual FFolder GetFolder() const override;
 	/* End FFolderTreeItem Implementation */
 		

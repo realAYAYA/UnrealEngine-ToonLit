@@ -5,106 +5,36 @@
 #include "Platform.ush"
 
 #ifndef ENABLE_BINDLESS_RESOURCES
-#define ENABLE_BINDLESS_RESOURCES 0
+	#define ENABLE_BINDLESS_RESOURCES 0
 #endif
 
 #ifndef ENABLE_BINDLESS_SAMPLERS
-#define ENABLE_BINDLESS_SAMPLERS 0
+	#define ENABLE_BINDLESS_SAMPLERS 0
 #endif
 
-// Indices can always be used as-is. This is important for things like Uniform Buffer layouts.
+#if defined(UB_RESOURCE_MEMBER_SRV) || defined(UB_RESOURCE_MEMBER_UAV)
+	// Using platform defined bindless macros
 
-#define DEFINE_RESOURCE_INDEX(Name)  uint BindlessResource_##Name
-#define DEFINE_SAMPLER_INDEX(Name)   uint BindlessSampler_##Name
+#elif ENABLE_BINDLESS_RESOURCES && PLATFORM_SUPPORTS_BINDLESS
+	#define UB_RESOURCE_MEMBER_SRV(Type, UBName, Name) \
+		Type GetBindlessResource##UBName##_##Name() { return GetResourceFromHeap(Type, UB_CB_PREFIXED_MEMBER_ACCESS(UBName, BindlessSRV_, Name)); } \
+		static const Type UBName##_##Name = GetBindlessResource##UBName##_##Name();
 
-//
-
-#if ENABLE_BINDLESS_RESOURCES && PLATFORM_SUPPORTS_BINDLESS
-	#define DEFINE_RESOURCE_VARIABLE(Type, Name) \
-		Type GetBindlessResource##Name() \
-		{ \
-			return GetResourceFromHeap(Type, BindlessResource_##Name); \
-		}
-
-	#define GET_RESOURCE(Name) GetBindlessResource##Name()
-
-	#define DEFINE_RESOURCE(Type, Name) \
-		DEFINE_RESOURCE_INDEX(Name); \
-		DEFINE_RESOURCE_VARIABLE(Type, Name); \
-		static const Type Name = GET_RESOURCE(Name);
-
-	// NOTE: These macros equivalent to FShaderParameterParser::ApplyBindlessModifications and must be kept in sync
-	#define AUTO_BINDLESS_RESOURCE_INDEX(Name)          uint BindlessResource_##Name
-	#define AUTO_BINDLESS_RESOURCE_VARIABLE(Type, Name) Type GetBindlessResource##Name() { return GetResourceFromHeap(Type, BindlessResource_##Name); }; static const Type Name = GetBindlessResource##Name()
-
-	#ifndef UB_RESOURCE_MEMBER_RESOURCE  // allow platforms to override ub member resource decl
-		#define UB_RESOURCE_MEMBER_RESOURCE(Type, Name) AUTO_BINDLESS_RESOURCE_VARIABLE(Type, Name)
-	#endif
+	#define UB_RESOURCE_MEMBER_UAV(Type, UBName, Name) \
+		Type GetBindlessResource##UBName##_##Name() { return GetResourceFromHeap(Type, UB_CB_PREFIXED_MEMBER_ACCESS(UBName, BindlessUAV_, Name)); } \
+		static const Type UBName##_##Name = GetBindlessResource##UBName##_##Name();
 #else
-	#define DEFINE_RESOURCE_VARIABLE(Type, Name)  Type Name
-	#define DEFINE_RESOURCE(Type, Name)           Type Name
-	#define GET_RESOURCE(Name)                    Name
-
-	#define UB_RESOURCE_MEMBER_RESOURCE(Type, Name) Type Name
+	#define UB_RESOURCE_MEMBER_SRV(Type, UBName, Name) Type UBName##_##Name
+	#define UB_RESOURCE_MEMBER_UAV(Type, UBName, Name) Type UBName##_##Name
 #endif
 
-#if ENABLE_BINDLESS_SAMPLERS && PLATFORM_SUPPORTS_BINDLESS
-	#define DEFINE_SAMPLER_VARIABLE(Type, Name) \
-		Type GetBindlessSampler##Name() \
-		{ \
-			return GetSamplerFromHeap(Type, BindlessSampler_##Name); \
-		}
+#if defined(UB_RESOURCE_MEMBER_SAMPLER)
+	// Using platform defined bindless macros
 
-	#define GET_SAMPLER(Name)  GetBindlessSampler##Name()
-
-	#define DEFINE_SAMPLER(Type, Name) \
-		DEFINE_SAMPLER_INDEX(Name); \
-		DEFINE_SAMPLER_VARIABLE(Type, Name); \
-		static const Type Name = GET_SAMPLER(Name);
-
-	// NOTE: These macros equivalent to FShaderParameterParser::ApplyBindlessModifications and must be kept in sync
-	#define AUTO_BINDLESS_SAMPLER_INDEX(Name)          uint BindlessSampler_##Name
-	#define AUTO_BINDLESS_SAMPLER_VARIABLE(Type, Name) Type GetBindlessSampler##Name() { return GetSamplerFromHeap(Type, BindlessSampler_##Name); }; static const Type Name = GetBindlessSampler##Name()
-
-	#ifndef UB_RESOURCE_MEMBER_SAMPLER  // allow platforms to override ub member sampler decl
-		#define UB_RESOURCE_MEMBER_SAMPLER(Type, Name) AUTO_BINDLESS_SAMPLER_VARIABLE(Type, Name)
-	#endif
+#elif ENABLE_BINDLESS_SAMPLERS && PLATFORM_SUPPORTS_BINDLESS
+	#define UB_RESOURCE_MEMBER_SAMPLER(Type, UBName, Name) \
+		Type GetBindlessSampler##UBName##_##Name() { return GetSamplerFromHeap(Type, UB_CB_PREFIXED_MEMBER_ACCESS(UBName, BindlessSampler_, Name)); } \
+		static const Type UBName##_##Name = GetBindlessSampler##UBName##_##Name();
 #else
-	#define DEFINE_SAMPLER_VARIABLE(Type, Name)  Type Name
-	#define DEFINE_SAMPLER(Type, Name)           Type Name
-	#define GET_SAMPLER(Name)                    Name
-
-	#define UB_RESOURCE_MEMBER_SAMPLER(Type, Name) Type Name
+	#define UB_RESOURCE_MEMBER_SAMPLER(Type, UBName, Name) Type UBName##_##Name
 #endif
-
-/*
-// Uniform buffers will do:
-cbuffer UniformBuffer_MyUniformBuffer
-{
-	DEFINE_RESOURCE_INDEX(MyUniformBuffer_MyTexture);
-	DEFINE_SAMPLER_INDEX(MyUniformBuffer_MySampler);
-};
-
-UB_RESOURCE_MEMBER_RESOURCE(Texture2D, MyUniformBuffer_MyTexture);
-UB_RESOURCE_MEMBER_SAMPLER(SamplerState, MyUniformBuffer_MySampler);
-
-static const struct
-{
-	Texture2D MyTexture;
-	SamplerState MySampler;
-}
-MyUniformBuffer = { MyUniformBuffer_MyTexture, MyUniformBuffer_MySampler };
-
-{	// No wrappers necessary to use
-	MyUniformBuffer.MyTexture.Sample(MyUniformBuffer.MySampler, ...);
-}
-
-// Normal uses will look like:
-DEFINE_RESOURCE(Texture2D, MyTexture);
-DEFINE_SAMPLER(SamplerState, MySampler);
-
-{	// No wrappers necessary to use
-	MyTexture.Sample(MySampler, ...);
-}
-
-*/

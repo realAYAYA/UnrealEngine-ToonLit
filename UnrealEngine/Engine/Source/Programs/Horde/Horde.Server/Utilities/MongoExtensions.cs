@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 
 namespace Horde.Server.Utilities
@@ -19,6 +20,15 @@ namespace Horde.Server.Utilities
 	public static class MongoExtensions
 	{
 		/// <summary>
+		/// Maps a constructor for a type into a classmap
+		/// </summary>
+		public static void MapConstructor<T>(this BsonClassMap classMap, Expression<Func<T>> generator, params string[] argumentNames)
+		{
+			NewExpression newExpr = (NewExpression)generator.Body;
+			classMap.MapConstructor(newExpr.Constructor, argumentNames);
+		}
+
+		/// <summary>
 		/// Rounds a time value to its BSON equivalent (ie. milliseconds since Unix Epoch).
 		/// </summary>
 		/// <param name="time"></param>
@@ -26,6 +36,26 @@ namespace Horde.Server.Utilities
 		public static DateTime RoundToBsonDateTime(DateTime time)
 		{
 			return BsonUtils.ToDateTimeFromMillisecondsSinceEpoch(BsonUtils.ToMillisecondsSinceEpoch(time));
+		}
+
+		/// <summary>
+		/// Renders a filter definition to a document using the default serializer registry
+		/// </summary>
+		public static BsonDocument Render<T>(this FilterDefinition<T> filter)
+		{
+			IBsonSerializerRegistry serializerRegistry = BsonSerializer.SerializerRegistry;
+			IBsonSerializer<T> documentSerializer = serializerRegistry.GetSerializer<T>();
+			return filter.Render(documentSerializer, serializerRegistry, MongoDB.Driver.Linq.LinqProvider.V2);
+		}
+
+		/// <summary>
+		/// Renders a filter definition to a document using the default serializer registry
+		/// </summary>
+		public static BsonValue Render<T>(this UpdateDefinition<T> update)
+		{
+			IBsonSerializerRegistry serializerRegistry = BsonSerializer.SerializerRegistry;
+			IBsonSerializer<T> documentSerializer = serializerRegistry.GetSerializer<T>();
+			return update.Render(documentSerializer, serializerRegistry, MongoDB.Driver.Linq.LinqProvider.V2);
 		}
 
 		/// <summary>
@@ -38,7 +68,7 @@ namespace Horde.Server.Utilities
 		/// <param name="indexHint"></param>
 		/// <param name="processAsync"></param>
 		/// <returns></returns>
-		public static async Task<TResult> FindWithHint<TDoc, TResult>(this IMongoCollection<TDoc> collection, FilterDefinition<TDoc> filter, string? indexHint, Func<IFindFluent<TDoc, TDoc>, Task<TResult>> processAsync)
+		public static async Task<TResult> FindWithHintAsync<TDoc, TResult>(this IMongoCollection<TDoc> collection, FilterDefinition<TDoc> filter, string? indexHint, Func<IFindFluent<TDoc, TDoc>, Task<TResult>> processAsync)
 		{
 			FindOptions? findOptions = null;
 			if (indexHint != null)
@@ -68,7 +98,7 @@ namespace Horde.Server.Utilities
 			{
 				query = query.Skip(index.Value);
 			}
-			if(count != null)
+			if (count != null)
 			{
 				query = query.Limit(count.Value);
 			}
@@ -96,38 +126,18 @@ namespace Horde.Server.Utilities
 		}
 
 		/// <summary>
-		/// Filters the documents returned from a search
-		/// </summary>
-		/// <param name="query">The query to filter</param>
-		/// <returns>New query</returns>
-		public static async Task<List<TResult>> ToListAsync<TDocument, TResult>(this IAsyncCursorSource<TDocument> query) where TDocument : TResult
-		{
-			List<TResult> results = new List<TResult>();
-			using (IAsyncCursor<TDocument> cursor = await query.ToCursorAsync())
-			{
-				while (await cursor.MoveNextAsync())
-				{
-					foreach(TDocument document in cursor.Current)
-					{
-						results.Add(document);
-					}
-				}
-			}
-			return results;
-		}
-
-		/// <summary>
 		/// Attempts to insert a document into a collection, handling the error case that a document with the given key already exists
 		/// </summary>
 		/// <typeparam name="TDocument"></typeparam>
 		/// <param name="collection">Collection to insert into</param>
 		/// <param name="newDocument">The document to insert</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the document was inserted, false if it already exists</returns>
-		public static async Task<bool> InsertOneIgnoreDuplicatesAsync<TDocument>(this IMongoCollection<TDocument> collection, TDocument newDocument)
+		public static async Task<bool> InsertOneIgnoreDuplicatesAsync<TDocument>(this IMongoCollection<TDocument> collection, TDocument newDocument, CancellationToken cancellationToken = default)
 		{
 			try
 			{
-				await collection.InsertOneAsync(newDocument);
+				await collection.InsertOneAsync(newDocument, cancellationToken: cancellationToken);
 				return true;
 			}
 			catch (MongoWriteException ex)
@@ -168,7 +178,7 @@ namespace Horde.Server.Utilities
 			}
 			catch (MongoBulkWriteException ex)
 			{
-				if(ex.WriteErrors.Any(x => x.Category != ServerErrorCategory.DuplicateKey))
+				if (ex.WriteErrors.Any(x => x.Category != ServerErrorCategory.DuplicateKey))
 				{
 					throw;
 				}
@@ -299,7 +309,11 @@ namespace Horde.Server.Utilities
 		/// <param name="source">Query source</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
+#pragma warning disable IDE1006 // Naming Styles
+#pragma warning disable VSTHRD200 // Use Async suffix
 		public static async IAsyncEnumerable<T> ToAsyncEnumerable<T>(this IAsyncCursorSource<T> source, [EnumeratorCancellation] CancellationToken cancellationToken)
+#pragma warning restore VSTHRD200 // Use Async suffix
+#pragma warning restore IDE1006 // Naming Styles
 		{
 			using (IAsyncCursor<T> cursor = await source.ToCursorAsync(cancellationToken))
 			{
@@ -321,7 +335,7 @@ namespace Horde.Server.Utilities
 		/// <returns>Bson value</returns>
 		public static BsonValue ToBsonValue(this JsonElement element)
 		{
-			switch(element.ValueKind)
+			switch (element.ValueKind)
 			{
 				case JsonValueKind.True:
 					return true;

@@ -4,12 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "EditorUndoClient.h"
-#include "DragAndDrop/GraphNodeDragDropOp.h"
 #include "Engine/SkeletalMesh.h"
 #include "Editor/SRigHierarchyTreeView.h"
 #include "Units/RigUnitContext.h"
 #include "ControlRigBlueprint.h"
 #include "Editor/RigVMEditor.h"
+#include "ControlRigSchematicModel.h"
+#include "ControlRigDragOps.h"
 #include "SRigHierarchy.generated.h"
 
 class SRigHierarchy;
@@ -22,35 +23,6 @@ struct FAssetData;
 class FMenuBuilder;
 class UToolMenu;
 struct FToolMenuContext;
-
-class FRigElementHierarchyDragDropOp : public FGraphNodeDragDropOp
-{
-public:
-	DRAG_DROP_OPERATOR_TYPE(FRigElementHierarchyDragDropOp, FGraphNodeDragDropOp)
-
-	static TSharedRef<FRigElementHierarchyDragDropOp> New(const TArray<FRigElementKey>& InElements);
-
-	virtual TSharedPtr<SWidget> GetDefaultDecorator() const override;
-
-	/** @return true if this drag operation contains property paths */
-	bool HasElements() const
-	{
-		return Elements.Num() > 0;
-	}
-
-	/** @return The property paths from this drag operation */
-	const TArray<FRigElementKey>& GetElements() const
-	{
-		return Elements;
-	}
-
-	FString GetJoinedElementNames() const;
-
-private:
-
-	/** Data for the property paths this item represents */
-	TArray<FRigElementKey> Elements;
-};
 
 USTRUCT()
 struct FRigHierarchyImportSettings
@@ -122,7 +94,7 @@ private:
 	/** Check whether we can deleting the selected item(s) */
 	bool CanRenameItem() const;
 
-	/** Delete Item */
+	/** Rename Item */
 	void HandleRenameItem();
 
 	bool CanPasteItems() const;
@@ -141,6 +113,7 @@ private:
 	void OnItemClicked(TSharedPtr<FRigTreeElement> InItem);
 	void OnItemDoubleClicked(TSharedPtr<FRigTreeElement> InItem);
 	void OnSetExpansionRecursive(TSharedPtr<FRigTreeElement> InItem, bool bShouldBeExpanded);
+	TOptional<FText> OnGetItemTooltip(const FRigElementKey& InKey) const;
 
 	// FEditorUndoClient
 	virtual void PostUndo(bool bSuccess) override;
@@ -150,6 +123,8 @@ private:
 	FReply OnDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent);
 	TOptional<EItemDropZone> OnCanAcceptDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone, TSharedPtr<FRigTreeElement> TargetItem);
 	FReply OnAcceptDrop(const FDragDropEvent& DragDropEvent, EItemDropZone DropZone, TSharedPtr<FRigTreeElement> TargetItem);
+	void OnElementKeyTagDragDetected(const FRigElementKey& InDraggedTag);
+	void UpdateConnectorMatchesOnDrag(const TArray<FRigElementKey>& InDraggedKeys);
 
 	static const FName ContextMenuName;
 	static void CreateContextMenu();
@@ -172,6 +147,8 @@ private:
 	EVisibility IsToolbarVisible() const;
 	EVisibility IsSearchbarVisible() const;
 	FReply OnImportSkeletonClicked();
+	FText GetImportHierarchyText() const;
+	bool IsImportHierarchyEnabled() const;
 	void OnFilterTextChanged(const FText& SearchText);
 
 	/** Tree view widget */
@@ -191,10 +168,14 @@ private:
 	bool IsControlOrNullSelected(bool bIncludeProcedural) const;
 	bool IsProceduralElementSelected() const;
 	bool IsNonProceduralElementSelected() const;
+	bool CanAddElement(const ERigElementType ElementType) const;
+	bool CanAddAnimationChannel() const;
 
 	URigHierarchy* GetHierarchy() const;
 	URigHierarchy* GetDefaultHierarchy() const;
 	const URigHierarchy* GetHierarchyForTreeView() const { return GetHierarchy(); }
+	FRigElementKey OnGetResolvedKey(const FRigElementKey& InKey);
+	void OnRequestDetailsInspection(const FRigElementKey& InKey);
 	
 	void ImportHierarchy(const FAssetData& InAssetData);
 	void CreateImportMenu(FMenuBuilder& MenuBuilder);
@@ -218,7 +199,8 @@ private:
 	void HandleParent(const FToolMenuContext& Context);
 	void HandleAlign(const FToolMenuContext& Context);
 	FReply ReparentOrMatchTransform(const TArray<FRigElementKey>& DraggedKeys, FRigElementKey TargetKey, bool bReparentItems, int32 LocalIndex = INDEX_NONE);
-
+	FReply ResolveConnector(const FRigElementKey& DraggedKey, const FRigElementKey& TargetKey);
+	
 	FName CreateUniqueName(const FName& InBaseName, ERigElementType InElementType) const;
 
 	void ClearDetailPanel() const;
@@ -230,10 +212,12 @@ private:
 	void HandleSetObjectBeingDebugged(UObject* InObject);
 	void OnPreConstruction_AnyThread(UControlRig* InRig, const FName& InEventName);
 	void OnPostConstruction_AnyThread(UControlRig* InRig, const FName& InEventName);
+	void OnNavigateToFirstConnectorWarning();
 
 	bool bIsConstructionEventRunning;
 	uint32 LastHierarchyHash;
 	TArray<FRigElementKey> SelectionBeforeConstruction;
+	TMap<FRigElementKey, FModularRigResolveResult> DragRigResolveResults;
 
 public:
 	FName HandleRenameElement(const FRigElementKey& OldKey, const FString& NewName);
@@ -246,3 +230,4 @@ public:
 	friend class SRigHierarchyItem;
 	friend class UControlRigBlueprintEditorLibrary;
 };
+

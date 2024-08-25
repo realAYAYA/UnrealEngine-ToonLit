@@ -149,18 +149,18 @@ public:
 
 	/**  
 	 * Dereference the weak pointer.
-	 * @param bEvenIfPendingKill if this is true, pendingkill objects are considered valid
+	 * @param bEvenIfGarbage if this is true, Garbage objects are considered valid
 	 * @return nullptr if this object is gone or the weak pointer is explicitly null, otherwise a valid uobject pointer
 	 */
-	COREUOBJECT_API class UObject* Get(bool bEvenIfPendingKill) const;
+	COREUOBJECT_API class UObject* Get(bool bEvenIfGarbage) const;
 
 	/**  
-	 * Dereference the weak pointer. This is an optimized version implying bEvenIfPendingKill=false.
+	 * Dereference the weak pointer. This is an optimized version implying bEvenIfGarbage=false.
 	 * @return nullptr if this object is gone or the weak pointer is explicitly null, otherwise a valid uobject pointer
 	 */
-	COREUOBJECT_API class UObject* Get(/*bool bEvenIfPendingKill = false*/) const;
+	COREUOBJECT_API class UObject* Get(/*bool bEvenIfGarbage = false*/) const;
 
-	/** Dereference the weak pointer even if it is RF_PendingKill or RF_Unreachable */
+	/** Dereference the weak pointer even if it is marked as Garbage or Unreachable */
 	COREUOBJECT_API class UObject* GetEvenIfUnreachable() const;
 
 	// This is explicitly not added to avoid resolving weak pointers too often - use Get() once in a function.
@@ -170,32 +170,32 @@ public:
 	 * Test if this points to a live UObject
 	 * This should be done only when needed as excess resolution of the underlying pointer can cause performance issues.
 	 *
-	 * @param bEvenIfPendingKill if this is true, pendingkill are not considered invalid
+	 * @param bEvenIfGarbage if this is true, Garbage objects are considered invalid
 	 * @param bThreadsafeTest if true then function will just give you information whether referenced
 	 *							UObject is gone forever (return false) or if it is still there (return true, no object flags checked).
 	 *							This is required as without it IsValid can return false during the mark phase of the GC
 	 *							due to the presence of the Unreachable flag.
 	 * @return true if Get() would return a valid non-null pointer
 	 */
-	COREUOBJECT_API bool IsValid(bool bEvenIfPendingKill, bool bThreadsafeTest = false) const;
+	COREUOBJECT_API bool IsValid(bool bEvenIfGarbage, bool bThreadsafeTest = false) const;
 
 	/**
-	 * Test if this points to a live UObject. This is an optimized version implying bEvenIfPendingKill=false, bThreadsafeTest=false.
+	 * Test if this points to a live UObject. This is an optimized version implying bEvenIfGarbage=false, bThreadsafeTest=false.
 	 * This should be done only when needed as excess resolution of the underlying pointer can cause performance issues.
 	 * Note that IsValid can not be used on another thread as it will incorrectly return false during the mark phase of the GC
 	 * due to the Unreachable flag being set. (see bThreadsafeTest above)
 
 	 * @return true if Get() would return a valid non-null pointer.
 	 */
-	COREUOBJECT_API bool IsValid(/*bool bEvenIfPendingKill = false, bool bThreadsafeTest = false*/) const;
+	COREUOBJECT_API bool IsValid(/*bool bEvenIfGarbage = false, bool bThreadsafeTest = false*/) const;
 
 	/**  
 	 * Slightly different than !IsValid(), returns true if this used to point to a UObject, but doesn't any more and has not been assigned or reset in the mean time.
-	 * @param bIncludingIfPendingKill if this is false, pendingkill objects are not considered stale
+	 * @param bIncludingGarbage if this is false, Garbage objects are NOT considered stale
 	 * @param bThreadsafeTest set it to true when testing outside of Game Thread. Results in false if WeakObjPtr point to an existing object (no flags checked)
 	 * @return true if this used to point at a real object but no longer does.
 	 */
-	COREUOBJECT_API bool IsStale(bool bIncludingIfPendingKill = true, bool bThreadsafeTest = false) const;
+	COREUOBJECT_API bool IsStale(bool bIncludingGarbage = true, bool bThreadsafeTest = false) const;
 
 	/**
 	 * Returns true if this pointer was explicitly assigned to null, was reset, or was never initialized.
@@ -294,7 +294,7 @@ private:
 	}
 
 	/** Private (inlined) version for internal use only. */
-	FORCEINLINE_DEBUGGABLE bool Internal_IsValid(bool bEvenIfPendingKill, bool bThreadsafeTest) const
+	FORCEINLINE_DEBUGGABLE bool Internal_IsValid(bool bEvenIfGarbage, bool bThreadsafeTest) const
 	{
 		FUObjectItem* const ObjectItem = Internal_GetObjectItem();
 		if (bThreadsafeTest)
@@ -303,15 +303,15 @@ private:
 		}
 		else
 		{
-			return (ObjectItem != nullptr) && GUObjectArray.IsValid(ObjectItem, bEvenIfPendingKill);
+			return (ObjectItem != nullptr) && GUObjectArray.IsValid(ObjectItem, bEvenIfGarbage);
 		}
 	}
 
 	/** Private (inlined) version for internal use only. */
-	FORCEINLINE_DEBUGGABLE UObject* Internal_Get(bool bEvenIfPendingKill) const
+	FORCEINLINE_DEBUGGABLE UObject* Internal_Get(bool bEvenIfGarbage) const
 	{
 		FUObjectItem* const ObjectItem = Internal_GetObjectItem();
-		return ((ObjectItem != nullptr) && GUObjectArray.IsValid(ObjectItem, bEvenIfPendingKill)) ? (UObject*)ObjectItem->Object : nullptr;
+		return ((ObjectItem != nullptr) && GUObjectArray.IsValid(ObjectItem, bEvenIfGarbage)) ? (UObject*)ObjectItem->Object : nullptr;
 	}
 
 #if UE_WEAKOBJECTPTR_ZEROINIT_FIX

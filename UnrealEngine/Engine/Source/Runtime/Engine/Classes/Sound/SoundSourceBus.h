@@ -79,4 +79,7 @@ public:
 
 protected:
 	ENGINE_API void Init();
+	
+	// SourceBus doesn't represent a wav file, don't do anything when serializing cue points
+	virtual void SerializeCuePoints(FArchive& Ar, const bool bIsLoadingFromCookedArchive) {}
 };

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using EpicGames.Core;
 using Microsoft.Extensions.Logging;
 
 namespace Horde.Server.Configuration
@@ -46,6 +47,11 @@ namespace Horde.Server.Configuration
 		public IReadOnlyDictionary<string, IConfigSource> Sources { get; }
 
 		/// <summary>
+		/// Map of macro name to value 
+		/// </summary>
+		public List<Dictionary<string, string>> MacroScopes { get; } = new List<Dictionary<string, string>>();
+
+		/// <summary>
 		/// Tracks files read as part of the configuration
 		/// </summary>
 		public Dictionary<Uri, IConfigFile> Files { get; } = new Dictionary<Uri, IConfigFile>();
@@ -65,6 +71,8 @@ namespace Horde.Server.Configuration
 		/// </summary>
 		public string CurrentScope => ScopeStack.Peek();
 
+		readonly Func<string, string?> _getMacroValue;
+
 		/// <summary>
 		/// Constructor
 		/// </summary>
@@ -74,6 +82,9 @@ namespace Horde.Server.Configuration
 			Sources = sources;
 			ScopeStack.Push("$");
 			Logger = logger;
+			MacroScopes.Add(new Dictionary<string, string> { ["HordeDir"] = ServerApp.AppDir.FullName });
+
+			_getMacroValue = GetMacroValue;
 		}
 
 		/// <summary>
@@ -125,6 +136,26 @@ namespace Horde.Server.Configuration
 		public void LeaveScope()
 		{
 			ScopeStack.Pop();
+		}
+
+		/// <summary>
+		/// Expand macros in a string property
+		/// </summary>
+		public string ExpandMacros(string text) => StringUtils.ExpandProperties(text, _getMacroValue);
+
+		/// <summary>
+		/// Gets the value of a named macro
+		/// </summary>
+		string? GetMacroValue(string name)
+		{
+			for (int idx = MacroScopes.Count - 1; idx >= 0; idx--)
+			{
+				if (MacroScopes[idx].TryGetValue(name, out string? value))
+				{
+					return value;
+				}
+			}
+			return null;
 		}
 	}
 }

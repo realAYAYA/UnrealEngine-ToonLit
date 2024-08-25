@@ -556,7 +556,7 @@ void UUVEditorSeamTool::ReconstructExistingSeamsVisualization()
 
 	ULineSetComponent* SeamLines = LivePreviewGeometry->FindLineSet(ExistingSeamsID);
 	SeamLines->Clear();
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		FDynamicMesh3* Mesh = Target->AppliedCanonical.Get();
 		FDynamicMeshUVOverlay* Overlay = Target->AppliedCanonical->Attributes()->GetUVLayer(Target->UVLayerIndex);
@@ -668,7 +668,7 @@ void UUVEditorSeamTool::Shutdown(EToolShutdownType ShutdownType)
 	UnwrapGeometry = nullptr;
 	LivePreviewGeometry = nullptr;
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->OnCanonicalModified.RemoveAll(this);
 	}

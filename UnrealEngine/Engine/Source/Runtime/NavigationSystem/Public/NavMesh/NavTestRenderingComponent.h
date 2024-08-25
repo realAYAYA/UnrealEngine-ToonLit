@@ -2,11 +2,20 @@
 
 #pragma once
 
-#include "PrimitiveViewRelevance.h"
 #include "Debug/DebugDrawComponent.h"
+#include "AI/Navigation/NavigationTypes.h" // NavNodeRef
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "PrimitiveViewRelevance.h"
 #include "DynamicMeshBuilder.h"
 #include "DebugRenderSceneProxy.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 
+#include "NavTestRenderingComponent.generated.h"
+
+#if UE_ENABLE_DEBUG_DRAWING
+
+class FPrimitiveSceneProxy;
 class ANavigationTestingActor;
 class APlayerController;
 class FMeshElementCollector;
@@ -42,7 +51,7 @@ public:
 		}
 	};
 
-	FNavTestSceneProxy(const UNavTestRenderingComponent* InComponent);
+	explicit FNavTestSceneProxy(const UNavTestRenderingComponent* InComponent);
 
 	virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override;
 
@@ -69,8 +78,6 @@ private:
 	uint32 bShowDiff : 1;
 
 	ANavigationTestingActor* NavTestActor;
-	FDebugDrawDelegate DebugTextDrawingDelegate;
-	FDelegateHandle DebugTextDrawingDelegateHandle;
 	TArray<FVector> PathPoints;
 	TArray<FString> PathPointFlags;
 
@@ -84,7 +91,6 @@ private:
 	FVector ClosestWallLocation;
 };
 
-#if WITH_RECAST && WITH_EDITOR
 class FNavTestDebugDrawDelegateHelper : public FDebugDrawDelegateHelper
 {
 	typedef FDebugDrawDelegateHelper Super;
@@ -108,16 +114,13 @@ private:
 	uint32 bShowBestPath : 1;
 	uint32 bShowDiff : 1;
 };
-#endif //WITH_RECAST && WITH_EDITOR
 
-#include "NavTestRenderingComponent.generated.h"
-
-class FPrimitiveSceneProxy;
+#endif // UE_ENABLE_DEBUG_DRAWING
 
 UCLASS(ClassGroup = Debug)
 class UNavTestRenderingComponent: public UDebugDrawComponent
 {
-	GENERATED_UCLASS_BODY()
+	GENERATED_BODY()
 
 protected:
 
@@ -125,11 +128,9 @@ protected:
 
 #if UE_ENABLE_DEBUG_DRAWING
 	virtual FDebugRenderSceneProxy* CreateDebugSceneProxy() override;
-
-#if WITH_RECAST && WITH_EDITOR
 	virtual FDebugDrawDelegateHelper& GetDebugDrawDelegateHelper() override { return NavTestDebugDrawDelegateHelper; }
 private:
 	FNavTestDebugDrawDelegateHelper NavTestDebugDrawDelegateHelper;
-#endif // WITH_RECAST && WITH_EDITOR
 #endif // UE_ENABLE_DEBUG_DRAWING
 };
+

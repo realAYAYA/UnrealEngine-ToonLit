@@ -40,7 +40,7 @@ class UMaterialGraphNode_Base : public UEdGraphNode
 	uint32 GetInputType(const UEdGraphPin* InputPin) const;
 
 	/** Get the Material value type of an output pin */
-	uint32 GetOutputType(const UEdGraphPin* OutputPin) const;
+	UNREALED_API uint32 GetOutputType(const UEdGraphPin* OutputPin) const;
 
 	/**
 	 * Handles inserting the node between the FromPin and what the FromPin was original connected to
@@ -70,4 +70,7 @@ protected:
 
 	/** Return the first input pin matching the name */
 	class UEdGraphPin* GetInputPin(const FName& PinName) const;
+
+	/** Used when changing one property may affect the preview of subsequent properties */
+	virtual void PropagatePropertyChange() {}
 };

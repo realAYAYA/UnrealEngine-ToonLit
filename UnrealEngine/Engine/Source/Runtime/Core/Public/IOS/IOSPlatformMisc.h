@@ -173,6 +173,8 @@ struct CORE_API FIOSPlatformMisc : public FApplePlatformMisc
 		IOS_NewDevice7,
 		IOS_NewDevice8,
 
+		IOS_RealityPro,
+		
 		IOS_Unknown,
 	};
 

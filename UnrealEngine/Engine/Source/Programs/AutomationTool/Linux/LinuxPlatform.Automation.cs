@@ -32,7 +32,7 @@ public abstract class BaseLinuxPlatform : Platform
 
 		if (HostPlatform.Current.HostEditorPlatform == TargetPlatformType)
 		{
-			DeviceInfo LocalMachine = new DeviceInfo(TargetPlatformType, Environment.MachineName, Environment.MachineName,
+			DeviceInfo LocalMachine = new DeviceInfo(TargetPlatformType, Unreal.MachineName, Unreal.MachineName,
 				RuntimeInformation.OSDescription, "Computer", true, true);
 
 			Devices.Add(LocalMachine);

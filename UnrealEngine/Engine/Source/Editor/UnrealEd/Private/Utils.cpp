@@ -6,7 +6,6 @@
 #include "SceneView.h"
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 // Needed for showing balloon messages
 #include "Windows/AllowWindowsPlatformTypes.h"
 		#include <ShellAPI.h>

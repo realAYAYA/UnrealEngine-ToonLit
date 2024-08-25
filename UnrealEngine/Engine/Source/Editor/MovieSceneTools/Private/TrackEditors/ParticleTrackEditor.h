@@ -77,7 +77,7 @@ public:
 
 	// ISequencerSection interface
 	virtual UMovieSceneSection* GetSectionObject() override;
-	virtual float GetSectionHeight() const override;
+	virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const override;
 	virtual int32 OnPaintSection( FSequencerSectionPainter& InPainter ) const override;
 	virtual bool SectionIsResizable() const override { return false; }
 

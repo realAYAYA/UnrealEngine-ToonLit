@@ -5,6 +5,7 @@
 #include "Fonts/FontCacheFreeType.h"
 #include "Fonts/SlateFontRenderer.h"
 #include "Trace/SlateMemoryTags.h"
+#include "Fonts/FontUtils.h"
 
 #if WITH_HARFBUZZ
 
@@ -449,13 +450,13 @@ FHarfBuzzFontFactory::~FHarfBuzzFontFactory()
 
 #if WITH_HARFBUZZ
 
-hb_font_t* FHarfBuzzFontFactory::CreateFont(const FFreeTypeFace& InFace, const uint32 InGlyphFlags, const float InFontSize, const float InFontScale) const
+hb_font_t* FHarfBuzzFontFactory::CreateFont(const FFreeTypeFace& InFace, const uint32 InGlyphFlags, const FSlateFontInfo& InFontInfo, const float InFontScale) const
 {
 	hb_font_t* HarfBuzzFont = nullptr;
 
 #if WITH_FREETYPE
 	FT_Face FreeTypeFace = InFace.GetFace();
-	FreeTypeUtils::ApplySizeAndScale(FreeTypeFace, InFontSize, InFontScale);
+	FreeTypeUtils::ApplySizeAndScale(FreeTypeFace, InFontInfo.Size, InFontScale);
 
 	hb_font_extents_t HarfBuzzFontExtents;
 	FMemory::Memzero(HarfBuzzFontExtents);
@@ -472,9 +473,10 @@ hb_font_t* FHarfBuzzFontFactory::CreateFont(const FFreeTypeFace& InFace, const u
 			hb_font_get_scale(HarfBuzzFTFont, &HarfBuzzFTFontXScale, &HarfBuzzFTFontYScale);
 
 			// Cache the font extents
-			HarfBuzzFontExtents.ascender = InFace.GetAscender();
-			HarfBuzzFontExtents.descender = InFace.GetDescender();
-			HarfBuzzFontExtents.line_gap = InFace.GetScaledHeight() - (HarfBuzzFontExtents.ascender - HarfBuzzFontExtents.descender);
+			const bool IsAscentDescentOverridenEnabled = UE::Slate::FontUtils::IsAscentDescentOverrideEnabled(InFontInfo.FontObject);
+			HarfBuzzFontExtents.ascender = InFace.GetAscender(IsAscentDescentOverridenEnabled);
+			HarfBuzzFontExtents.descender = InFace.GetDescender(IsAscentDescentOverridenEnabled);
+			HarfBuzzFontExtents.line_gap = InFace.GetScaledHeight(IsAscentDescentOverridenEnabled) - (HarfBuzzFontExtents.ascender - HarfBuzzFontExtents.descender);
 			if (HarfBuzzFTFontYScale < 0)
 			{
 				HarfBuzzFontExtents.ascender = -HarfBuzzFontExtents.ascender;
@@ -493,7 +495,7 @@ hb_font_t* FHarfBuzzFontFactory::CreateFont(const FFreeTypeFace& InFace, const u
 	hb_font_set_user_data(
 		HarfBuzzFont, 
 		&HarfBuzzFontFunctions::UserDataKey, 
-		HarfBuzzFontFunctions::CreateUserData(InFontSize, InFontScale, FTCacheDirectory, HarfBuzzFontExtents),
+		HarfBuzzFontFunctions::CreateUserData(InFontInfo.Size, InFontScale, FTCacheDirectory, HarfBuzzFontExtents),
 		&HarfBuzzFontFunctions::DestroyUserData, 
 		true
 		);

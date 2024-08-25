@@ -2,25 +2,27 @@
 
 #include "USDStageImportContext.h"
 
-#include "USDAssetCache.h"
-#include "USDLog.h"
-#include "USDMemory.h"
 #include "USDOptionsWindow.h"
 #include "USDStageImportOptions.h"
 
 #include "Dialogs/DlgPickPath.h"
 #include "Editor.h"
-#include "IMessageLogListing.h"
-#include "MessageLogModule.h"
 #include "Misc/Paths.h"
-#include "Modules/ModuleManager.h"
 
 FUsdStageImportContext::FUsdStageImportContext()
 {
 	Reset();
 }
 
-bool FUsdStageImportContext::Init(const FString& InName, const FString& InFilePath, const FString& InInitialPackagePath, EObjectFlags InFlags, bool bInIsAutomated, bool bIsReimport, bool bAllowActorImport)
+bool FUsdStageImportContext::Init(
+	const FString& InName,
+	const FString& InFilePath,
+	const FString& InInitialPackagePath,
+	EObjectFlags InFlags,
+	bool bInIsAutomated,
+	bool bIsReimport,
+	bool bAllowActorImport
+)
 {
 	ObjectName = InName;
 	FilePath = InFilePath;
@@ -29,29 +31,31 @@ bool FUsdStageImportContext::Init(const FString& InName, const FString& InFilePa
 	World = GEditor->GetEditorWorldContext().World();
 	PackagePath = InInitialPackagePath;
 
-	if ( !PackagePath.EndsWith( TEXT("/") ) )
+	if (!PackagePath.EndsWith(TEXT("/")))
 	{
-		PackagePath.Append( TEXT("/") );
+		PackagePath.Append(TEXT("/"));
 	}
 
 	FPaths::NormalizeFilename(FilePath);
 
 	// Open the stage if we haven't yet, as we'll need it open to show the preview tree
-	if ( !Stage )
+	if (!Stage)
 	{
 		const EUsdInitialLoadSet InitialLoadSet = EUsdInitialLoadSet::LoadAll;
-		Stage = UnrealUSDWrapper::OpenStage( *FilePath, InitialLoadSet, bReadFromStageCache );
+		Stage = UnrealUSDWrapper::OpenStage(*FilePath, InitialLoadSet, bReadFromStageCache);
 	}
 
-	if(!bIsAutomated)
+	if (!bIsAutomated)
 	{
 		// Show dialog for content folder
 		if (!bIsReimport)
 		{
+			// clang-format off
 			TSharedRef<SDlgPickPath> PickContentPathDlg =
 				SNew(SDlgPickPath)
 				.Title(NSLOCTEXT("USDStageImportContext", "ChooseImportRootContentPath", "Choose where to place the imported USD assets"))
-				.DefaultPath(FText::FromString( InInitialPackagePath ));
+				.DefaultPath(FText::FromString(InInitialPackagePath));
+			// clang-format on
 
 			if (PickContentPathDlg->ShowModal() == EAppReturnType::Cancel)
 			{
@@ -60,13 +64,13 @@ bool FUsdStageImportContext::Init(const FString& InName, const FString& InFilePa
 			// e.g. "/Game/MyFolder/layername/"
 			// We inject the package path here because this is what the automated import task upstream code will do. This way the importer
 			// can always expect to receive /ContentPath/layername/
-			PackagePath = FString::Printf( TEXT( "%s/%s/" ), *PickContentPathDlg->GetPath().ToString(), *InName );
+			PackagePath = FString::Printf(TEXT("%s/%s/"), *PickContentPathDlg->GetPath().ToString(), *InName);
 		}
 
-		ImportOptions->EnableActorImport( bAllowActorImport );
+		ImportOptions->EnableActorImport(bAllowActorImport);
 
 		// Show dialog for import options
-		bool bProceedWithImport = SUsdOptionsWindow::ShowImportOptions( *ImportOptions, &Stage );
+		bool bProceedWithImport = SUsdOptionsWindow::ShowImportOptions(*ImportOptions, &Stage);
 		if (!bProceedWithImport)
 		{
 			return false;
@@ -85,10 +89,11 @@ void FUsdStageImportContext::Reset()
 	ObjectName = FString{};
 	PackagePath = FString{};
 	FilePath = FString{};
-	ImportOptions = NewObject< UUsdStageImportOptions >();
+	ImportOptions = NewObject<UUsdStageImportOptions>();
 	ImportedAsset = nullptr;
 	LevelSequenceHelper.Clear();
 	AssetCache = nullptr;
+	BBoxCache = nullptr;
 	MaterialToPrimvarToUVIndex.Empty();
 	Stage = UE::FUsdStage{};
 	ImportObjectFlags = EObjectFlags::RF_NoFlags;

@@ -30,10 +30,11 @@ void FElectraSamplesTextureManager::CleanupMap()
 
 TSharedPtr<IVideoDecoderTexture, ESPMode::ThreadSafe> FElectraSamplesTextureManager::CreateTexture(const FIntPoint& Dim, EPixelFormat Fmt)
 {
-	FScopeLock Lock(&AccessCS);
-
-	CleanupMap();
+	// note: we create the texture outside the CS to avoid any danger of deadlocks
 	TSharedPtr<IVideoDecoderTexture, ESPMode::ThreadSafe> NewTexture = PlatformCreateTexture(Dim, Fmt);
+
+	FScopeLock Lock(&AccessCS);
+	CleanupMap();
 	if (NewTexture.IsValid())
 	{
 		KnownTextures.Add(PlatformGetTexturePlatform(NewTexture.Get()), NewTexture);

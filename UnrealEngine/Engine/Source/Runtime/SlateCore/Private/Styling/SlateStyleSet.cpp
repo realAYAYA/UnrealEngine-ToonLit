@@ -383,7 +383,7 @@ const TSharedPtr< FSlateDynamicImageBrush > FSlateStyleSet::GetDynamicImageBrush
 	if ( !ReturnBrush.IsValid() )
 	{
 		const ISlateStyle* ReportingStyle = RequestingStyle != nullptr ? RequestingStyle : this;
-		ReportingStyle->MakeDynamicImageBrush(BrushTemplate, TextureResource, TextureName);
+		ReturnBrush = ReportingStyle->MakeDynamicImageBrush(BrushTemplate, TextureResource, TextureName);
 	}
 
 	return ReturnBrush;

@@ -4,6 +4,8 @@
 #include "Misc/App.h"
 #include "Misc/CoreDelegates.h"
 #include "RHI.h"
+#include "AVResult.h"
+#include "GenericPlatform/GenericPlatformDriver.h"
 
 #include "NVDEC.h"
 #include "NVENC.h"
@@ -17,8 +19,21 @@ public:
 		{
 			FCoreDelegates::OnPostEngineInit.AddLambda([]()
 				{
-					const_cast<FNVDEC&>(FAPI::Get<FNVDEC>()).bHasCompatibleGPU = IsRHIDeviceNVIDIA();
-					const_cast<FNVENC&>(FAPI::Get<FNVENC>()).bHasCompatibleGPU = IsRHIDeviceNVIDIA();
+					FString RequiredDriverVersion;
+#if PLATFORM_WINDOWS
+					RequiredDriverVersion = TEXT("531.61");
+#elif PLATFORM_LINUX
+					RequiredDriverVersion = TEXT("530.41");
+#endif
+
+					bool bExceedsMinimumDriverVersion = FDriverVersion(GRHIAdapterUserDriverVersion) >= FDriverVersion(RequiredDriverVersion);
+					if(!bExceedsMinimumDriverVersion)
+					{
+						FAVResult::Log(EAVResult::Error, FString::Printf(TEXT("Detected driver version (%s) is older than required (%s). Please update your drivers!"), *GRHIAdapterUserDriverVersion, *RequiredDriverVersion));
+					}
+
+					const_cast<FNVDEC&>(FAPI::Get<FNVDEC>()).bHasCompatibleGPU = IsRHIDeviceNVIDIA() && bExceedsMinimumDriverVersion;
+					const_cast<FNVENC&>(FAPI::Get<FNVENC>()).bHasCompatibleGPU = IsRHIDeviceNVIDIA() && bExceedsMinimumDriverVersion;
 				});
 		}
 	}

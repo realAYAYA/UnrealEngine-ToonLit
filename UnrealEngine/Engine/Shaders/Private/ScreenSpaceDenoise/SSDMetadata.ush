@@ -113,7 +113,7 @@ FSSDSampleSceneInfos CreateSampleSceneInfos()
 
 //------------------------------------------------------- UNCOMPRESSED SCENE INFOS
 
-// STRATA_TODO
+// SUBSTRATE_TODO
 ISOLATE
 FSSDSampleSceneInfos UncompressSampleSceneInfo(
 	const uint CompressedLayout, const bool bIsPrevFrame,
@@ -195,11 +195,11 @@ FSSDSampleSceneInfos UncompressSampleSceneInfo(
 
 	// Compute translated world position.
 	{
-		float4 ClipPosition = float4(ScreenPosition * (View.ViewToClip[3][3] < 1.0f ? Infos.WorldDepth : 1.0f), Infos.WorldDepth, 1);
+		float4 ClipPosition = float4(GetScreenPositionForProjectionType(ScreenPosition, Infos.WorldDepth), Infos.WorldDepth, 1);
 
 		if (bIsPrevFrame)
 		{
-			float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+			float3 PreViewTranslationOffset = DFFastLocalSubtractDemote(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation);
 			Infos.TranslatedWorldPosition = mul(ClipPosition, View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
 		}
 		else
@@ -210,7 +210,7 @@ FSSDSampleSceneInfos UncompressSampleSceneInfo(
 	return Infos;
 }
 
-// STRATA_TODO
+// SUBSTRATE_TODO
 FSSDCompressedSceneInfos CompressSampleSceneInfo(
 	const uint CompressedLayout,
 	FSSDSampleSceneInfos Infos)

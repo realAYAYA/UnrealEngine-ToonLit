@@ -27,6 +27,8 @@ FPuncturedDiscMeshGenerator::FPuncturedDiscMeshGenerator()
 
 FMeshShapeGenerator& FDiscMeshGenerator::Generate()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(DiscMeshGenerator_Generate);
+	
 	int AngleNV = AngleSamples > 3 ? AngleSamples : 3;
 	int RadialNV = RadialSamples > 1 ? RadialSamples : 1;
 	int NumVertices = AngleNV * RadialNV + 1;

@@ -18,12 +18,6 @@ class UUserDefinedEnum;
 class UUserDefinedStruct;
 struct FKismetCompilerOptions;
 
-// @todo: BP2CPP_remove
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-struct FCompilerNativizationOptions;
-
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 #define KISMET_COMPILER_MODULENAME "KismetCompiler"
 
 //////////////////////////////////////////////////////////////////////////
@@ -97,6 +91,7 @@ public:
 
 	/** Facilities for establishing mappings between UClasses, UBlueprints, and UBlueprintGenerated Classes*/
 	virtual void OverrideBPTypeForClass(UClass* Class, TSubclassOf<UBlueprint> BlueprintType) = 0;
+	UE_DEPRECATED(5.4, "Conditional overrides in editor have been deprecated - make a new sentinel type if required to keep UBlueprint mappings unambiguous")
 	virtual void OverrideBPTypeForClassInEditor(UClass* Class, TSubclassOf<UBlueprint> BlueprintType) = 0;
 	virtual void OverrideBPGCTypeForBPType(TSubclassOf<UBlueprint> BlueprintType, TSubclassOf<UBlueprintGeneratedClass> BPGCType) = 0;
 
@@ -107,17 +102,7 @@ public:
 	 * blueprint is a normal UBlueprint, like UUserWidget blueprints should be UWidgetBlueprints.
 	 */
 	virtual void GetBlueprintTypesForClass(UClass* ParentClass, UClass*& OutBlueprintClass, UClass*& OutBlueprintGeneratedClass) const = 0;
-
-	// @todo: BP2CPP_remove
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UE_DEPRECATED(5.0, "This API is no longer required. Any overrides should be removed.")
-	virtual void GenerateCppCodeForEnum(UUserDefinedEnum* UDEnum, const FCompilerNativizationOptions& NativizationOptions, FString& OutHeaderCode, FString& OutCPPCode) {}
-	UE_DEPRECATED(5.0, "This API is no longer required. Any overrides should be removed.")
-	virtual void GenerateCppCodeForStruct(UUserDefinedStruct* UDStruct, const FCompilerNativizationOptions& NativizationOptions, FString& OutHeaderCode, FString& OutCPPCode) {}
-	// Generate a wrapper class, that helps accessing non-native properties and calling non-native functions
-	UE_DEPRECATED(5.0, "This API is no longer required. Any overrides should be removed.")
-	virtual FString GenerateCppWrapper(UBlueprintGeneratedClass* BPGC, const FCompilerNativizationOptions& NativizationOptions) { return FString(); }
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	virtual void GetSubclassesWithDifferingBlueprintTypes(UClass* Class, TSet<const UClass*>& OutMismatchedSubclasses) const = 0;
 };
 
 

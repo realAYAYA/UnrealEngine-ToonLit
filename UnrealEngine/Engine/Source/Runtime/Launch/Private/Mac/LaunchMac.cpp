@@ -124,13 +124,23 @@ static int32 MacOSVersionCompare(const NSOperatingSystemVersion& VersionA, const
 		
 		NSURL* BundleURL = [[NSRunningApplication currentApplication] bundleURL];
 		
-		NSDictionary* Configuration = [NSDictionary dictionaryWithObject: [NSArray arrayWithObject: ProjectName] forKey: NSWorkspaceLaunchConfigurationArguments];
+		NSWorkspaceOpenConfiguration* Configuration = [NSWorkspaceOpenConfiguration configuration];
+		[Configuration setCreatesNewApplicationInstance:YES];
+		[Configuration setPromptsUserIfNeeded:YES];
+		[Configuration setArguments:[NSArray arrayWithObject: ProjectName]];
+
+		[[NSWorkspace sharedWorkspace]
+			openApplicationAtURL: BundleURL
+			configuration: Configuration
+				completionHandler:^(NSRunningApplication * _Nullable app, NSError * _Nullable error)
+				{
+					if (error) {
+						NSLog(@"Failed to run the app: %@", error.localizedDescription);
+					}
+				}
+		];
 		
-		NSError* Error = nil;
-		
-		NSRunningApplication* NewInstance = [[NSWorkspace sharedWorkspace] launchApplicationAtURL:BundleURL options:(NSWorkspaceLaunchOptions)(NSWorkspaceLaunchAsync|NSWorkspaceLaunchNewInstance) configuration:Configuration error:&Error];
-		
-		return (NewInstance != nil);
+		return YES;
 	}
 	else
 	{
@@ -249,7 +259,9 @@ static int32 MacOSVersionCompare(const NSOperatingSystemVersion& VersionA, const
 
 	if (GGuardedMainErrorLevel == 0)
 	{
-		[NSApp terminate: nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [NSApp terminate: nil];
+        });
 	}
 	else
 	{

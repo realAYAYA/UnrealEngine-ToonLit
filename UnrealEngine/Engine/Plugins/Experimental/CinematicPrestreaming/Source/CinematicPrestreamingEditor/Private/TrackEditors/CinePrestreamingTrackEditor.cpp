@@ -10,7 +10,7 @@
 #include "MovieSceneTimeHelpers.h"
 #include "Sections/MovieSceneCinePrestreamingSection.h"
 #include "SequencerSectionPainter.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "Styling/StyleColors.h"
 #include "Tracks/MovieSceneCinePrestreamingTrack.h"
 #include "Widgets/SBoxPanel.h"
@@ -182,10 +182,10 @@ void FCinePrestreamingTrackEditor::BuildAddTrackMenu(FMenuBuilder& MenuBuilder)
 
 TSharedPtr<SWidget> FCinePrestreamingTrackEditor::BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params)
 {
-	return FSequencerUtilities::MakeAddButton(
+	return UE::Sequencer::MakeAddButton(
 		LOCTEXT("AddCinePrestreaming_ButtonLabel", "Cinematic Prestreaming"),
 		FOnGetContent::CreateSP(this, &FCinePrestreamingTrackEditor::BuildAddDataLayerMenu, Track),
-		Params.NodeIsHovered, GetSequencer());
+		Params.ViewModel);
 }
 
 UMovieSceneCinePrestreamingSection* FCinePrestreamingTrackEditor::AddNewSection(UMovieScene* MovieScene, UMovieSceneTrack* PrestreamingTrack)

@@ -15,10 +15,11 @@
 #include "ShaderPlatformCachedIniValue.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "RenderCore.h"
-#include "StrataDefinitions.h"
+#include "SubstrateDefinitions.h"
+#include "Animation/MeshDeformerProvider.h"
+#include "Interfaces/ITargetPlatform.h"
 
 #if WITH_EDITOR
-#include "Interfaces/ITargetPlatform.h"
 #include "Interfaces/ITargetPlatformManagerModule.h"
 #include "RHIShaderFormatDefinitions.inl"
 #endif
@@ -68,11 +69,11 @@ static FAutoConsoleVariableRef CVarRayTracingEnableOnDemand(
 	TEXT(" 1: on"),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly);
 
-static int32 GRayTracingRequireSM6 = 0;
+static int32 GRayTracingRequireSM6 = 1;
 static FAutoConsoleVariableRef CVarRayTracingRequireSM6(
 	TEXT("r.RayTracing.RequireSM6"),
 	GRayTracingRequireSM6,
-	TEXT("Whether ray tracing shaders and features should only be available when targetting and running SM6. If disabled, ray tracing shaders will also be available when running in SM5 mode. (default = 0, allow SM5 and SM6)"),
+	TEXT("Whether ray tracing shaders and features should only be available when targetting and running SM6. If disabled, ray tracing shaders will also be available when running in SM5 mode. (default = 1, allow only SM6)"),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly
 );
 
@@ -472,29 +473,14 @@ RENDERCORE_API FVertexDeclarationRHIRef& GetVertexDeclarationFVector2()
 	return GVector2VertexDeclaration.VertexDeclarationRHI;
 }
 
-RENDERCORE_API bool MobileSupportsGPUScene()
+RENDERCORE_API bool PlatformGPUSceneUsesUniformBufferView(const FStaticShaderPlatform Platform)
 {
-	// make it shader platform setting?
-	static TConsoleVariableData<int32>* CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Mobile.SupportGPUScene"));
-	return (CVar && CVar->GetValueOnAnyThread() != 0) ? true : false;
-}
-
-RENDERCORE_API bool IsMobileDeferredShadingEnabled(const FStaticShaderPlatform Platform)
-{
-	static FShaderPlatformCachedIniValue<bool> MobileShadingPathIniValue(TEXT("r.Mobile.ShadingPath"));
-	static TConsoleVariableData<int32>* MobileAllowDeferredShadingOpenGL = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Mobile.AllowDeferredShadingOpenGL"));
-
-	// OpenGL requires DXC for deferred shading
-	bool bSupportedPlatform = !IsOpenGLPlatform(Platform) ||
-		(MobileAllowDeferredShadingOpenGL && MobileAllowDeferredShadingOpenGL->GetValueOnAnyThread() != 0 && IsDxcEnabledForPlatform(Platform));
-
-	return MobileShadingPathIniValue.Get(Platform) == 1 && bSupportedPlatform;
+	return IsMobilePlatform(Platform) && FDataDrivenShaderPlatformInfo::GetSupportsUniformBufferObjects(Platform);
 }
 
 RENDERCORE_API bool MobileRequiresSceneDepthAux(const FStaticShaderPlatform Platform)
 {
-	static const auto CVarMobileHDR = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MobileHDR"));
-	const bool bMobileHDR = (CVarMobileHDR && CVarMobileHDR->GetValueOnAnyThread() != 0);
+	const bool bMobileHDR = IsMobileHDR();
 
 	if (!MobileUsesFullDepthPrepass(Platform))
 	{
@@ -522,11 +508,10 @@ RENDERCORE_API bool SupportsTextureCubeArray(ERHIFeatureLevel::Type FeatureLevel
 
 RENDERCORE_API bool MaskedInEarlyPass(const FStaticShaderPlatform Platform)
 {
-	static FShaderPlatformCachedIniValue<int32> CVarMobileEarlyZPass(TEXT("r.Mobile.EarlyZPass"));
 	static IConsoleVariable* CVarEarlyZPassOnlyMaterialMasking = IConsoleManager::Get().FindConsoleVariable(TEXT("r.EarlyZPassOnlyMaterialMasking"));
 	if (IsMobilePlatform(Platform))
 	{
-		return CVarMobileEarlyZPass.Get(Platform) == 2 || MobileUsesFullDepthPrepass(Platform);
+		return FReadOnlyCVARCache::MobileEarlyZPass(Platform) == 2 || MobileUsesFullDepthPrepass(Platform);
 	}
 	else
 	{
@@ -580,14 +565,7 @@ RENDERCORE_API bool IsMobileDistanceFieldEnabled(const FStaticShaderPlatform Pla
 
 RENDERCORE_API bool IsMobileMovableSpotlightShadowsEnabled(const FStaticShaderPlatform Platform)
 {
-	static FShaderPlatformCachedIniValue<bool> MobileMovableSpotlightShadowsEnabledIniValue(TEXT("r.Mobile.EnableMovableSpotlightsShadow"));
-	return MobileMovableSpotlightShadowsEnabledIniValue.Get(Platform);
-}
-
-RENDERCORE_API bool MobileForwardEnableLocalLights(const FStaticShaderPlatform Platform)
-{
-	static FShaderPlatformCachedIniValue<int32> MobileForwardEnableLocalLightsIniValue(TEXT("r.Mobile.Forward.EnableLocalLights"));
-	return MobileForwardEnableLocalLightsIniValue.Get(Platform) > 0;
+	return FReadOnlyCVARCache::MobileEnableMovableSpotlightsShadow(Platform);
 }
 
 RENDERCORE_API bool MobileForwardEnableClusteredReflections(const FStaticShaderPlatform Platform)
@@ -617,10 +595,8 @@ RENDERCORE_API bool MobileUsesExtenedGBuffer(FStaticShaderPlatform ShaderPlatfor
 // Required for shading models with a custom data
 RENDERCORE_API bool MobileUsesGBufferCustomData(FStaticShaderPlatform ShaderPlatform)
 {
-	static const auto CVarAllowStaticLighting = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	static const bool bAllowStaticLighting = CVarAllowStaticLighting->GetValueOnAnyThread() != 0;
 	// we can pack CustomData into static lighting related space
-	return MobileUsesExtenedGBuffer(ShaderPlatform) || !bAllowStaticLighting;
+	return MobileUsesExtenedGBuffer(ShaderPlatform) || !IsStaticLightingAllowed();
 }
 
 RENDERCORE_API bool MobileBasePassAlwaysUsesCSM(const FStaticShaderPlatform Platform)
@@ -639,8 +615,7 @@ RENDERCORE_API bool MobileBasePassAlwaysUsesCSM(const FStaticShaderPlatform Plat
 
 RENDERCORE_API bool MobileUsesFullDepthPrepass(const FStaticShaderPlatform Platform)
 {
-	static FShaderPlatformCachedIniValue<int32> CVarMobileEarlyZPass(TEXT("r.Mobile.EarlyZPass"));
-	return MobileUsesShadowMaskTexture(Platform) || IsMobileAmbientOcclusionEnabled(Platform) || (CVarMobileEarlyZPass.Get(Platform) == 1);
+	return MobileUsesShadowMaskTexture(Platform) || IsMobileAmbientOcclusionEnabled(Platform) || IsUsingDBuffers(Platform) || FReadOnlyCVARCache::MobileEarlyZPass(Platform) == 1;
 }
 
 RENDERCORE_API bool ShouldForceFullDepthPass(const FStaticShaderPlatform Platform)
@@ -767,6 +742,8 @@ RENDERCORE_API void RenderUtilsInit()
 {
 	checkf(GIsRHIInitialized, TEXT("RenderUtilsInit() may only be called once RHI is initialized."));
 
+	FReadOnlyCVARCache::Initialize();
+
 	GForwardShadingPlatformMask.Init(GUseForwardShading == 1, EShaderPlatform::SP_NumPlatforms);
 
 	static IConsoleVariable* DBufferVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.DBuffer"));
@@ -816,7 +793,7 @@ RENDERCORE_API void RenderUtilsInit()
 
 					GForwardShadingPlatformMask[ShaderPlatformIndex] = TargetPlatform->UsesForwardShading();
 
-					GDBufferPlatformMask[ShaderPlatformIndex] = TargetPlatform->UsesDBuffer() && !IsMobilePlatform(ShaderPlatformToEdit);
+					GDBufferPlatformMask[ShaderPlatformIndex] = IsMobilePlatform(ShaderPlatformToEdit) ? (TargetPlatform->UsesMobileDBuffer() && !IsMobileDeferredShadingEnabled(ShaderPlatformToEdit)) : TargetPlatform->UsesDBuffer();
 
 					GSelectiveBasePassOutputsPlatformMask[ShaderPlatformIndex] = TargetPlatform->UsesSelectiveBasePassOutputs();
 
@@ -855,10 +832,10 @@ RENDERCORE_API void RenderUtilsInit()
 	}
 
 #else // WITH_EDITOR
-
 	if (IsMobilePlatform(GMaxRHIShaderPlatform))
 	{
-		GDBufferPlatformMask.Init(false, EShaderPlatform::SP_NumPlatforms);
+		static IConsoleVariable* MobileDBufferCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Mobile.DBuffer"));
+		GDBufferPlatformMask.Init(MobileDBufferCVar && MobileDBufferCVar->GetInt() && !IsMobileDeferredShadingEnabled(GMaxRHIShaderPlatform), EShaderPlatform::SP_NumPlatforms);
 	}
 
 	if (RayTracingCVar && RayTracingCVar->GetInt() && GRHISupportsRayTracing)
@@ -1123,24 +1100,24 @@ RENDERCORE_API FBufferRHIRef& GetUnitCubeAABBVertexBuffer()
 }
 #endif // RHI_RAYTRACING
 
-RENDERCORE_API void QuantizeSceneBufferSize(const FIntPoint& InBufferSize, FIntPoint& OutBufferSize)
+RENDERCORE_API void QuantizeSceneBufferSize(const FIntPoint& InBufferSize, FIntPoint& OutBufferSize, const uint32 SuggestedDivisor)
 {
-	// Ensure sizes are dividable by STRATA_TILE_SIZE (==8) 2d tiles to make it more convenient.
-	const uint32 StrataDividableBy = 8;
-	static_assert(StrataDividableBy % 8 == 0, "A lot of graphic algorithms where previously assuming DividableBy >= 4");
+	// Ensure sizes are dividable by SUBSTRATE_TILE_SIZE (==8) 2d tiles to make it more convenient.
+	const uint32 SubstrateDividableBy = SUBSTRATE_TILE_SIZE;
+	static_assert(SubstrateDividableBy % 8 == 0, "A lot of graphic algorithms where previously assuming DividableBy >= 4");
 
 	// Ensure sizes are dividable by the ideal group size for 2d tiles to make it more convenient.
 	const uint32 LegacyDividableBy = 4;
 	static_assert(LegacyDividableBy % 4 == 0, "A lot of graphic algorithms where previously assuming DividableBy == 4");
 
-	const uint32 DividableBy = Strata::IsStrataEnabled() ? StrataDividableBy : LegacyDividableBy;
+	const uint32 DividableBy = FMath::Max(Substrate::IsSubstrateEnabled() ? SubstrateDividableBy : LegacyDividableBy, SuggestedDivisor);
 
 	const uint32 Mask = ~(DividableBy - 1);
 	OutBufferSize.X = (InBufferSize.X + DividableBy - 1) & Mask;
 	OutBufferSize.Y = (InBufferSize.Y + DividableBy - 1) & Mask;
 }
 
-bool UseVirtualTexturing(bool bIsMobilePlatform, const ITargetPlatform* TargetPlatform)
+RENDERCORE_API bool UseVirtualTexturing(const FStaticShaderPlatform ShaderPlatform, const ITargetPlatform* TargetPlatform)
 {
 #if PLATFORM_SUPPORTS_VIRTUAL_TEXTURE_STREAMING
 	if (!FPlatformProperties::SupportsVirtualTextureStreaming())
@@ -1156,38 +1133,48 @@ bool UseVirtualTexturing(bool bIsMobilePlatform, const ITargetPlatform* TargetPl
 		return false;
 	}
 
+	bool bIsMobilePlatform = IsMobilePlatform(ShaderPlatform);
 #if WITH_EDITOR
 	// in case we are cooking for a platform that supports only mobile rendering
 	bIsMobilePlatform |= (TargetPlatform && !TargetPlatform->SupportsFeature(ETargetPlatformFeatures::DeferredRendering));
 #endif
 	// mobile needs an additional switch to enable VT		
-	static const auto CVarMobileVirtualTexture = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Mobile.VirtualTextures"));
-	if (bIsMobilePlatform && CVarMobileVirtualTexture->GetValueOnAnyThread() == 0)
+	if (bIsMobilePlatform)
 	{
-		return false;
+	#if WITH_EDITOR		
+		if (TargetPlatform)
+		{
+			// VT can be toggled on and off for specific platform
+			return TargetPlatform->SupportsFeature(ETargetPlatformFeatures::VirtualTextureStreaming);
+		}
+		else
+	#endif
+		{ 
+			static FShaderPlatformCachedIniValue<bool> MobileVirtualTexturesIniValue(TEXT("r.Mobile.VirtualTextures"));
+			return (MobileVirtualTexturesIniValue.Get(ShaderPlatform) != false);
+		}
 	}
-
 	return true;
 #else
 	return false;
 #endif
 }
 
-RENDERCORE_API bool UseVirtualTexturing(const EShaderPlatform InShaderPlatform, const ITargetPlatform* TargetPlatform)
-{
-	return UseVirtualTexturing(IsMobilePlatform(InShaderPlatform), TargetPlatform);
-}
-
 RENDERCORE_API bool UseVirtualTexturing(const FStaticFeatureLevel InFeatureLevel, const ITargetPlatform* TargetPlatform)
 {
-	return UseVirtualTexturing(InFeatureLevel == ERHIFeatureLevel::ES3_1, TargetPlatform);
+	return UseVirtualTexturing(GetFeatureLevelShaderPlatform(InFeatureLevel), TargetPlatform);
+}
+
+RENDERCORE_API bool UseVirtualTextureLightmap(const FStaticShaderPlatform InShaderPlatform, const ITargetPlatform* TargetPlatform)
+{
+	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.VirtualTexturedLightmaps"));
+	const bool bUseVirtualTextureLightmap = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(InShaderPlatform, TargetPlatform);
+	return bUseVirtualTextureLightmap;
 }
 
 RENDERCORE_API bool UseVirtualTextureLightmap(const FStaticFeatureLevel InFeatureLevel, const ITargetPlatform* TargetPlatform)
 {
-	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.VirtualTexturedLightmaps"));
-	const bool bUseVirtualTextureLightmap = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(InFeatureLevel, TargetPlatform);
-	return bUseVirtualTextureLightmap;
+	return UseVirtualTextureLightmap(GetFeatureLevelShaderPlatform(InFeatureLevel), TargetPlatform);
 }
 
 RENDERCORE_API bool UseNaniteLandscapeMesh(EShaderPlatform ShaderPlatform)
@@ -1300,6 +1287,25 @@ bool NaniteComputeMaterialsSupported()
 	return bAllowComputeMaterials;
 }
 
+bool NaniteLegacyMaterialsSupported()
+{
+	static const auto AllowLegacyMaterials = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Nanite.AllowLegacyMaterials"));
+	static const bool bAllowLegacyMaterials = (AllowLegacyMaterials && AllowLegacyMaterials->GetValueOnAnyThread() != 0);
+	return bAllowLegacyMaterials;
+}
+
+bool UseNaniteComputeMaterials()
+{
+	static const auto UseComputeMaterials = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Nanite.ComputeMaterials"));
+	return NaniteComputeMaterialsSupported() && !IsVulkanPlatform(GMaxRHIShaderPlatform) && !IsMetalPlatform(GMaxRHIShaderPlatform) /* TODO: Support CS derivatives */ && (UseComputeMaterials && UseComputeMaterials->GetValueOnRenderThread() != 0);
+}
+
+bool UseNaniteFastTileClear()
+{
+	static const IConsoleVariable* CVarNaniteFastTileClear = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Nanite.FastTileClear"));
+	return NaniteComputeMaterialsSupported() && (CVarNaniteFastTileClear && CVarNaniteFastTileClear->GetInt() != 0);
+}
+
 bool NaniteTessellationSupported()
 {
 	static const auto AllowTessellation = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Nanite.AllowTessellation"));
@@ -1314,6 +1320,13 @@ bool NaniteSplineMeshesSupported()
 	return bAllowSplineMeshes;
 }
 
+bool UseNaniteTessellation()
+{
+	static const auto TessellationVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Nanite.Tessellation"));
+	const bool bTessellation = (TessellationVar && TessellationVar->GetValueOnAnyThread() != 0);
+	return bTessellation && NaniteTessellationSupported();
+}
+
 bool DoesRuntimeSupportNanite(EShaderPlatform ShaderPlatform, bool bCheckForAtomicSupport, bool bCheckForProjectSetting)
 {
 	// Does the platform support Nanite?
@@ -1323,6 +1336,25 @@ bool DoesRuntimeSupportNanite(EShaderPlatform ShaderPlatform, bool bCheckForAtom
 	const bool bForwardShadingEnabled = IsForwardShadingEnabled(ShaderPlatform);
 
 	return bSupportedPlatform && (!bCheckForAtomicSupport || NaniteAtomicsSupported()) && !bForwardShadingEnabled;
+}
+
+bool DoesTargetPlatformSupportNanite(const ITargetPlatform* TargetPlatform)
+{
+	if (TargetPlatform != nullptr)
+	{
+		TArray<FName> DesiredShaderFormats;
+		TargetPlatform->GetAllTargetedShaderFormats(DesiredShaderFormats);
+		for (int32 FormatIndex = 0; FormatIndex < DesiredShaderFormats.Num(); FormatIndex++)
+		{
+			const EShaderPlatform ShaderPlatform = ShaderFormatToLegacyShaderPlatform(DesiredShaderFormats[FormatIndex]);
+			if (DoesPlatformSupportNanite(ShaderPlatform))
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 bool UseNanite(EShaderPlatform ShaderPlatform, bool bCheckForAtomicSupport /*= true*/, bool bCheckForProjectSetting /*= true*/)
@@ -1366,6 +1398,14 @@ bool IsWaterVirtualShadowMapFilteringEnabled(const FStaticShaderPlatform Platfor
 	return !IsForwardShadingEnabled(Platform) && bWaterVSMFilteringSupported && bVirtualShadowMapsSupported;
 }
 
+bool DoesPlatformSupportHeterogeneousVolumes(EShaderPlatform Platform)
+{
+	return IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5)
+		// TODO:
+		// && FDataDrivenShaderPlatformInfo::GetSupportsHeterogeneousVolumes(Platform)
+		&& !IsForwardShadingEnabled(Platform);
+}
+
 bool IsSingleLayerWaterDepthPrepassEnabled(const FStaticShaderPlatform Platform, const FStaticFeatureLevel FeatureLevel)
 {
 	static const auto CVarWaterSingleLayerDepthPrepass = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Water.SingleLayer.DepthPrepass"));
@@ -1381,13 +1421,32 @@ bool IsSingleLayerWaterDepthPrepassEnabled(const FStaticShaderPlatform Platform,
 
 RENDERCORE_API bool IsUsingDBuffers(const FStaticShaderPlatform Platform)
 {
-	return (GDBufferPlatformMask[(int)Platform]);
+	return GDBufferPlatformMask[(int)Platform];
 }
 
 RENDERCORE_API bool AreSkinCacheShadersEnabled(EShaderPlatform Platform)
 {
 	static FShaderPlatformCachedIniValue<bool> PerPlatformCVar(TEXT("r.SkinCache.CompileShaders"));
 	return (PerPlatformCVar.Get(Platform) != 0);
+}
+
+RENDERCORE_API bool IsGPUSkinCacheAllowed(EShaderPlatform Platform)
+{
+	static FShaderPlatformCachedIniValue<bool> PerPlatformCVar(TEXT("r.SkinCache.Allow"));
+	return PerPlatformCVar.Get(Platform);
+}
+
+RENDERCORE_API bool IsGPUSkinCacheAvailable(EShaderPlatform Platform)
+{
+	return AreSkinCacheShadersEnabled(Platform) != 0 && IsGPUSkinCacheAllowed(Platform);
+}
+
+RENDERCORE_API bool IsGPUSkinPassThroughSupported(EShaderPlatform Platform)
+{
+	// Enable the GPUSkin passthrough path if we might use the GPUSkinCache or MeshDeformers.
+	static IMeshDeformerProvider* MeshDeformerProvider = IMeshDeformerProvider::Get();
+	bool bMeshDeformersAvailable = MeshDeformerProvider && MeshDeformerProvider->IsSupported(Platform);
+	return bMeshDeformersAvailable || IsGPUSkinCacheAvailable(Platform);
 }
 
 RENDERCORE_API bool DoesRuntimeSupportOnePassPointLightShadows(EShaderPlatform Platform)
@@ -1481,6 +1540,15 @@ bool VelocityEncodeDepth(const FStaticShaderPlatform Platform)
 	return (GVelocityEncodeDepthPlatformMask[(int)Platform]);
 }
 
+bool VelocityEncodeHasPixelAnimation(const FStaticShaderPlatform Platform)
+{
+	// Should matches VELOCITY_ENCODE_HAS_PIXEL_ANIMATION.
+	// But there is a bug (UE-198416) where VelocityEncodeDepth() always returns false on staged build since only depends on TargetPlatform->VelocityEncodeDepth();
+	// which is completly disconnected to FVelocityRendering::GetFormat(). This ends up in the case where VelocityEncodeDepth() == true at cook time, but false at runtime
+	// and yet end up with FVelocityRendering::GetFormat() return a format to encode the velocity.
+	return !IsMobilePlatform(Platform);
+}
+
 RENDERCORE_API bool AllowTranslucencyPerObjectShadows(const FStaticShaderPlatform Platform)
 {
 	return IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5) && GAllowTranslucencyShadowsInProject != 0;
@@ -1515,7 +1583,9 @@ bool ShouldCompileRayTracingShadersForProject(EShaderPlatform ShaderPlatform)
 {
 	if (RHISupportsRayTracingShaders(ShaderPlatform))
 	{
-		return IsRayTracingEnabledForProject(ShaderPlatform);
+		const bool bRayTracingRequireSM6 = (GRayTracingRequireSM6 != 0);
+
+		return IsRayTracingEnabledForProject(ShaderPlatform) && (IsFeatureLevelSupported(ShaderPlatform, ERHIFeatureLevel::SM6) || !bRayTracingRequireSM6);		
 	}
 	else
 	{
@@ -1560,7 +1630,9 @@ bool IsRayTracingAllowed()
 
 bool IsRayTracingEnabled(EShaderPlatform ShaderPlatform)
 {
-	return IsRayTracingEnabled() && RHISupportsRayTracing(ShaderPlatform);
+	const bool bRayTracingRequireSM6 = (GRayTracingRequireSM6 != 0);
+
+	return IsRayTracingEnabled() && RHISupportsRayTracing(ShaderPlatform) && (IsFeatureLevelSupported(ShaderPlatform, ERHIFeatureLevel::SM6) || !bRayTracingRequireSM6);
 }
 
 ERayTracingMode GetRayTracingMode()
@@ -1568,8 +1640,98 @@ ERayTracingMode GetRayTracingMode()
 	return IsRayTracingAllowed() ? GRayTracingMode : ERayTracingMode::Disabled;
 }
 
+bool UseSplineMeshSceneResources(const FStaticShaderPlatform Platform)
+{
+	// This feature currently requires GPU Scene to be supported and enabled.
+	// NOTE: Mobile GPU can't currently support this feature because it doesn't include the payload extension in its instance data
+	if (UseGPUScene(Platform) && !IsMobilePlatform(Platform))
+	{
+		static FShaderPlatformCachedIniValue<int32> CVar(TEXT("r.SplineMesh.SceneTextures"));
+		return CVar.Get(Platform) > 0;
+	}
+
+	return false;
+}
+
+static TAutoConsoleVariable<int32> CVarLightFunctionAtlasFormat(
+	TEXT("r.LightFunctionAtlas.Format"),
+	0,
+	TEXT("0: grey scale in [0,1]. 1: colored in [0,1]"),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarSingleLayerWaterUsesLightFunctionAtlas(
+	TEXT("r.SingleLayerWater.UsesLightFunctionAtlas"),
+	0,
+	TEXT("Enable sampling of the light function atlas on SingleLAyer Water mateirals."),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarTranslucentUsesLightFunctionAtlas(
+	TEXT("r.Translucent.UsesLightFunctionAtlas"),
+	0,
+	TEXT("Enable sampling of the light function atlas on translucent materials using forward shading."),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarRectLighTranslucent(
+	TEXT("r.Translucent.UsesRectLights"),
+	0,
+	TEXT("Enable rect light support for translucent surfaces. When enabled, it will add an extrat sampler to the pixel shader (limited to 16 on dx11 based system)"),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarIESProfileTranslucent(
+	TEXT("r.Translucent.UsesIESProfiles"),
+	0,
+	TEXT("Enable IES profiles support for translucent surfaces. When enabled, it will add an extrat sampler to the pixel shader (limited to 16 on dx11 based system)"),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarHairStrandsUsesTriangleStrips(
+	TEXT("r.HairStrands.Strands.UseTriangleStrips"),
+	1,
+	TEXT("Enable triangle strip geometry for hair strands rendering. This improves performances, but removes the last segments of each curve."),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarHairStrandsLODMode(
+	TEXT("r.HairStrands.LODMode"),
+	1,
+	TEXT("Enable hair strands Auto LOD mode by default. Otherwise use Manual LOD mode. Auto LOD mode adapts hair curves based on screen coverage. Manual LOD mode relies on LODs manually setup per groom asset. This global behavior can be overridden per groom asset."),
+	ECVF_RenderThreadSafe);
+
+int32 GetLightFunctionAtlasFormat()
+{
+	return CVarLightFunctionAtlasFormat.GetValueOnAnyThread();
+}
+
+bool GetSingleLayerWaterUsesLightFunctionAtlas()
+{
+	return CVarSingleLayerWaterUsesLightFunctionAtlas.GetValueOnAnyThread() > 0;
+}
+
+bool GetTranslucentUsesLightFunctionAtlas()
+{
+	return CVarTranslucentUsesLightFunctionAtlas.GetValueOnAnyThread() > 0;
+}
+
+bool GetTranslucentUsesLightRectLights()
+{
+	return CVarRectLighTranslucent.GetValueOnAnyThread() > 0;
+}
+
+bool GetTranslucentUsesLightIESProfiles()
+{
+	return CVarIESProfileTranslucent.GetValueOnAnyThread() > 0;
+}
+
+bool GetHairStrandsUsesTriangleStrips()
+{
+	return CVarHairStrandsUsesTriangleStrips.GetValueOnAnyThread() > 0;
+}
+
+uint32 GetHairStrandsLODMode()
+{
+	return FMath::Clamp(CVarHairStrandsLODMode.GetValueOnAnyThread(), 0, 1);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// Strata settings interface
+// Substrate settings interface
 
 static TAutoConsoleVariable<int32> CVarSubstrate(
 	TEXT("r.Substrate"),
@@ -1577,10 +1739,16 @@ static TAutoConsoleVariable<int32> CVarSubstrate(
 	TEXT("Enable Substrate materials (Beta)."),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
-static TAutoConsoleVariable<int32> CVarSubstrateBytePerPixel(
+static TAutoConsoleVariable<int32> CVarSubstrateBytesPerPixel(
 	TEXT("r.Substrate.BytesPerPixel"),
 	80,
 	TEXT("Substrate allocated byte per pixel to store materials data. Higher value means more complex material can be represented."),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarSubstrateClosuresPerPixel(
+	TEXT("r.Substrate.ClosuresPerPixel"),
+	8,	// Similar to SUBSTRATE_MAX_CLOSURE_COUNT
+	TEXT("Substrate closure count per pixel can be constrained. That is usefull to reduce the number of byte written durting the base pass, but also to limit the number of closures in Forward. Higher value means more complex material can be represented."),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarSubstrateBackCompatibility(
@@ -1629,7 +1797,7 @@ static TAutoConsoleVariable<int32> CVarSubstrateRoughDiffuse(
 static TAutoConsoleVariable<int32> CVarSubstrateGlints(
 	TEXT("r.Substrate.Glints"),
 	1,
-	TEXT("Enable Glint support for Strata slabs. If changed, shaders needs to be recompiled."),
+	TEXT("Enable Glint support for Substrate slabs. If changed, shaders needs to be recompiled."),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarSubstrateGlintsLUT(
@@ -1653,7 +1821,7 @@ static TAutoConsoleVariable<float> CVarSubstrateGlintsLevelMin(
 static TAutoConsoleVariable<int32> CVarSubstrateSpecularProfile(
 	TEXT("r.Substrate.SpecularProfile"),
 	1,
-	TEXT("Enable Specular Profile support for Strata slabs. If changed, shaders needs to be recompiled."),
+	TEXT("Enable Specular Profile support for Substrate slabs. If changed, shaders needs to be recompiled."),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarSubstrateDebugAdvancedVisualizationShaders(
@@ -1662,15 +1830,9 @@ static TAutoConsoleVariable<int32> CVarSubstrateDebugAdvancedVisualizationShader
 	TEXT("Enable advanced Substrate material debug visualization shaders. Base pass shaders can output such advanced data."),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
-static TAutoConsoleVariable<int32> CVarSubstrateTileCoord8Bits(
-	TEXT("r.Substrate.TileCoord8bits"),
-	0,
-	TEXT("Format of tile coord. This variable is read-only."),
-	ECVF_ReadOnly | ECVF_RenderThreadSafe);
-
-namespace Strata
+namespace Substrate
 {
-	bool IsStrataEnabled()
+	bool IsSubstrateEnabled()
 	{
 		return CVarSubstrate.GetValueOnAnyThread() > 0;
 	}
@@ -1683,26 +1845,33 @@ namespace Strata
 			return  FMath::DivideAndRoundUp<uint32>(Value, Divisor) * Divisor;
 		};
 
-		// We enforce at least 20 bytes per pixel because this is the minimal Strata GBuffer footprint of the simplest material.
-		const uint32 MinStrataBytePerPixel = 20u;
-		const uint32 MaxStrataBytePerPixel = /*IsMobilePlatform(GMaxRHI InPlatform) ? 24u : */256u; // STRATA_TODO
+		// We enforce at least 20 bytes per pixel because this is the minimal Substrate GBuffer footprint of the simplest material.
+		const uint32 MinSubstrateBytePerPixel = 20u;
+		const uint32 MaxSubstrateBytePerPixel = /*IsMobilePlatform(GMaxRHI InPlatform) ? 24u : */256u; // SUBSTRATE_TODO
 		// Align byte per pixel count to 4 because the read/write unit is uint32
-		check(MinStrataBytePerPixel == RoundUpValueToUInt(MinStrataBytePerPixel));
-		check(MaxStrataBytePerPixel == RoundUpValueToUInt(MaxStrataBytePerPixel));
+		check(MinSubstrateBytePerPixel == RoundUpValueToUInt(MinSubstrateBytePerPixel));
+		check(MaxSubstrateBytePerPixel == RoundUpValueToUInt(MaxSubstrateBytePerPixel));
 		InBytePerPixel = RoundUpValueToUInt(InBytePerPixel);
-		return FMath::Clamp(InBytePerPixel, MinStrataBytePerPixel, MaxStrataBytePerPixel);
+		return FMath::Clamp(InBytePerPixel, MinSubstrateBytePerPixel, MaxSubstrateBytePerPixel);
 	}
 
 	uint32 GetBytePerPixel()
 	{
-		return InternalGetBytePerPixel(CVarSubstrateBytePerPixel.GetValueOnAnyThread());
+		return InternalGetBytePerPixel(CVarSubstrateBytesPerPixel.GetValueOnAnyThread());
 	}
 
 	uint32 GetBytePerPixel(EShaderPlatform InPlatform)
 	{
 		// Variant for shader compilation per platform
-		static FShaderPlatformCachedIniValue<int32> CVarBudget(TEXT("r.Substrate.BytesPerPixel"));
-		return InternalGetBytePerPixel(CVarBudget.Get(InPlatform));
+		static FShaderPlatformCachedIniValue<int32> CVarByteBudget(TEXT("r.Substrate.BytesPerPixel"));
+		return InternalGetBytePerPixel(CVarByteBudget.Get(InPlatform));
+	}
+
+	uint32 GetClosurePerPixel(EShaderPlatform InPlatform)
+	{
+		// Variant for shader compilation per platform
+		static FShaderPlatformCachedIniValue<int32> CVarClosureBudget(TEXT("r.Substrate.ClosuresPerPixel"));
+		return uint32(FMath::Max(0, CVarClosureBudget.Get(InPlatform)));
 	}
 
 	uint32 GetNormalQuality()
@@ -1713,16 +1882,16 @@ namespace Strata
 
 	uint32 GetRayTracingMaterialPayloadSizeInBytes(bool bFullySimplifiedMaterial)
 	{
-		// The payload size represents FPackedMaterialClosestHitPayload containing FStrataRaytracingPayload composed of 
-		//  (1)- top layer data using a count of STRATA_TOP_LAYER_TYPE uints
-		//  (2)- packed data in a uint32 array of size STRATA_RT_PAYLOAD_NUM_UINTS
+		// The payload size represents FPackedMaterialClosestHitPayload containing FSubstrateRaytracingPayload composed of 
+		//  (1)- top layer data using a count of SUBSTRATE_TOP_LAYER_TYPE uints
+		//  (2)- packed data in a uint32 array of size SUBSTRATE_RT_PAYLOAD_NUM_UINTS
 
 		uint32 PayloadSizeBytes = 0;
 
 		// Account for (1)
-		const uint32 StrataNormalQuality = Strata::GetNormalQuality();
-		check(StrataNormalQuality >= 0 && StrataNormalQuality <= 1);
-		switch (StrataNormalQuality)
+		const uint32 SubstrateNormalQuality = Substrate::GetNormalQuality();
+		check(SubstrateNormalQuality >= 0 && SubstrateNormalQuality <= 1);
+		switch (SubstrateNormalQuality)
 		{
 		case 0:
 			PayloadSizeBytes += 1 * sizeof(uint32);
@@ -1735,11 +1904,11 @@ namespace Strata
 		// Account for (2)
 		if (bFullySimplifiedMaterial)
 		{
-			PayloadSizeBytes += STRATA_FULLY_SIMPLIFIED_NUM_UINTS * sizeof(uint32);
+			PayloadSizeBytes += SUBSTRATE_FULLY_SIMPLIFIED_NUM_UINTS * sizeof(uint32);
 		}
 		else
 		{
-			PayloadSizeBytes += Strata::GetBytePerPixel();
+			PayloadSizeBytes += Substrate::GetBytePerPixel();
 		}
 
 		return PayloadSizeBytes;
@@ -1757,7 +1926,13 @@ namespace Strata
 
 	bool IsGlintEnabled()
 	{
-		return IsStrataEnabled() && CVarSubstrateGlints.GetValueOnAnyThread() > 0;
+		return IsSubstrateEnabled() && CVarSubstrateGlints.GetValueOnAnyThread() > 0;
+	}
+
+	bool IsGlintEnabled(EShaderPlatform InPlatform)
+	{
+		static FShaderPlatformCachedIniValue<int32> CVar(TEXT("r.Substrate.Glints"));
+		return IsSubstrateEnabled() && CVar.Get(InPlatform);
 	}
 
 	uint32 GlintLUTIndex()
@@ -1778,17 +1953,24 @@ namespace Strata
 
 	bool IsSpecularProfileEnabled()
 	{
-		return IsStrataEnabled() && CVarSubstrateSpecularProfile.GetValueOnAnyThread() > 0;
+		return IsSubstrateEnabled() && CVarSubstrateSpecularProfile.GetValueOnAnyThread() > 0;
 	}
 
-	bool Is8bitTileCoordEnabled()
+	bool IsSpecularProfileEnabled(EShaderPlatform InPlatform)
 	{
-		return CVarSubstrateTileCoord8Bits.GetValueOnAnyThread() > 0 ? 1 : 0;
+		static FShaderPlatformCachedIniValue<int32> CVar(TEXT("r.Substrate.SpecularProfile"));
+		return IsSubstrateEnabled() && CVar.Get(InPlatform) > 0;
 	}
 
 	uint32 GetSheenQuality()
 	{
 		return CVarSubstrateSheenQuality.GetValueOnAnyThread();
+	}
+
+	uint32 GetSheenQuality(EShaderPlatform InPlatform)
+	{
+		static FShaderPlatformCachedIniValue<int32> CVar(TEXT("r.Substrate.SheenQuality"));
+		return CVar.Get(InPlatform);
 	}
 
 	uint32 GetShadingQuality()
@@ -1812,16 +1994,51 @@ namespace Strata
 		const bool bDBufferPassSupported = NormalQuality == 0 || (NormalQuality > 0 && IsConsolePlatform(InPlatform));
 		
 		static FShaderPlatformCachedIniValue<int32> CVarSubstrateDBufferPassPlatform(TEXT("r.Substrate.DBufferPass"));
-		return IsStrataEnabled() && IsUsingDBuffers(InPlatform) && bDBufferPassSupported && CVarSubstrateDBufferPassPlatform.Get(InPlatform) > 0;
+		return IsSubstrateEnabled() && IsUsingDBuffers(InPlatform) && bDBufferPassSupported && CVarSubstrateDBufferPassPlatform.Get(InPlatform) > 0;
 	}
 
 	bool IsOpaqueRoughRefractionEnabled()
 	{
-		return IsStrataEnabled() && CVarSubstrateOpaqueMaterialRoughRefraction.GetValueOnAnyThread() > 0;
+		return IsSubstrateEnabled() && CVarSubstrateOpaqueMaterialRoughRefraction.GetValueOnAnyThread() > 0;
 	}
 
 	bool IsAdvancedVisualizationEnabled()
 	{
 		return CVarSubstrateDebugAdvancedVisualizationShaders.GetValueOnAnyThread() > 0;
 	}
+}
+
+bool DoesPlatformSupportLumenGI(EShaderPlatform Platform, bool bSkipProjectCheck)
+{
+	static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Lumen.Supported"));
+	const bool bLumenSupported = CVar->GetInt() != 0;
+
+	return (bSkipProjectCheck || bLumenSupported)
+		&& FDataDrivenShaderPlatformInfo::GetSupportsLumenGI(Platform)
+		&& !IsForwardShadingEnabled(Platform);
+}
+
+static TAutoConsoleVariable<int32> CVarLumenReflectionsHardwareRayTracingTranslucentRefractionEnableForProject(
+	TEXT("r.Lumen.Reflections.HardwareRayTracing.Translucent.Refraction.EnableForProject"),
+	1,
+	TEXT("Whether to use Lumen refraction tracing from surfaces when using harware ray tracing and hit lighting. This will require shader recompilation to compile of translucent card capture Lumen shaders. Increases GPU cost when enabled."),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe
+);
+
+bool DoesProjectSupportLumenRayTracedTranslucentRefraction()
+{
+	int32 LumenTranslucentRefractionEnabled = CVarLumenReflectionsHardwareRayTracingTranslucentRefractionEnableForProject.GetValueOnAnyThread();
+	return LumenTranslucentRefractionEnabled > 0;
+}
+
+static TAutoConsoleVariable<int32> CVarForwardShadingForceSkyBoxBlending(
+	TEXT("r.ForwardShading.ForceSkyLightCubemapBlending"),
+	0,
+	TEXT("Forces in shader sky box blending for forward shading. More expenssive but higher quality. This is similar to having Blend Sky Light Cubemaps = true on all forward materials."),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+bool ForwardShadingForcesSkyLightCubemapBlending(const FStaticShaderPlatform Platform)
+{
+	static FShaderPlatformCachedIniValue<int32> CVar(TEXT("r.ForwardShading.ForceSkyLightCubemapBlending"));
+	return CVar.Get(Platform) > 0;
 }

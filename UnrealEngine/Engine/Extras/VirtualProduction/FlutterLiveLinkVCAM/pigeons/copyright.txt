@@ -1,0 +1,5 @@
+Copyright Epic Games, Inc. All Rights Reserved.
+
+This is an auto-generated file. See FlutterLiveLinkVCAM/pigeons/README for information on how to
+modify the original source and generate a new file.
+

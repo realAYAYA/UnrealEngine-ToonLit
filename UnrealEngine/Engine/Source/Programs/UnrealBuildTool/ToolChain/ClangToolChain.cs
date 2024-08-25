@@ -112,6 +112,13 @@ namespace UnrealBuildTool
 		/// Enable LibFuzzer
 		/// </summary>
 		EnableLibFuzzer = 1 << 18,
+
+		/// <summary>
+		/// Modify code generation to help with debugging optimized builds e.g. by extending lifetimes of local variables.
+		/// It may slightly reduce performance. Thus, it's meant to be used during development only.
+		/// Supported only on some platforms.
+		/// </summary>
+		OptimizeForDebugging = 1 << 19,
 	}
 
 	abstract class ClangToolChain : ISPCToolChain
@@ -181,6 +188,8 @@ namespace UnrealBuildTool
 
 		protected ClangToolChainOptions Options;
 
+		protected bool bOptimizeForDebugging => Options.HasFlag(ClangToolChainOptions.OptimizeForDebugging);
+
 		// Dummy define to work around clang compilation related to the windows maximum path length limitation
 		protected static string ClangDummyDefine;
 		protected const int ClangCmdLineMaxSize = 32 * 1024;
@@ -209,6 +218,11 @@ namespace UnrealBuildTool
 		}
 
 		protected abstract ClangToolChainInfo GetToolChainInfo();
+
+		public override FileReference? GetCppCompilerPath()
+		{
+			return LazyInfo.Value.Clang;
+		}
 
 		public override void SetUpGlobalEnvironment(ReadOnlyTargetRules Target)
 		{
@@ -250,10 +264,7 @@ namespace UnrealBuildTool
 					};
 
 					Action AggregateTimingInfoAction = MakefileBuilder.CreateRecursiveAction<AggregateClangTimingInfo>(ActionType.ParseTimingInfo, String.Join(" ", AggregateActionArgs));
-					AggregateTimingInfoAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 					AggregateTimingInfoAction.StatusDescription = $"Aggregating {TimingJsonFiles.Count} Timing File(s)";
-					AggregateTimingInfoAction.bCanExecuteRemotely = false;
-					AggregateTimingInfoAction.bCanExecuteRemotelyWithSNDBS = false;
 					AggregateTimingInfoAction.PrerequisiteItems.UnionWith(TimingJsonFiles);
 
 					AggregateTimingInfoAction.ProducedItems.Add(AggregateOutputFile);
@@ -268,10 +279,7 @@ namespace UnrealBuildTool
 					};
 
 					Action ArchiveTimingInfoAction = MakefileBuilder.CreateRecursiveAction<AggregateClangTimingInfo>(ActionType.ParseTimingInfo, String.Join(" ", ArchiveActionArgs));
-					ArchiveTimingInfoAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 					ArchiveTimingInfoAction.StatusDescription = $"Archiving {TimingJsonFiles.Count} Timing File(s)";
-					ArchiveTimingInfoAction.bCanExecuteRemotely = false;
-					ArchiveTimingInfoAction.bCanExecuteRemotelyWithSNDBS = false;
 					ArchiveTimingInfoAction.PrerequisiteItems.UnionWith(TimingJsonFiles);
 
 					ArchiveTimingInfoAction.ProducedItems.Add(ArchiveOutputFile);
@@ -288,6 +296,7 @@ namespace UnrealBuildTool
 						CompileScoreExtractorAction.StatusDescription = $"Extracting CompileScore";
 						CompileScoreExtractorAction.bCanExecuteRemotely = false;
 						CompileScoreExtractorAction.bCanExecuteRemotelyWithSNDBS = false;
+						CompileScoreExtractorAction.bCanExecuteInUBA = false; // TODO: Unknown if supported
 						CompileScoreExtractorAction.PrerequisiteItems.UnionWith(TimingJsonFiles);
 						CompileScoreExtractorAction.CommandPath = ScoreDataExtractor;
 						CompileScoreExtractorAction.CommandArguments = $"-clang -verbosity 0 -timelinepack 1000000 -extract -i \"{NormalizeCommandLinePath(Makefile.ProjectIntermediateDirectory)}\" -o \"{NormalizeCommandLinePath(CompileScoreOutput)}\"";
@@ -323,10 +332,19 @@ namespace UnrealBuildTool
 		/// </summary>
 		protected bool CompilerVersionLessThan(int Major, int Minor, int Patch) => Info.ClangVersion < new Version(Major, Minor, Patch);
 
+		protected bool IsPreprocessing(CppCompileEnvironment CompileEnvironment) =>
+				CompileEnvironment.PrecompiledHeaderAction != PrecompiledHeaderAction.Create
+			&& CompileEnvironment.bPreprocessOnly;
+
 		protected bool IsAnalyzing(CppCompileEnvironment CompileEnvironment) =>
 				StaticAnalyzer == StaticAnalyzer.Default
 			&& CompileEnvironment.PrecompiledHeaderAction != PrecompiledHeaderAction.Create
 			&& !CompileEnvironment.bDisableStaticAnalysis;
+
+		protected bool ShouldSkipCompile(CppCompileEnvironment CompileEnvironment) =>
+				StaticAnalyzer == StaticAnalyzer.Default
+			&& CompileEnvironment.PrecompiledHeaderAction != PrecompiledHeaderAction.Create
+			&& CompileEnvironment.bDisableStaticAnalysis;
 
 		protected virtual void GetCppStandardCompileArgument(CppCompileEnvironment CompileEnvironment, List<string> Arguments)
 		{
@@ -364,7 +382,7 @@ namespace UnrealBuildTool
 				Arguments.Add("-fpch-validate-input-files-content");
 			}
 
-			if (CompileEnvironment.bAllowAutoRTFMInstrumentation)
+			if (CompileEnvironment.bAllowAutoRTFMInstrumentation && CompileEnvironment.bUseAutoRTFMCompiler)
 			{
 				Arguments.Add("-fautortfm");
 			}
@@ -395,7 +413,7 @@ namespace UnrealBuildTool
 					throw new BuildException($"Unsupported C standard type set: {CompileEnvironment.CStandard}");
 			}
 
-			if (CompileEnvironment.bAllowAutoRTFMInstrumentation)
+			if (CompileEnvironment.bAllowAutoRTFMInstrumentation && CompileEnvironment.bUseAutoRTFMCompiler)
 			{
 				Arguments.Add("-fautortfm");
 			}
@@ -585,6 +603,28 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
+		/// Compile arguments for FP semantics
+		/// </summary>
+		/// <param name="CompileEnvironment"></param>
+		/// <param name="Arguments"></param>
+		protected virtual void GetCompileArguments_FPSemantics(CppCompileEnvironment CompileEnvironment, List<string> Arguments)
+		{
+			switch (CompileEnvironment.FPSemantics)
+			{
+				case FPSemanticsMode.Default: // Default to precise FP semantics.
+				case FPSemanticsMode.Precise:
+					// Clang defaults to -ffp-contract=on, which allows fusing multiplications and additions into FMAs.
+					Arguments.Add("-ffp-contract=off");
+					break;
+				case FPSemanticsMode.Imprecise:
+					Arguments.Add("-ffast-math");
+					break;
+				default:
+					throw new BuildException($"Unsupported FP semantics: {CompileEnvironment.FPSemantics}");
+			}
+		}
+
+		/// <summary>
 		/// Compile arguments for optimization settings, such as profile guided optimization and link time optimization
 		/// </summary>
 		/// <param name="CompileEnvironment"></param>
@@ -608,6 +648,12 @@ namespace UnrealBuildTool
 			{
 				Arguments.Add("-fno-inline-functions");
 			}
+
+			if (CompilerVersionGreaterOrEqual(12, 0, 0))
+			{
+				// We have 'this' vs nullptr comparisons that get optimized away for newer versions of Clang, which is undesirable until we refactor these checks.
+				Arguments.Add("-fno-delete-null-pointer-checks");
+			}
 		}
 
 		/// <summary>
@@ -627,6 +673,11 @@ namespace UnrealBuildTool
 			{
 				Arguments.Add("-fno-exceptions");
 				Arguments.Add("-DPLATFORM_EXCEPTIONS_DISABLED=1");
+			}
+
+			if (bOptimizeForDebugging)
+			{
+				Arguments.Add("-fextend-lifetimes");
 			}
 		}
 
@@ -771,6 +822,9 @@ namespace UnrealBuildTool
 			// Add warning and error flags to the argument list.
 			GetCompileArguments_WarningsAndErrors(CompileEnvironment, Arguments);
 
+			// Add FP semantics flags to the argument list.
+			GetCompileArguments_FPSemantics(CompileEnvironment, Arguments);
+
 			// Add optimization flags to the argument list.
 			GetCompileArguments_Optimizations(CompileEnvironment, Arguments);
 
@@ -887,7 +941,7 @@ namespace UnrealBuildTool
 					ParentPCHInstance = ParentPCHInstance.ParentPCHInstance;
 				}
 			}
-			else if (CompileEnvironment.bPreprocessOnly)
+			else if (IsPreprocessing(CompileEnvironment))
 			{
 				OutputFile = FileItem.GetItemByFileReference(FileReference.Combine(OutputDir, GetFileNameFromExtension(FileName, ".i")));
 				CompileResult.ObjectFiles.Add(OutputFile);
@@ -895,9 +949,6 @@ namespace UnrealBuildTool
 				// Clang does EITHER pre-process or object file.
 				Arguments.Add("-E"); // Only run the preprocessor
 				Arguments.Add("-fuse-line-directives"); // Use #line in preprocessed output
-
-				// this is parsed by external tools wishing to open this file directly.
-				Logger.LogInformation("PreProcessPath: {File}", OutputFile.AbsolutePath);
 			}
 			else if (IsAnalyzing(CompileEnvironment))
 			{
@@ -969,6 +1020,27 @@ namespace UnrealBuildTool
 			return NewList;
 		}
 
+		public override IEnumerable<string> GetGlobalCommandLineArgs(CppCompileEnvironment CompileEnvironment)
+		{
+			List<string> Arguments = new();
+			GetCompileArguments_Global(new CppCompileEnvironment(CompileEnvironment), Arguments);
+			return Arguments;
+		}
+
+		public override IEnumerable<string> GetCPPCommandLineArgs(CppCompileEnvironment CompileEnvironment)
+		{
+			List<string> Arguments = new();
+			GetCompileArguments_CPP(CompileEnvironment, Arguments);
+			return Arguments;
+		}
+
+		public override IEnumerable<string> GetCCommandLineArgs(CppCompileEnvironment CompileEnvironment)
+		{
+			List<string> Arguments = new();
+			GetCompileArguments_C(CompileEnvironment, Arguments);
+			return Arguments;
+		}
+
 		public override CppCompileEnvironment CreateSharedResponseFile(CppCompileEnvironment CompileEnvironment, FileReference OutResponseFile, IActionGraphBuilder Graph)
 		{
 			CppCompileEnvironment NewCompileEnvironment = new CppCompileEnvironment(CompileEnvironment);
@@ -1015,6 +1087,9 @@ namespace UnrealBuildTool
 			ClangSpecificFileActionGraphBuilder GraphBuilder = new(Logger);
 			Action Action = CompileCPPFile(CompileEnvironment, DummyFile, OutputDir, "<Unknown>", GraphBuilder, GlobalArguments, Result);
 			Action.PrerequisiteItems.RemoveWhere(File => File.Name.Contains(DummyName));
+			Action.bCanExecuteRemotely = true;
+			Action.bCanExecuteRemotelyWithSNDBS = Action.bCanExecuteRemotely && !CompileEnvironment.bBuildLocallyWithSNDBS;
+			Action.Weight = CompileActionWeight;
 
 			Graph.AddAction(new ClangSpecificFileAction(SourceDir, OutputDir, Action, GraphBuilder.ContentLines));
 		}
@@ -1022,6 +1097,15 @@ namespace UnrealBuildTool
 		protected virtual Action CompileCPPFile(CppCompileEnvironment CompileEnvironment, FileItem SourceFile, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph, IReadOnlyCollection<string> GlobalArguments, CPPOutput Result)
 		{
 			Action CompileAction = Graph.CreateAction(ActionType.Compile);
+
+			// If we are using the AutoRTFM compiler, we make the compile action depend on the version of the compiler itself.
+			// This lets us update the compiler (which might not cause a version update of the compiler, which instead tracks
+			// the LLVM versioning scheme that Clang uses), but ensure that we rebuild the source if the compiler has changed.
+			if (CompileEnvironment.bUseAutoRTFMCompiler)
+			{
+				CompileAction.PrerequisiteItems.Add(FileItem.GetItemByFileReference(GetToolChainInfo().Clang));
+			}
+
 			CompileAction.Weight = CompileActionWeight;
 
 			// copy the global arguments into the file arguments, so GetCompileArguments_FileType can remove entries if needed (special case but can be important)
@@ -1064,7 +1148,7 @@ namespace UnrealBuildTool
 			CompileAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 			CompileAction.CommandPath = Info.Clang;
 			CompileAction.CommandVersion = Info.ClangVersionString;
-			CompileAction.CommandDescription = IsAnalyzing(CompileEnvironment) ? "Analyze" : "Compile";
+			CompileAction.CommandDescription = IsPreprocessing(CompileEnvironment) ? "Preprocess" : IsAnalyzing(CompileEnvironment) ? "Analyze" : "Compile";
 			UnrealArchitectureConfig ArchConfig = UnrealArchitectureConfig.ForPlatform(CompileEnvironment.Platform);
 			if (ArchConfig.Mode != UnrealArchitectureMode.SingleArchitecture)
 			{
@@ -1139,8 +1223,13 @@ namespace UnrealBuildTool
 			return CompileAction;
 		}
 
-		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
+		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
 		{
+			if (ShouldSkipCompile(CompileEnvironment))
+			{
+				return new CPPOutput();
+			}
+
 			List<string> GlobalArguments = new();
 
 			if (!CompileEnvironment.bHasSharedResponseFile)

@@ -304,13 +304,21 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::CustomizeChildren(TShare
 					continue;
 				}
 
-				const FString* PayloadVariable = PayloadVariables.Find(Field->GetFName());
+				const FMovieSceneDirectorBlueprintVariableValue* PayloadVariable = PayloadVariables.Find(Field->GetFName());
 				if (PayloadVariable)
 				{
 					AllValidNames.Add(Field->GetFName());
 
 					// We have an override for this variable
-					const bool bImportSuccess = FBlueprintEditorUtils::PropertyValueFromString(Field, *PayloadVariable, StructData->GetStructMemory());
+					bool bImportSuccess = false;
+					if (PayloadVariable->ObjectValue.IsValid())
+					{
+						bImportSuccess = FBlueprintEditorUtils::PropertyValueFromString(Field, PayloadVariable->ObjectValue.ToString(), StructData->GetStructMemory());
+					}
+					if (!bImportSuccess)
+					{
+						bImportSuccess = FBlueprintEditorUtils::PropertyValueFromString(Field, *PayloadVariable->Value, StructData->GetStructMemory());
+					}
 					if (!bImportSuccess)
 					{
 						// @todo: error
@@ -318,13 +326,18 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::CustomizeChildren(TShare
 				}
 				else if (UEdGraphPin* Pin = CommonEndpoint->FindPin(Field->GetFName(), EGPD_Output))
 				{
-					if (!Pin->DefaultValue.IsEmpty())
+					bool bImportSuccess = false;
+					if (Pin->DefaultObject)
 					{
-						const bool bImportSuccess = FBlueprintEditorUtils::PropertyValueFromString(Field, Pin->DefaultValue, StructData->GetStructMemory());
-						if (!bImportSuccess)
-						{
-							// @todo: error
-						}
+						bImportSuccess = FBlueprintEditorUtils::PropertyValueFromString(Field, Pin->DefaultObject->GetPathName(), StructData->GetStructMemory());
+					}
+					if (!bImportSuccess && !Pin->DefaultValue.IsEmpty())
+					{
+						bImportSuccess = FBlueprintEditorUtils::PropertyValueFromString(Field, Pin->DefaultValue, StructData->GetStructMemory());
+					}
+					if (!bImportSuccess)
+					{
+						// @todo: error
 					}
 				}
 
@@ -391,6 +404,22 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::OnPayloadVariableChanged
 		return;
 	}
 
+	TObjectPtr<UObject> NewValueObject = FindObject<UObject>(nullptr, *NewValueString);
+
+#if WITH_EDITORONLY_DATA
+	// Fixup redirectors
+	while (Cast<UObjectRedirector>(NewValueObject) != nullptr)
+	{
+		NewValueObject = Cast<UObjectRedirector>(NewValueObject)->DestinationObject;
+		if (NewValueObject)
+		{
+			NewValueString = NewValueObject->GetPathName();
+		}
+	}
+#endif
+
+	FMovieSceneDirectorBlueprintVariableValue NewPayloadVariable{ NewValueObject, NewValueString };
+
 	TArray<UObject*> EditObjects;
 	GetEditObjects(EditObjects);
 
@@ -404,7 +433,7 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::OnPayloadVariableChanged
 
 	for (int32 Index = 0; Index < RawData.Num(); ++Index)
 	{
-		bChangedAnything |= SetPayloadVariable(EditObjects[Index], RawData[Index], Property->GetFName(), NewValueString);
+		bChangedAnything |= SetPayloadVariable(EditObjects[Index], RawData[Index], Property->GetFName(), NewPayloadVariable);
 	}
 
 	if (bChangedAnything)
@@ -1306,7 +1335,7 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::SetEndpoint(const FMovie
 	UEdGraphPin* CallTargetPin = FMovieSceneDirectorBlueprintUtils::FindCallTargetPin(NewEndpoint, EndpointDefinition.PossibleCallTargetClass);
 
 	// Map of the Payload Variable Names to their Default Values as Strings
-	TMap<FName, FString> PayloadVariables;
+	TMap<FName, FMovieSceneDirectorBlueprintVariableValue> PayloadVariables;
 	if (PayloadTemplate && EnumHasAnyFlags(AutoCreatePayload, EAutoCreatePayload::Variables | EAutoCreatePayload::Pins))
 	{
 		UFunction* PayloadTemplateFunction = nullptr;
@@ -1347,7 +1376,7 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::SetEndpoint(const FMovie
 				// Make a payload variable for this pin
 				if (EnumHasAnyFlags(AutoCreatePayload, EAutoCreatePayload::Variables))
 				{
-					PayloadVariables.Add(PayloadPin->PinName, PayloadPin->DefaultValue);
+					PayloadVariables.Add(PayloadPin->PinName, FMovieSceneDirectorBlueprintVariableValue{ PayloadPin->DefaultObject, PayloadPin->DefaultValue });
 				}
 
 				// Make a matching user pin on the endpoint node
@@ -1368,7 +1397,7 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::SetEndpoint(const FMovie
 
 	// Create payload variables for new parameters, remove payload variables for parameters
 	// that don't exist anymore.
-	const FString EmptyValue;
+	const FMovieSceneDirectorBlueprintVariableValue EmptyValue;
 	for (const TPair<UMovieSceneSequence*, FSequenceData>& Pair : AllSequenceData)
 	{
 		const TArray<void*>& RawData = Pair.Value.RawData;
@@ -1379,7 +1408,7 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::SetEndpoint(const FMovie
 			FPayloadVariableMap OldPayloadVariables;
 			GetPayloadVariables(EditObjects[Index], RawData[Index], OldPayloadVariables);
 
-			for (const TPair<FName, FString>& PayloadVar : PayloadVariables)
+			for (const TPair<FName, FMovieSceneDirectorBlueprintVariableValue>& PayloadVar : PayloadVariables)
 			{
 				if (!OldPayloadVariables.Contains(PayloadVar.Key))
 				{
@@ -1387,7 +1416,7 @@ void FMovieSceneDirectorBlueprintEndpointCustomization::SetEndpoint(const FMovie
 				}
 			}
 
-			for (const TPair<FName, FString>& PayloadVar : OldPayloadVariables)
+			for (const TPair<FName, FMovieSceneDirectorBlueprintVariableValue>& PayloadVar : OldPayloadVariables)
 			{
 				if (!PayloadVariables.Contains(PayloadVar.Key))
 				{

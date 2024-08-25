@@ -81,6 +81,9 @@ struct SpirvCodeGenOptions {
   // UE Change Begin: Allow SV_Position to be implicit invariant
   bool svPositionimplicitInvariant;
   // UE Change End: Allow SV_Position to be implicit invariant
+  // UE Change Begin: Allow precise semantic outputs 
+  bool supportPreciseOutputs;
+  // UE Change End: Allow precise semantic outputs 
   bool flattenResourceArrays;
   bool reduceLoadSize;
   bool autoShiftBindings;

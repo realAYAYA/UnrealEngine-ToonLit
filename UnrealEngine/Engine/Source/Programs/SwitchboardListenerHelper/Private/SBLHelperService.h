@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+#include "Containers/Queue.h"
 #include "Containers/Set.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"

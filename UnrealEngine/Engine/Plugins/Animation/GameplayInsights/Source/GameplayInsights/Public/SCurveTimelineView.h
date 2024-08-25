@@ -48,6 +48,9 @@ public:
 	
 		/** Enable Fill rendering */
 		SLATE_ATTRIBUTE(bool, RenderFill);
+
+		/** Track Name for tool tip */
+		SLATE_ATTRIBUTE(FText, TrackName);
      
 	SLATE_END_ARGS()
 
@@ -67,6 +70,7 @@ public:
 		FixedRangeMax = Max;
 	}
 
+	FText GetTrackName() const { return TrackName.Get(); }
 	FText GetCurveToolTipInputText() const { return CurveToolTipInputText; }
 	FText GetCurveToolTipOutputText() const { return CurveToolTipOutputText; }
 	
@@ -85,6 +89,7 @@ protected:
 	TAttribute<FLinearColor> CurveColor;
 	TAttribute<FLinearColor> FillColor;
 	TAttribute<bool> RenderFill;
+	TAttribute<FText> TrackName;
 	
 	TSharedPtr<SToolTip> CurveToolTip;	/** The tooltip control for the curve. */
 	FText CurveToolTipInputText;		

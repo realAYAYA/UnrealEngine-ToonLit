@@ -8,10 +8,6 @@ UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomL
 UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomLightShapeKey = UE::Interchange::FAttributeKey(TEXT("LightShape"));
 UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomDimensionsKey = UE::Interchange::FAttributeKey(TEXT("Dimensions"));
 UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomColorKey = UE::Interchange::FAttributeKey(TEXT("Color"));
-UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomIESTextureKey = UE::Interchange::FAttributeKey(TEXT("IESTexture"));
-UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomUseIESBrightnessKey = UE::Interchange::FAttributeKey(TEXT("UseIESBrightness"));
-UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomIESBrightnessScaleKey = UE::Interchange::FAttributeKey(TEXT("IESBrightnessScale"));
-UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomRotationKey = UE::Interchange::FAttributeKey(TEXT("Rotation"));
 UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomSourceRadiusKey = UE::Interchange::FAttributeKey(TEXT("SourceRadius"));
 UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomSourceLengthKey = UE::Interchange::FAttributeKey(TEXT("SourceLength"));
 UE::Interchange::FAttributeKey UInterchangeDatasmithAreaLightNode::Macro_CustomSpotlightInnerAngleKey = UE::Interchange::FAttributeKey(TEXT("SpotlightInnerAngle"));
@@ -63,46 +59,6 @@ bool UInterchangeDatasmithAreaLightNode::GetCustomColor(FLinearColor& AttributeV
 bool UInterchangeDatasmithAreaLightNode::SetCustomColor(const FLinearColor& AttributeValue, bool bAddApplyDelegate)
 {
 	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(Color, FLinearColor);
-}
-
-bool UInterchangeDatasmithAreaLightNode::GetCustomIESTexture(FString& AttributeValue) const
-{
-	IMPLEMENT_NODE_ATTRIBUTE_GETTER(IESTexture, FString);
-}
-
-bool UInterchangeDatasmithAreaLightNode::SetCustomIESTexture(const FString& AttributeValue)
-{
-	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(IESTexture, FString);
-}
-
-bool UInterchangeDatasmithAreaLightNode::GetCustomUseIESBrightness(bool& AttributeValue) const
-{
-	IMPLEMENT_NODE_ATTRIBUTE_GETTER(UseIESBrightness, bool);
-}
-
-bool UInterchangeDatasmithAreaLightNode::SetCustomUseIESBrightness(const bool& AttributeValue, bool bAddApplyDelegate)
-{
-	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(UseIESBrightness, bool);
-}
-
-bool UInterchangeDatasmithAreaLightNode::GetCustomIESBrightnessScale(float& AttributeValue) const
-{
-	IMPLEMENT_NODE_ATTRIBUTE_GETTER(IESBrightnessScale, float);
-}
-
-bool UInterchangeDatasmithAreaLightNode::SetCustomIESBrightnessScale(const float& AttributeValue, bool bAddApplyDelegate)
-{
-	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(IESBrightnessScale, float);
-}
-
-bool UInterchangeDatasmithAreaLightNode::GetCustomRotation(FRotator& AttributeValue) const
-{
-	IMPLEMENT_NODE_ATTRIBUTE_GETTER(Rotation, FRotator);
-}
-
-bool UInterchangeDatasmithAreaLightNode::SetCustomRotation(const FRotator& AttributeValue, bool bAddApplyDelegate)
-{
-	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(Rotation, FRotator);
 }
 
 bool UInterchangeDatasmithAreaLightNode::GetCustomSourceRadius(float& AttributeValue) const

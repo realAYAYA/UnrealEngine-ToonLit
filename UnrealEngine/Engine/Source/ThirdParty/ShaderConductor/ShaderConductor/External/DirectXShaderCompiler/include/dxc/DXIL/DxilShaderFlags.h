@@ -47,6 +47,11 @@ namespace hlsl {
     void SetForceEarlyDepthStencil(bool flag) { m_bForceEarlyDepthStencil = flag; }
     bool GetForceEarlyDepthStencil() const { return m_bForceEarlyDepthStencil; }
 
+    // UE Change Begin: Added UserInfo container and check for derivative ops
+    void SetHasDerivativeOps(bool flag) { m_bHasDerivativeOps = flag; }
+    bool GetHasDerivativeOps() const { return m_bHasDerivativeOps; }
+    // UE Change End: Added UserInfo container and check for derivative ops
+
     void SetEnableRawAndStructuredBuffers(bool flag) { m_bEnableRawAndStructuredBuffers = flag; }
     bool GetEnableRawAndStructuredBuffers() const { return m_bEnableRawAndStructuredBuffers; }
 
@@ -200,7 +205,13 @@ namespace hlsl {
     unsigned m_bAdvancedTextureOps : 1;     // SHADER_FEATURE_ADVANCED_TEXTURE_OPS
     unsigned m_bWriteableMSAATextures : 1;  // SHADER_FEATURE_WRITEABLE_MSAA_TEXTURES
 
-    uint32_t m_align1 : 28;            // align to 64 bit.
+    // UE Change Begin: Added UserInfo container and check for derivative ops
+    unsigned m_bHasDerivativeOps : 1;
+    // UE Change End: Added UserInfo container and check for derivative ops
+
+    // UE Change Begin: Added UserInfo container and check for derivative ops
+    uint32_t m_align1 : 27;            // align to 64 bit.
+    // UE Change End: Added UserInfo container and check for derivative ops
   };
 
 

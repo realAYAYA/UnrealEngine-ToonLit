@@ -83,7 +83,7 @@ void TestKeyValuePairs()
 		UE_LOG_ONLINE(Display, TEXT("Iterator %s = %s"), *It.Key().ToString(), *It.Value().ToString());
 	}
 
-	bSuccess = TestKeyValuePairs.Num() == 0 ? true : false;
+	bSuccess = TestKeyValuePairs.Num() == 0 ? true : false; //-V547
 
 	// Test basic variant data type functionality
 	FVariantData OrigKeyValuePair;

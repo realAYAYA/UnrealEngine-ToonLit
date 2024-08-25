@@ -127,17 +127,6 @@ enum class ELandscapeConvertMode : int8
 	Resample = 2,
 };
 
-namespace EColorChannel
-{
-	enum UE_DEPRECATED(5.2, "Use ELandscapeTextureColorChannel") Type : int
-	{
-		Red,
-		Green,
-		Blue,
-		Alpha,
-	};
-}
-
 UENUM()
 enum class ELandscapeTextureColorChannel : int32
 {
@@ -312,6 +301,7 @@ class ULandscapeEditorObject : public UObject
 	UPROPERTY(NonTransactional)
 	float MaximumValueRadius;
 
+	// Use the combined result of the underlying layers as input to the operation.  When not checked, it will use only the data in the currently selected layer as input.
 	UPROPERTY(Category="Tool Settings", EditAnywhere, NonTransactional, meta=(ShowForTools="Flatten,Smooth,Erosion,HydraErosion,Ramp", ShowForTargetTypes="Heightmap", ShowForLandscapeLayerSystem))
 	bool bCombinedLayersOperation;
 
@@ -403,6 +393,10 @@ class ULandscapeEditorObject : public UObject
 	UPROPERTY(Category="Tool Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Noise Scale", ShowForTools="Erosion", ClampMin="1", ClampMax="512", UIMin="1.1", UIMax="256"))
 	float ErosionNoiseScale;
 
+	// Whether the erosion tool should take into account the paint layer's hardness parameter (a hardness of 0 means the layer is fully affected by erosion, while 1 means fully unaffected)
+	UPROPERTY(Category = "Tool Settings", EditAnywhere, NonTransactional, meta = (DisplayName = "Use Layer Hardness", ShowForTools = "Erosion"))
+	bool bErosionUseLayerHardness;
+
 	// Hydraulic Erosion Tool:
 
 	// The amount of rain to apply to the surface. Larger values will result in more erosion
@@ -410,14 +404,14 @@ class ULandscapeEditorObject : public UObject
 	int32 RainAmount;
 
 	// The amount of sediment that the water can carry. Larger values will result in more erosion
-	UPROPERTY(Category="Tool Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Sediment Cap.", ShowForTools="HydraErosion", ClampMin="0.1", ClampMax="1.0"))
+	UPROPERTY(Category="Tool Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Sediment Capacity", ShowForTools="HydraErosion", ClampMin="0.1", ClampMax="1.0"))
 	float SedimentCapacity;
 
 	// Number of erosion iterations, more means more erosion but is slower
 	UPROPERTY(Category="Tool Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Iterations", ShowForTools="HydraErosion", ClampMin="1", ClampMax="300", UIMin="1", UIMax="150"))
 	int32 HErodeIterationNum;
 
-	// Initial Rain Distribution
+	// Selects how rain is distributed over the brush area for hydro erosion
 	UPROPERTY(Category="Tool Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Initial Rain Distribution", ShowForTools="HydraErosion"))
 	ELandscapeToolHydroErosionMode RainDistMode;
 
@@ -496,8 +490,7 @@ class ULandscapeEditorObject : public UObject
 	UPROPERTY(Category="Tool Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Smoothing Width", ShowForTools="Mirror", ClampMin="0", UIMin="0", UIMax="20"))
 	int32 MirrorSmoothingWidth;
 
-	// Blueprint Brush Tool
-
+	// Selects the blueprint brush to apply to the current edit layer. Click on the landscape to apply it.
 	UPROPERTY(Category = "Tool Settings", EditAnywhere, Transient, meta = (DisplayName = "Blueprint Brush", ShowForTools = "BlueprintBrush"))
 	TSubclassOf<ALandscapeBlueprintBrushBase> BlueprintBrush;
 
@@ -541,13 +534,19 @@ class ULandscapeEditorObject : public UObject
 	UPROPERTY(Category="New Landscape", EditAnywhere, meta=(DisplayName="Number of Components", ShowForTools="NewLandscape"))
 	FIntPoint NewLandscape_ComponentCount;
 
+	static const FVector NewLandscape_DefaultLocation;
+
 	// The location of the new landscape
 	UPROPERTY(Category="New Landscape", EditAnywhere, meta=(DisplayName="Location", ShowForTools="NewLandscape"))
 	FVector NewLandscape_Location;
 
+	static const FRotator NewLandscape_DefaultRotation;
+
 	// The rotation of the new landscape
 	UPROPERTY(Category="New Landscape", EditAnywhere, meta=(DisplayName="Rotation", ShowForTools="NewLandscape"))
 	FRotator NewLandscape_Rotation;
+
+	static const FVector NewLandscape_DefaultScale;
 
 	// The scale of the new landscape. This is the distance between each vertex on the landscape, defaulting to 100 units.
 	UPROPERTY(Category="New Landscape", EditAnywhere, meta=(DisplayName="Scale", ShowForTools="NewLandscape"))
@@ -582,10 +581,10 @@ class ULandscapeEditorObject : public UObject
 	UPROPERTY(Category = "Import / Export", EditAnywhere, NonTransactional, meta = (DisplayName="Export Selected Edit Layer", ShowForTools = "ImportExport", ToolTip="When true exports the selected edit layer, if false exports the blended result"))
 	bool bExportEditLayer = true;
 
-	UPROPERTY(Category = "Import / Export", EditAnywhere, NonTransactional, meta = (DisplayName = "Export Single File", ShowForTools = "ImportExport", ToolTip = "(World Partition only) When true, exports the landscape as a single file, if false exports each grid tile individually."))
+	UPROPERTY(Category = "Import / Export", EditAnywhere, NonTransactional, meta = (ShowForTools = "ImportExport", ToolTip = "(World Partition only) When true, exports the landscape as a single file, if false exports each grid tile individually."))
 	bool bExportSingleFile = false;
 
-	UPROPERTY(Category = "Import / Export", EditAnywhere, NonTransactional, meta = (DisplayName = "Mode", ShowForTools = "ImportExport", ToolTip = "Import Loaded or All Landscape Regions"))
+	UPROPERTY(Category = "Import / Export", EditAnywhere, NonTransactional, meta = (ShowForTools = "ImportExport"))
 	ELandscapeImportExportMode ImportExportMode = ELandscapeImportExportMode::LoadedOnly;
 
 	UPROPERTY(NonTransactional)
@@ -620,18 +619,18 @@ public:
 	// Common Brush Settings:
 
 	// The radius of the sculpt brush, in unreal units
-	UPROPERTY(Category="Brush Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Brush Size", ShowForBrushes="BrushSet_Circle,BrushSet_Alpha,BrushSet_Pattern", ShowForTargetTypes = "Heightmap,Visibility", ClampMin="1", ClampMax="65536", UIMin="1", UIMax="8192", SliderExponent="3", MaxFractionalDigits="2"))
+	UPROPERTY(Category="Brush Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Brush Size", ShowForBrushes="BrushSet_Circle,BrushSet_Alpha,BrushSet_Pattern", ShowForTargetTypes = "Heightmap,Visibility", ClampMin="1", ClampMax="65536", UIMin="1", UIMax="8192", SliderExponent="3", MaxFractionalDigits="2", ToolTip = "Radius of the sculpt editing brush. The maximum slider/clamp value can be set with the BrushSizeUIMax/BrushSizeClampMax values in the Landscape project settings."))
 	float BrushRadius;
 
 	// The radius of the paint brush, in unreal units
-	UPROPERTY(Category="Brush Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Brush Size", ShowForBrushes="BrushSet_Circle,BrushSet_Alpha,BrushSet_Pattern", ShowForTargetTypes = "Weightmap", ClampMin="1", ClampMax="65536", UIMin="1", UIMax="8192", SliderExponent="3"))
+	UPROPERTY(Category="Brush Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Brush Size", ShowForBrushes="BrushSet_Circle,BrushSet_Alpha,BrushSet_Pattern", ShowForTargetTypes = "Weightmap", ClampMin="1", ClampMax="65536", UIMin="1", UIMax="8192", SliderExponent="3", ToolTip = "Radius of the paint editing brush. The maximum slider/clamp value can be set with the BrushSizeUIMax/BrushSizeClampMax values in the Landscape project settings."))
 	float PaintBrushRadius;
 
 	// The falloff at the edge of the sculpt brush, as a fraction of the brush's size. 0 = no falloff, 1 = all falloff
 	UPROPERTY(Category="Brush Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Brush Falloff", ShowForBrushes="BrushSet_Circle,BrushSet_Gizmo,BrushSet_Pattern", ShowForTargetTypes = "Heightmap,Visibility", ClampMin="0", ClampMax="1", UIMin = "0", UIMax = "1"))
 	float BrushFalloff;
 	
-	// The falloff at the edge of the point brush, as a fraction of the brush's size. 0 = no falloff, 1 = all falloff
+	// The falloff at the edge of the paint brush, as a fraction of the brush's size. 0 = no falloff, 1 = all falloff
 	UPROPERTY(Category="Brush Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Brush Falloff", ShowForBrushes="BrushSet_Circle,BrushSet_Gizmo,BrushSet_Pattern", ShowForTargetTypes = "Weightmap", ClampMin="0", ClampMax="1", UIMin = "0", UIMax = "1"))
 	float PaintBrushFalloff;
 
@@ -661,6 +660,7 @@ public:
 	UPROPERTY(Category="Brush Settings", EditAnywhere, NonTransactional, meta=(DisplayName="Texture Pan V", ShowForBrushes="BrushSet_Pattern", ClampMin="0", ClampMax="1"))
 	float AlphaBrushPanV;
 
+	// Tile the pattern in world space (this only takes scale and position into account, not rotation)
 	UPROPERTY(Category = "Brush Settings", EditAnywhere, NonTransactional, meta = (DisplayName = "Use World-Space", ShowForBrushes = "BrushSet_Pattern"))
 	bool bUseWorldSpacePatternBrush;
 

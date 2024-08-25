@@ -6,6 +6,7 @@
 #include "Animation/AnimData/AttributeIdentifier.h"
 #include "Animation/AnimData/IAnimationDataController.h"
 #include "Animation/AttributeCurve.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 #include "Containers/ArrayView.h"
 #include "Curves/KeyHandle.h"
 #include "Internationalization/Internationalization.h"

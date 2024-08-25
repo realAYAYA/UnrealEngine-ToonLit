@@ -186,7 +186,8 @@ UActorComponent* UNiagaraDataInterfaceActorComponent::ResolveComponent(FNiagaraS
 	return SourceActor.IsValid() ? SourceActor->GetRootComponent() : nullptr;
 }
 
-void UNiagaraDataInterfaceActorComponent::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceActorComponent::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIActorComponentLocal;
 	FNiagaraFunctionSignature DefaultSig;
@@ -219,6 +220,7 @@ void UNiagaraDataInterfaceActorComponent::GetFunctions(TArray<FNiagaraFunctionSi
 		FunctionSignature.SetDescription(LOCTEXT("GetVelocityDesc", "Returns the velocity from the component or actor if valid."));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceActorComponent::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {
@@ -267,7 +269,7 @@ bool UNiagaraDataInterfaceActorComponent::UpgradeFunctionCall(FNiagaraFunctionSi
 	if (FunctionSignature.FunctionVersion < FNiagaraActorDIFunctionVersion::LWCConversion)
 	{
 		TArray<FNiagaraFunctionSignature> AllFunctions;
-		GetFunctions(AllFunctions);
+		GetFunctionsInternal(AllFunctions);
 		for (const FNiagaraFunctionSignature& Sig : AllFunctions)
 		{
 			if (FunctionSignature.Name == Sig.Name)

@@ -48,10 +48,16 @@ public:
 	virtual int32 GetMinimapLowQualityWorldUnitsPerPixelThreshold() const override;
 
 	/**
-	 * Returns if loading in the editor is disabled or not.
+	 * Returns if loading in the editor is enabled or not.
 	 */
-	virtual bool GetDisableLoadingInEditor() const override;
-	virtual void SetDisableLoadingInEditor(bool bInDisableLoadingInEditor) override;
+	virtual bool GetEnableLoadingInEditor() const override;
+	virtual void SetEnableLoadingInEditor(bool bInEnableLoadingInEditor) override;
+
+	/**
+	* Returns if streaming generation log on PIE is enabled or not.
+	*/
+	virtual bool GetEnableStreamingGenerationLogOnPIE() const override;
+	virtual void SetEnableStreamingGenerationLogOnPIE(bool bInEnableLoadingInEditor) override;
 
 	/**
 	 * Returns if pie is disabled or not.
@@ -70,6 +76,20 @@ public:
 	 */
 	virtual bool GetAdvancedMode() const override;
 	virtual void SetAdvancedMode(bool bInAdvancedMode) override;
+
+	virtual bool GetShowHLODsInEditor() const override;
+	virtual void SetShowHLODsInEditor(bool bInShowHLODsInEditor) override;
+ 
+	virtual bool GetShowHLODsOverLoadedRegions() const override;
+	virtual void SetShowHLODsOverLoadedRegions(bool bInShowHLODsOverLoadedRegions) override;
+
+	virtual double GetHLODInEditorMinDrawDistance() const override;
+	virtual void SetHLODInEditorMinDrawDistance(double InMinDrawDistance) override;
+
+	virtual double GetHLODInEditorMaxDrawDistance() const override;
+	virtual void SetHLODInEditorMaxDrawDistance(double InMaxDrawDistance) override;
+
+	virtual bool IsHLODInEditorAllowed(UWorld* InWorld, FText* OutDisallowedReason) const override;
 
 	/**
 	 * Convert the specified map to a world partition map.
@@ -118,7 +138,7 @@ private:
 
 	/** Inserts world partition tabs into the level editor layout */
 	void RegisterWorldPartitionLayout(FLayoutExtender& Extender);
-	
+
 	/** Spawns the world partition tab */
 	TSharedRef<SDockTab> SpawnWorldPartitionTab(const FSpawnTabArgs& Args);
 
@@ -134,12 +154,10 @@ private:
 	void RunCommandletAsExternalProcess(const FString& InCommandletArgs, const FText& InOperationDescription, int32& OutResult, bool& bOutCancelled);
 	void OnConvertMap();
 
+	FDelegateHandle EditorInitializedHandle;
 	FDelegateHandle LevelEditorExtenderDelegateHandle;
 
-	TSharedPtr<class FHLODLayerAssetTypeActions> HLODLayerAssetTypeActions;
-
 	TWeakPtr<SDockTab> WorldPartitionTab;
-
 	TWeakPtr<SDockTab> ContentBundleTab;
 
 	TWeakPtr<SContentBundleBrowser> ContentBundleBrowser;

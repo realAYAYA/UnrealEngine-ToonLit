@@ -343,10 +343,8 @@ void MainAtomicCS(
 
 				{
 					const float3 TranslatedWorldPosition = ReconstructTranslatedWorldPositionFromDepth(GBufferUV, GBufferData.Depth);
-					const float3 CameraVector = normalize(View.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
-
 					const float3 N = GBufferData.WorldNormal;
-					const float3 V = CameraVector;
+					const float3 V = -GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
 					const float3 EnvBrdf = EnvBRDF(GBufferData.SpecularColor, GBufferData.Roughness, max(0.0, dot(N, V)));
 
 					Denominator += EnvBrdf;

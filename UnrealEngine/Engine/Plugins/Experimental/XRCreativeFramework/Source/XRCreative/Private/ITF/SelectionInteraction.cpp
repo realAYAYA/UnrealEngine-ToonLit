@@ -13,12 +13,28 @@
 #endif
 
 
-void UXRCreativeSelectionInteraction::Initialize(UTypedElementSelectionSet* InSelectionSet, TUniqueFunction<bool()> InCanChangeSelectionCallback)
+UXRCreativeSelectionInteraction::UXRCreativeSelectionInteraction()
+ : TraceCallback([this](const FInputDeviceRay& InRay) { return DefaultTrace(InRay); })
+{
+}
+
+void UXRCreativeSelectionInteraction::Initialize(
+	UTypedElementSelectionSet* InSelectionSet,
+	FActorPredicate InCanSelectCallback,
+	FTraceMethod InTraceCallback)
 {
 	ensure(InSelectionSet);
-
 	WeakSelectionSet = InSelectionSet;
-	CanChangeSelectionCallback = MoveTemp(InCanChangeSelectionCallback);
+
+	if (InCanSelectCallback)
+	{
+		CanSelectCallback = MoveTemp(InCanSelectCallback);
+	}
+
+	if (InTraceCallback)
+	{
+		TraceCallback = MoveTemp(InTraceCallback);
+	}
 
 	// create click behavior and set ourselves as click target
 	ClickBehavior = NewObject<USingleClickInputBehavior>();
@@ -61,21 +77,14 @@ FInputRayHit UXRCreativeSelectionInteraction::IsHitByClick(const FInputDeviceRay
 {
 	FInputRayHit RayHit;
 
-	if (CanChangeSelectionCallback() == false)
-	{
-		return RayHit;
-	}
-
-	FCollisionObjectQueryParams QueryParams(FCollisionObjectQueryParams::AllObjects);
-	FHitResult Result;
-	const bool bBlockingHit = GetWorld()->LineTraceSingleByObjectType(Result,
-		ClickPos.WorldRay.Origin, ClickPos.WorldRay.PointAt(999999), QueryParams);
-	if (bBlockingHit)
+	const FHitResult HitResult = TraceCallback(ClickPos);
+	AActor* HitActor = HitResult.GetActor();
+	if (HitResult.bBlockingHit && CanSelectCallback(HitActor))
 	{
 		RayHit.bHit = true;
-		RayHit.HitDepth = Result.Distance;
+		RayHit.HitDepth = HitResult.Distance;
 		RayHit.bHasHitNormal = true;
-		RayHit.SetHitObject(Result.GetActor());
+		RayHit.SetHitObject(HitActor);
 	}
 
 	return RayHit;
@@ -104,6 +113,15 @@ FTypedElementHandle UXRCreativeSelectionInteraction::AcquireActorElementHandle(c
 }
 
 
+FHitResult UXRCreativeSelectionInteraction::DefaultTrace(const FInputDeviceRay& InRay) const
+{
+	FCollisionObjectQueryParams QueryParams(FCollisionObjectQueryParams::AllObjects);
+	FHitResult Result;
+	GetWorld()->LineTraceSingleByObjectType(Result, InRay.WorldRay.Origin, InRay.WorldRay.PointAt(RayLength), QueryParams);
+	return Result;
+}
+
+
 void UXRCreativeSelectionInteraction::OnClicked(const FInputDeviceRay& ClickPos)
 {
 	UTypedElementSelectionSet* SelectionSet = WeakSelectionSet.Get();
@@ -113,11 +131,11 @@ void UXRCreativeSelectionInteraction::OnClicked(const FInputDeviceRay& ClickPos)
 	}
 
 	FCollisionObjectQueryParams QueryParams(FCollisionObjectQueryParams::AllObjects);
-	FHitResult Result;
-	const bool bBlockingHit = GetWorld()->LineTraceSingleByObjectType(Result,
-		ClickPos.WorldRay.Origin, ClickPos.WorldRay.PointAt(999999), QueryParams);
-	if (bBlockingHit)
+	const FHitResult Result = TraceCallback(ClickPos);
+	if (ensure(Result.bBlockingHit))
 	{
+		ensure(CanSelectCallback(Result.GetActor()));
+
 		FTypedElementHandle HitActorHandle;
 
 #if WITH_EDITOR

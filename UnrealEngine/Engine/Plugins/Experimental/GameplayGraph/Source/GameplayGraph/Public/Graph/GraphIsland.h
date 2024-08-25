@@ -1,17 +1,26 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
+#include "Misc/EnumClassFlags.h"
 #include "Graph/GraphElement.h"
 #include "GraphIsland.generated.h"
 
-USTRUCT()
-struct FSerializedIslandData
+/**
+ * These are the possible operations that can be done to an island. The graph
+ * will attempt to check that the island is allowing these operations before
+ * successfully performing any of these operations. By default all operations are allowed.
+ */
+UENUM()
+enum class EGraphIslandOperations : int32
 {
-	GENERATED_BODY()
-
-	UPROPERTY(SaveGame)
-	TArray<FGraphVertexHandle> Vertices;
+	None = 0,
+	Add = 1 << 0,
+Split = 1 << 1,
+	Merge = 1 << 2,
+	Destroy = 1 << 3,
+	All = Add | Split | Merge | Destroy
 };
+ENUM_CLASS_FLAGS(EGraphIslandOperations);
 
 /** Delegate to track when some sort of batch change has occurred on this island that probably changes its connectivity.
  *  This is different from FOnGraphIslandNodeRemoved since FOnGraphIslandDestructiveChangeFinish will only be called
@@ -38,13 +47,30 @@ public:
 
 	FGraphIslandHandle Handle() const
 	{
-		return FGraphIslandHandle{ GetUniqueIndex(), const_cast<UGraphIsland*>(this) };
+		return FGraphIslandHandle{ GetUniqueIndex(), GetGraph() };
 	}
 
-	bool IsPendingDestroy() const { return bPendingDestroy; }
 	bool IsEmpty() const { return Vertices.IsEmpty(); }
 	const TSet<FGraphVertexHandle>& GetVertices() const { return Vertices; }
-	FSerializedIslandData GetSerializedData() const;
+	int32 Num() const { return Vertices.Num(); }
+
+	bool IsOperationAllowed(EGraphIslandOperations Op) const { return EnumHasAnyFlags(AllowedOperations, Op); }
+	void SetOperationAllowed(EGraphIslandOperations Op, bool bAllowed);
+
+	template<typename TLambda>
+	void ForEachVertex(TLambda&& Lambda)
+	{
+		for (const FGraphVertexHandle& Vh : Vertices)
+		{
+			Lambda(Vh);
+		}
+	}
+
+	/** Adds a single node into this island. */
+	void AddVertex(const FGraphVertexHandle& Node);
+
+	/** Removes a node from the island. */
+	void RemoveVertex(const FGraphVertexHandle& Node);
 
 	FOnGraphIslandVertexAdded OnVertexAdded;
 	FOnGraphIslandVertexRemoved OnVertexRemoved;
@@ -62,19 +88,10 @@ protected:
 	/** Called when removing the island from the graph. */
 	void Destroy();
 
-	/** Takes the nodes from the other island and puts them into this island. */
-	void MergeWith(TObjectPtr<UGraphIsland> OtherIsland);
-
-	/** Adds a single node into this island. */
-	void AddVertex(const FGraphVertexHandle& Node);
-
-	/** Removes a node from the island. */
-	void RemoveVertex(const FGraphVertexHandle& Node);
-
 private:
 	UPROPERTY(SaveGame)
 	TSet<FGraphVertexHandle> Vertices;
 
 	UPROPERTY(Transient)
-	bool bPendingDestroy;
+	EGraphIslandOperations AllowedOperations = EGraphIslandOperations::All;
 };

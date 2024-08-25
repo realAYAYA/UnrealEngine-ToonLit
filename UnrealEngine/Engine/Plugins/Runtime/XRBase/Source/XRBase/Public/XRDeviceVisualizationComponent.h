@@ -65,20 +65,16 @@ class XRBASE_API UXRDeviceVisualizationComponent : public UStaticMeshComponent
 
 	FXRDeviceId DisplayDeviceId;
 
-	void BeginPlay() override;
-	virtual void OnUnregister() override;
 	void RefreshMesh();
 	UMotionControllerComponent* FindParentMotionController();
 	void SetMaterials(int32 MatCount);
-
+	void OnRegister() override;
+	void OnUnregister() override;
 #if WITH_EDITOR
-	int32 PreEditMaterialCount = 0;
+	void OnCloseVREditor();
 #endif
 
 public:
-#if WITH_EDITOR 
-	virtual void PreEditChange(FProperty* PropertyAboutToChange) override;
-#endif 
 
 	UFUNCTION(BlueprintSetter, Category="MotionController")
 	void SetIsRenderingActive(bool bRenderingIsActive);

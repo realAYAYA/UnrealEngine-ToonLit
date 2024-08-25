@@ -49,6 +49,7 @@ bool FSocketAndroid::JoinMulticastGroup(const FInternetAddr& GroupAddress, const
 
 void FSocketAndroid::AcquireMulticastLock()
 {
+#if USE_ANDROID_JNI
     extern bool AndroidThunkCpp_AcquireWifiManagerMulticastLock();
     if (AndroidThunkCpp_AcquireWifiManagerMulticastLock())
     {
@@ -56,6 +57,7 @@ void FSocketAndroid::AcquireMulticastLock()
 		UE_LOG(LogSockets, VeryVerbose, TEXT("WifiManager.MulticastLock succesfully aquired"));
     }
     else
+#endif
     {
         static bool bAlreadyLoggedFailure = false;  
         if (!bAlreadyLoggedFailure) 
@@ -68,6 +70,7 @@ void FSocketAndroid::AcquireMulticastLock()
 
 void FSocketAndroid::ReleaseMulticastLock()
 {
+#if USE_ANDROID_JNI
     if (bIsMulticastLockAcquired)
     {
 	    UE_LOG(LogSockets, VeryVerbose, TEXT("Releasing WifiManager.MulticastLock"));
@@ -75,4 +78,5 @@ void FSocketAndroid::ReleaseMulticastLock()
         AndroidThunkCpp_ReleaseWifiManagerMulticastLock();
         bIsMulticastLockAcquired = false;
     }
+#endif
 }

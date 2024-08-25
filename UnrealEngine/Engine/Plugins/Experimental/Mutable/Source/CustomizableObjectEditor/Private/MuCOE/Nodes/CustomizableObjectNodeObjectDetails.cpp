@@ -44,7 +44,7 @@ void FCustomizableObjectNodeObjectDetails::CustomizeDetails( IDetailLayoutBuilde
 	IDetailCategoryBuilder& RuntimeParameters = DetailBuilder.EditCategory("States Runtime Parameters");
 	IDetailCategoryBuilder& ExternalCategory = DetailBuilder.EditCategory("AttachedToExternalObject");
 	IDetailCategoryBuilder& RealTimeMorphTargets = DetailBuilder.EditCategory("RealTime Morph Targets");
-	IDetailCategoryBuilder& LODCustomSettings = DetailBuilder.EditCategory("LODCustomSettings");
+	IDetailCategoryBuilder& LODCustomSettings = DetailBuilder.EditCategory("LOD Custom Settings");
 
 	//StatesCategory.CategoryIcon( "ActorClassIcon.CustomizableObject" );
 

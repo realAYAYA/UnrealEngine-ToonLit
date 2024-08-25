@@ -10,8 +10,10 @@
 #include "UnrealEdGlobals.h"
 #include "Editor/UnrealEdEngine.h"
 #include "Customizations/SmartObjectSlotDefinitionDetails.h"
+#include "Customizations/SmartObjectDefinitionDataProxyDetails.h"
 #include "Customizations/SmartObjectSlotReferenceDetails.h"
 #include "Customizations/SmartObjectDefinitionDetails.h"
+#include "Customizations/SmartObjectDefinitionReferenceDetails.h"
 #include "WorldPartitionSmartObjectCollectionBuilder.h"
 
 #define LOCTEXT_NAMESPACE "SmartObjects"
@@ -40,7 +42,9 @@ void FSmartObjectsEditorModule::StartupModule()
 	// Register the details customizer
 	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	PropertyModule.RegisterCustomPropertyTypeLayout("SmartObjectSlotDefinition", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSmartObjectSlotDefinitionDetails::MakeInstance));
+	PropertyModule.RegisterCustomPropertyTypeLayout("SmartObjectDefinitionDataProxy", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSmartObjectDefinitionDataProxyDetails::MakeInstance));
 	PropertyModule.RegisterCustomPropertyTypeLayout("SmartObjectSlotReference", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSmartObjectSlotReferenceDetails::MakeInstance));
+	PropertyModule.RegisterCustomPropertyTypeLayout("SmartObjectDefinitionReference", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSmartObjectDefinitionReferenceDetails::MakeInstance));
 	PropertyModule.RegisterCustomClassLayout("SmartObjectDefinition", FOnGetDetailCustomizationInstance::CreateStatic(&FSmartObjectDefinitionDetails::MakeInstance));
 
 	PropertyModule.NotifyCustomizationModuleChanged();
@@ -68,7 +72,9 @@ void FSmartObjectsEditorModule::ShutdownModule()
 	{
 		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyModule.UnregisterCustomPropertyTypeLayout("SmartObjectSlotDefinition");
+		PropertyModule.UnregisterCustomPropertyTypeLayout("SmartObjectDefinitionDataItem");
 		PropertyModule.UnregisterCustomPropertyTypeLayout("SmartObjectSlotReference");
+		PropertyModule.UnregisterCustomPropertyTypeLayout("SmartObjectDefinitionReference");
 		PropertyModule.UnregisterCustomClassLayout("SmartObjectDefinition");
 	}
 	

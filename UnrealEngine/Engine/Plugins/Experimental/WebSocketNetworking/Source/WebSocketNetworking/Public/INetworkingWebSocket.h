@@ -31,4 +31,6 @@ public:
 	virtual FString RemoteEndPoint(bool bAppendPort) = 0;
 	virtual FString LocalEndPoint(bool bAppendPort) = 0;
 	virtual struct sockaddr_in* GetRemoteAddr() = 0;
+	virtual TArray<FString> GetUrlArgs() = 0;
+	virtual FString GetUrlArgByName(const FString& Name) = 0;
 };

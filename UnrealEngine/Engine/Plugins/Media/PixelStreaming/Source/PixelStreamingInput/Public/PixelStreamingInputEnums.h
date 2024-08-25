@@ -15,7 +15,8 @@ enum class PIXELSTREAMINGINPUT_API EPixelStreamingMessageTypes
 	Int16,
 	Float,
 	Double,
-	Variable,
+    Variable UE_DEPRECATED(5.3, "EPixelStreamingMessageTypes::Variable has been deprecated. Please use either String or Undefined instead"),
+    String,
 	Undefined
 };
 

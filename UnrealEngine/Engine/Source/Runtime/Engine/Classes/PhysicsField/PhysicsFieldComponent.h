@@ -144,7 +144,7 @@ public:
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 
 	/** Update RHI resources. */
-	void UpdateResource(FRHICommandListImmediate& RHICmdList,
+	void UpdateResource(FRHICommandList& RHICmdList,
 		const TStaticArray<int32, EFieldPhysicsType::Field_PhysicsType_Max + 1>& TargetsOffsetsDatas, const TArray<int32>& NodesOffsetsDatas, const TArray<float>& NodesParamsDatas,
 		const TArray<FVector>& TargetsMinDatas, const TArray<FVector>& TargetsMaxDatas, const float TimeSeconds, 
 		const TArray<FVector4>& BoundsMinDatas, const TArray<FVector4>& BoundsMaxDatas, const TStaticArray<int32, EFieldPhysicsType::Field_PhysicsType_Max + 1>& BoundsOffsetsDatas);

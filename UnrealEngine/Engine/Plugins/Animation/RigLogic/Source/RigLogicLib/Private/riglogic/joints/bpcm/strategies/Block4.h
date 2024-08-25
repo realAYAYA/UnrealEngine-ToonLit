@@ -16,6 +16,8 @@ namespace rl4 {
 
 namespace bpcm {
 
+namespace block4 {
+
 /*
  * Process the remainder portion after 8x4 blocks
  *
@@ -333,7 +335,7 @@ static FORCE_INLINE void processJointGroupBlock4(const JointGroupView<T>& jointG
     }
 }
 
-template<typename TF128, typename T>
+template<typename T, typename TF128>
 struct Block4JointCalculationStrategy : public JointCalculationStrategy<T> {
 
     using JointGroupArrayView = typename JointCalculationStrategy<T>::JointGroupArrayView;
@@ -358,6 +360,8 @@ struct Block4JointCalculationStrategy : public JointCalculationStrategy<T> {
     }
 
 };
+
+}  // namespace block4
 
 }  // namespace bpcm
 

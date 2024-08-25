@@ -160,12 +160,12 @@ namespace Horde.Server.Utilities
 		/// <summary>
 		/// The full source pattern
 		/// </summary>
-		public Utf8String Source => $"{SourcePrefix}{Wildcard}{SourceSuffix}";
+		public Utf8String Source => new Utf8String($"{SourcePrefix}{Wildcard}{SourceSuffix}");
 
 		/// <summary>
 		/// The full target pattern
 		/// </summary>
-		public Utf8String Target => $"{TargetPrefix}{Wildcard}{TargetSuffix}";
+		public Utf8String Target => new Utf8String($"{TargetPrefix}{Wildcard}{TargetSuffix}");
 
 		/// <summary>
 		/// Tests if the entry has a file wildcard ('*')
@@ -203,24 +203,24 @@ namespace Horde.Server.Utilities
 			{
 				string wildcardStr = match.Groups[2].Value;
 
-				SourcePrefix = match.Groups[1].Value;
-				SourceSuffix = match.Groups[3].Value;
-				Wildcard = match.Groups[2].Value;
+				SourcePrefix = new Utf8String(match.Groups[1].Value);
+				SourceSuffix = new Utf8String(match.Groups[3].Value);
+				Wildcard = new Utf8String(match.Groups[2].Value);
 
 				int otherIdx = target.IndexOf(wildcardStr, StringComparison.Ordinal);
-				TargetPrefix = target.Substring(0, otherIdx);
-				TargetSuffix = target.Substring(otherIdx + Wildcard.Length);
+				TargetPrefix = new Utf8String(target.Substring(0, otherIdx));
+				TargetSuffix = new Utf8String(target.Substring(otherIdx + Wildcard.Length));
 
 				if (wildcardStr.Equals("%%1", StringComparison.Ordinal))
 				{
-					Wildcard = "*";
+					Wildcard = new Utf8String("*");
 				}
 			}
 			else
 			{
-				SourcePrefix = source;
+				SourcePrefix = new Utf8String(source);
 				SourceSuffix = Utf8String.Empty;
-				TargetPrefix = target;
+				TargetPrefix = new Utf8String(target);
 				TargetSuffix = Utf8String.Empty;
 			}
 		}

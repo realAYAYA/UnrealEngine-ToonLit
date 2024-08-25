@@ -558,7 +558,7 @@ void FMetadataProvider::OnAnalysisCompleted()
 		UE_LOG(LogTraceServices, Error, TEXT("[Meta] Restore scope errors: %u"), RestoreScopeErrors);
 	}
 
-	UE_LOG(LogTraceServices, Log, TEXT("[Meta] Analysis Completed (%llu events; %llu alloc events; %llu allocs; %llu bytes)"),
+	UE_LOG(LogTraceServices, Log, TEXT("[Meta] Analysis completed (%llu events, %llu alloc events, %llu allocs, %llu bytes)."),
 		EventCount, AllocationEventCount, AllocationCount, TotalAllocatedMemory);
 }
 

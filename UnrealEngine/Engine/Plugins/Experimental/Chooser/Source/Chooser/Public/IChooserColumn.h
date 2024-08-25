@@ -24,6 +24,11 @@ public:
 };
 
 class UChooserTable;
+class FVariant;
+
+class FChooserIndexArray;
+
+struct FInstancedPropertyBag;
 
 USTRUCT()
 struct CHOOSER_API FChooserColumnBase
@@ -33,31 +38,45 @@ struct CHOOSER_API FChooserColumnBase
 public:
 	virtual ~FChooserColumnBase() {}
 	virtual void PostLoad() {};
-	virtual void Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const {}
+	virtual void Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const {}
 
 	virtual bool HasFilters() const { return true; }
 	virtual bool HasOutputs() const { return false; }
 	
 	virtual void SetOutputs(FChooserEvaluationContext& Context, int RowIndex) const { }
 
+	virtual void Compile(IHasContextClass* Owner, bool bForce)
+	{
+		if (FChooserParameterBase* Input = GetInputValue())
+		{
+			Input->Compile(Owner, bForce);
+		}
+	};
+
+	virtual void SetTestValue(TArrayView<const uint8> Value) { }
+	virtual FChooserParameterBase* GetInputValue() { return nullptr; };
 #if WITH_EDITOR
 	virtual FName RowValuesPropertyName() { return FName(); }
 	virtual void SetNumRows(int32 NumRows) {}
 	virtual void DeleteRows(const TArray<uint32> & RowIndices) {}
 	virtual void MoveRow(int SourceIndex, int TargetIndex) {}
+	virtual void InsertRows(int Index, int Count) {}
 	
 	virtual UScriptStruct* GetInputBaseType() const { return nullptr; };
 	virtual const UScriptStruct* GetInputType() const { return nullptr; };
 	virtual void SetInputType(const UScriptStruct* Type) { };
-	virtual FChooserParameterBase* GetInputValue() { return nullptr; };
 
 	// random columns must go last, and get a special icon
 	// using a virtual fucntion to identify them (rather than hard coding a specific type) to potentially support multiple varieties of randomization column.
 	virtual bool IsRandomizeColumn() const { return false; }
 
 	virtual bool EditorTestFilter(int32 RowIndex) const { return false; }
+
+	virtual void AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) {}
+	virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) {}
 #endif
 };
+
 
 #if WITH_EDITOR
 #define CHOOSER_COLUMN_BOILERPLATE2(ParameterType, RowValuesProperty) \
@@ -72,6 +91,14 @@ public:
 		{\
 			while(RowValuesProperty.Num() < NumRows)\
 			RowValuesProperty.Add(DefaultRowValue);\
+		}\
+	}\
+	virtual void InsertRows(int Index, int Count) override\
+	{\
+		RowValuesProperty.InsertUninitialized(Index, Count);\
+		for (int i=0;i<Count;i++)\
+		{\
+			RowValuesProperty[Index + i] = DefaultRowValue;\
 		}\
 	}\
 	virtual void DeleteRows(const TArray<uint32> & RowIndices )\
@@ -90,14 +117,14 @@ public:
 	}\
 	virtual UScriptStruct* GetInputBaseType() const override { return ParameterType::StaticStruct(); };\
 	virtual const UScriptStruct* GetInputType() const override { return InputValue.IsValid() ? InputValue.GetScriptStruct() : nullptr; };\
-	virtual FChooserParameterBase* GetInputValue() override { return InputValue.IsValid() ? &InputValue.GetMutable<FChooserParameterBase>() : nullptr; };\
+	virtual FChooserParameterBase* GetInputValue() override { return InputValue.GetMutablePtr<FChooserParameterBase>(); };\
 	virtual void SetInputType(const UScriptStruct* Type) override { InputValue.InitializeAs(Type); };
-
-#define CHOOSER_COLUMN_BOILERPLATE(ParameterType) CHOOSER_COLUMN_BOILERPLATE2(ParameterType, RowValues)
 
 #else
 
-#define CHOOSER_COLUMN_BOILERPLATE2(ParameterType, RowValuesProperty)
-#define CHOOSER_COLUMN_BOILERPLATE(ParameterType)
+#define CHOOSER_COLUMN_BOILERPLATE2(ParameterType, RowValuesProperty)\
+	virtual FChooserParameterBase* GetInputValue() override { return InputValue.GetMutablePtr<FChooserParameterBase>(); };\
 
 #endif
+
+#define CHOOSER_COLUMN_BOILERPLATE(ParameterType) CHOOSER_COLUMN_BOILERPLATE2(ParameterType, RowValues)

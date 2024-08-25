@@ -100,37 +100,37 @@ namespace EpicGames.Core
 				return Name;
 			}
 
-			public bool TryGetDefine(string Name, out string? Value)
+			public bool TryGetDefine(string name, out string? value)
 			{
-				Value = null;
-				int Length = Name.Length;
-				foreach (string Define in PublicDefines)
+				value = null;
+				int length = name.Length;
+				foreach (string define in PublicDefines)
 				{
-					if (!Define.StartsWith(Name, System.StringComparison.Ordinal))
+					if (!define.StartsWith(name, System.StringComparison.Ordinal))
 					{
 						continue;
 					}
-					if (Define.Length > Length)
+					if (define.Length > length)
 					{
-						if (Define[Length] != '=')
+						if (define[length] != '=')
 						{
 							continue;
 						}
-						Value = Define.Substring(Length + 1, Define.Length - Length - 1);
+						value = define.Substring(length + 1, define.Length - length - 1);
 					}
 					return true;
 				}
 				return false;
 			}
 
-			public bool TryGetDefine(string Name, out int Value)
+			public bool TryGetDefine(string name, out int value)
 			{
-				string? String;
-				if (TryGetDefine(Name, out String))
+				string? stringValue;
+				if (TryGetDefine(name, out stringValue))
 				{
-					return int.TryParse(String, out Value);
+					return int.TryParse(stringValue, out value);
 				}
-				Value = 0;
+				value = 0;
 				return false;
 			}
 		}

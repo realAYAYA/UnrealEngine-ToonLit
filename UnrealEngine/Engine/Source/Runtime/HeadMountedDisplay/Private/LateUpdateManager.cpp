@@ -36,7 +36,7 @@ void FLateUpdateManager::Setup(const FTransform& ParentToWorld, USceneComponent*
 
 void FLateUpdateManager::Apply_RenderThread(FSceneInterface* Scene, const FTransform& OldRelativeTransform, const FTransform& NewRelativeTransform)
 {
-	check(IsInRenderingThread());
+	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
 
 	if (!UpdateStates[LateUpdateRenderReadIndex].Primitives.Num() || UpdateStates[LateUpdateRenderReadIndex].bSkip)
 	{
@@ -65,7 +65,7 @@ void FLateUpdateManager::Apply_RenderThread(FSceneInterface* Scene, const FTrans
 		}
 		else if (CachedSceneInfo->Proxy)
 		{
-			CachedSceneInfo->Proxy->ApplyLateUpdateTransform(LateUpdateTransform);
+			CachedSceneInfo->Proxy->ApplyLateUpdateTransform(RHICmdList, LateUpdateTransform);
 			PrimitivePair.Value = -1; // Set the cached index to -1 to indicate that this primitive was already processed
 		}
 	}
@@ -80,7 +80,7 @@ void FLateUpdateManager::Apply_RenderThread(FSceneInterface* Scene, const FTrans
 		{
 			if (RetrievedSceneInfo->Proxy && UpdateStates[LateUpdateRenderReadIndex].Primitives.Contains(RetrievedSceneInfo) && UpdateStates[LateUpdateRenderReadIndex].Primitives[RetrievedSceneInfo] >= 0)
 			{
-				RetrievedSceneInfo->Proxy->ApplyLateUpdateTransform(LateUpdateTransform);
+				RetrievedSceneInfo->Proxy->ApplyLateUpdateTransform(RHICmdList, LateUpdateTransform);
 			}
 			RetrievedSceneInfo = Scene->GetPrimitiveSceneInfo(Index++);
 		}

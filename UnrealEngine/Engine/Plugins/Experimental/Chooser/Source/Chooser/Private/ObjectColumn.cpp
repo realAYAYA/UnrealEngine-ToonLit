@@ -1,30 +1,31 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "ObjectColumn.h"
+#include "ChooserIndexArray.h"
 #include "ChooserPropertyAccess.h"
+#include "ChooserTrace.h"
 
 #if WITH_EDITOR
-	#include "IPropertyAccessEditor.h"
+#include "IPropertyAccessEditor.h"
+#include "PropertyBag.h"
 #endif
 
 bool FObjectContextProperty::GetValue(FChooserEvaluationContext& Context, FSoftObjectPath& OutResult) const
 {
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-
-	if (UE::Chooser::ResolvePropertyChain(Context, Binding, Container, StructType))
+	UE::Chooser::FResolvedPropertyChainResult Result;
+	if (UE::Chooser::ResolvePropertyChain(Context, Binding, Result))
 	{
-		if (const FObjectPropertyBase* ObjectProperty = FindFProperty<FObjectPropertyBase>(StructType, Binding.PropertyBindingChain.Last()))
+		if (Result.Function == nullptr)
 		{
 			// if the property is a soft object property, get the path directly
-			if (ObjectProperty->IsA<FSoftObjectProperty>())
+			if (Result.PropertyType == UE::Chooser::EChooserPropertyAccessType::SoftObjectRef)
 			{
-				const FSoftObjectPtr& SoftObjectPtr = *ObjectProperty->ContainerPtrToValuePtr<FSoftObjectPtr>(Container);
+				const FSoftObjectPtr& SoftObjectPtr = *reinterpret_cast<const FSoftObjectPtr*>(Result.Container + Result.PropertyOffset);
 				OutResult = SoftObjectPtr.ToSoftObjectPath();
 				return true;
 			}
-			
+		
 			// otherwise get the value from the object property and convert to a soft object path
-			const UObject* LoadedObject = ObjectProperty->GetObjectPropertyValue_InContainer(Container);
+			const UObject* LoadedObject = reinterpret_cast<const UObject*>(Result.Container + Result.PropertyOffset);
 			OutResult = LoadedObject;
 			return true;
 		}
@@ -32,24 +33,6 @@ bool FObjectContextProperty::GetValue(FChooserEvaluationContext& Context, FSoftO
 
 	return false;
 }
-
-#if WITH_EDITOR
-
-void FObjectContextProperty::SetBinding(const TArray<FBindingChainElement>& InBindingChain)
-{
-	const UClass* PreviousClass = Binding.AllowedClass;
-	Binding.AllowedClass = nullptr;
-
-	UE::Chooser::CopyPropertyChain(InBindingChain, Binding);
-
-	const FField* Field = InBindingChain.Last().Field.ToField();
-	if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Field))
-	{
-		Binding.AllowedClass = ObjectProperty->PropertyClass;
-	}
-}
-
-#endif // WITH_EDITOR
 
 FObjectColumn::FObjectColumn()
 {
@@ -76,13 +59,14 @@ bool FChooserObjectRowData::Evaluate(const FSoftObjectPath& LeftHandSide) const
 	}
 }
 
-void FObjectColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const
+void FObjectColumn::Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const
 {
 	FSoftObjectPath Result;
 	if (InputValue.IsValid() &&
 		InputValue.Get<FChooserParameterObjectBase>().GetValue(Context, Result))
 	{
-		
+		TRACE_CHOOSER_VALUE(Context, ToCStr(InputValue.Get<FChooserParameterBase>().GetDebugName()), Result.ToString());
+	
 #if WITH_EDITOR
 		if (Context.DebuggingInfo.bCurrentDebugTarget)
 		{
@@ -97,7 +81,7 @@ void FObjectColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint
 				const FChooserObjectRowData& RowValue = RowValues[Index];
 				if (RowValue.Evaluate(Result))
 				{
-					IndexListOut.Emplace(Index);
+					IndexListOut.Push(Index);
 				}
 			}
 		}
@@ -108,3 +92,26 @@ void FObjectColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint
 		IndexListOut = IndexListIn;
 	}
 }
+#if WITH_EDITOR
+	void FObjectColumn::AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FText DisplayName;
+		InputValue.Get<FChooserParameterObjectBase>().GetDisplayName(DisplayName);
+		FName PropertyName("RowData",ColumnIndex);
+		FPropertyBagPropertyDesc PropertyDesc(PropertyName,  EPropertyBagPropertyType::Struct, FChooserObjectRowData::StaticStruct());
+		PropertyDesc.MetaData.Add(FPropertyBagPropertyDescMetaData("DisplayName", DisplayName.ToString()));
+		PropertyBag.AddProperties({PropertyDesc});
+		PropertyBag.SetValueStruct(PropertyName, RowValues[RowIndex]);
+	}
+
+	void FObjectColumn::SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FName PropertyName("RowData", ColumnIndex);
+		
+		TValueOrError<FStructView, EPropertyBagResult> Result = PropertyBag.GetValueStruct(PropertyName, FChooserObjectRowData::StaticStruct());
+		if (FStructView* StructView = Result.TryGetValue())
+		{
+			RowValues[RowIndex] = StructView->Get<FChooserObjectRowData>();
+		}
+	}
+#endif

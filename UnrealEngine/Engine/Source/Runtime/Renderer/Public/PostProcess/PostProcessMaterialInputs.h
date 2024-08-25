@@ -43,12 +43,17 @@ enum class EPathTracingPostProcessMaterialInput : uint32
 
 struct FPostProcessMaterialInputs
 {
-	inline void SetInput(EPostProcessMaterialInput Input, FScreenPassTexture Texture)
+	inline void SetInput(FRDGBuilder& GraphBuilder, EPostProcessMaterialInput Input, FScreenPassTexture Texture)
+	{
+		SetInput(Input, FScreenPassTextureSlice::CreateFromScreenPassTexture(GraphBuilder, Texture));
+	}
+
+	inline void SetInput(EPostProcessMaterialInput Input, FScreenPassTextureSlice Texture)
 	{
 		Textures[(uint32)Input] = Texture;
 	}
 
-	inline FScreenPassTexture GetInput(EPostProcessMaterialInput Input) const
+	inline FScreenPassTextureSlice GetInput(EPostProcessMaterialInput Input) const
 	{
 		return Textures[(uint32)Input];
 	}
@@ -83,8 +88,25 @@ struct FPostProcessMaterialInputs
 
 	inline void ValidateInputExists(EPostProcessMaterialInput Input) const
 	{
-		const FScreenPassTexture Texture = GetInput(EPostProcessMaterialInput::SceneColor);
+		const FScreenPassTextureSlice Texture = GetInput(EPostProcessMaterialInput::SceneColor);
 		check(Texture.IsValid());
+	}
+
+	/**
+	* A helper function that extracts the right scene color texture, untouched, to be used further in post processing.
+	*/
+	inline FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(FRDGBuilder& GraphBuilder) const
+	{
+		if (OverrideOutput.IsValid())
+		{
+			return OverrideOutput;
+		}
+		else
+		{
+			/** We don't want to modify scene texture in any way. We just want it to be passed back onto the next stage. */
+			FScreenPassTextureSlice SceneTexture = const_cast<FScreenPassTextureSlice&>(Textures[(uint32)EPostProcessMaterialInput::SceneColor]);
+			return FScreenPassTexture::CopyFromSlice(GraphBuilder, SceneTexture);
+		}
 	}
 
 	// [Optional] Render to the specified output. If invalid, a new texture is created and returned.
@@ -93,7 +115,7 @@ struct FPostProcessMaterialInputs
 	/** Array of input textures bound to the material. The first element represents the output from
 	 *  the previous post process and is required. All other inputs are optional.
 	 */
-	TStaticArray<FScreenPassTexture, kPostProcessMaterialInputCountMax> Textures;
+	TStaticArray<FScreenPassTextureSlice, kPostProcessMaterialInputCountMax> Textures;
 
 	/**
 	*	Array of input textures bound to the material from path tracing. All inputs are optional
@@ -124,3 +146,11 @@ struct FPostProcessMaterialInputs
 
 	bool bMetalMSAAHDRDecode = false;
 };
+
+class UMaterialInterface;
+
+FScreenPassTexture RENDERER_API AddPostProcessMaterialPass(
+	FRDGBuilder& GraphBuilder,
+	const FSceneView& View,
+	const FPostProcessMaterialInputs& Inputs,
+	const UMaterialInterface* MaterialInterface);

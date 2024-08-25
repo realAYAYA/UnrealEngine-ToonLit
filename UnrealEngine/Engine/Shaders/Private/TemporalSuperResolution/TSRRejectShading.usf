@@ -1,150 +1,389 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-//------------------------------------------------------- CONFIG WAVE SIZE
-
-// needed if CONFIG_OPTIMIZED_LDS_ACCESS == 0 for ConvertWaveBroadcastToLDS()
-//#if DIM_WAVE_SIZE == 0 // fallback to LDS
-//	#define WAVE_BROADCAST_GROUPSIZE (16 * 16)
-//#endif
-
 //------------------------------------------------------- INCLUDES
 
-#include "TSRCommon.ush"
-#include "/Engine/Public/LaneVectorization.ush"
+#include "TSRShadingAnalysis.ush"
 
 
 //------------------------------------------------------- CONFIG
 
 #define DEBUG_ARRAY_SIZE 8
 
-/** Whether should remove firefliers from input and history before comparison to improve stability. */
-#define CONFIG_FIREFLY_REMOVAL 1
+#define DEBUG_DISABLE_PADDING 0
 
-/** Whether to compose translucency to the input. */
-#define CONFIG_COMPOSE_TRANSLUCENCY 1
+#define DEBUG_DIGESTABLE 0
 
 /** Whether to detect flickering. */
 #define CONFIG_MOIRE_DETECTION (DIM_FLICKERING_DETECTION)
 
-#define CONFIG_MANUAL_LDS_SPILL 0
+#define CONFIG_HISTORY_RESURRECTION (DIM_HISTORY_RESURRECTION)
 
 
-//------------------------------------------------------- DERIVED
+//------------------------------------------------------- CONSTANTS
 
-/** Pixel coordinate stride between each lane in the GROUP_TILE_SIZE. */
-#if DIM_WAVE_SIZE == 32 && PLATFORM_GPU_ARCH == PLATFORM_GPU_ARCH_AMD_RDNA_2
-	/** Load an entire 16x16 tile in a single wave32 with 4x2 worth of data per lane and just 100% waveops all communications. */
-	#define GROUP_TILE_SIZE 16
-
-	#define WAVE_COUNT_X 1
-	#define WAVE_COUNT_Y 1
-
-	#define LANE_COUNT_X 4
-	#define LANE_COUNT_Y 8
-
-	#define LANE_STRIDE_X 4
-	#define LANE_STRIDE_Y 2
-	
-#elif DIM_WAVE_SIZE == 64 || DIM_WAVE_SIZE == 32
-	/** Layouts wave in row major so an entire row of pixels fits within a single wave, and waveops horizontally, but LDS vertically.
-	 * Each lane worth of a 2x2 of data per lane to minimise to trade VGPR pressure for both number of wave ops and LDS.
-	 */
-	#define GROUP_TILE_SIZE 16
-
-	#define WAVE_COUNT_X 1
-	#define WAVE_COUNT_Y 8
-
-	#define LANE_COUNT_X 8
-	#define LANE_COUNT_Y 1
-
-	#define LANE_STRIDE_X 2
-	#define LANE_STRIDE_Y 2
-
-	// Each wave needs to output top and bottom rows of pixels into LDS;
-	#define LDS_SIZE (2 * (LANE_STRIDE_X * LANE_COUNT_X) * (WAVE_COUNT_X * WAVE_COUNT_Y))
-
-#elif DIM_WAVE_SIZE == 0
-	/** Load an entire 16x16 with 1x1 worth of data by lane, only using LDS. */
-	#define GROUP_TILE_SIZE 16
-
-	#define WAVE_COUNT_X 16
-	#define WAVE_COUNT_Y 16
-
-	#define LANE_COUNT_X 1
-	#define LANE_COUNT_Y 1
-
-	#define LANE_STRIDE_X 1
-	#define LANE_STRIDE_Y 1
-
-	#define LDS_SIZE (WAVE_COUNT_X * WAVE_COUNT_Y)
-
-#else
-	#error Unknown wave size
-#endif
-
-/** Size of the SIMD per lane that also number of input pixel loaded into each individual lanes. */
-#define SIMD_SIZE (LANE_STRIDE_X * LANE_STRIDE_Y)
-
-//------------------------------------------------------- INCLUDE CONVOLUTION NETWORK
-
-#include "TSRConvolutionNetwork.ush"
-
-
-//------------------------------------------------------- TYPEDEFS
-
-#define tsr_simd_half  TLaneVector2D<tsr_half, 1, LANE_STRIDE_X, LANE_STRIDE_Y>
-#define tsr_simd_half4 TLaneVector2D<tsr_half, 4, LANE_STRIDE_X, LANE_STRIDE_Y>
-#define tsr_simd_halfC TLaneVector2D<tsr_half, CONFIG_CHANNEL_COUNT, LANE_STRIDE_X, LANE_STRIDE_Y>
-#define tsr_simd_bool  TLaneVector2D<bool, 1, LANE_STRIDE_X, LANE_STRIDE_Y>
-
-#ifndef PLATFORM_SPECIFIC_ISOLATE
-	#define PLATFORM_SPECIFIC_ISOLATE ISOLATE
+#if CONFIG_LDS_DESPILL
+	static const uint kDespillInput = LDS_DESPILL_THREAD_COUNT * LDS_DESPILL_OFFSET * 0;
+	static const uint kDespillHistory = LDS_DESPILL_THREAD_COUNT * LDS_DESPILL_OFFSET * 1;
 #endif
 
 
 //------------------------------------------------------- PARAMETERS
 
 FScreenTransform InputPixelPosToTranslucencyTextureUV;
+float4x4 ClipToResurrectionClip;
 float2 TranslucencyTextureUVMin;
 float2 TranslucencyTextureUVMax;
 float3 HistoryGuideQuantizationError;
-float FlickeringFramePeriod;
 float TheoricBlendFactor;
 uint TileOverscan;
-float PerceptionAdd;
+uint bEnableResurrection;
+uint bEnableFlickeringHeuristic;
 
 
 Texture2D<tsr_halfC> InputTexture;
 Texture2D<tsr_half>  InputMoireLumaTexture;
 Texture2D<tsr_half4> InputSceneTranslucencyTexture;
-Texture2D<tsr_halfC> ReprojectedHistoryGuideTexture;
+Texture2D<tsr_half4> ReprojectedHistoryGuideTexture;
+Texture2D<tsr_half>  ReprojectedHistoryGuideMetadataTexture;
 Texture2D<tsr_half4> ReprojectedHistoryMoireTexture;
-Texture2D<tsr_half> ParallaxRejectionMaskTexture;
+#if CONFIG_HISTORY_RESURRECTION
+	Texture2D<tsr_half4> ResurrectedHistoryGuideTexture;
+	Texture2D<tsr_half>  ResurrectedHistoryGuideMetadataTexture;
+#endif
+Texture2D<tsr_half2> DecimateMaskTexture;
 Texture2D<tsr_ushort> IsMovingMaskTexture;
+Texture2D<float2> ClosestDepthTexture;
 
-RWTexture2D<tsr_half4> HistoryGuideOutput;
-RWTexture2D<tsr_half4> HistoryMoireOutput;
-RWTexture2D<tsr_half2> HistoryRejectionOutput;
-RWTexture2D<tsr_half> InputSceneColorLdrLumaOutput;
+RWTexture2DArray<tsr_half4> HistoryGuideOutput;
+RWTexture2DArray<tsr_half4> HistoryMoireOutput;
+RWTexture2D<tsr_half4>  HistoryRejectionOutput;
+RWTexture2D<float2>     DilatedVelocityOutput;
+RWTexture2D<tsr_halfC>  InputSceneColorOutput;
+RWTexture2D<tsr_half>   InputSceneColorLdrLumaOutput;
+RWTexture2D<tsr_ushort> AntiAliasMaskOutput;
 
 
-//------------------------------------------------------- GENERAL OPERATIONS
+//------------------------------------------------------- GLOBALS
 
-CALL_SITE_DEBUGLOC
-tsr_simd_halfC ClampFireFliersWithGuide(tsr_simd_halfC ToClamp, tsr_simd_halfC Guide)
+static uint2 GGroupId = 0;
+
+static tsr_tensor_half4 Debug[DEBUG_ARRAY_SIZE];
+
+
+//------------------------------------------------------- INPUT FETCHES
+
+tsr_short2 ComputeElementPixelPos(const uint ElementIndex)
 {
-	tsr_simd_halfC ToClampMin;
-	tsr_simd_halfC ToClampMax;
-	MinMax3x3(ToClamp, /* out */ ToClampMin, /* out */ ToClampMax);
+	tsr_short2 ClampedFetchPixelPos = ComputeElementInputPixelPos(
+		/* LaneStride = */ uint2(LANE_STRIDE_X, LANE_STRIDE_Y),
+		TileOverscan,
+		InputInfo_ViewportMin,
+		InputInfo_ViewportMax,
+		GGroupId,
+		GGroupThreadIndex,
+		ElementIndex);
 
-	tsr_simd_halfC ClampedGuide = fastClamp(Guide, ToClampMin, ToClampMax);
-	
-	tsr_simd_halfC ClampedGuideMin;
-	tsr_simd_halfC ClampedGuideMax;
-	MinMax3x3(ClampedGuide, /* out */ ClampedGuideMin, /* out */ ClampedGuideMax);
-	
-	return fastClamp(ToClamp, ClampedGuideMin, ClampedGuideMax);
+	return ClampedFetchPixelPos;
 }
+
+tsr_tensor_short2 ComputePixelPos()
+{
+	tsr_tensor_short2 PixelPos;
+
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		PixelPos.SetElement(ElementIndex, ComputeElementPixelPos(ElementIndex));
+	}
+
+	return PixelPos;
+}
+
+tsr_short2 ComputeElementOutputPixelPos(const uint ElementIndex)
+{
+	return ComputeElementOutputPixelPos(
+		/* LaneStride = */ uint2(LANE_STRIDE_X, LANE_STRIDE_Y),
+		TileOverscan,
+		InputInfo_ViewportMin,
+		InputInfo_ViewportMax,
+		GGroupId,
+		GGroupThreadIndex,
+		ElementIndex);
+}
+
+void FetchDecimateMask(
+	tsr_tensor_short2 PixelPos,
+	out tsr_tensor_half VelocityEdge,
+	out tsr_tensor_bool bIsDisoccluded,
+	out tsr_tensor_bool bHasPixelAnimation)
+{
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_short2 ClampedFetchPixelPos = PixelPos.GetElement(ElementIndex);
+		
+		tsr_half2 DecimateMask = DecimateMaskTexture[ClampedFetchPixelPos];
+
+		tsr_ushort BitMask = tsr_ushort(DecimateMask.r * tsr_half(255.0));
+
+		VelocityEdge.SetElement(ElementIndex, DecimateMask.g);
+		bIsDisoccluded.SetElement(ElementIndex,     (BitMask & tsr_ushort(0x1)) != tsr_ushort(0));
+		bHasPixelAnimation.SetElement(ElementIndex, (BitMask & tsr_ushort(0x2)) != tsr_ushort(0));
+	}
+} // FetchDecimateMask()
+
+void FetchSceneColorAndTranslucency(
+	tsr_tensor_short2 PixelPos,
+	out tsr_tensor_halfC OriginalOpaqueInput,
+	out tsr_tensor_half4 OriginalTranslucencyInput)
+{
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_short2 ClampedFetchPixelPos = PixelPos.GetElement(ElementIndex);
+		
+		float2 TranslucencyTextureUV = ApplyScreenTransform(float2(ClampedFetchPixelPos), InputPixelPosToTranslucencyTextureUV);
+		TranslucencyTextureUV = fastClamp(TranslucencyTextureUV, TranslucencyTextureUVMin, TranslucencyTextureUVMax);
+		
+		OriginalOpaqueInput.SetElement(ElementIndex, InputTexture[ClampedFetchPixelPos]);
+		OriginalTranslucencyInput.SetElement(ElementIndex, InputSceneTranslucencyTexture.SampleLevel(GlobalBilinearClampedSampler, TranslucencyTextureUV, 0));
+	}
+} // FetchSceneColorAndTranslucency()
+
+void FetchHistoryGuide(
+	Texture2D<tsr_half4> HistoryGuideTexture,
+	Texture2D<tsr_half>  HistoryGuideMetadataTexture,
+	tsr_tensor_short2 PixelPos,
+	out tsr_tensor_halfC History,
+	out tsr_tensor_half  HistoryUncertainty)
+{
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	#if CONFIG_SCENE_COLOR_ALPHA
+	{
+		tsr_short2 ClampedFetchPixelPos = PixelPos.GetElement(ElementIndex);
+
+		History.SetElement(ElementIndex, HistoryGuideTexture[ClampedFetchPixelPos]);
+		HistoryUncertainty.SetElement(ElementIndex, HistoryGuideMetadataTexture[ClampedFetchPixelPos]);
+	}
+	#else
+	{
+		tsr_short2 ClampedFetchPixelPos = PixelPos.GetElement(ElementIndex);
+
+		tsr_half4 ReprojectedGuide = HistoryGuideTexture[ClampedFetchPixelPos];
+		History.SetElement(ElementIndex, ReprojectedGuide.rgb);
+		HistoryUncertainty.SetElement(ElementIndex, ReprojectedGuide.a);
+	}
+	#endif
+} // FetchHistoryGuide()
+
+// Fetch the previous history history.
+void FetchReprojectedHistoryGuide(
+	tsr_tensor_short2 PixelPos,
+	out tsr_tensor_halfC History,
+	out tsr_tensor_half  HistoryUncertainty)
+{
+	FetchHistoryGuide(
+		ReprojectedHistoryGuideTexture,
+		ReprojectedHistoryGuideMetadataTexture,
+		PixelPos,
+		/* out */ History,
+		/* out */ HistoryUncertainty);
+}
+
+#if CONFIG_MOIRE_DETECTION
+
+void FetchMoireInput(
+	tsr_tensor_short2 PixelPos,
+	out tsr_tensor_half MoireInput,
+	out tsr_tensor_half4 PrevMoireHistory,
+	out tsr_tensor_half bIsStatic)
+{
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_short2 ClampedFetchPixelPos = PixelPos.GetElement(ElementIndex);
+		
+		MoireInput.SetElement(ElementIndex, InputMoireLumaTexture[ClampedFetchPixelPos]);
+		PrevMoireHistory.SetElement(ElementIndex, ReprojectedHistoryMoireTexture[ClampedFetchPixelPos]);
+		bIsStatic.SetElement(ElementIndex, tsr_half(1.0) - tsr_half(IsMovingMaskTexture[ClampedFetchPixelPos]) * rcp(tsr_half(255.0)));
+	}
+} // FetchMoireInput()
+
+#endif // CONFIG_MOIRE_DETECTION
+
+#if CONFIG_HISTORY_RESURRECTION
+
+// Fetch the resurrected history.
+void FetchResurrectedHistoryGuide(
+	tsr_tensor_short2 PixelPos,
+	out tsr_tensor_halfC History,
+	out tsr_tensor_half  HistoryUncertainty)
+{
+	FetchHistoryGuide(
+		ResurrectedHistoryGuideTexture,
+		ResurrectedHistoryGuideMetadataTexture,
+		PixelPos,
+		/* out */ History,
+		/* out */ HistoryUncertainty);
+}
+
+// Returns whether resurrected frame is closer than previous frame on per pixel basis.
+CALL_SITE_DEBUGLOC
+tsr_tensor_bool IsResurrectedFrameCloserThanPreviousFrame(tsr_tensor_halfC ExposedInput, tsr_tensor_halfC ExposedHistory, tsr_tensor_halfC ExposedResurrectedHistory)
+{
+	tsr_tensor_halfC PrevMatch         = abs(ExposedInput - ExposedHistory);
+	tsr_tensor_halfC ResurrectionMatch = abs(ExposedInput - ExposedResurrectedHistory);
+
+	tsr_tensor_halfC MatchDiff = PrevMatch - ResurrectionMatch;
+	#if CONFIG_SCENE_COLOR_ALPHA
+		tsr_tensor_half TotalMatchDiff = Sum3x3(MatchDiff[0] + MatchDiff[1] + MatchDiff[2] + MatchDiff[3]);
+	#else
+		tsr_tensor_half TotalMatchDiff = Sum3x3(MatchDiff[0] + MatchDiff[1] + MatchDiff[2]);
+	#endif
+
+	tsr_tensor_half bResurrectedPixelIsCloser = saturate((TotalMatchDiff - tsr_tensor_half::Const(tsr_half(0.05 * 3.0 * 9.0))) * tsr_tensor_half::Const(tsr_half(POSITIVE_INFINITY)));
+
+	tsr_tensor_bool bResurrectionIsCloser = Sum3x3(bResurrectedPixelIsCloser) > tsr_tensor_half::Const(4.0);
+
+	//tsr_tensor_bool bResurrectionIsCloser = MedianBool3x3((TotalMatchDiff - tsr_tensor_half::Const(tsr_half(0.05 * 3.0 * 9.0))));
+
+	return bResurrectionIsCloser;
+}
+
+// Whether it is worth for the entire tile to MeasureRejection() on the resurrected frame.
+CALL_SITE_DEBUGLOC
+bool IsWorthMeasuringRejectionOfResurrectedFrame(tsr_tensor_half PrevRejectionBlendFinal, tsr_tensor_bool bResurrectionIsCloser)
+{
+	bool bComputeResurrection;
+	BRANCH
+	if (bEnableResurrection)
+	{
+		tsr_tensor_bool bPrevIsNotGoodEnough = PrevRejectionBlendFinal < tsr_tensor_half::Const(0.5);
+		tsr_tensor_bool bIsValidTilePixel = IsValidTilePixel<LANE_STRIDE_X, LANE_STRIDE_Y>(TileOverscan);
+		tsr_tensor_bool bShouldComputeResurrection = and(and(bResurrectionIsCloser, bPrevIsNotGoodEnough), bIsValidTilePixel);
+
+		bComputeResurrection = AnyThread(AnyComponent(bShouldComputeResurrection));
+	}
+	else
+	{
+		bComputeResurrection = false;
+	}
+
+	return bComputeResurrection;
+}
+
+// Final logic whether the resurrection must actually happen on per pixel basis.
+CALL_SITE_DEBUGLOC
+tsr_tensor_bool ShouldResurrectHistory(tsr_tensor_half PrevRejectionBlendFinal, tsr_tensor_half ResurrectionRejectionBlendFinal, tsr_tensor_bool bResurrectionIsCloser)
+{
+	tsr_tensor_bool bIsValidTilePixel = IsValidTilePixel<LANE_STRIDE_X, LANE_STRIDE_Y>(TileOverscan);
+	tsr_tensor_bool bResurrectionIsBetter = (ResurrectionRejectionBlendFinal - PrevRejectionBlendFinal) > tsr_tensor_half::Const(0.1);
+	tsr_tensor_bool bResurrectHistory = and(and(bResurrectionIsCloser, bResurrectionIsBetter), bIsValidTilePixel);
+
+	return bResurrectHistory;
+}
+
+// Load the depth for ComputeResurrectionVelocity()
+CALL_SITE_DEBUGLOC
+void FetchDeviceZ(
+	tsr_tensor_short2 PixelPos,
+	out tsr_tensor_float DeviceZ)
+{
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_short2 ClampedFetchPixelPos = PixelPos.GetElement(ElementIndex);
+		
+		DeviceZ.SetElement(ElementIndex, ClosestDepthTexture[ClampedFetchPixelPos].g);
+	}
+} // FetchMoireInput()
+
+// Compute the velocity used by the reprojection of the resurrection.
+CALL_SITE_DEBUGLOC
+tsr_tensor_float2 ComputeResurrectionMotionVector(tsr_tensor_float DeviceZ)
+{
+	tsr_tensor_float2 ResurrectedEncodedScreenVelocity;
+	
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		float2 ScreenPos = ApplyScreenTransform(float2(ComputeElementPixelPos(ElementIndex)), InputPixelPosToScreenPos);
+
+		float4 ThisClip = float4(ScreenPos, DeviceZ.GetElement(ElementIndex), 1);
+		float4 ResurrectionClip = mul(ThisClip, ClipToResurrectionClip); 
+		float2 ResurrectionScreen = ResurrectionClip.xy / ResurrectionClip.w;
+			
+		ResurrectedEncodedScreenVelocity.SetElement(ElementIndex, EncodeVelocityToTexture(float3(ScreenPos - ResurrectionScreen, 0.0)).xy);
+	}
+
+	return ResurrectedEncodedScreenVelocity;
+}
+
+#endif // CONFIG_HISTORY_RESURRECTION
+
+
+//------------------------------------------------------- UPDATE GUDIE
+
+// Update the guide for next frame.
+CALL_SITE_DEBUGLOC
+tsr_tensor_halfC UpdateGuide(tsr_tensor_halfC ExposedInput, tsr_tensor_halfC ExposedHistory, tsr_tensor_bool bIsDisoccluded, tsr_tensor_half RejectionBlendFinal)
+{
+	tsr_tensor_bool bIsOffScreen = tsr_tensor_bool::Const(false);
+
+	tsr_tensor_half TotalBlend = select(or(bIsOffScreen, bIsDisoccluded), tsr_tensor_half::Const(1.0), saturate(tsr_tensor_half::Const(1.0) - RejectionBlendFinal * tsr_tensor_half::Const(4.0)));
+	tsr_tensor_half RejectedBlendFactor = max(tsr_tensor_half::Const(tsr_half(TheoricBlendFactor)), tsr_tensor_half::Const(1.0) - RejectionBlendFinal);
+
+	tsr_tensor_half BlendFinal = max(RejectedBlendFactor, TotalBlend);
+
+	tsr_tensor_halfC FinalGuide = ExposedInput * tsr_tensor_halfC::Vectorize(BlendFinal) - ExposedHistory * tsr_tensor_halfC::Vectorize(BlendFinal - 1.0);
+	return FinalGuide;
+}
+
+
+//------------------------------------------------------- REGISTER PRESSURE HELPERS
+
+#if CONFIG_LDS_DESPILL || CONFIG_CACHE_REFETCH
+
+void RefetchInputAndHistoryFromLDSOrCache(
+	out tsr_tensor_halfC Input,
+	out tsr_tensor_half  InputUncertainty,
+	out tsr_tensor_halfC History,
+	out tsr_tensor_half  HistoryUncertainty)
+#if CONFIG_LDS_DESPILL
+{
+	Deconcatenate(tsr_tensor_half4::LoadLDSSpill(kDespillInput), /* out */ Input, /* out */ InputUncertainty);
+	Deconcatenate(tsr_tensor_half4::LoadLDSSpill(kDespillHistory), /* out */ History, /* out */ HistoryUncertainty);
+}
+#else
+{
+	tsr_tensor_short2 PixelPos = ComputePixelPos();
+
+	tsr_tensor_halfC OriginalOpaqueInput;
+	tsr_tensor_half4 OriginalTranslucencyInput;
+	tsr_tensor_halfC OriginalHistory;
+	tsr_tensor_half  OriginalHistoryUncertainty;
+	tsr_tensor_half  VelocityEdge;
+	tsr_tensor_bool  bIsDisoccluded;
+	tsr_tensor_bool  bHasPixelAnimation;
+
+	FetchDecimateMask(PixelPos, /* out */ VelocityEdge, /* out */ bIsDisoccluded, /* out */ bHasPixelAnimation);
+	FetchSceneColorAndTranslucency(PixelPos, /* out */ OriginalOpaqueInput, /* out */ OriginalTranslucencyInput);
+	FetchReprojectedHistoryGuide(
+		PixelPos,
+		/* out */ OriginalHistory,
+		/* out */ OriginalHistoryUncertainty);
+
+	tsr_tensor_halfC OriginalInput = ComposeTranslucencyForRejection(OriginalOpaqueInput, OriginalTranslucencyInput, bHasPixelAnimation);
+
+	Input            = OriginalInput;
+	InputUncertainty = VelocityEdge;
+	History            = OriginalHistory;
+	HistoryUncertainty = OriginalHistoryUncertainty;
+}
+#endif
+
+#endif // CONFIG_LDS_DESPILL || CONFIG_CACHE_REFETCH
 
 
 //------------------------------------------------------- ENTRY POINT
@@ -157,442 +396,382 @@ void MainCS(
 	uint2 GroupId : SV_GroupID,
 	uint GroupThreadIndex : SV_GroupIndex)
 {
+	GGroupId = GroupId;
 	GGroupThreadIndex = GroupThreadIndex;
 
-	tsr_simd_halfC Debug[DEBUG_ARRAY_SIZE];
 	UNROLL_N(DEBUG_ARRAY_SIZE)
 	for (uint DebugId = 0; DebugId < DEBUG_ARRAY_SIZE; DebugId++)
 	{
 		Debug[DebugId].SetAllElements(0.0);
 	}
-
-	const uint LaneIndex = GroupThreadIndex;
-	const tsr_short2 GroupPixelOffset = (
-		tsr_short2(InputPixelPosMin) +
-		tsr_short2(GroupId) * tsr_short(GROUP_TILE_SIZE - 2 * TileOverscan).xx +
-		tsr_short(-TileOverscan).xx);
 		
-	// Load
-	tsr_simd_halfC OriginalOpaqueInput;
-	#if CONFIG_COMPOSE_TRANSLUCENCY
-		tsr_simd_half4 OriginalTranslucencyInput;
-	#endif
-	tsr_simd_halfC OriginalHistory;
-	tsr_simd_half bIsValid;
+	// Analyses the moire pattern overtime.
+	tsr_tensor_half  MoireError;
 	#if CONFIG_MOIRE_DETECTION
-		tsr_simd_half MoireInput;
-		tsr_simd_half4 PrevMoire;
-		tsr_simd_half bIsStatic;
+	BRANCH
+	if (bEnableFlickeringHeuristic)
+	PLATFORM_SPECIFIC_ISOLATE
+	{
+		// Load its own data
+		tsr_tensor_half  VelocityEdge;
+		tsr_tensor_bool  bIsDisoccluded;
+		tsr_tensor_bool  bHasPixelAnimation;
+		tsr_tensor_halfC OriginalOpaqueInput;
+		tsr_tensor_half4 OriginalTranslucencyInput;
+		tsr_tensor_half  MoireInput;
+		tsr_tensor_half4 PrevMoireHistory;
+		tsr_tensor_half  bIsStatic;
+		PLATFORM_SPECIFIC_ISOLATE
+		{
+			tsr_tensor_short2 PixelPos = ComputePixelPos();
+		
+			FetchDecimateMask(PixelPos, /* out */ VelocityEdge, /* out */ bIsDisoccluded, /* out */ bHasPixelAnimation);
+			FetchSceneColorAndTranslucency(PixelPos, /* out */ OriginalOpaqueInput, /* out */ OriginalTranslucencyInput);
+			FetchMoireInput(
+				PixelPos,
+				/* out */ MoireInput,
+				/* out */ PrevMoireHistory,
+				/* out */ bIsStatic);
+		}
+	
+		tsr_tensor_half4 MoireHistory;
+		ComputeMoireError(
+			bIsDisoccluded,
+			bIsStatic,
+			MoireInput,
+			OriginalOpaqueInput,
+			OriginalTranslucencyInput,
+			PrevMoireHistory,
+			/* out */ MoireHistory,
+			/* out */ MoireError);
+
+		// Stores moire output to save VGPR for what is next.
+		UNROLL_N(SIMD_SIZE)
+		for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+		{
+			const tsr_short2 OutputPixelPos = ComputeElementOutputPixelPos(ElementIndex);
+			const tsr_short2 OutputHistoryPixelPos = OutputPixelPos - tsr_short2(InputInfo_ViewportMin);
+
+			HistoryMoireOutput[tsr_short3(OutputHistoryPixelPos, 0)] = MoireHistory.GetElement(ElementIndex);
+		}
+	}
+	else
+	#endif // CONFIG_MOIRE_DETECTION
+	{
+		MoireError = tsr_tensor_half::Const(0.0);
+	}
+	
+	// Load all the history data.
+	tsr_tensor_half  VelocityEdge;
+	tsr_tensor_bool  bIsDisoccluded;
+	tsr_tensor_bool  bHasPixelAnimation;
+	tsr_tensor_halfC OriginalOpaqueInput;
+	tsr_tensor_half4 OriginalTranslucencyInput;
+	tsr_tensor_halfC OriginalHistory;
+	tsr_tensor_half  OriginalHistoryUncertainty;
+	#if CONFIG_HISTORY_RESURRECTION
+		tsr_tensor_halfC OriginalResurrectedHistory;
+		tsr_tensor_half  OriginalResurrectedHistoryUncertainty;
+	#endif
+	{
+		#if CONFIG_HISTORY_RESURRECTION
+		BRANCH
+		if (bEnableResurrection)
+		PLATFORM_SPECIFIC_ISOLATE
+		{
+			tsr_tensor_short2 PixelPos = ComputePixelPos();
+
+			FetchDecimateMask(PixelPos, /* out */ VelocityEdge, /* out */ bIsDisoccluded, /* out */ bHasPixelAnimation);
+			FetchSceneColorAndTranslucency(PixelPos, /* out */ OriginalOpaqueInput, /* out */ OriginalTranslucencyInput);
+			FetchReprojectedHistoryGuide(
+				PixelPos,
+				/* out */ OriginalHistory,
+				/* out */ OriginalHistoryUncertainty);
+			FetchResurrectedHistoryGuide(
+				PixelPos,
+				/* out */ OriginalResurrectedHistory,
+				/* out */ OriginalResurrectedHistoryUncertainty);
+		}
+		else // if (!bEnableResurrection)
+		#endif // CONFIG_HISTORY_RESURRECTION
+		PLATFORM_SPECIFIC_ISOLATE
+		{
+			tsr_tensor_short2 PixelPos = ComputePixelPos();
+
+			FetchDecimateMask(PixelPos, /* out */ VelocityEdge, /* out */ bIsDisoccluded, /* out */ bHasPixelAnimation);
+			FetchSceneColorAndTranslucency(PixelPos, /* out */ OriginalOpaqueInput, /* out */ OriginalTranslucencyInput);
+			FetchReprojectedHistoryGuide(
+				PixelPos,
+				/* out */ OriginalHistory,
+				/* out */ OriginalHistoryUncertainty);
+			#if CONFIG_HISTORY_RESURRECTION
+				OriginalResurrectedHistory            = tsr_tensor_halfC::Const(0.0);
+				OriginalResurrectedHistoryUncertainty = tsr_tensor_half::Const(0.0);
+			#endif
+		}
+	}
+	
+	// Compute AA Luma and compose separate translucency into scene color for optimised HistoryUpdate.
+	{
+		tsr_tensor_halfC CenterFinalSceneColor = ComposeTranslucency(OriginalOpaqueInput, OriginalTranslucencyInput);
+		CenterFinalSceneColor = min(CenterFinalSceneColor, tsr_tensor_halfC::Const(tsr_half(Max10BitsFloat)));
+		
+		tsr_tensor_half CenterLumaLDR = ComputeSpatialAntiAliaserLumaLDR(CenterFinalSceneColor);
+
+		PLATFORM_SPECIFIC_ISOLATE
+		{
+			UNROLL_N(SIMD_SIZE)
+			for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+			{
+				const tsr_short2 OutputPixelPos = ComputeElementOutputPixelPos(ElementIndex);
+		
+				InputSceneColorOutput[OutputPixelPos] = CenterFinalSceneColor.GetElement(ElementIndex);
+				InputSceneColorLdrLumaOutput[OutputPixelPos] = CenterLumaLDR.GetElement(ElementIndex);
+			}
+		}
+	}
+
+	tsr_tensor_halfC OriginalInput = ComposeTranslucencyForRejection(OriginalOpaqueInput, OriginalTranslucencyInput, bHasPixelAnimation);
+	
+	// Despill to LDS to make room in VGPRs for the convolutions of ComputeMoireError()
+	#if CONFIG_LDS_DESPILL
+	PLATFORM_SPECIFIC_ISOLATE
+	{
+		Concatenate(OriginalInput, VelocityEdge).StoreLDSSpill(kDespillInput);
+		Concatenate(OriginalHistory, OriginalHistoryUncertainty).StoreLDSSpill(kDespillHistory);
+	}
+	#endif // CONFIG_LDS_DESPILL
+
+	// Measure rejection
+	tsr_tensor_half RejectionBlendFinal = tsr_tensor_half::Const(1.0);
+	tsr_tensor_half RejectionClampBlend = tsr_tensor_half::Const(1.0);
+	tsr_tensor_bool bAliasingIsVisible = tsr_tensor_bool::Const(false);
+	#if CONFIG_HISTORY_RESURRECTION
+		tsr_tensor_bool bResurrectionIsCloser;
 	#endif
 	PLATFORM_SPECIFIC_ISOLATE
 	{
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-		{
-			tsr_short2 ClampedFetchPixelPos = GroupPixelOffset + GetLaneSimdPixelOffset<LANE_STRIDE_X, LANE_STRIDE_Y>(LaneIndex, SimdIndex);
-			float2 TranslucencyTextureUV = ApplyScreenTransform(float2(ClampedFetchPixelPos), InputPixelPosToTranslucencyTextureUV);
+		// Reload all the data from LDS or cache with moire to avoid register pressure
+		tsr_tensor_halfC Input   = OriginalInput;
+		tsr_tensor_halfC History = OriginalHistory;
 
-			ClampedFetchPixelPos = ClampPixelOffset(ClampedFetchPixelPos, InputPixelPosMin, InputPixelPosMax);
-			TranslucencyTextureUV = fastClamp(TranslucencyTextureUV, TranslucencyTextureUVMin, TranslucencyTextureUVMax);
-
-			OriginalOpaqueInput.SetElement(SimdIndex, InputTexture[ClampedFetchPixelPos]);
-			#if CONFIG_COMPOSE_TRANSLUCENCY
-				OriginalTranslucencyInput.SetElement(SimdIndex, InputSceneTranslucencyTexture.SampleLevel(GlobalBilinearClampedSampler, TranslucencyTextureUV, 0));
-			#endif
-			OriginalHistory.SetElement(SimdIndex, ReprojectedHistoryGuideTexture[ClampedFetchPixelPos]);
-			bIsValid.SetElement(SimdIndex, ParallaxRejectionMaskTexture[ClampedFetchPixelPos] > tsr_half(PARALLAX_REJECTION_MASK_THRESHOLD) ? tsr_half(1.0) : tsr_half(0.0));
-			#if CONFIG_MOIRE_DETECTION
-				MoireInput.SetElement(SimdIndex, InputMoireLumaTexture[ClampedFetchPixelPos]);
-				PrevMoire.SetElement(SimdIndex, ReprojectedHistoryMoireTexture[ClampedFetchPixelPos]);
-				bIsStatic.SetElement(SimdIndex, tsr_half(1.0) - tsr_half(IsMovingMaskTexture[ClampedFetchPixelPos]) * rcp(tsr_half(255.0)));
-			#endif
-		}
-	}
-	
-	// Compute AA Luma
-	tsr_simd_half CenterLumaLDR;
-	{
-		const tsr_half SpatialAAExposure = tsr_half(0.5);
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-		{
-			tsr_half3 Color = OriginalOpaqueInput.GetElement(SimdIndex).rgb;
+		// Convert input to shading LDR
+		tsr_tensor_halfC ExposedInput = AddPerceptionAdd(Input, /* DestPerceptionAdd = */ PerceptionAdd);
+		tsr_tensor_halfC ExposedHistory = ChangePerceptionAdd(
+			History,
+			/* SourcePerceptionAdd = */ kHistoryGuidePreceptionAdd,
+			/* DestPerceptionAdd   = */ PerceptionAdd);
 			
-			#if CONFIG_COMPOSE_TRANSLUCENCY
-				tsr_half4 Translucency = OriginalTranslucencyInput.GetElement(SimdIndex);
-				Color.rgb = Color.rgb * Translucency.a + Translucency.rgb;
-			#endif
-
-			tsr_half CenterLuma = dot(Color, tsr_half3(0.299f, 0.587f, 0.114f));
-			CenterLumaLDR.SetElement(SimdIndex, CenterLuma / (SpatialAAExposure + CenterLuma));
-		}
-	}
-	
-	tsr_simd_halfC OriginalInput = OriginalOpaqueInput;
-
-	#if CONFIG_COMPOSE_TRANSLUCENCY
-	{
-		tsr_simd_half4 FilteredTranslucencyInput = Blur3x3(OriginalTranslucencyInput);
-
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
+		// Check whether the history resurrection is closer to input, to discard and no pay the register pressure of OriginalResurrectedHistory
+		#if CONFIG_HISTORY_RESURRECTION
+		BRANCH
+		if (bEnableResurrection)
 		{
-			tsr_halfC Color = OriginalOpaqueInput.GetElement(SimdIndex);
-			tsr_half4 Translucency = FilteredTranslucencyInput.GetElement(SimdIndex);
-
-			Color.rgb = Color.rgb * Translucency.a + Translucency.rgb;
-			#if CONFIG_SCENE_COLOR_ALPHA
-				Color.a *= Translucency.a;
-			#endif 
-
-			OriginalInput.SetElement(SimdIndex, Color);
+			tsr_tensor_halfC ExposedResurrectedHistory = ChangePerceptionAdd(
+				OriginalResurrectedHistory,
+				/* SourcePerceptionAdd = */ kHistoryGuidePreceptionAdd,
+				/* DestPerceptionAdd   = */ PerceptionAdd);
+				
+			bResurrectionIsCloser = IsResurrectedFrameCloserThanPreviousFrame(ExposedInput, ExposedHistory, ExposedResurrectedHistory);
 		}
-	}
-	#endif
-	
-	#if POST_PROCESS_ALPHA
-		OriginalInput = min(OriginalInput, tsr_simd_halfC::Const(LargestSceneColorRGBA));
-	#else
-		OriginalInput = min(OriginalInput, tsr_simd_halfC::Const(LargestSceneColorRGB));
-	#endif
-
-	// Analyses the moire pattern overtime.
-	#if CONFIG_MOIRE_DETECTION
-	tsr_simd_half4 FinalMoire = tsr_simd_half4::Const(0.0);
-	tsr_simd_half MoireError = tsr_simd_half::Const(0.0);
-	{
-		const tsr_half BlendFinal = tsr_half(0.05);
-		const tsr_half MoireEncodingError = tsr_half(rcp(127.0));
-		const tsr_half MaxPrevTotalVariationCount = tsr_half(20.0);
-
-		// Compute the threshold at which the variation count should quick in
-		const tsr_half TotalVariationCountThreshold = tsr_half(1.0 / (1.0 - pow(1.0 - BlendFinal, tsr_half(FlickeringFramePeriod))));
-
-		// Input luminance to monitor flickering from.
-		tsr_simd_half InputLuma = MoireInput;
-
-		// How much input luminance from the TSRComputeMoireLuma.usf measurement has been modified since for instance with fog, water.
-		tsr_simd_half InputLumaModification;
+		else
 		{
-			const tsr_half InputLumaEncodingError = tsr_half(0.5 / 255.0);
-			
-			OriginalOpaqueInput = OriginalOpaqueInput * rcp(OriginalOpaqueInput + tsr_simd_halfC::Const(tsr_half(PerceptionAdd)));
-
-
-			tsr_simd_half SceneColorLuma;
-			UNROLL_N(SIMD_SIZE)
-			for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-			{
-				SceneColorLuma.SetElement(SimdIndex, dot(OriginalOpaqueInput.GetElement(SimdIndex).rgb, kMoireLumaWeights));
-			}
-
-			InputLumaModification = max(abs(InputLuma - SceneColorLuma) - tsr_simd_half::Const(InputLumaEncodingError), tsr_simd_half::Const(0.0));
-		}
-		
-		// Convolve the input luma to have the exact same moire pattern as FilteredInput below.
-		InputLuma = Blur3x3(InputLuma);
-		InputLumaModification = Blur3x3(InputLumaModification);
-
-		// Unpack history
-		tsr_simd_half PrevFlickeringHistory = PrevMoire[0];
-		tsr_simd_half PrevGradient = PrevMoire[1] * tsr_half(255.0 / 127.0) - tsr_half(1.0);
-		//tsr_simd_half PrevTotalVariation = PrevMoire[2] * tsr_simd_half::Const(1.0 - BlendFinal);
-		tsr_simd_half PrevTotalVariation = PrevMoire[2] * tsr_simd_half::Const(tsr_half(1.0) - BlendFinal);
-		tsr_simd_half PrevTotalVariationCount = PrevMoire[3] * MaxPrevTotalVariationCount * tsr_simd_half::Const(tsr_half(1.0) - BlendFinal);
-		
-		// Discard history on moving objects.
-		PrevTotalVariation = PrevTotalVariation * bIsStatic;
-		PrevTotalVariationCount = PrevTotalVariationCount * bIsStatic;
-
-
-		// Compute clamping box of the limance.
-		tsr_simd_half InputLumaMin;
-		tsr_simd_half InputLumaMax;
-		MinMax3x3(InputLuma, /* out */ InputLumaMin, /* out */ InputLumaMax);
-
-		// Clamp and contribue the history.		
-		tsr_simd_half ClampedPrevFlickeringHistory = fastClamp(PrevFlickeringHistory, InputLumaMin, InputLumaMax);
-		tsr_simd_half FinalFlickeringHistory = InputLuma * tsr_simd_half::Const(BlendFinal) - ClampedPrevFlickeringHistory * tsr_simd_half::Const(BlendFinal - tsr_half(1.0));
-	
-		// Measure the flickering gradient of the current frame.
-		//tsr_simd_half CurrentGradient = FinalFlickeringHistory - PrevFlickeringHistory;
-		tsr_simd_half CurrentGradient = ClampedPrevFlickeringHistory - PrevFlickeringHistory;
-		
-		// Remove how much luma has changed from luma measurement to final scene color from the gradient.
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-		{
-			tsr_half LocalCurrentGradient = CurrentGradient.GetElement(SimdIndex);
-			tsr_half LocalInputLumaModification = InputLumaModification.GetElement(SimdIndex);
-			
-			CurrentGradient.SetElement(SimdIndex, clamp(LocalCurrentGradient * tsr_half(POSITIVE_INFINITY), tsr_half(-1.0), tsr_half(1.0)) * max(abs(LocalCurrentGradient) - LocalInputLumaModification, tsr_half(0.0)));
-		}
-
-		#if 0
-			tsr_simd_half InputBoxSize = InputLumaMax - InputLumaMin;
-			CurrentGradient = sign(CurrentGradient) * max(abs(CurrentGradient) - tsr_simd_half::Const(0.5) * InputBoxSize, tsr_simd_half::Const(0.0));
-		#endif
-
-		tsr_simd_half IsFlicker;
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-		{
-			tsr_half LocalCurrentGradient = CurrentGradient.GetElement(SimdIndex);
-			tsr_half LocalPrevGradient = PrevGradient.GetElement(SimdIndex);
-
-			bool bGradientsAreSameSign = LocalCurrentGradient * LocalPrevGradient > tsr_half(0.0);
-			bool bGradientsAreWithinError = abs(LocalCurrentGradient) < MoireEncodingError || abs(LocalPrevGradient) < MoireEncodingError;
-			//bool bCurrentGradientSubstentialEnough = abs(LocalCurrentGradient) > View.GeneralPurposeTweak * abs(LocalPrevGradient); // - 2.0 * MoireEncodingError;
-
-			tsr_half LocalIsFlicker = select((
-				bGradientsAreSameSign ||
-				bGradientsAreWithinError ||
-				//!bCurrentGradientSubstentialEnough ||
-				bCameraCut), tsr_half(0.0), tsr_half(1.0));
-
-			IsFlicker.SetElement(SimdIndex, LocalIsFlicker);
-		}
-
-		// Compute the total variation of the gradient over time.
-		tsr_simd_half GradientVariation = min(abs(PrevGradient), abs(CurrentGradient)) * IsFlicker;
-
-		// Dilates the total variation and contribution to keep stability despite inacuracies in the history reprojection
-		// of these need a nearest filter which isn't precise at all.
-		tsr_simd_half TotalVariationContribution = Max3x3(GradientVariation);
-		tsr_simd_half TotalVariationCountContribution = Max3x3(IsFlicker);
-
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-		{
-			tsr_half LocalCurrentGradient = CurrentGradient.GetElement(SimdIndex);
-
-			tsr_half LocalPrevGradient = PrevGradient.GetElement(SimdIndex);
-			tsr_half LocalPrevTotalVariation = PrevTotalVariation.GetElement(SimdIndex);
-			tsr_half LocalPrevTotalVariationCount = PrevTotalVariationCount.GetElement(SimdIndex);
-			tsr_half LocalIsValid = bIsValid.GetElement(SimdIndex);
-
-			tsr_half LocalIsFlicker = IsFlicker.GetElement(SimdIndex);
-
-			tsr_half LocalTotalVariationContribution = TotalVariationContribution.GetElement(SimdIndex);
-			tsr_half LocalTotalVariationCountContribution = TotalVariationCountContribution.GetElement(SimdIndex);
-			
-			// Blend out previous gradient
-			tsr_half LocalPrevBlendedGradient = LocalPrevGradient * (tsr_half(1.0) - BlendFinal) * (tsr_half(1.0) - LocalIsFlicker);
-
-			// Compute new gradient.
-			#if 0
-				tsr_half LocalNewGradient = LocalPrevBlendedGradient + LocalCurrentGradient;
-			#else
-				tsr_half LocalNewGradient = abs(LocalPrevBlendedGradient) > abs(LocalCurrentGradient) ? LocalPrevBlendedGradient : LocalCurrentGradient;
-			#endif
-			
-			// Accumulate current frame variation.
-			tsr_half LocalNewTotalVariation = LocalPrevTotalVariation + LocalTotalVariationContribution;
-			tsr_half LocalNewTotalVariationCount = LocalPrevTotalVariationCount + LocalTotalVariationCountContribution;
-
-			// Discard all moire history on parallax disocclusion.
-			LocalNewGradient *= LocalIsValid;
-			LocalNewTotalVariation *= LocalIsValid;
-			LocalNewTotalVariationCount *= LocalIsValid;
-
-			// Quantise total variation and count to history bit depth to variation drift in the history over time.
-			tsr_half LocalQuantizedNewTotalVariationCount = floor(LocalNewTotalVariationCount * (tsr_half(255.0) / MaxPrevTotalVariationCount)) * (MaxPrevTotalVariationCount / tsr_half(255.0));
-			LocalNewTotalVariation *= LocalQuantizedNewTotalVariationCount * SafeRcp(LocalNewTotalVariationCount);
-
-			// Compute the final luminance 
-			#if 1
-				tsr_half LocalCountFadeIn = saturate(LocalNewTotalVariationCount / TotalVariationCountThreshold - tsr_half(0.5));
-			#else
-				tsr_half LocalCountFadeIn = saturate(LocalNewTotalVariationCount - TotalVariationCountThreshold);
-			#endif
-			tsr_half LocalMoireError = (abs(LocalNewTotalVariation * SafeRcp(LocalNewTotalVariationCount)) + LocalNewTotalVariationCount * MoireEncodingError) * LocalCountFadeIn;
-
-			FinalMoire.RegisterArray[SimdIndex][0] = FinalFlickeringHistory.GetElement(SimdIndex);
-			FinalMoire.RegisterArray[SimdIndex][1] = LocalNewGradient * tsr_half(127.0 / 255.0) + tsr_half(127.0 / 255.0);
-			FinalMoire.RegisterArray[SimdIndex][2] = LocalNewTotalVariation;
-			FinalMoire.RegisterArray[SimdIndex][3] = LocalQuantizedNewTotalVariationCount * rcp(MaxPrevTotalVariationCount);
-
-			MoireError.SetElement(SimdIndex, LocalMoireError);
-		}
-		
-		// Moving object in the scene have very low chance of creating moire pattern with TAA jitter, so discard the moire error to still
-		// have character animation ghost free evem as environement shadow project different things on character.
-		MoireError = MoireError * bIsStatic;
-	}
-	#endif
-
-	// Measure rejection
-	tsr_simd_half RejectionBlendFinal = tsr_simd_half::Const(1.0);
-	tsr_simd_half RejectionClampBlend = tsr_simd_half::Const(1.0);
-	#if 1
-	{
-		const tsr_half FilteringWeight = rcp(tsr_half(1.0 + 4 * 0.5 + 4 * 0.25));
-		tsr_simd_halfC BackbufferQuantizationErrorVector = tsr_simd_halfC::Const(MeasureBackbufferLDRQuantizationError());
-		
-		// Convert input to LDR
-		tsr_simd_halfC ExposedInput = OriginalInput * rcp(OriginalInput + tsr_simd_halfC::Const(tsr_half(PerceptionAdd)));
-	
-		// Change the exposure of history for the shading rejection
-		tsr_simd_halfC ExposedHistory = OriginalHistory;
-		{
-			ExposedHistory = ExposedHistory * rcp(tsr_simd_halfC::Const(1.0) - ExposedHistory);
-			ExposedHistory = ExposedHistory * rcp(ExposedHistory + tsr_simd_halfC::Const(tsr_half(PerceptionAdd)));
-		}
-
-		// Top secret sauce with paper and salt.
-		tsr_simd_halfC ClampedInput = ExposedInput;
-		tsr_simd_halfC ClampedHistory = ExposedHistory;
-		#if CONFIG_FIREFLY_REMOVAL
-		{
-			ClampedInput   = ClampFireFliersWithGuide(ClampedInput  , /* Guide = */ ExposedHistory);
-			ClampedHistory = ClampFireFliersWithGuide(ClampedHistory, /* Guide = */ ExposedInput);
+			bResurrectionIsCloser = tsr_tensor_bool::Const(false);
 		}
 		#endif
-
-		// Filter clamped input and history to increase quantization of the rejection detection
-		tsr_simd_halfC FilteredInput   = Blur3x3(ClampedInput);
-		tsr_simd_halfC FilteredHistory = Blur3x3(ClampedHistory);
-	
-		tsr_simd_halfC FilteredBoxMin;
-		tsr_simd_halfC FilteredBoxMax;
-		MinMax3x3(FilteredInput, /* out */ FilteredBoxMin, /* out */ FilteredBoxMax);
-		FilteredBoxMin = FilteredBoxMin - BackbufferQuantizationErrorVector;
-		FilteredBoxMax = FilteredBoxMax + BackbufferQuantizationErrorVector;
 		
-		tsr_simd_halfC FlickeringClampedFilteredHistory = fastClamp(FilteredHistory, FilteredBoxMin, FilteredBoxMax);
+		// Mutual Annihilation
+		tsr_tensor_halfC ExposedInputMin;
+		tsr_tensor_halfC ExposedInputMax;
+		MinMax3x3(ExposedInput, /* out */ ExposedInputMin, /* out */ ExposedInputMax);
 
-		tsr_simd_halfC ClampedFilteredHistory;
-		#if CONFIG_MOIRE_DETECTION
+		bAliasingIsVisible = IsAliasingVisible(ExposedInputMax - ExposedInputMin);
+
+		tsr_tensor_halfC ClampedInput = Clamp3x3(ExposedInput, fastClamp(ExposedHistory, ExposedInputMin, ExposedInputMax));
+		tsr_tensor_halfC ClampedHistory = AnnihilateToGuide3x3(ExposedHistory, /* Guide = */ ExposedInput);
+
+		MeasureRejection(
+			/* InputC0 = */    ExposedInput,
+			/* InputC2 = */    ClampedInput,
+			/* HistoryC2 = */  ClampedHistory,
+			/* MoireError = */ MoireError,
+			/* bEnableMoireError = */ CONFIG_MOIRE_DETECTION != 0 && bEnableFlickeringHeuristic != 0,
+			/* out */ RejectionBlendFinal,
+			/* out */ RejectionClampBlend);
+	}
+	
+	// Try resurrecting the history if necessary
+	tsr_tensor_bool bResurrectHistory = tsr_tensor_bool::Const(false);
+	#if CONFIG_HISTORY_RESURRECTION
+	bool bComputeResurrection = IsWorthMeasuringRejectionOfResurrectedFrame(RejectionBlendFinal, bResurrectionIsCloser);
+	BRANCH
+	if (bComputeResurrection)
+	PLATFORM_SPECIFIC_ISOLATE
+	{
+		// Reload the resurrected history from cache.
+		tsr_tensor_halfC Input;
+		tsr_tensor_halfC ResurrectedHistory;
+		tsr_tensor_half  ResurrectedHistoryUncertainty;
+		#if CONFIG_CACHE_REFETCH || CONFIG_LDS_DESPILL
 		{
-			tsr_simd_halfC MoireErrorSize;
-			
-			UNROLL_N(SIMD_SIZE)
-			for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-			#if 0
-			{
-				tsr_halfC ClampedEnergy = abs(FlickeringClampedFilteredHistory.GetElement(SimdIndex) - FilteredHistory.GetElement(SimdIndex));
-				tsr_halfC ClampedEnergyAmount = ClampedEnergy * SafeRcp(ClampedEnergy[0] + ClampedEnergy[1] + ClampedEnergy[2]);
-
-				// Apply the moire error on each individual channel based on how much they need to clamp.
-				MoireErrorSize.SetElement(SimdIndex, ClampedEnergyAmount * (kMoireLumaToChannel * MoireError.GetElement(SimdIndex)));
-			}
+			tsr_tensor_short2 PixelPos = ComputePixelPos();
+		
+			FetchResurrectedHistoryGuide(
+				PixelPos,
+				/* out */ ResurrectedHistory,
+				/* out */ ResurrectedHistoryUncertainty);
+				
+			#if CONFIG_LDS_DESPILL
+				Input = ResizeChannels<3>(tsr_tensor_half4::LoadLDSSpill(kDespillInput));
 			#else
-			{
-				MoireErrorSize.SetElement(SimdIndex, kMoireLumaToChannel * MoireError.GetElement(SimdIndex));
-			}
-			#endif
+				tsr_tensor_halfC OriginalOpaqueInput;
+				tsr_tensor_half4 OriginalTranslucencyInput;
+				FetchSceneColorAndTranslucency(PixelPos, /* out */ OriginalOpaqueInput, /* out */ OriginalTranslucencyInput);
 
-			tsr_simd_halfC StableFilteredBoxMin = min(FilteredBoxMin, FilteredBoxMax - MoireErrorSize);
-			tsr_simd_halfC StableFilteredBoxMax = max(FilteredBoxMax, FilteredBoxMin + MoireErrorSize);
-			
-			ClampedFilteredHistory = fastClamp(FilteredHistory, StableFilteredBoxMin, StableFilteredBoxMax);
+				Input = ComposeTranslucencyForRejection(OriginalOpaqueInput, OriginalTranslucencyInput, bHasPixelAnimation);
+			#endif
 		}
 		#else
-			ClampedFilteredHistory = FlickeringClampedFilteredHistory;
+		ResurrectedHistory = OriginalResurrectedHistory;
+		Input = OriginalInput;
 		#endif
 		
-		tsr_simd_halfC OriginalBoxMin;
-		tsr_simd_halfC OriginalBoxMax;
-		MinMax3x3(ExposedInput, /* out */ OriginalBoxMin, /* out */ OriginalBoxMax);
-		tsr_simd_halfC BoxSize = (OriginalBoxMax - OriginalBoxMin + (BackbufferQuantizationErrorVector + BackbufferQuantizationErrorVector)) * FilteringWeight;
-		
-		tsr_simd_halfC RawClampedEnergy = abs(ClampedFilteredHistory - FilteredHistory);
-
-		tsr_simd_halfC FilteredClampedEnergy;
-		{
-			FilteredClampedEnergy = Median3x3(RawClampedEnergy);
-			FilteredClampedEnergy = Max3x3(FilteredClampedEnergy);
-		}
-
-		#if CONFIG_MOIRE_DETECTION
-		tsr_simd_halfC MoireErrorSize;
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-		{
-			tsr_halfC ClampedEnergy = abs(ClampedFilteredHistory.GetElement(SimdIndex) - FilteredHistory.GetElement(SimdIndex));
-			tsr_halfC ClampedEnergyAmount = ClampedEnergy * SafeRcp(ClampedEnergy[0] + ClampedEnergy[1] + ClampedEnergy[2]);
-
-			// Apply the moire error on each individual channel based on how much they need to clamp.
-			MoireErrorSize.SetElement(SimdIndex, ClampedEnergyAmount * ((FilteringWeight * tsr_half(3.0)) * MoireError.GetElement(SimdIndex)));
-		}
-		BoxSize = max(BoxSize, MoireErrorSize);
-		#endif
-
-		tsr_simd_halfC Delta = abs(FilteredInput - FilteredHistory);
-		tsr_simd_halfC ClampError = max(
-			BoxSize * tsr_half(0.25),
-			BackbufferQuantizationErrorVector);
+		// Convert input to shading LDR
+		tsr_tensor_halfC ExposedInput = AddPerceptionAdd(Input, /* DestPerceptionAdd = */ PerceptionAdd);
+		tsr_tensor_halfC ExposedResurrectedHistory = ChangePerceptionAdd(
+			ResurrectedHistory,
+			/* SourcePerceptionAdd = */ kHistoryGuidePreceptionAdd,
+			/* DestPerceptionAdd   = */ PerceptionAdd);
 			
-		tsr_simd_halfC RawFactor      = saturate(tsr_simd_halfC::Const(1.0) - max(RawClampedEnergy - ClampError, tsr_simd_halfC::Const(0.0)) * rcp(max(Delta, BoxSize)));
-		tsr_simd_halfC FilteredFactor = saturate(tsr_simd_halfC::Const(1.0) - max(FilteredClampedEnergy - ClampError, tsr_simd_halfC::Const(0.0)) * rcp(max(Delta, BoxSize)));
-		
-		tsr_simd_half RawRejection      = min3(RawFactor[0], RawFactor[1], RawFactor[2]);
-		tsr_simd_half FilteredRejection = min3(FilteredFactor[0], FilteredFactor[1], FilteredFactor[2]);
-		
-		RejectionBlendFinal = saturate(FilteredRejection + tsr_simd_half::Const(1.0) - bIsValid);
-		
-		RejectionClampBlend = Median3x3(RawRejection);
-		RejectionClampBlend = saturate(RejectionClampBlend + tsr_simd_half::Const(1.0) - bIsValid);
-		RejectionClampBlend = Min3x3(RejectionClampBlend);
-	}
-	#endif
+		// Mutual Annihilation
+		tsr_tensor_halfC ClampedResurrectedInput, ClampedResurrectedHistory;
+		AnnihilateMutually3x3(ExposedInput, ExposedResurrectedHistory, /* out */ ClampedResurrectedInput, /* out */ ClampedResurrectedHistory);
+
+		tsr_tensor_half ResurrectionRejectionBlendFinal = tsr_tensor_half::Const(1.0);
+		tsr_tensor_half ResurrectionRejectionClampBlend = tsr_tensor_half::Const(1.0);
+		MeasureRejection(
+			/* InputC0 = */    ExposedInput,
+			/* InputC2 = */    ClampedResurrectedInput,
+			/* HistoryC2 = */  ClampedResurrectedHistory,
+			/* MoireError = */ tsr_tensor_half::Const(0.0),
+			/* bEnableMoireError = */ CONFIG_MOIRE_DETECTION != 0 && bEnableFlickeringHeuristic != 0,
+			/* out */ ResurrectionRejectionBlendFinal,
+			/* out */ ResurrectionRejectionClampBlend);
+			
+		bResurrectHistory = ShouldResurrectHistory(RejectionBlendFinal, ResurrectionRejectionBlendFinal, bResurrectionIsCloser);
+
+		RejectionBlendFinal = select(bResurrectHistory, ResurrectionRejectionBlendFinal, RejectionBlendFinal);
+		RejectionClampBlend = select(bResurrectHistory, ResurrectionRejectionClampBlend, RejectionClampBlend);
+	} // if (bComputeResurrection)
+	#endif // CONFIG_HISTORY_RESURRECTION
 	
 	// Update the guide for next frame.
-	tsr_simd_halfC FinalGuide;
+	tsr_tensor_halfC FinalGuide;
+	tsr_tensor_half  InputUncertainty;
+	tsr_tensor_half  HistoryUncertainty;
+	PLATFORM_SPECIFIC_ISOLATE
 	{
-		
-		// Convert input to LDR
-		tsr_simd_halfC ExposedInput = OriginalInput * rcp(OriginalInput + tsr_simd_halfC::Const(tsr_half(1.0)));
+		// Reload all the data from LDS or cache
+		tsr_tensor_halfC Input;
+		tsr_tensor_halfC History;
+		#if CONFIG_LDS_DESPILL || CONFIG_CACHE_REFETCH
+			RefetchInputAndHistoryFromLDSOrCache(
+				/* out */ Input,
+				/* out */ InputUncertainty,
+				/* out */ History,
+				/* out */ HistoryUncertainty);
+		#else
+			Input            = OriginalInput;
+			InputUncertainty = VelocityEdge;
+			History            = OriginalHistory;
+			HistoryUncertainty = OriginalHistoryUncertainty;
+		#endif
 	
-
-		tsr_simd_half BlendFinal;
-		// Completely discard the history
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
+		// Apply resurrection
+		#if CONFIG_HISTORY_RESURRECTION
+		BRANCH
+		if (AnyComponent(bResurrectHistory))
+		PLATFORM_SPECIFIC_ISOLATE
 		{
-			bool bIsOffScreen = false;
-			bool bIsDisoccluded = bIsValid.GetElement(SimdIndex) == tsr_half(0.0);
-			tsr_half LocalRejectionBlendFinal = RejectionBlendFinal.GetElement(SimdIndex);
+			// Reload the resurrected history from cache.
+			tsr_tensor_halfC ResurrectedHistory;
+			tsr_tensor_half  ResurrectedHistoryUncertainty;
+			tsr_tensor_float DeviceZ;
+			PLATFORM_SPECIFIC_ISOLATE
+			{
+				tsr_tensor_short2 PixePos = ComputePixelPos();
+				
+				#if CONFIG_CACHE_REFETCH
+					FetchResurrectedHistoryGuide(
+						PixePos,
+						/* out */ ResurrectedHistory,
+						/* out */ ResurrectedHistoryUncertainty);
+				#else
+					ResurrectedHistory            = OriginalResurrectedHistory;
+					ResurrectedHistoryUncertainty = OriginalResurrectedHistoryUncertainty;
+				#endif
+					
+				FetchDeviceZ(PixePos, /* out */ DeviceZ);
+			}
 
-			//tsr_half TotalBlend = select(or(bIsOffScreen, bIsDisoccluded), tsr_half(1.0), tsr_half(0.0));
-			tsr_half TotalBlend = select(or(bIsOffScreen, bIsDisoccluded), tsr_half(1.0), saturate(tsr_half(1.0) - LocalRejectionBlendFinal * tsr_half(4.0)));
-			tsr_half RejectedBlendFactor = max(tsr_half(TheoricBlendFactor), tsr_half(1.0) - LocalRejectionBlendFinal);
+			// Apply the resurrection on the guide immediatly to free up registers.
+			History = select(tsr_tensor_boolC::Vectorize(bResurrectHistory), ResurrectedHistory, History);
+			HistoryUncertainty = select(bResurrectHistory, ResurrectedHistoryUncertainty, HistoryUncertainty);
+			
+			PLATFORM_SPECIFIC_ISOLATE
+			{
+				// Compute the motion vector for the resurrection
+				tsr_tensor_float2 ResurrectionMotionVector = ComputeResurrectionMotionVector(DeviceZ);
+			
+				// Amends the motion vector for resurrection areas.
+				UNROLL_N(SIMD_SIZE)
+				for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+				{
+					tsr_short2 OutputPixelPos = ComputeElementOutputPixelPos(ElementIndex);
+					OutputPixelPos.x = select(bResurrectHistory.GetElement(ElementIndex), OutputPixelPos.x, tsr_short(-1));
 
-			BlendFinal.SetElement(SimdIndex, max(RejectedBlendFactor, TotalBlend));
+					DilatedVelocityOutput[OutputPixelPos] = ResurrectionMotionVector.GetElement(ElementIndex);
+				}
+			}
 		}
-		
-		FinalGuide = ExposedInput * tsr_simd_halfC::Vectorize(BlendFinal) - OriginalHistory * tsr_simd_halfC::Vectorize(BlendFinal - 1.0);
+		#endif // CONFIG_HISTORY_RESURRECTION
+
+		// Convert input to LDR
+		tsr_tensor_halfC ExposedInput = AddPerceptionAdd(Input, /* DestPerceptionAdd = */ kHistoryGuidePreceptionAdd);
+	
+		FinalGuide = UpdateGuide(ExposedInput, History, bIsDisoccluded, RejectionBlendFinal);
 	}
 
-	// Mark the top left corner of the tile for debugging purposes.
-	#if DEBUG_OUTPUT
-	if (GGroupThreadIndex == 0)
+	// Controls how the history and its validity is clamped.
+	tsr_tensor_half  DisableHistoryClamp;
+	tsr_tensor_half  IncreaseValidityMultiplier;
+	PLATFORM_SPECIFIC_ISOLATE
 	{
-		UNROLL_N(DEBUG_ARRAY_SIZE)
-		for (uint DebugId = 0; DebugId < DEBUG_ARRAY_SIZE; DebugId++)
-		{
-			Debug[DebugId].SetElement(/* SimdIndex = */ 0, 1.0);
-		}
+		DisableHistoryClamp        = select(and(bIsDisoccluded, not(bResurrectHistory)), tsr_tensor_half::Const(0.0), min(RejectionClampBlend, min(InputUncertainty, Min3x3(HistoryUncertainty))));
+		IncreaseValidityMultiplier = select(and(bIsDisoccluded, not(bResurrectHistory)), tsr_tensor_half::Const(0.0), RejectionClampBlend);
 	}
-	#endif
+	
+	// Whether to run spatial anti-aliaser on the frame. Must match SpatialAntiAliasingLerp.
+	tsr_tensor_bool bSpatialAntiAlias = ShouldSpatialAntiAlias(bIsDisoccluded, bResurrectHistory, bAliasingIsVisible, RejectionBlendFinal);
 
 	// Output data.
 	PLATFORM_SPECIFIC_ISOLATE
 	{
-		UNROLL_N(SIMD_SIZE)
-		for (uint SimdIndex = 0; SimdIndex < SIMD_SIZE; SimdIndex++)
-		{
-			tsr_short2 LaneSimdPixelOffset = GetLaneSimdPixelOffset<LANE_STRIDE_X, LANE_STRIDE_Y>(LaneIndex, SimdIndex);
-			bool bIsNonOverscanPixel = all(and(LaneSimdPixelOffset >= TileOverscan, LaneSimdPixelOffset < (GROUP_TILE_SIZE - TileOverscan)));
+		const uint LaneIndex = GGroupThreadIndex;
 
-			tsr_short2 OutputPixelPos = InvalidateOutputPixelPos(GroupPixelOffset + LaneSimdPixelOffset, InputInfo_ViewportMax);
-			OutputPixelPos.x = select(bIsNonOverscanPixel, OutputPixelPos.x, ~tsr_short(0));
-		
-			tsr_half LocalRejectionBlendFinal = RejectionBlendFinal.GetElement(SimdIndex);
-			tsr_half LocalRejectionClampBlend = RejectionClampBlend.GetElement(SimdIndex);
-			tsr_halfC FinalGuideColor = FinalGuide.GetElement(SimdIndex);
+		UNROLL_N(SIMD_SIZE)
+		for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+		{
+			const tsr_short2 LaneSimdPixelOffset = GetElementPixelOffsetInTile(LANE_STRIDE_X, LANE_STRIDE_Y, GGroupThreadIndex, ElementIndex);
+			const tsr_short2 OutputPixelPos = ComputeElementOutputPixelPos(ElementIndex);
+			const tsr_short2 OutputHistoryPixelPos = OutputPixelPos - tsr_short2(InputInfo_ViewportMin);
+
+			tsr_halfC FinalGuideColor = FinalGuide.GetElement(ElementIndex);
 			
-			LocalRejectionBlendFinal = LocalRejectionBlendFinal - tsr_half(0.5 * rcp(256.0));
-			LocalRejectionClampBlend = LocalRejectionClampBlend - tsr_half(0.5 * rcp(256.0));
+			tsr_half BitMask = (
+				select(bIsDisoccluded.GetElement(ElementIndex),    tsr_half(0x0), tsr_half(0x1) * rcp(tsr_half(255.0))) + 
+				select(bResurrectHistory.GetElement(ElementIndex), tsr_half(0x2) * rcp(tsr_half(255.0)), tsr_half(0x0)));
+
 			#if CONFIG_ENABLE_STOCASTIC_QUANTIZATION
 			{
 				uint2 Random = Rand3DPCG16(int3(LaneSimdPixelOffset, View.StateFrameIndexMod8)).xy;
@@ -603,24 +782,55 @@ void MainCS(
 			#endif
 
 			#if CONFIG_SCENE_COLOR_ALPHA
-				HistoryGuideOutput[OutputPixelPos] = FinalGuideColor;
+				HistoryGuideOutput[tsr_short3(OutputHistoryPixelPos, 0)] = FinalGuideColor;
+				HistoryGuideOutput[tsr_short3(OutputHistoryPixelPos, 1)] = tsr_half4(InputUncertainty.GetElement(ElementIndex), 0, 0, 0);
 			#else
-				HistoryGuideOutput[OutputPixelPos] = tsr_half4(FinalGuideColor.xyz, tsr_half(1.0));
+				HistoryGuideOutput[tsr_short3(OutputHistoryPixelPos, 0)] = tsr_half4(FinalGuideColor.xyz, InputUncertainty.GetElement(ElementIndex));
 			#endif
-
-			#if CONFIG_MOIRE_DETECTION
-				HistoryMoireOutput[OutputPixelPos] = FinalMoire.GetElement(SimdIndex);
-			#endif
-			HistoryRejectionOutput[OutputPixelPos] = tsr_half2(LocalRejectionBlendFinal, LocalRejectionClampBlend);
-			InputSceneColorLdrLumaOutput[OutputPixelPos] = CenterLumaLDR.GetElement(SimdIndex);
-			
-			#if DEBUG_OUTPUT
+			HistoryRejectionOutput[OutputPixelPos] = tsr_half4(
+				RejectionBlendFinal.GetElement(ElementIndex) - tsr_half(0.5 * rcp(256.0)),
+				DisableHistoryClamp.GetElement(ElementIndex) - tsr_half(0.5 * rcp(256.0)),
+				tsr_half(255.5 * rcp(256.0)) - IncreaseValidityMultiplier.GetElement(ElementIndex),
+				BitMask);
+			AntiAliasMaskOutput[OutputPixelPos] = select(bSpatialAntiAlias.GetElement(ElementIndex), tsr_ushort(1), tsr_ushort(0));
+		}
+	}
+	
+	#if DEBUG_OUTPUT
+	{
+		// Mark the top left corner of the tile for debugging purposes.
+		#if DEBUG_DISABLE_PADDING == 2
+		if (GGroupThreadIndex == 0)
+		{
 			UNROLL_N(DEBUG_ARRAY_SIZE)
 			for (uint DebugId = 0; DebugId < DEBUG_ARRAY_SIZE; DebugId++)
 			{
-				DebugOutput[tsr_short3(OutputPixelPos, DebugId)] = float4(Debug[DebugId].GetElement(SimdIndex), 0.0);
+				Debug[DebugId].SetElement(/* ElementIndex = */ 0, 1.0);
 			}
-			#endif
+		}
+		#endif // DEBUG_DISABLE_PADDING == 2
+	
+		UNROLL_N(SIMD_SIZE)
+		for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+		{
+			const tsr_short2 OutputPixelPos = ComputeElementOutputPixelPos(
+				/* LaneStride = */ uint2(LANE_STRIDE_X, LANE_STRIDE_Y),
+				TileOverscan,
+				InputInfo_ViewportMin,
+				InputInfo_ViewportMax,
+				GGroupId,
+				GGroupThreadIndex,
+				ElementIndex,
+				/* OutputDataOffset = */ int2(0, 0),
+				/* OutputResDivisor = */ 1,
+				/* bDebugDisablePadding = */ DEBUG_DISABLE_PADDING != 0);
+
+			UNROLL_N(DEBUG_ARRAY_SIZE)
+			for (uint DebugId = 0; DebugId < DEBUG_ARRAY_SIZE; DebugId++)
+			{
+				DebugOutput[tsr_short3(OutputPixelPos, DebugId)] = float4(Debug[DebugId].GetElement(ElementIndex));
+			}
 		}
 	}
+	#endif // DEBUG_OUTPUT
 }

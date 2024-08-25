@@ -8,9 +8,13 @@
 #include "MassCommonTypes.h"
 #include "Templates/SubclassOf.h"
 #include "GameFramework/Actor.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 
 #include "MassActorSpawnerSubsystem.generated.h"
+
+
+class ULevel; 
+struct FActorSpawnParameters;
 
 // Handle for an actor spawning request
 USTRUCT()
@@ -89,6 +93,9 @@ public:
 	/** Requested world time seconds */
 	double RequestedTime = 0.;
 
+	/** If set, will be used to name the spawned character */
+	FGuid Guid;
+
 	void Reset()
 	{
 		MassAgent = FMassEntityHandle();
@@ -108,17 +115,19 @@ public:
 /**
  * A subsystem managing spawning of actors for all mass subsystems
  */
-UCLASS()
-class MASSACTORS_API UMassActorSpawnerSubsystem : public UWorldSubsystem
+UCLASS(transient)
+class MASSACTORS_API UMassActorSpawnerSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
-public:
 
+protected:
 	// USubsystem BEGIN
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
-	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 	// USubsystem END
+
+public:
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 	/** Request an actor to spawn
 	 * Note: If you do not provide a spawn delegate, the requester is responsible to remove the request by hand.
@@ -130,6 +139,19 @@ public:
 	{
 		return RequestActorSpawnInternal(FConstStructView::Make(InSpawnRequest));
 	}
+
+	/**
+	 * Process a valid spawn request indicated by given handle. Can be used to force instant-spawn of an actor provided 
+	 * a valid handle is obtained by calling RequestActorSpawn first. 
+	 * @return indicates the status of processed spawn request, with ESpawnRequestStatus::None indicating that "something 
+	 *	went wrong" and spawning request has not been processed. 
+	 */
+	[[nodiscard]] ESpawnRequestStatus ProcessSpawnRequest(const FMassActorSpawnRequestHandle SpawnRequestHandle);
+
+	/** 
+	 * Similar to the other ProcessSpawnRequest flavor, but with SpawnRequestView and SpawnRequest already provided. 
+	 */
+	[[nodiscard]] ESpawnRequestStatus ProcessSpawnRequest(const FMassActorSpawnRequestHandle SpawnRequestHandle, FStructView SpawnRequestView, FMassActorSpawnRequest& SpawnRequest);
 
 	/** Retries a failed spawn request
 	 * @param SpawnRequestHandle the spawn request handle to retry
@@ -171,6 +193,11 @@ public:
 		return SpawnRequests[SpawnRequestHandle.GetIndex()].GetMutable<T>();
 	}
 
+	bool IsSpawnRequestHandleValid(const FMassActorSpawnRequestHandle SpawnRequestHandle) const
+	{
+		return SpawnRequestHandleManager.IsValidHandle(SpawnRequestHandle);
+	}
+
 	/**
 	 * Destroy an actor 
 	 * @param Actor to destroy
@@ -180,10 +207,16 @@ public:
 	
 	void EnableActorPooling();
 	void DisableActorPooling();
+	bool IsActorPoolingEnabled();
 
 	void ReleaseAllResources();
 
 protected:
+	/** 
+	 * Provides consistent way of conditional destroying Actor within World. The actual destruction depends on Actor's state
+	 * and whether it belongs to World
+	 */
+	static void ConditionalDestroyActor(UWorld& World, AActor& ActorToDestroy);
 
 	/** Called at the start of the PrePhysics mass processing phase and calls ProcessPendingSpawningRequest */ 
 	void OnPrePhysicsPhaseStarted(const float DeltaSeconds);
@@ -191,16 +224,24 @@ protected:
 	/** Called at the end of the PrePhysics mass processing phase and calls ProcessPendingDestruction */ 
 	void OnPrePhysicsPhaseFinished(const float DeltaSeconds); 
 	
-	/** Retrieve what would be the next best spawning request to spawn, can be overridden to have different logic
+	/** 
+	 *  Retrieve what would be the next best spawning request to spawn, can be overridden to have different logic
 	 *  Default implementation is the first valid request in the list, no interesting logic yet
-	 *  @return the next best handle to spawn. */
-	virtual FMassActorSpawnRequestHandle GetNextRequestToSpawn() const;
+	 *  @param InOutHandleIndex used to start the search in subsequent locations. Also the index ensures the same handle 
+	 *    won't get returned twice in a row. InOutHandleIndex being INDEX_NONE indicates this is the first run, so all 
+	 *    handles are to be considered. If it's a  valid index then we iterate all but one to not even consider the 
+	 *    handle indicated by InOutHandleIndex.
+	 *  @return the next best handle to spawn. 
+	 */
+	virtual FMassActorSpawnRequestHandle GetNextRequestToSpawn(int32& InOutHandleIndex) const;
 
 	virtual ESpawnRequestStatus SpawnOrRetrieveFromPool(FConstStructView SpawnRequestView, TObjectPtr<AActor>& OutSpawnedActor);
 
 	/** Actual code that will spawn the actor, overridable by subclass if need to be.
 	 *  @return spawned actor if succeeded. */
-	virtual ESpawnRequestStatus SpawnActor(FConstStructView SpawnRequestView, TObjectPtr<AActor>& OutSpawnedActor) const;
+	virtual ESpawnRequestStatus SpawnActor(FConstStructView SpawnRequestView, TObjectPtr<AActor>& OutSpawnedActor, FActorSpawnParameters& InOutSpawnParameters) const;
+
+	TObjectPtr<AActor> FindActorByName(const FName ActorName, ULevel* OverrideLevel) const;
 
 	/** Go through the spawning request and spawn them until we reach the budget 
 	 * @param MaxTimeSlicePerTick is the budget in seconds allowed to do spawning */
@@ -213,7 +254,7 @@ protected:
 	/** Try releasing this actor to pool if possible 
 	 * @param Actor to release to the bool
 	 * @return true if the actor was actually released to the pool */
-	bool ReleaseActorToPool(AActor* Actor);
+	virtual bool ReleaseActorToPool(AActor* Actor);
 
 	/** Internal generic request actor spawn to make sure the request derives from FMassActorSpawnRequest 
 	 *  @param SpawnRequest the spawn request parameters, We are allowing any type of spawn request, let's store it internally as a FInstancedStruct. This parameter is the FStructView over provide user struct */
@@ -240,4 +281,10 @@ protected:
 
 	mutable int32 NumActorSpawned = 0;
 	mutable int32 NumActorPooled = 0;
+
+	int32 StartingHandleIndex = INDEX_NONE;
+
+public:
+	UE_DEPRECATED(5.4, "This flavor of GetNextRequestToSpawn is deprecated. Use the alternative taking an int32& parameter")
+	virtual FMassActorSpawnRequestHandle GetNextRequestToSpawn() const final;
 };

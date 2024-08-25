@@ -3,11 +3,9 @@
 #pragma once
 
 #include "Camera/CameraShakeBase.h"
-#include "Compilation/IMovieSceneTrackTemplateProducer.h"
 #include "Containers/Array.h"
 #include "CoreMinimal.h"
 #include "CoreTypes.h"
-#include "Evaluation/MovieSceneEvalTemplate.h"
 #include "Internationalization/Text.h"
 #include "Misc/InlineValue.h"
 #include "MovieSceneNameableTrack.h"
@@ -30,7 +28,8 @@ struct FMovieSceneSegmentCompilerRules;
  * 
  */
 UCLASS(MinimalAPI)
-class UMovieSceneCameraShakeSourceShakeTrack : public UMovieSceneNameableTrack, public IMovieSceneTrackTemplateProducer
+class UMovieSceneCameraShakeSourceShakeTrack 
+	: public UMovieSceneNameableTrack
 {
 	GENERATED_BODY()
 
@@ -50,8 +49,6 @@ public:
 	virtual bool SupportsType(TSubclassOf<UMovieSceneSection> SectionClass) const override;
 	virtual UMovieSceneSection* CreateNewSection() override;
 	virtual void RemoveAllAnimationData() override;
-
-	virtual FMovieSceneEvalTemplatePtr CreateTemplateForSection(const UMovieSceneSection& InSection) const override;
 
 #if WITH_EDITORONLY_DATA
 	virtual FText GetDisplayName() const override;

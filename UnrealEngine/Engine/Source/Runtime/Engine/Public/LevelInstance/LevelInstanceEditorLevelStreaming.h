@@ -6,6 +6,7 @@
 #include "UObject/ObjectMacros.h"
 #include "Engine/LevelStreamingAlwaysLoaded.h"
 #include "LevelInstance/LevelInstanceTypes.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
 #include "LevelInstanceEditorLevelStreaming.generated.h"
 
 class ILevelInstanceInterface;
@@ -26,7 +27,8 @@ public:
 	virtual TOptional<FFolder::FRootObject> GetFolderRootObject() const override;
 protected:
 	void OnLevelActorAdded(AActor* InActor);
-	void OnLoadedActorAddedToLevel(AActor& InActor);
+	void OnLoadedActorsAddedToLevelPreEvent(const TArray<AActor*>& InActors);
+	void OnPreInitializeContainerInstance(UActorDescContainerInstance::FInitializeParams& InInitParams, UActorDescContainerInstance* InContainerInstance);
 
 	friend class ULevelInstanceSubsystem;
 
@@ -36,5 +38,9 @@ protected:
 	virtual void OnLevelLoadedChanged(ULevel* Level) override;
 private:
 	FLevelInstanceID LevelInstanceID;
+
+	// When creating a new LevelInstance initialize UActorDescContainerInstance using those values
+	UActorDescContainerInstance* ParentContainerInstance = nullptr;
+	FGuid ParentContainerGuid;
 #endif
 };

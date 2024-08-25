@@ -880,8 +880,8 @@ public:
 		TSharedPtr<FJsonObject> JsonObject = FJsonObjectConverter::UStructToJsonObject<FPIEPreviewDeviceSpecifications>(DeviceSpecs);
 
 		// remove IOS and switch fields
-		JsonObject->RemoveField("IOSProperties");
-		JsonObject->RemoveField("switchProperties");
+		JsonObject->RemoveField(TEXT("IOSProperties"));
+		JsonObject->RemoveField(TEXT("switchProperties"));
 
 		// serialize the JSon object to string
 		FString OutputString;

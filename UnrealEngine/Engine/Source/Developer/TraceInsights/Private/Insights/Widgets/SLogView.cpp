@@ -773,7 +773,7 @@ void SLogView::Tick(const FGeometry& AllottedGeometry, const double InCurrentTim
 				FString CategoryStr(Category.Name);
 				if (CategoryStr.StartsWith(TEXT("Log")))
 				{
-					CategoryStr.RightChopInline(3, false);
+					CategoryStr.RightChopInline(3, EAllowShrinking::No);
 				}
 				FName CategoryName(CategoryStr);
 				if (Categories.Contains(CategoryName))
@@ -1225,28 +1225,56 @@ TSharedPtr<SWidget> SLogView::ListView_GetContextMenu()
 
 			ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
 			ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
-
-			const FText ItemLabel = FText::Format(LOCTEXT("ContextMenu_OpenSource", "Open Source in {0}"), SourceCodeAccessor.GetNameText());
-
-			FText ItemToolTip;
-			if (!File.IsEmpty())
+			if (SourceCodeAccessor.CanAccessSourceCode())
 			{
-				ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc1", "Opens the source file of the selected message in {0}.\n{1} ({2})"),
-					SourceCodeAccessor.GetNameText(), FText::FromString(File), FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+				const FText ItemLabel = FText::Format(LOCTEXT("ContextMenu_OpenSource", "Open Source in {0}"),
+					SourceCodeAccessor.GetNameText());
+
+				FText ItemToolTip;
+				if (!File.IsEmpty())
+				{
+					ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc1", "Opens the source file of the selected message in {0}.\n{1} ({2})"),
+						SourceCodeAccessor.GetNameText(),
+						FText::FromString(File),
+						FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+				}
+				else
+				{
+					ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc2", "Opens the source file of the selected message in {0}."),
+						SourceCodeAccessor.GetNameText());
+				}
+
+				MenuBuilder.AddMenuEntry(
+					FLogViewCommands::Get().Command_OpenSource,
+					NAME_None,
+					ItemLabel,
+					ItemToolTip,
+					FSlateIcon(SourceCodeAccessor.GetStyleSet(), SourceCodeAccessor.GetOpenIconName()));
 			}
 			else
 			{
-				ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc2", "Opens the source file of the selected message in {0}."),
-					SourceCodeAccessor.GetNameText());
-			}
+				const FText ItemLabel = LOCTEXT("ContextMenu_OpenSource_NoAccessor", "Open Source");
 
-			MenuBuilder.AddMenuEntry(
-				FLogViewCommands::Get().Command_OpenSource,
-				NAME_None,
-				ItemLabel,
-				ItemToolTip,
-				FSlateIcon(FAppStyle::GetAppStyleSetName(), SourceCodeAccessor.GetOpenIconName())
-			);
+				FText ItemToolTip;
+				if (!File.IsEmpty())
+				{
+					ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_NoAccessor_Desc1", "{0} ({1})\nSource Code Accessor is not available."),
+						FText::FromString(File),
+						FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+				}
+				else
+				{
+					ItemToolTip = LOCTEXT("ContextMenu_OpenSource_NoAccessor_Desc2", "Source Code Accessor is not available.");
+				}
+
+				MenuBuilder.AddMenuEntry(
+					ItemLabel,
+					ItemToolTip,
+					FSlateIcon(SourceCodeAccessor.GetStyleSet(), SourceCodeAccessor.GetOpenIconName()),
+					FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([]() { return false; })),
+					NAME_None,
+					EUserInterfaceActionType::None);
+			}
 		}
 	}
 	MenuBuilder.EndSection();

@@ -327,7 +327,7 @@ static bool BuildNanite(
 }
 
 
-bool FStaticMeshBuilder::Build(FStaticMeshRenderData& StaticMeshRenderData, UStaticMesh* StaticMesh, const FStaticMeshLODGroup& LODGroup, bool bGenerateCoarseMeshStreamingLODs, bool bTargetSupportsNanite)
+bool FStaticMeshBuilder::Build(FStaticMeshRenderData& StaticMeshRenderData, UStaticMesh* StaticMesh, const FStaticMeshLODGroup& LODGroup, bool bTargetSupportsNanite)
 {
 	const bool bNaniteBuildEnabled = StaticMesh->IsNaniteEnabled();
 	const bool bHaveHiResSourceModel = StaticMesh->IsHiResMeshDescriptionValid();
@@ -381,22 +381,52 @@ bool FStaticMeshBuilder::Build(FStaticMeshRenderData& StaticMeshRenderData, USta
 	{
 		SlowTask.EnterProgressFrame(1);
 
-		FBoxSphereBounds NaniteBounds;
+		auto IsHiresMeshDescriptionValid = [&StaticMesh]()
+			{
+				bool bIsValid = false;
+				if (const FMeshDescription* BaseLodMeshDescription = StaticMesh->GetSourceModel(0).GetOrCacheMeshDescription())
+				{
+					if (const FMeshDescription* HiResMeshDescription = StaticMesh->GetHiResSourceModel().GetOrCacheMeshDescription())
+					{
+						//Validate the number of sections
+						if (HiResMeshDescription->PolygonGroups().Num() > BaseLodMeshDescription->PolygonGroups().Num())
+						{
+							UE_LOG(LogStaticMeshBuilder, Display, TEXT("Invalid hi-res mesh description during Nanite build [%s]. The number of sections from the hires mesh is higher than LOD 0 section count. This is not supported and LOD 0 will be used as a fallback to build nanite data."), *StaticMesh->GetFullName());
+							bIsValid = false;
+						}
+						else
+						{
+							if (HiResMeshDescription->PolygonGroups().Num() < BaseLodMeshDescription->PolygonGroups().Num())
+							{
+								UE_LOG(LogStaticMeshBuilder, Display, TEXT("Nanite hi-res mesh description for [%s] has fewer sections than lod 0. Verify you have the proper material id result when nanite is turned on."), *StaticMesh->GetFullName());
+							}
+							bIsValid = true;
+						}
+					}
+				}
+				//No need to log if we miss a mesh description, this was handle before
+				return bIsValid;
+			};
 
-		bool bBuildSuccess = BuildNanite(
-			StaticMesh,
-			StaticMesh->GetHiResSourceModel(),
-			StaticMeshRenderData.LODResources,
-			StaticMeshRenderData.LODVertexFactories,
-			NaniteResources,
-			NaniteSettings,
-			TArrayView< float >(),
-			NaniteBounds);
-
-		if( bBuildSuccess )
+		//Make sure hires mesh data has the same amount of sections. If not rendering bugs and issues will show up because the nanite render must use the LOD 0 sections.
+		if (IsHiresMeshDescriptionValid())
 		{
-			MeshBoundsBuilder += NaniteBounds;
-			bNaniteDataBuilt = true;
+			FBoxSphereBounds NaniteBounds;
+			bool bBuildSuccess = BuildNanite(
+				StaticMesh,
+				StaticMesh->GetHiResSourceModel(),
+				StaticMeshRenderData.LODResources,
+				StaticMeshRenderData.LODVertexFactories,
+				NaniteResources,
+				NaniteSettings,
+				TArrayView< float >(),
+				NaniteBounds);
+
+			if (bBuildSuccess)
+			{
+				MeshBoundsBuilder += NaniteBounds;
+				bNaniteDataBuilt = true;
+			}
 		}
 	}
 
@@ -730,7 +760,8 @@ bool FStaticMeshBuilder::Build(FStaticMeshRenderData& StaticMeshRenderData, USta
 bool FStaticMeshBuilder::BuildMeshVertexPositions(
 	UStaticMesh* StaticMesh,
 	TArray<uint32>& BuiltIndices,
-	TArray<FVector3f>& BuiltVertices)
+	TArray<FVector3f>& BuiltVertices,
+	FStaticMeshSectionArray& Sections)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FStaticMeshBuilder::BuildMeshVertexPositions);
 
@@ -742,59 +773,62 @@ bool FStaticMeshBuilder::BuildMeshVertexPositions(
 		return false;
 	}
 
-	const int32 NumSourceModels = StaticMesh->GetNumSourceModels();
-	if (NumSourceModels > 0)
+	FMeshDescription MeshDescription;
+	const bool bIsMeshDescriptionValid = SourceModel.CloneMeshDescription(MeshDescription);
+	check(bIsMeshDescriptionValid);
+
+	FMeshBuildSettings& BuildSettings = StaticMesh->GetSourceModel(0).BuildSettings;
+
+	FMeshDescriptionHelper MeshDescriptionHelper(&BuildSettings);
+	MeshDescriptionHelper.SetupRenderMeshDescription(StaticMesh, MeshDescription, false, false);
+
+	const FPolygonGroupArray& PolygonGroups = MeshDescription.PolygonGroups();
+
+	// Build new vertex buffers
+	FMeshBuildVertexData BuildVertexData;
+
+	Sections.Empty(PolygonGroups.Num());
+
+	TArray<int32> RemapVerts; //Because we will remove MeshVertex that are redundant, we need a remap
+	//Render data Wedge map is only set for LOD 0???
+
+	TArray<int32> WedgeMap;
+
+	// Prepare the PerSectionIndices array so we can optimize the index buffer for the GPU
+	TArray<TArray<uint32>> PerSectionIndices;
+	PerSectionIndices.AddDefaulted(MeshDescription.PolygonGroups().Num());
+
+	FBoxSphereBounds LODBounds;
+
+	// Build the vertex and index buffer
+	UE::Private::StaticMeshBuilder::BuildVertexBuffer(
+		StaticMesh,
+		MeshDescription,
+		BuildSettings,
+		WedgeMap,
+		Sections,
+		PerSectionIndices,
+		BuildVertexData,
+		MeshDescriptionHelper.GetOverlappingCorners(),
+		RemapVerts,
+		LODBounds,
+		false /* bNeedTangents */,
+		false /* bNeedWedgeMap */
+	);
+
+	BuiltVertices = BuildVertexData.Position;
+
+	// Release MeshDescription memory since we don't need it anymore
+	MeshDescription.Empty();
+
+	// Concatenate the per-section index buffers.
+	bool bNeeds32BitIndices = false;
+	UE::Private::StaticMeshBuilder::BuildCombinedSectionIndices(PerSectionIndices, Sections, BuiltIndices, bNeeds32BitIndices);
+
+	// Apply section remapping
+	for (int32 SectionIndex = 0; SectionIndex < Sections.Num(); SectionIndex++)
 	{
-		FMeshDescription MeshDescription;
-		const bool bIsMeshDescriptionValid = SourceModel.CloneMeshDescription(MeshDescription);
-		if (bIsMeshDescriptionValid)
-		{
-			FElementIDRemappings Remappings;
-			if (MeshDescription.NeedsCompact())
-			{
-				MeshDescription.Compact(Remappings);
-			}
-
-			const FMeshBuildSettings& BuildSettings = SourceModel.BuildSettings;
-
-			const FStaticMeshConstAttributes Attributes(MeshDescription);
-			TArrayView<const FVector3f> VertexPositions = Attributes.GetVertexPositions().GetRawArray();
-			TArrayView<const FVertexID> VertexIndices = Attributes.GetTriangleVertexIndices().GetRawArray();
-			const FVector3f BuildScale3D = (FVector3f)BuildSettings.BuildScale3D;
-
-			BuiltVertices.Reserve(VertexPositions.Num());
-			for (int32 VertexIndex = 0; VertexIndex < VertexPositions.Num(); ++VertexIndex)
-			{
-				BuiltVertices.Add(VertexPositions[VertexIndex] * BuildScale3D);
-			}
-
-			BuiltIndices.Reserve(VertexIndices.Num());
-			for (int32 TriangleIndex = 0; TriangleIndex < VertexIndices.Num() / 3; ++TriangleIndex)
-			{
-				const uint32 I0 = VertexIndices[TriangleIndex * 3 + 0];
-				const uint32 I1 = VertexIndices[TriangleIndex * 3 + 1];
-				const uint32 I2 = VertexIndices[TriangleIndex * 3 + 2];
-
-				if (!ensureMsgf(I0 != INDEX_NONE && I1 != INDEX_NONE && I2 != INDEX_NONE,
-					TEXT("Mesh '%s' has triangles with uninitialized vertex indices"), *StaticMesh->GetName()))
-				{
-					continue;
-				}
-
-				const FVector3f V0 = BuiltVertices[I0];
-				const FVector3f V1 = BuiltVertices[I1];
-				const FVector3f V2 = BuiltVertices[I2];
-
-				const FVector3f TriangleNormal = ((V1 - V2) ^ (V0 - V2));
-				const bool bDegenerateTriangle = TriangleNormal.SizeSquared() < SMALL_NUMBER;
-				if (!bDegenerateTriangle)
-				{
-					BuiltIndices.Add(I0);
-					BuiltIndices.Add(I1);
-					BuiltIndices.Add(I2);
-				}
-			}
-		}
+		Sections[SectionIndex].MaterialIndex = StaticMesh->GetSectionInfoMap().Get(0, SectionIndex).MaterialIndex;
 	}
 
 	return true;
@@ -938,6 +972,8 @@ void BuildVertexBuffer(
 
 	float VertexComparisonThreshold = BuildSettings.bRemoveDegenerates ? THRESH_POINTS_ARE_SAME : 0.0f;
 
+	bool bUseLegacyTangentScaling = StaticMesh->GetLegacyTangentScaling();
+
 	int32 WedgeIndex = 0;
 	for (const FTriangleID TriangleID : MeshDescription.Triangles().GetElementIDs())
 	{
@@ -977,8 +1013,18 @@ void BuildVertexBuffer(
 			PendingVertex.Position = VertexPosition * BuildScale;
 			if (bNeedTangents)
 			{
-				PendingVertex.TangentX = VertexInstanceTangent / BuildScale;
-				PendingVertex.TangentY = ( (VertexInstanceNormal ^ VertexInstanceTangent) * VertexInstanceBinormalSign ) / BuildScale;
+				if (bUseLegacyTangentScaling)
+				{
+					// Apply incorrect inverse scale to tangents to match an old bug, for legacy assets only
+					PendingVertex.TangentX = VertexInstanceTangent / BuildScale;
+					PendingVertex.TangentY = ((VertexInstanceNormal ^ VertexInstanceTangent) * VertexInstanceBinormalSign) / BuildScale;
+				}
+				else
+				{
+					// Tangents should transform by directly applying the same scale as the geometry; it's only the normal that needs an inverse scale
+					PendingVertex.TangentX = VertexInstanceTangent * BuildScale;
+					PendingVertex.TangentY = ((VertexInstanceNormal ^ VertexInstanceTangent) * VertexInstanceBinormalSign) * BuildScale;
+				}
 				PendingVertex.TangentX.Normalize();
 				PendingVertex.TangentY.Normalize();
 			}

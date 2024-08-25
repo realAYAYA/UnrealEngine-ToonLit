@@ -54,7 +54,5 @@ EHairBufferSwapType GetHairSwapBufferType();
 void RegisterHairStrands(struct FHairGroupInstance* Instance);
 void UnregisterHairStrands(uint32 ComponentId);
 
-FHairStrandsProjectionMeshData ExtractMeshData(class FSkeletalMeshRenderData* RenderData);
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

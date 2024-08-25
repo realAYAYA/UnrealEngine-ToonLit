@@ -29,12 +29,13 @@ void FMetalShaderParameterCache::ResizeGlobalUniforms(uint32 TypeIndex, uint32 U
 {
 	if (!PackedGlobalUniforms[TypeIndex])
 	{
-		PackedGlobalUniforms[TypeIndex] = [[FMetalBufferData alloc] initWithSize:UniformArraySize];
+        PackedGlobalUniforms[TypeIndex] = new FMetalBufferData;
+        PackedGlobalUniforms[TypeIndex]->InitWithSize(UniformArraySize);
 	}
 	else
 	{
-		PackedGlobalUniforms[TypeIndex]->Data = (uint8*)FMemory::Realloc(PackedGlobalUniforms[TypeIndex]->Data, UniformArraySize);
-		PackedGlobalUniforms[TypeIndex]->Len = UniformArraySize;
+        PackedGlobalUniforms[TypeIndex]->Data = (uint8*)FMemory::Realloc(PackedGlobalUniforms[TypeIndex]->Data, UniformArraySize);
+        PackedGlobalUniforms[TypeIndex]->Len = UniformArraySize;
 	}
 	PackedGlobalUniformsSizes[TypeIndex] = UniformArraySize;
 	PackedGlobalUniformDirty[TypeIndex].LowVector = 0;
@@ -45,7 +46,10 @@ FMetalShaderParameterCache::~FMetalShaderParameterCache()
 {
 	for (int32 ArrayIndex = 0; ArrayIndex < CrossCompiler::PACKED_TYPEINDEX_MAX; ++ArrayIndex)
 	{
-		[PackedGlobalUniforms[ArrayIndex] release];
+        if(PackedGlobalUniforms[ArrayIndex])
+        {
+            delete PackedGlobalUniforms[ArrayIndex];
+        }
 	}
 }
 
@@ -77,7 +81,7 @@ void FMetalShaderParameterCache::Set(uint32 BufferIndexName, uint32 ByteOffset, 
 		check(ByteOffset + NumBytes <= PackedGlobalUniformsSizes[BufferIndex]);
 		PackedGlobalUniformDirty[BufferIndex].LowVector = FMath::Min(PackedGlobalUniformDirty[BufferIndex].LowVector, ByteOffset / SizeOfFloat);
 		PackedGlobalUniformDirty[BufferIndex].HighVector = FMath::Max(PackedGlobalUniformDirty[BufferIndex].HighVector, (ByteOffset + NumBytes + SizeOfFloat - 1) / SizeOfFloat);
-		FMemory::Memcpy(PackedGlobalUniforms[BufferIndex]->Data + ByteOffset, NewValues, NumBytes);
+        FMemory::Memcpy(PackedGlobalUniforms[BufferIndex]->Data + ByteOffset, NewValues, NumBytes);
 	}
 }
 
@@ -99,20 +103,35 @@ void FMetalShaderParameterCache::CommitPackedGlobals(FMetalStateCache* Cache, FM
 
 			//@todo-rco: Temp workaround
 			uint32 Size = FMath::Min(TotalSize, SizeToUpload);
-			if (Size > MetalBufferPageSize)
+#if METAL_USE_METAL_SHADER_CONVERTER
+			if(IsMetalBindlessEnabled())
 			{
+				check(PackedGlobalUniforms[Index]);
 				uint8 const* Bytes = PackedGlobalUniforms[Index]->Data;
-				ns::AutoReleased<FMetalBuffer> Buffer(Encoder->GetRingBuffer().NewBuffer(Size, 0));
-				FMemory::Memcpy((uint8*)Buffer.GetContents(), Bytes, Size);
-				Cache->SetShaderBuffer((EMetalShaderStages)Frequency, Buffer, nil, 0, Size, UniformBufferIndex, mtlpp::ResourceUsage::Read);
+				
+				FMetalBufferPtr Buffer;
+				PackedGlobalUniforms[Index]->Len = Size;
+				Cache->IRBindPackedUniforms((EMetalShaderStages)Frequency, UniformBufferIndex, Bytes, TotalSize, Buffer);
+				
+				SafeReleaseMetalBuffer(Buffer);
 			}
 			else
+#endif
 			{
-				PackedGlobalUniforms[Index]->Len = Size;
-				Cache->SetShaderBuffer((EMetalShaderStages)Frequency, nil, nil, 0, 0, UniformBufferIndex, mtlpp::ResourceUsage(0));
-				Cache->SetShaderBuffer((EMetalShaderStages)Frequency, nil, PackedGlobalUniforms[Index], 0, Size, UniformBufferIndex, mtlpp::ResourceUsage::Read);
+				if (Size > MetalBufferPageSize)
+				{
+					uint8 const* Bytes = PackedGlobalUniforms[Index]->Data;
+					FMetalBufferPtr Buffer = Encoder->GetRingBuffer().NewBuffer(Size, 0);
+					FMemory::Memcpy((uint8*)Buffer->Contents(), Bytes, Size);
+					Cache->SetShaderBuffer((EMetalShaderStages)Frequency, Buffer, nullptr, 0, Size, UniformBufferIndex, MTL::ResourceUsageRead);
+				}
+				else
+				{
+					PackedGlobalUniforms[Index]->Len = Size;
+					Cache->SetShaderBuffer((EMetalShaderStages)Frequency, nullptr, nullptr, 0, 0, UniformBufferIndex, MTL::ResourceUsage(0));
+					Cache->SetShaderBuffer((EMetalShaderStages)Frequency, nullptr, PackedGlobalUniforms[Index], 0, Size, UniformBufferIndex, MTL::ResourceUsageRead);
+				}
 			}
-
 			// mark as clean
 			PackedGlobalUniformDirty[Index].HighVector = 0;
 		}

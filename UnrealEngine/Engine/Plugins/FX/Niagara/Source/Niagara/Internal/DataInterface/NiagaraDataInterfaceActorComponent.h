@@ -74,7 +74,6 @@ public:
 	//UNiagaraDataInterface Interface
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return true; }
 
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 #if WITH_EDITORONLY_DATA
 	NIAGARA_API virtual bool AppendCompileHash(FNiagaraCompileHashVisitor* InVisitor) const override;
@@ -100,6 +99,11 @@ public:
 
 	virtual bool HasPreSimulateTick() const override { return true; }
 	//UNiagaraDataInterface Interface
+
+protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 
 private:
 	NIAGARA_API void VMGetMatrix(FVectorVMExternalFunctionContext& Context);

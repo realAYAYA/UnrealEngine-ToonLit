@@ -6,6 +6,7 @@
 #include "Containers/ContainersFwd.h"
 #include "Delegates/Delegate.h"
 #include "Elements/Common/TypedElementHandles.h"
+#include "Elements/Common/TypedElementQueryConditions.h"
 #include "Elements/Common/TypedElementQueryDescription.h"
 #include "Elements/Common/TypedElementQueryTypes.h"
 #include "Elements/Framework/TypedElementColumnUtils.h"
@@ -22,6 +23,7 @@
 class UClass;
 class USubsystem;
 class UScriptStruct;
+class UTypedElementDataStorageFactory;
 
 struct ColumnDataResult
 {
@@ -87,6 +89,20 @@ class ITypedElementDataStorageInterface
 	GENERATED_BODY()
 
 public:
+	/**
+	 * @section Factories
+	 *
+	 * @description
+	 * Factories are an automated way to register tables, queries and other information with TEDS.
+	 */
+
+	/** Finds a factory instance registered with TEDS */
+	virtual const UTypedElementDataStorageFactory* FindFactory(const UClass* FactoryType) const = 0;
+
+	/** Convenience function for FindFactory */
+	template<typename FactoryT>
+	const FactoryT* FindFactory() const;
+	
 	/**
 	 * @section Table management
 	 * 
@@ -197,11 +213,14 @@ public:
 	
 	/** Retrieves a pointer to the column of the given row or a nullptr if not found or if the column type is a tag. */
 	virtual void* GetColumnData(TypedElementRowHandle Row, const UScriptStruct* ColumnType) = 0;
+	virtual const void* GetColumnData(TypedElementRowHandle Row, const UScriptStruct* ColumnType) const = 0;
 	virtual ColumnDataResult GetColumnData(TypedElementRowHandle Row, FTopLevelAssetPath ColumnName) = 0;
 
 	/** Determines if the provided row contains the collection of columns and tags. */
 	virtual bool HasColumns(TypedElementRowHandle Row, TConstArrayView<const UScriptStruct*> ColumnTypes) const = 0;
 	virtual bool HasColumns(TypedElementRowHandle Row, TConstArrayView<TWeakObjectPtr<const UScriptStruct>> ColumnTypes) const = 0;
+	/** Determines if the columns in the row match the query conditions. */
+	virtual bool MatchesColumns(TypedElementDataStorage::RowHandle Row, const TypedElementDataStorage::FQueryConditions& Conditions) const = 0;
 	
 
 	/**
@@ -256,6 +275,26 @@ public:
 	 */
 	virtual FQueryResult RunQuery(TypedElementQueryHandle Query, DirectQueryCallbackRef Callback) = 0;
 	
+	/**
+	 * @section Indexing
+	 * @description
+	 * In order for rows to reference each other it's often needed to find a row based on the content of one of its columns. This can be
+	 * done by linearly searching through columns, though this comes at a performance cost. As an alternative the data storage allows
+	 * one or more indexes to be created for a row. An index is a 64-bit value and typically uses a hash value of an identifying value.
+	 */
+
+	/** Retrieves the row for an indexed object. Returns an invalid row handle if the hash wasn't found. */
+	virtual TypedElementDataStorage::RowHandle FindIndexedRow(TypedElementDataStorage::IndexHash Index) const = 0;
+	/** 
+	 * Registers a row under the index hash. The same row can be registered multiple, but an index hash can only be associated 
+	 * with a single row.
+	 */
+	virtual void IndexRow(TypedElementDataStorage::IndexHash Index, TypedElementDataStorage::RowHandle Row) = 0;
+	/** Updates the index of a row to a new value. Effectively this is the same as removing an index and adding a new one. */
+	virtual void ReindexRow(TypedElementDataStorage::IndexHash OriginalIndex, TypedElementDataStorage::IndexHash NewIndex, TypedElementDataStorage::RowHandle Row) = 0;
+	/** Removes a previously registered index hash from the index lookup table or does nothing if the hash no longer exists. */
+	virtual void RemoveIndex(TypedElementDataStorage::IndexHash Index) = 0;
+
 	/**
 	 * @section Misc
 	 */
@@ -313,10 +352,24 @@ public:
 	 */
 	template<typename ColumnType, typename... Args>
 	ColumnType* AddOrGetColumn(TypedElementRowHandle Row, Args... Arguments);
+
+	/**
+	 * Returns a pointer to the column of the given row or creates a new one if not found.
+	 * Enables type deduction of ColumnType from Column argument.
+	 * 
+	 * For example, FTransformColumn added and deduced from second argument:
+	 * StorageInterface->AddOrGetColumn(Row, FTransformColumn{.Transform = Transform});
+	 */
+	template<typename ColumnType>
+	ColumnType* AddOrGetColumn(TypedElementRowHandle Row, ColumnType&& Column);
 	
 	/** Returns a pointer to the column of the given row or a nullptr if the type couldn't be found or the row doesn't exist. */
 	template<typename ColumnType>
 	ColumnType* GetColumn(TypedElementRowHandle Row);
+
+	/** Returns a pointer to the column of the given row or a nullptr if the type couldn't be found or the row doesn't exist. */
+	template<typename ColumnType>
+	const ColumnType* GetColumn(TypedElementRowHandle Row) const;
 
 	template<typename... ColumnTypes>
 	bool HasColumns(TypedElementRowHandle Row) const;
@@ -329,6 +382,12 @@ public:
 
 
 // Implementations
+
+template <typename FactoryT>
+const FactoryT* ITypedElementDataStorageInterface::FindFactory() const
+{
+	return static_cast<const FactoryT*>(FindFactory(FactoryT::StaticClass()));
+}
 
 template<typename Column>
 bool ITypedElementDataStorageInterface::AddColumn(TypedElementRowHandle Row)
@@ -354,12 +413,28 @@ void ITypedElementDataStorageInterface::RemoveColumns(TypedElementRowHandle Row)
 	RemoveColumns(Row, { Columns::StaticStruct()...});
 }
 
+template<typename ColumnType, typename FirstArg, typename... NextArgs>
+struct TConstructFromSlicedObjectDisabler
+{
+	// Fail assertion if the only argument is derived from FTypedElementDataStorageColumn and not the same as ColumnType
+	// This gives a good indication that object slicing is probably happening.
+	static_assert(!(
+		sizeof...(NextArgs) == 0 &&                                    // There is only one argument to the callback and ...
+		std::is_base_of_v<FTypedElementDataStorageColumn, FirstArg> && // ... the type of the argument derives from FTypedElementDataStorageColumn
+		!std::is_same_v<ColumnType, FirstArg>),                        // ... but it isn't the same type as the column we are trying to add
+		"Probable object slicing detected. The invoked constructor of ColumnType uses a different column type as it's first argument. "
+		"This is detected as a likely object slice and disabled. "
+		"If this is what you intended, then explicitly slice the object using the constructor before passing it as an argument");
+};
+
 template<typename ColumnType, typename... Args>
 ColumnType* ITypedElementDataStorageInterface::AddOrGetColumn(TypedElementRowHandle Row, Args... Arguments)
 {
-	auto* Result = reinterpret_cast<ColumnType*>(AddOrGetColumnData(Row, ColumnType::StaticStruct()));
+	ColumnType* Result = static_cast<ColumnType*>(AddOrGetColumnData(Row, ColumnType::StaticStruct()));
 	if constexpr (sizeof...(Arguments) > 0)
 	{
+		[[maybe_unused]] TConstructFromSlicedObjectDisabler<ColumnType, Args...> SliceDisabler;
+		
 		if (Result)
 		{
 			new(Result) ColumnType{ std::forward<Args>(Arguments)... };
@@ -369,9 +444,27 @@ ColumnType* ITypedElementDataStorageInterface::AddOrGetColumn(TypedElementRowHan
 }
 
 template<typename ColumnType>
+ColumnType* ITypedElementDataStorageInterface::AddOrGetColumn(TypedElementRowHandle Row, ColumnType&& Column)
+{
+	ColumnType* Result = static_cast<ColumnType*>(AddOrGetColumnData(Row, ColumnType::StaticStruct()));
+
+	if (Result)
+	{
+		new(Result) ColumnType(MoveTemp(Column));
+	}
+	return Result;
+}
+
+template<typename ColumnType>
 ColumnType* ITypedElementDataStorageInterface::GetColumn(TypedElementRowHandle Row)
 {
 	return reinterpret_cast<ColumnType*>(GetColumnData(Row, ColumnType::StaticStruct()));
+}
+
+template<typename ColumnType>
+const ColumnType* ITypedElementDataStorageInterface::GetColumn(TypedElementRowHandle Row) const
+{
+	return reinterpret_cast<const ColumnType*>(GetColumnData(Row, ColumnType::StaticStruct()));
 }
 
 template<typename... ColumnType>

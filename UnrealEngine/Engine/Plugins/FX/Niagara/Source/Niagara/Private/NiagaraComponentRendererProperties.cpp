@@ -145,44 +145,32 @@ FNiagaraTypeDefinition UNiagaraComponentRendererProperties::GetFRotatorDef()
 
 FNiagaraTypeDefinition UNiagaraComponentRendererProperties::GetFVector2DDef()
 {
-	static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
-	static UScriptStruct* VectorStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector2D"));
-	return FNiagaraTypeDefinition(VectorStruct, FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+	return FNiagaraTypeHelper::GetVector2DDef();
 }
 
 FNiagaraTypeDefinition UNiagaraComponentRendererProperties::GetFVectorDef()
 {
-	static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
-	static UScriptStruct* VectorStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector"));
-	return FNiagaraTypeDefinition(VectorStruct, FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+	return FNiagaraTypeHelper::GetVectorDef();
 }
 
 FNiagaraTypeDefinition UNiagaraComponentRendererProperties::GetFVector4Def()
 {
-	static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
-	static UScriptStruct* Vector4Struct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector4"));
-	return FNiagaraTypeDefinition(Vector4Struct, FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+	return FNiagaraTypeHelper::GetVector4Def();
 }
 
 FNiagaraTypeDefinition UNiagaraComponentRendererProperties::GetFVector3fDef()
 {
-	static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
-	static UScriptStruct* VectorStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector3f"));
-	return FNiagaraTypeDefinition(VectorStruct, FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+	return FNiagaraTypeDefinition::GetVec3Def();
 }
 
 FNiagaraTypeDefinition UNiagaraComponentRendererProperties::GetFQuatDef()
 {
-	static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
-	static UScriptStruct* Struct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Quat"));
-	return FNiagaraTypeDefinition(Struct, FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+	return FNiagaraTypeHelper::GetQuatDef();
 }
 
 FNiagaraTypeDefinition UNiagaraComponentRendererProperties::GetDoubleDef()
 {
-	static UPackage* NiagaraPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/Niagara"));
-	static UScriptStruct* DoubleStruct = FindObjectChecked<UScriptStruct>(NiagaraPkg, TEXT("NiagaraDouble"));
-	return FNiagaraTypeDefinition(DoubleStruct, FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+	return FNiagaraTypeHelper::GetDoubleDef();
 }
 
 TArray<TWeakObjectPtr<UNiagaraComponentRendererProperties>> UNiagaraComponentRendererProperties::ComponentRendererPropertiesToDeferredInit;
@@ -350,6 +338,7 @@ bool FindFunctionParameterDefaultValue(const UFunction* Function, const FPropert
 void UNiagaraComponentRendererProperties::CacheFromCompiledData(const FNiagaraDataSetCompiledData* CompiledData)
 {
 	UpdateSourceModeDerivates(ENiagaraRendererSourceDataMode::Particles);
+	UpdateTemplateCoordinateSpace();
 }
 
 #if WITH_EDITORONLY_DATA
@@ -496,7 +485,6 @@ FNiagaraRenderer* UNiagaraComponentRendererProperties::CreateEmitterRenderer(ERH
 	{
 		UpdateSetterFunctions();
 	}
-	EmitterPtr = Emitter->GetCachedEmitter();
 
 	FNiagaraRenderer* NewRenderer = new FNiagaraRendererComponents(FeatureLevel, this, Emitter);
 	NewRenderer->Initialize(this, Emitter, InController);
@@ -509,11 +497,17 @@ void UNiagaraComponentRendererProperties::CreateTemplateComponent()
 	TemplateComponent->SetVisibility(false);
 	TemplateComponent->SetAutoActivate(false);
 	TemplateComponent->SetComponentTickEnabled(false);
+	UpdateTemplateCoordinateSpace();
+}
 
-	// set some defaults on the component
-	FVersionedNiagaraEmitterData* EmitterData = EmitterPtr.GetEmitterData();
-	bool IsWorldSpace = EmitterData ? !EmitterData->bLocalSpace : true;
-	TemplateComponent->SetAbsolute(IsWorldSpace, IsWorldSpace, IsWorldSpace);
+void UNiagaraComponentRendererProperties::UpdateTemplateCoordinateSpace()
+{
+	if (TemplateComponent)
+	{
+		FVersionedNiagaraEmitterData* EmitterData = GetOuterEmitter().GetEmitterData();
+		const bool IsWorldSpace = EmitterData ? !EmitterData->bLocalSpace : true;
+		TemplateComponent->SetAbsolute(IsWorldSpace, IsWorldSpace, IsWorldSpace);
+	}
 }
 
 #if WITH_EDITOR
@@ -607,7 +601,7 @@ void UNiagaraComponentRendererProperties::GetRendererFeedback(const FVersionedNi
 		OutErrors.Add(FNiagaraRendererFeedback(ErrorDescription, ErrorSummary));
 	}
 
-	FVersionedNiagaraEmitterData* EmitterData = EmitterPtr.GetEmitterData();
+	FVersionedNiagaraEmitterData* EmitterData = InEmitter.GetEmitterData();
 	if (InEmitter.Emitter && TemplateComponent && EmitterData)
 	{
 		if (const UNiagaraSettings* Settings = GetDefault<UNiagaraSettings>())

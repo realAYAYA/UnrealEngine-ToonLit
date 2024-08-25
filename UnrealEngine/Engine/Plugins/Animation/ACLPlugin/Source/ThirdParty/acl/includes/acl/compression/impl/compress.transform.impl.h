@@ -26,6 +26,7 @@
 
 // Included only once from compress.h
 
+#include "acl/version.h"
 #include "acl/core/buffer_tag.h"
 #include "acl/core/compressed_tracks.h"
 #include "acl/core/compressed_tracks_version.h"
@@ -41,7 +42,9 @@
 #include "acl/compression/impl/track_stream.h"
 #include "acl/compression/impl/convert_rotation_streams.h"
 #include "acl/compression/impl/compact_constant_streams.h"
+#include "acl/compression/impl/keyframe_stripping.h"
 #include "acl/compression/impl/normalize_streams.h"
+#include "acl/compression/impl/optimize_looping.h"
 #include "acl/compression/impl/quantize_streams.h"
 #include "acl/compression/impl/segment_streams.h"
 #include "acl/compression/impl/write_segment_data.h"
@@ -50,12 +53,58 @@
 #include "acl/compression/impl/write_sub_track_types.h"
 #include "acl/compression/impl/write_track_metadata.h"
 
+#include <rtm/quatf.h>
+#include <rtm/vector4f.h>
+
+#if defined(ACL_USE_SJSON)
+#include <sjson/writer.h>
+#endif
+
 #include <cstdint>
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
+		inline bool has_trivial_default_values(const track_array_qvvf& track_list, additive_clip_format8 additive_format, const clip_context& lossy_clip_context)
+		{
+			// Additive clips and regular clips can have zero/one scale and be trivial
+			bool all_scales_zero = true;
+			bool all_scales_one = true;
+
+			const rtm::vector4f zero = rtm::vector_zero();
+			const rtm::vector4f one = rtm::vector_set(1.0F);
+
+			for (const track_qvvf& track : track_list)
+			{
+				const track_desc_transformf& desc = track.get_description();
+
+				if (!rtm::quat_near_identity(desc.default_value.rotation, 0.0F))
+					return false;	// Not the identity
+
+				if (!rtm::vector_all_near_equal3(desc.default_value.translation, zero, 0.0F))
+					return false;	// Not zero
+
+				if (!rtm::vector_all_near_equal3(desc.default_value.scale, zero, 0.0F))
+					all_scales_zero = false;	// Not zero
+				if (!rtm::vector_all_near_equal3(desc.default_value.scale, one, 0.0F))
+					all_scales_one = false;		// Not one
+			}
+
+			if (lossy_clip_context.has_scale)
+			{
+				if (additive_format == additive_clip_format8::additive1 && !all_scales_zero)
+					return false;	// Not zero
+				else if (!all_scales_one)
+					return false;	// Not one
+			}
+
+			// Every default value was trivial
+			return true;
+		}
+
 		inline error_result compress_transform_track_list(iallocator& allocator, const track_array_qvvf& track_list, compression_settings settings,
 			const track_array_qvvf* additive_base_track_list, additive_clip_format8 additive_format,
 			compressed_tracks*& out_compressed_tracks, output_stats& out_stats)
@@ -64,16 +113,23 @@ namespace acl
 			if (result.any())
 				return result;
 
-#if defined(SJSON_CPP_WRITER)
+#if defined(ACL_USE_SJSON)
 			scope_profiler compression_time;
 #endif
 
 			// Segmenting settings are an implementation detail
 			compression_segmenting_settings segmenting_settings;
 
-			// If we enable database support, include the metadata we need
+			// If we enable database support or keyframe stripping, include the metadata we need
+			bool remove_contributing_error = false;
 			if (settings.enable_database_support)
 				settings.metadata.include_contributing_error = true;
+			else if (settings.keyframe_stripping.is_enabled())
+			{
+				// If we only enable the contributing error for keyframe stripping, make sure to strip it afterwards
+				remove_contributing_error = !settings.metadata.include_contributing_error;
+				settings.metadata.include_contributing_error = true;
+			}
 
 			// If every track is retains full precision, we disable segmenting since it provides no benefit
 			if (!is_rotation_format_variable(settings.rotation_format) && !is_vector_format_variable(settings.translation_format) && !is_vector_format_variable(settings.scale_format))
@@ -123,6 +179,18 @@ namespace acl
 			if (is_additive && !initialize_clip_context(allocator, *additive_base_track_list, settings, additive_format, additive_base_clip_context))
 				return error_result("Some base samples are not finite");
 
+			// Topology dependent data, not specific to clip context
+			const uint32_t num_input_transforms = raw_clip_context.num_bones;
+			rigid_shell_metadata_t* clip_shell_metadata = compute_clip_shell_distances(allocator, raw_clip_context, additive_base_clip_context);
+
+			raw_clip_context.clip_shell_metadata = clip_shell_metadata;
+			lossy_clip_context.clip_shell_metadata = clip_shell_metadata;
+			if (is_additive)
+				additive_base_clip_context.clip_shell_metadata = clip_shell_metadata;
+
+			// Wrap instead of clamp if we loop
+			optimize_looping(lossy_clip_context, additive_base_clip_context, settings);
+
 			// Convert our rotations if we need to
 			convert_rotation_streams(allocator, lossy_clip_context, settings.rotation_format);
 
@@ -130,7 +198,7 @@ namespace acl
 			extract_clip_bone_ranges(allocator, lossy_clip_context);
 
 			// Compact and collapse the constant streams
-			compact_constant_streams(allocator, lossy_clip_context, track_list, settings);
+			compact_constant_streams(allocator, lossy_clip_context, raw_clip_context, additive_base_clip_context, track_list, settings);
 
 			uint32_t clip_range_data_size = 0;
 			if (range_reduction != range_reduction_flags8::none)
@@ -152,14 +220,26 @@ namespace acl
 				normalize_segment_streams(lossy_clip_context, range_reduction);
 			}
 
+			// Find how many bits we need per sub-track and quantize everything
 			quantize_streams(allocator, lossy_clip_context, settings, raw_clip_context, additive_base_clip_context, out_stats);
 
 			uint32_t num_output_bones = 0;
 			uint32_t* output_bone_mapping = create_output_track_mapping(allocator, track_list, num_output_bones);
 
-			const uint32_t constant_data_size = get_constant_data_size(lossy_clip_context);
-
+			// Calculate the pose size, we need it to estimate savings when stripping keyframes
 			calculate_animated_data_size(lossy_clip_context, output_bone_mapping, num_output_bones);
+
+			// Remove whole keyframes as needed
+			strip_keyframes(lossy_clip_context, settings);
+
+			// Compression is done! Time to pack things.
+
+			if (remove_contributing_error)
+				settings.metadata.include_contributing_error = false;
+
+			const bool has_trivial_defaults = has_trivial_default_values(track_list, additive_format, lossy_clip_context);
+
+			const uint32_t constant_data_size = get_constant_data_size(lossy_clip_context);
 
 			uint32_t num_animated_variable_sub_tracks_padded = 0;
 			const uint32_t format_per_track_data_size = get_format_per_track_data_size(lossy_clip_context, settings.rotation_format, settings.translation_format, settings.scale_format, &num_animated_variable_sub_tracks_padded);
@@ -176,7 +256,8 @@ namespace acl
 
 			// Adding an extra index at the end to delimit things, the index is always invalid: 0xFFFFFFFF
 			const uint32_t segment_start_indices_size = lossy_clip_context.num_segments > 1 ? (uint32_t(sizeof(uint32_t)) * (lossy_clip_context.num_segments + 1)) : 0;
-			const uint32_t segment_headers_size = sizeof(segment_header) * lossy_clip_context.num_segments;
+			const uint32_t segment_header_type_size = lossy_clip_context.has_stripped_keyframes ? sizeof(stripped_segment_header_t) : sizeof(segment_header);
+			const uint32_t segment_headers_size = segment_header_type_size * lossy_clip_context.num_segments;
 
 			uint32_t buffer_size = 0;
 			// Per clip data
@@ -206,8 +287,8 @@ namespace acl
 			{
 				constexpr uint32_t k_cache_line_byte_size = 64;
 				lossy_clip_context.decomp_touched_bytes = clip_header_size + clip_data_size;
-				lossy_clip_context.decomp_touched_bytes += sizeof(uint32_t) * 4;		// We touch at most 4 segment start indices
-				lossy_clip_context.decomp_touched_bytes += sizeof(segment_header) * 2;	// We touch at most 2 segment headers
+				lossy_clip_context.decomp_touched_bytes += sizeof(uint32_t) * 4;			// We touch at most 4 segment start indices
+				lossy_clip_context.decomp_touched_bytes += segment_header_type_size * 2;	// We touch at most 2 segment headers
 				lossy_clip_context.decomp_touched_cache_lines = align_to(clip_header_size, k_cache_line_byte_size) / k_cache_line_byte_size;
 				lossy_clip_context.decomp_touched_cache_lines += align_to(clip_data_size, k_cache_line_byte_size) / k_cache_line_byte_size;
 				lossy_clip_context.decomp_touched_cache_lines += 1;						// All 4 segment start indices should fit in a cache line
@@ -285,8 +366,8 @@ namespace acl
 			header->algorithm_type = algorithm_type8::uniformly_sampled;
 			header->track_type = track_list.get_track_type();
 			header->num_tracks = num_output_bones;
-			header->num_samples = num_output_bones != 0 ? track_list.get_num_samples_per_track() : 0;
-			header->sample_rate = num_output_bones != 0 ? track_list.get_sample_rate() : 0.0F;
+			header->num_samples = num_output_bones != 0 ? lossy_clip_context.num_samples : 0;
+			header->sample_rate = num_output_bones != 0 ? lossy_clip_context.sample_rate : 0.0F;
 			header->set_rotation_format(settings.rotation_format);
 			header->set_translation_format(settings.translation_format);
 			header->set_scale_format(settings.scale_format);
@@ -294,6 +375,9 @@ namespace acl
 			// Our default scale is 1.0 if we have no additive base or if we don't use 'additive1', otherwise it is 0.0
 			header->set_default_scale(!is_additive || additive_format != additive_clip_format8::additive1 ? 1 : 0);
 			header->set_has_database(false);
+			header->set_has_trivial_default_values(has_trivial_defaults);
+			header->set_has_stripped_keyframes(lossy_clip_context.has_stripped_keyframes);
+			header->set_is_wrap_optimized(lossy_clip_context.looping_policy == sample_looping_policy::wrap);
 			header->set_has_metadata(metadata_size != 0);
 
 			// Write our transform tracks header
@@ -455,7 +539,7 @@ namespace acl
 			(void)buffer_start;
 #endif
 
-#if defined(SJSON_CPP_WRITER)
+#if defined(ACL_USE_SJSON)
 			compression_time.stop();
 
 			if (out_stats.logging != stat_logging::none)
@@ -463,6 +547,7 @@ namespace acl
 #endif
 
 			deallocate_type_array(allocator, output_bone_mapping, num_output_bones);
+			deallocate_type_array(allocator, clip_shell_metadata, num_input_transforms);
 			destroy_clip_context(lossy_clip_context);
 			destroy_clip_context(raw_clip_context);
 			destroy_clip_context(additive_base_clip_context);
@@ -470,4 +555,6 @@ namespace acl
 			return error_result();
 		}
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }

@@ -31,9 +31,6 @@ private:
 	/** Refreshes the UI widgets enabled state depending on whether the parent behaviour is currently enabled */
 	void RefreshIsBehaviourEnabled(const bool bIsEnabled);
 
-	/** Handles click event for toggling Enable/Disable behaviour*/
-	void OnToggleEnableBehaviour(ECheckBoxState State);
-
 	/** The parent Action panel UI widget holding this Header*/
 	TWeakPtr<SRCActionPanel> ActionPanelWeakPtr;
 	

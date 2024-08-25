@@ -2,6 +2,7 @@
 
 #include "CleaningOps/EditNormalsOp.h"
 
+#include "DynamicMeshEditor.h"
 #include "MeshDescriptionToDynamicMesh.h"
 #include "ToolContextInterfaces.h"
 
@@ -335,33 +336,12 @@ void FEditNormalsOp::CalculateResultSelection(FProgressCancel* Progress)
 		);
 	}
 
-	// Copy the changed elements from Workspace to ResultNormals
-	TMap<int32,int32> WorkspaceElementIDToNewResultElementID;
-	for (int32 Tid : EditTriangles) {
-
-		const FIndex3i WorkspaceElementIDs = Workspace.GetTriangle(Tid);
-		const FIndex3i TriVids = ResultMesh->GetTriangle(Tid);
-		FIndex3i TriElementsToSet = ResultNormals.GetTriangle(Tid);
-
-		for (int SubIdx = 0; SubIdx < 3; ++SubIdx){
-
-			const int WorkspaceElementID = WorkspaceElementIDs[SubIdx];
-
-			if (EditVertices.Contains(TriVids[SubIdx])){
-
-				int* FoundElementID = WorkspaceElementIDToNewResultElementID.Find(WorkspaceElementID);
-				if (!FoundElementID)
-				{
-					const FVector3f WorkspaceNormal = Workspace.GetElement(WorkspaceElementID);
-					const int NewResultElementID = ResultNormals.AppendElement(WorkspaceNormal);
-
-					FoundElementID = &WorkspaceElementIDToNewResultElementID.Add(WorkspaceElementID, NewResultElementID);
-				}
-
-				TriElementsToSet[SubIdx] = *FoundElementID;
-			}
-		}
-  
-		ResultNormals.SetTriangle(Tid, TriElementsToSet);
-	}
+	// Copy the subset of normals corresponding to the geometry selection to the Mesh overlays
+	FDynamicMeshEditor Editor(ResultMesh.Get());
+	Editor.AppendElementSubset(
+		ResultMesh.Get(),
+		EditTriangles,
+		EditVertices,
+		&Workspace,
+		&ResultNormals);
 }

@@ -59,7 +59,7 @@ void FColorimetryHelper::Update(const TArray<uint8>& InFromCOLRBox)
 
 void FColorimetryHelper::UpdateParamDict(FParamDict& InOutDictionary)
 {
-	InOutDictionary.Set(TEXT("colorimetry"), FVariantValue(CurrentColorimetry));
+	InOutDictionary.Set(IDecoderOutputOptionNames::Colorimetry, FVariantValue(CurrentColorimetry));
 }
 
 bool FColorimetryHelper::GetCurrentValues(uint8& colour_primaries, uint8& transfer_characteristics, uint8& matrix_coeffs) const
@@ -306,7 +306,7 @@ void FHDRHelper::Update(int32 BitDepth, const FColorimetryHelper& InColorimetry,
 
 void FHDRHelper::UpdateParamDict(FParamDict& InOutDictionary)
 {
-	InOutDictionary.Set(TEXT("hdr_info"), FVariantValue(CurrentHDRInfo));
+	InOutDictionary.Set(IDecoderOutputOptionNames::HDRInfo, FVariantValue(CurrentHDRInfo));
 }
 
 

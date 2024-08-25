@@ -54,8 +54,9 @@ public:
 	* Iterator function to invoke a lambda / TFunction for each reference of a function
 	* @param InFunctionName The function name to iterate all references for
 	* @param PerReferenceFunction The function to invoke for each reference
+	* @param bLoadIfNecessary If true, will load packages when needed
 	*/
-	void ForEachReference(const FName& InFunctionName, TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction) const;
+	void ForEachReference(const FName& InFunctionName, TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction, bool bLoadIfNecessary = true) const;
 
 	/**
 	* Iterator function to invoke a lambda / TFunction for each reference of a function

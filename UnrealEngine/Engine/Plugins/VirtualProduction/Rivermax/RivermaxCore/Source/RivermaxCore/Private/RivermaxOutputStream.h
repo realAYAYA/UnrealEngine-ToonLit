@@ -94,7 +94,13 @@ namespace UE::RivermaxCore::Private
 		float FrameRateMultiplier = 1.00;
 
 		/** Memory blocks given to Rivermax which where data is located */
-		TArray<rmax_mem_block> MemoryBlocks;
+		TArray<rmx_output_media_mem_block> MemoryBlocks;
+
+		/** Data Sub block ID */
+		const uint8 HeaderBlockID = 0;
+
+		/** Data Sub block ID */
+		const uint8 DataBlockID = 1;
 
 		/** Array with each packet size */
 		TArray<uint16_t> PayloadSizes; 
@@ -138,6 +144,9 @@ namespace UE::RivermaxCore::Private
 
 	struct FRivermaxOutputStreamData
 	{
+		// Handle used to retrieve chunks associated with output stream
+		rmx_output_media_chunk_handle ChunkHandle;
+
 		/** Current sequence number being done */
 		uint32 SequenceNumber = 0;
 		double FrameFieldTimeIntervalNs = 0.0;
@@ -159,6 +168,9 @@ namespace UE::RivermaxCore::Private
 		
 		/** Next alignment point frame number treated to detect missed frames */
 		uint64 NextAlignmentPointFrameNumber = 0;
+
+		/** Last alignment point frame number we have processed*/
+		uint64 LastAlignmentPointFrameNumber = 0;
 
 		/** Timestamp at which we started commiting a frame */
 		uint64 LastSendStartTimeNanoSec = 0;
@@ -213,6 +225,7 @@ namespace UE::RivermaxCore::Private
 		virtual bool PushVideoFrame(const FRivermaxOutputVideoFrameInfo& NewFrame) override;
 		virtual bool IsGPUDirectSupported() const override;
 		virtual bool ReserveFrame(uint32 FrameIdentifier) const override;
+		virtual void GetLastPresentedFrame(FPresentedFrameInfo& OutFrameInfo) const override;
 		//~ End IRivermaxOutputStream interface
 
 		void Process_AnyThread();
@@ -333,6 +346,9 @@ namespace UE::RivermaxCore::Private
 		/** Go through all chunks of current frame and commit them to Rivermax to send them at the next desired time */
 		void SendFrame();
 
+		/** When a frame has been sent (after frame interval), we update last presented frame tracking and optionally release it in the presentation queue */
+		void CompleteCurrentFrame(bool bReleaseFrame);
+
 	private:
 
 		/** Options related to this stream. i.e resolution, frame rate, etc... */
@@ -348,10 +364,7 @@ namespace UE::RivermaxCore::Private
 		FRivermaxOutputStreamData StreamData;
 
 		/** Stream id returned by rmax library */
-		rmax_stream_id StreamId;
-
-		/** Critical section to protect frames access */
-		mutable FCriticalSection FrameCriticalSection;
+		rmx_stream_id StreamId = 0;
 
 		/** Current frame being sent */
 		TSharedPtr<FRivermaxOutputFrame> CurrentFrame;
@@ -408,6 +421,12 @@ namespace UE::RivermaxCore::Private
 		const UE::RivermaxCore::Private::RIVERMAX_API_FUNCTION_LIST* CachedAPI = nullptr;
 		/** Whether to trigger a delay in the output thread loop next time it ticks */
 		bool bTriggerRandomDelay = false;
+
+		/** Critical section to access data of last presented frame */
+		mutable FCriticalSection PresentedFrameCS;
+
+		/** Info of last presented frame */
+		FPresentedFrameInfo LastPresentedFrame;
 
 		friend struct FRTPHeaderPrefiller;
 	};

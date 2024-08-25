@@ -3,11 +3,14 @@
 #pragma once
 
 #include "MuR/ModelPrivate.h"
-#include "MuT/ErrorLogPrivate.h"
+#include "MuT/ErrorLog.h"
 #include "MuT/TypeInfo.h"
 #include "UObject/GCObject.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Input/SSearchBox.h"
+#include "Engine/Texture.h"
+#include "MuR/Mesh.h"
+#include "UObject/SoftObjectPtr.h"
 
 class STableViewBase;
 namespace ESelectInfo { enum Type : int; }
@@ -56,7 +59,8 @@ public:
 		
 	SLATE_END_ARGS()
 
-	void Construct(const FArguments& InArgs, const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InMutableModel /*, const TSharedPtr<SDockTab>& ConstructUnderMajorTab*/);
+	void Construct(const FArguments& InArgs, const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InMutableModel,
+		const TArray<TSoftObjectPtr<UTexture>>& ReferencedTextures );
 
 	// SWidget interface
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
@@ -75,6 +79,9 @@ private:
 	/** The Mutable Model that we are showing. */
 	TSharedPtr<mu::Model, ESPMode::ThreadSafe> MutableModel;
 	
+	/** Array of external referenced textures in MutableModel, indexed by id. */
+	TArray<TSoftObjectPtr<UTexture>> ReferencedTextures;
+
 	/** Selected model operation for preview. */
 	mu::OP::ADDRESS SelectedOperationAddress = 0;
 
@@ -178,7 +185,7 @@ private:
 	TMap< mu::OP::ADDRESS, TSharedPtr<FMutableCodeTreeElement>> ExpandedElements;
 
 	/** Prepare the widget for the given model. */
-	void SetCurrentModel(const TSharedPtr<mu::Model, ESPMode::ThreadSafe>&);
+	void SetCurrentModel(const TSharedPtr<mu::Model, ESPMode::ThreadSafe>&, const TArray<TSoftObjectPtr<UTexture>>& ReferencedTextures);
 
 	/** Before any UI operation generate all the elements that may be navigable over the tree. No children of duplicated 
 	 * addresses will be generated.
@@ -210,8 +217,11 @@ private:
 	{
 		mu::OP_TYPE::ME_BINDSHAPE,
 		mu::OP_TYPE::ME_MASKCLIPMESH,
+		mu::OP_TYPE::ME_MASKCLIPUVMASK,
 		mu::OP_TYPE::ME_FORMAT,
+		mu::OP_TYPE::ME_MASKDIFF,
 		mu::OP_TYPE::ME_DIFFERENCE,
+		mu::OP_TYPE::ME_EXTRACTLAYOUTBLOCK,
 		mu::OP_TYPE::IM_MAKEGROWMAP,
 	};
 
@@ -784,9 +794,9 @@ public:
 	void PreviewMutableMesh (mu::MeshPtrConst InMeshPtr);
 	void PreviewMutableLayout(mu::LayoutPtrConst Layout);
 	void PreviewMutableSkeleton(mu::SkeletonPtrConst Skeleton);
-	void PreviewMutableString(const mu::string* InStringPtr);
+	void PreviewMutableString(const FString& InString);
 	void PreviewMutableProjector(const mu::FProjector* Projector);
-	void PreviewMutableMatrix(const mu::mat4f* Mat);
+	void PreviewMutableMatrix(const FMatrix44f& Mat);
 	void PreviewMutableShape(const mu::FShape* Shape);
 	void PreviewMutableCurve(const mu::Curve* Curve);
 	
@@ -836,210 +846,13 @@ public:
 class FMutableCodeTreeElement : public TSharedFromThis<FMutableCodeTreeElement>
 {
 public:
-	FMutableCodeTreeElement(int32 InIndexOnTree  , const int32& InMutableStateIndex ,const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InModel, mu::OP::ADDRESS InOperation, const FString& InCaption,const FSlateColor InLabelColor, const TSharedPtr<FMutableCodeTreeElement>* InDuplicatedOf = nullptr)
-	{
-		MutableModel = InModel;
-		MutableOperation = InOperation;
-		Caption = InCaption;
-		LabelColor = InLabelColor;
-		IndexOnTree = InIndexOnTree;
-		if (InDuplicatedOf)
-		{
-			DuplicatedOf = *InDuplicatedOf;
-		}
-
-		// Generate the label to be used to display this operation in the operation tree
-		GenerateLabelText();
-		
-		// Process the data that can be extracted from the current state
-		SetElementCurrentState(InMutableStateIndex);
-	}
+	FMutableCodeTreeElement(int32 InIndexOnTree, const int32& InMutableStateIndex, const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InModel, mu::OP::ADDRESS InOperation, const FString& InCaption, const FSlateColor InLabelColor, const TSharedPtr<FMutableCodeTreeElement>* InDuplicatedOf = nullptr);
 	
-	void SetElementCurrentState(const int32& InStateIndex)
-	{
-		// Skip operation if state is the same
-		if (InStateIndex == CurrentMutableStateIndex)
-		{
-			return;
-		}
+	void SetElementCurrentState(const int32& InStateIndex);
 
-		// Check for an out of bounds value
-		check(MutableModel)
-		mu::FProgram& MutableProgram = MutableModel->GetPrivate()->m_program;
-		check (InStateIndex >= 0 && InStateIndex < MutableProgram.m_states.Num());
-		
-		CurrentMutableStateIndex = InStateIndex;
-		const mu::FProgram::FState& CurrentState = MutableProgram.m_states[CurrentMutableStateIndex];
-		
-		// Check if it is a dynamic resource
-		for (auto& DynamicResource : CurrentState.m_dynamicResources)
-		{
-			// If the operation gets located then mark it as dynamic resource
-			if (DynamicResource.Key == MutableOperation)
-			{
-				bIsDynamicResource = true;
-				break;
-			}
-		}
-		// Early exit: A dynamic resource can not be at the same time a state constant
-		if (bIsDynamicResource)
-		{
-			return;
-		}
-		
-		// Check if it is a state constant
-		bIsStateConstant = CurrentState.m_updateCache.Contains(MutableOperation);
-	}
-
-	void GenerateLabelText()
-	{
-		const mu::FProgram& Program = MutableModel->GetPrivate()->m_program;
-		const mu::OP_TYPE Type = Program.GetOpType(MutableOperation);
-		FString OpName = mu::s_opNames[static_cast<int32>(Type)];
-		OpName.TrimEndInline();
-
-		// See if the operation type accepts additional information in the label
-		switch ( Type )
-		{
-		case mu::OP_TYPE::BO_PARAMETER:
-		case mu::OP_TYPE::NU_PARAMETER:
-		case mu::OP_TYPE::SC_PARAMETER:
-		case mu::OP_TYPE::CO_PARAMETER:
-		case mu::OP_TYPE::PR_PARAMETER:
-		case mu::OP_TYPE::IM_PARAMETER:
-		case mu::OP_TYPE::ST_PARAMETER:
-		{
-			mu::OP::ParameterArgs Args = Program.GetOpArgs<mu::OP::ParameterArgs>(MutableOperation);
-			OpName += TEXT(" ");
-			OpName += StringCast<TCHAR>(Program.m_parameters[int32(Args.variable)].m_name.c_str()).Get();
-			break;
-		}
-
-		case mu::OP_TYPE::IM_SWIZZLE:
-		{
-			mu::OP::ImageSwizzleArgs Args = Program.GetOpArgs<mu::OP::ImageSwizzleArgs>(MutableOperation);
-			OpName += TEXT(" ");
-			OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.format)]).Get();
-			break;
-		}
-
-		case mu::OP_TYPE::IM_PIXELFORMAT:
-		{
-			mu::OP::ImagePixelFormatArgs Args = Program.GetOpArgs<mu::OP::ImagePixelFormatArgs>(MutableOperation);
-			OpName += TEXT(" ");
-			OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.format)]).Get();
-			OpName += TEXT(" or ");
-			OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.formatIfAlpha)]).Get();
-			break;
-		}
-
-		case mu::OP_TYPE::IM_MIPMAP:
-		{
-			mu::OP::ImageMipmapArgs Args = Program.GetOpArgs<mu::OP::ImageMipmapArgs>(MutableOperation);
-			OpName += FString::Printf(TEXT(" levels: %d-%d tail: %d"), Args.levels, Args.blockLevels, int32(Args.onlyTail));
-			break;
-		}
-
-		case mu::OP_TYPE::IM_RESIZE:
-		{
-			mu::OP::ImageResizeArgs Args = Program.GetOpArgs<mu::OP::ImageResizeArgs>(MutableOperation);
-			OpName += FString::Printf(TEXT(" %d x %d"), int32(Args.size[0]), int32(Args.size[1]));
-			break;
-		}
-
-		case mu::OP_TYPE::IM_RESIZEREL:
-		{
-			mu::OP::ImageResizeRelArgs Args = Program.GetOpArgs<mu::OP::ImageResizeRelArgs>(MutableOperation);
-			OpName += FString::Printf(TEXT(" %.3f x %.3f"), Args.factor[0], Args.factor[1]);
-			break;
-		}
-
-		case mu::OP_TYPE::IM_MULTILAYER:
-		{
-			mu::OP::ImageMultiLayerArgs Args = Program.GetOpArgs<mu::OP::ImageMultiLayerArgs>(MutableOperation);
-			OpName += TEXT(" rgb: ");
-			OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendType)];
-			OpName += TEXT(", a: ");
-			OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendTypeAlpha)];
-			OpName += FString::Printf(TEXT(" a from %d "), Args.BlendAlphaSourceChannel);
-			OpName += FString::Printf(TEXT(" range-id: %d"), Args.rangeId);
-			OpName += FString::Printf(TEXT(" mask-from-alpha: %d"), int32(Args.bUseMaskFromBlended));
-			break;
-		}
-
-		case mu::OP_TYPE::IM_LAYER:
-		{
-			mu::OP::ImageLayerArgs Args = Program.GetOpArgs<mu::OP::ImageLayerArgs>(MutableOperation);
-			OpName += TEXT(" rgb: ");
-			OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendType)];
-			OpName += TEXT(", a: ");
-			OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendTypeAlpha)];
-			OpName += FString::Printf(TEXT(" a from %d "), Args.BlendAlphaSourceChannel);
-			OpName += FString::Printf(TEXT(" flags %d"),Args.flags);
-			break;
-		}
-
-		case mu::OP_TYPE::IM_LAYERCOLOUR:
-		{
-			mu::OP::ImageLayerColourArgs Args = Program.GetOpArgs<mu::OP::ImageLayerColourArgs>(MutableOperation);
-			OpName += TEXT(" rgb: ");
-			OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendType)];
-			OpName += TEXT(" a: ");
-			OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendTypeAlpha)];
-			OpName += TEXT(" a from ");
-			OpName += FString::Printf(TEXT(" a from %d "), Args.BlendAlphaSourceChannel);
-			OpName += FString::Printf(TEXT(" flags %d"), Args.flags);
-			break;
-		}
-
-		case mu::OP_TYPE::IM_PLAINCOLOUR:
-		{
-			mu::OP::ImagePlainColourArgs Args = Program.GetOpArgs<mu::OP::ImagePlainColourArgs>(MutableOperation);
-			OpName += TEXT(" format: ");
-			OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.format)]).Get();
-			OpName += FString::Printf(TEXT(" size %d x %d"), Args.size[0], Args.size[1]);
-			OpName += FString::Printf(TEXT(" mips %d"), Args.LODs);
-			break;
-		}
-
-		case mu::OP_TYPE::IN_ADDIMAGE:
-		{
-			mu::OP::InstanceAddArgs Args = Program.GetOpArgs<mu::OP::InstanceAddArgs>(MutableOperation);
-			if (Program.m_constantStrings.IsValidIndex(Args.name))
-			{
-				OpName += TEXT(" name: ");
-				OpName += FString(Program.m_constantStrings[Args.name].c_str());
-			}
- 			break;
-		}
-
-		default:
-			break;
-		}
-
-		// Prepare the text shown on the UI side of the operation tree
-		MainLabel = FString::Printf(TEXT("%s %d : %s"), *Caption, int32(MutableOperation), *OpName);
-
-		// DEBUG : 
-		// FString IndexOnTree = FString::FromInt(IndexOnTree);
-		// IndexOnTree.Append(TEXT("- "));
-		// MainLabel.InsertAt(0,IndexOnTree);
-
-		// DEBUG : 
-		// FString RowStateIndex = FString::FromInt(GetStateIndex());
-		// RowStateIndex.Append(TEXT(" st "));
-		// MainLabel.InsertAt(0,RowStateIndex);
-		
-		if (DuplicatedOf)
-		{
-			MainLabel.Append(TEXT(" (duplicated)"));
-		}
-	}
+	void GenerateLabelText();
 	
-	int32 GetStateIndex() const
-	{
-		return CurrentMutableStateIndex;
-	}
+	int32 GetStateIndex() const;
 	
 public:
 

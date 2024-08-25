@@ -810,7 +810,7 @@ FString FOnlineUserEOSPlus::GetAuthToken(int32 LocalUserNum) const
 	return BaseIdentityInterface->GetAuthToken(LocalUserNum);
 }
 
-void FOnlineUserEOSPlus::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineUserEOSPlus::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	FUniqueNetIdEOSPlusPtr NetIdPlus = GetNetIdPlus(UserId.ToString());
 	if (NetIdPlus.IsValid())
@@ -826,7 +826,7 @@ void FOnlineUserEOSPlus::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivi
 			OriginalDelegate.ExecuteIfBound(*NetIdPlus, Privilege, PrivilegeResults);
 		});
 
-		BaseIdentityInterface->GetUserPrivilege(*NetIdPlus->GetBaseNetId(), Privilege, IntermediateDelegate);
+		BaseIdentityInterface->GetUserPrivilege(*NetIdPlus->GetBaseNetId(), Privilege, IntermediateDelegate, ShowResolveUI);
 	}
 	else
 	{

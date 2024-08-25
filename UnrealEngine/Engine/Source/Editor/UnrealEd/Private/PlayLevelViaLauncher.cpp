@@ -221,6 +221,8 @@ void UEditorEngine::StartPlayUsingLauncherSession(FRequestPlaySessionParams& InR
 
 	LauncherProfile->AddCookedPlatform(LaunchPlatformName);
 
+	LauncherProfile->SetDeviceIsASimulator(InRequestParams.LauncherTargetDevice->bIsSimulator);
+
 	// select the quickest cook mode based on which in editor cook mode is enabled
 	const UCookerSettings& CookerSettings = *GetDefault<UCookerSettings>();
 	const UEditorExperimentalSettings& ExperimentalSettings = *GetDefault<UEditorExperimentalSettings>();

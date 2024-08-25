@@ -56,8 +56,6 @@ bool FSceneOutlinerVisibilityCache::GetVisibility(const ISceneOutlinerTreeItem& 
 	{
 		return RecurseChildren(Item);
 	}
-
-	return false;
 }
 
 class FVisibilityDragDropOp : public FDragDropOperation, public TSharedFromThis<FVisibilityDragDropOp>

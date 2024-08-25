@@ -33,144 +33,8 @@ DEFINE_LOG_CATEGORY(LogVulkanRHI);
 
 extern TAutoConsoleVariable<int32> GValidationCvar;
 
-static VkBool32 VKAPI_PTR DebugReportFunction(
-	VkDebugReportFlagsEXT			MsgFlags,
-	VkDebugReportObjectTypeEXT		ObjType,
-	uint64_t						SrcObject,
-	size_t							Location,
-	int32							MsgCode,
-	const ANSICHAR*					LayerPrefix,
-	const ANSICHAR*					Msg,
-	void*							UserData)
-{
-#if VULKAN_ENABLE_DUMP_LAYER
-	VulkanRHI::FlushDebugWrapperLog();
-#endif
-
-	const char* MsgPrefix = "UNKNOWN";
-	if (MsgFlags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
-	{
-		// Ignore some errors we might not fix...
-		if (!FCStringAnsi::Strcmp(LayerPrefix, "Validation"))
-		{
-			if (MsgCode == 0x4c00264)
-			{
-				// Unable to allocate 1 descriptorSets from pool 0x8cb8. This pool only has N descriptorSets remaining. The spec valid usage text states
-				// 'descriptorSetCount must not be greater than the number of sets that are currently available for allocation in descriptorPool'
-				// (https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#VUID-VkDescriptorSetAllocateInfo-descriptorSetCount-00306)
-				return VK_FALSE;
-			}
-			else if (MsgCode == 0x4c00266)
-			{
-				// Unable to allocate 1 descriptors of type VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER from pool 0x89f4. This pool only has 0 descriptors of this type
-				// remaining.The spec valid usage text states 'descriptorPool must have enough free descriptor capacity remaining to allocate the descriptor sets of
-				// the specified layouts' (https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#VUID-VkDescriptorSetAllocateInfo-descriptorPool-00307)
-				return VK_FALSE;
-			}
-		}
-		if (!FCStringAnsi::Strcmp(LayerPrefix, "SC"))
-		{
-			if (MsgCode == 3)
-			{
-				// Attachment N not written by fragment shader
-				return VK_FALSE;
-			}
-		}
-		if (!FCStringAnsi::Strcmp(LayerPrefix, "DS"))
-		{
-			if (MsgCode == 6)
-			{
-				auto* Found = FCStringAnsi::Strstr(Msg, " array layer ");
-				if (Found && Found[13] >= '1' && Found[13] <= '9')
-				{
-					//#todo-rco: Remove me?
-					// Potential bug in the validation layers for slice > 1 on 3d textures
-					return VK_FALSE;
-				}
-			}
-			else if (MsgCode == 15)
-			{
-				// Cannot get query results on queryPool 0x327 with index 193 as data has not been collected for this index.
-				//return VK_FALSE;
-			}
-		}
-
-		MsgPrefix = "ERROR";
-	}
-	else if (MsgFlags & VK_DEBUG_REPORT_WARNING_BIT_EXT)
-	{
-		MsgPrefix = "WARN";
-
-		// Ignore some warnings we might not fix...
-		// Ignore some errors we might not fix...
-		if (!FCStringAnsi::Strcmp(LayerPrefix, "Validation"))
-		{
-			if (MsgCode == 2)
-			{
-				// fragment shader writes to output location 0 with no matching attachment
-				return VK_FALSE;
-			}
-		}
-
-		if (!FCStringAnsi::Strcmp(LayerPrefix, "SC"))
-		{
-			if (MsgCode == 2)
-			{
-				// fragment shader writes to output location 0 with no matching attachment
-				return VK_FALSE;
-			}
-		}
-	}
-	else if (MsgFlags & VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT)
-	{
-		MsgPrefix = "PERF";
-		// Ignore some errors we might not fix...
-		if (!FCStringAnsi::Strcmp(LayerPrefix, "SC"))
-		{
-			if (MsgCode == 2)
-			{
-				// vertex shader outputs unused interpolator
-				return VK_FALSE;
-			}
-		}
-		else if (!FCStringAnsi::Strcmp(LayerPrefix, "DS"))
-		{
-			if (MsgCode == 15)
-			{
-				// DescriptorSet previously bound is incompatible with set newly bound as set #0 so set #1 and any subsequent sets were disturbed by newly bound pipelineLayout
-				return VK_FALSE;
-			}
-		}
-	}
-	else if (MsgFlags & VK_DEBUG_REPORT_INFORMATION_BIT_EXT)
-	{
-		MsgPrefix = "INFO";
-	}
-	else if (MsgFlags & VK_DEBUG_REPORT_DEBUG_BIT_EXT)
-	{
-		MsgPrefix = "DEBUG";
-	}
-	else
-	{
-		ensure(0);
-	}
-
-	const VkBool32 bPlatformPrintLog = FVulkanPlatform::DebugReportFunction(MsgFlags, ObjType, SrcObject, Location, MsgCode, LayerPrefix, Msg, UserData);
-	if (bPlatformPrintLog == VK_FALSE)
-	{
-		// Early out if platform wants to suppress this debug report.
-		return VK_FALSE;
-	}
-
-	// MsgCode seem to be always 0
-	VULKAN_REPORT_LOG(TEXT("*** [%s] Obj 0x%p Loc %d %s"), ANSI_TO_TCHAR(MsgPrefix), (void*)SrcObject, (uint32)Location, ANSI_TO_TCHAR(Msg));
-
-	return VK_FALSE;
-}
-
-#if VULKAN_SUPPORTS_DEBUG_UTILS
-static VkBool32 DebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT MsgSeverity, VkDebugUtilsMessageTypeFlagsEXT MsgType,
-	const VkDebugUtilsMessengerCallbackDataEXT* CallbackData, void* UserData)
+static VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT MsgSeverity, 
+	VkDebugUtilsMessageTypeFlagsEXT MsgType, const VkDebugUtilsMessengerCallbackDataEXT* CallbackData, void* UserData)
 {
 	const bool bError = (MsgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0;
 	const bool bWarning = (MsgSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) != 0;
@@ -252,7 +116,8 @@ static VkBool32 DebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT MsgSev
 		return VK_FALSE;
 	}
 
-	if (!FCStringAnsi::Strcmp(CallbackData->pMessageIdName, "UNASSIGNED-CoreValidation-Shader-OutputNotConsumed"))
+	if (!FCStringAnsi::Strcmp(CallbackData->pMessageIdName, "UNASSIGNED-CoreValidation-Shader-OutputNotConsumed") ||
+		!FCStringAnsi::Strcmp(CallbackData->pMessageIdName, "Undefined-Value-ShaderOutputNotConsumed"))
 	{
 		// Warning: *** [Warning:Validation-1(UNASSIGNED-CoreValidation-Shader-OutputNotConsumed)] fragment shader writes to output location 0 with no matching attachment
 		return VK_FALSE;
@@ -267,17 +132,23 @@ static VkBool32 DebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT MsgSev
 		// *** [Error:Validation(UNASSIGNED-GPU-Assisted Validation Setup Error.)] Unable to reserve descriptor binding slot on a device with only one slot.
 		return VK_FALSE;
 	}
+	else if (!FCStringAnsi::Strcmp(CallbackData->pMessageIdName, "VUID-RuntimeSpirv-Fragment-06427"))
+	{
+		// Warning: *** [Error:Validation(VUID-RuntimeSpirv-Fragment-06427)]
+		// False-positive in validation layers 1.3.250.1, known to be fixed in 1.3.268.0
+		return VK_FALSE;
+	}
 	else if (!FCStringAnsi::Strcmp(CallbackData->pMessageIdName, "UNASSIGNED-BestPractices-vkCreateDevice-deprecated-extension"))
 	{
 		// *** CreateDevice(): Attempting to enable deprecated extension VK_KHR_get_memory_requirements2, but this extension has been promoted to VK_VERSION_1_1.
 		return VK_FALSE;
 	}
-	else if (FCStringAnsi::Strstr(CallbackData->pMessage, "The SPIR-V Extension (SPV_GOOGLE_hlsl_functionality1) was declared") != nullptr)
+	else if (FCStringAnsi::Strstr(CallbackData->pMessage, "SPV_GOOGLE_hlsl_functionality1") != nullptr)
 	{
 		// *** [Error:Validation(VUID-VkShaderModuleCreateInfo-pCode-04147)] vkCreateShaderModule(): The SPIR-V Extension (SPV_GOOGLE_hlsl_functionality1) was declared, but none of the requirements were met to use it.
 		return VK_FALSE;
 	 }
-	else if (FCStringAnsi::Strstr(CallbackData->pMessage, "The SPIR-V Extension (SPV_GOOGLE_user_type) was declared") != nullptr)
+	else if (FCStringAnsi::Strstr(CallbackData->pMessage, "SPV_GOOGLE_user_type") != nullptr)
 	{
 		// *** [Error:Validation(VUID-VkShaderModuleCreateInfo-pCode-04147)] vkCreateShaderModule(): The SPIR-V Extension (SPV_GOOGLE_user_type) was declared, but none of the requirements were met to use it.
 		return VK_FALSE;
@@ -304,11 +175,9 @@ static VkBool32 DebugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT MsgSev
 
 	return VK_FALSE;
 }
-#endif
 
 void FVulkanDynamicRHI::SetupDebugLayerCallback()
 {
-#if VULKAN_SUPPORTS_DEBUG_UTILS
 	if (ActiveDebugLayerExtension == EActiveDebugLayerExtension::DebugUtilsExtension)
 	{
 		PFN_vkCreateDebugUtilsMessengerEXT CreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT)(void*)VulkanRHI::vkGetInstanceProcAddr(Instance, "vkCreateDebugUtilsMessengerEXT");
@@ -322,67 +191,15 @@ void FVulkanDynamicRHI::SetupDebugLayerCallback()
 				(CVar >= 2 ? VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT : 0) | (CVar >= 3 ? VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT : 0);
 			CreateInfo.messageType = (CVar >= 1 ? (VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) : 0) |
 				(CVar >= 3 ? VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT : 0);
-			CreateInfo.pfnUserCallback = (PFN_vkDebugUtilsMessengerCallbackEXT)(void*)DebugUtilsCallback;
+			CreateInfo.pfnUserCallback = DebugUtilsCallback;
 			VkResult Result = (*CreateDebugUtilsMessengerEXT)(Instance, &CreateInfo, nullptr, &Messenger);
 			ensure(Result == VK_SUCCESS);
-		}
-	}
-	else
-#endif
-	if (ActiveDebugLayerExtension == EActiveDebugLayerExtension::DebugReportExtension)
-	{
-		PFN_vkCreateDebugReportCallbackEXT CreateMsgCallback = (PFN_vkCreateDebugReportCallbackEXT)(void*)VulkanRHI::vkGetInstanceProcAddr(Instance, CREATE_MSG_CALLBACK);
-		if (CreateMsgCallback)
-		{
-			VkDebugReportCallbackCreateInfoEXT CreateInfo;
-			ZeroVulkanStruct(CreateInfo, VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT);
-			CreateInfo.pfnCallback = DebugReportFunction;
-
-			const int32 CVar = GValidationCvar.GetValueOnRenderThread();
-			switch (CVar)
-			{
-			default:
-				CreateInfo.flags |= VK_DEBUG_REPORT_DEBUG_BIT_EXT;
-				// Fall-through...
-			case 4:
-				CreateInfo.flags |= VK_DEBUG_REPORT_INFORMATION_BIT_EXT;
-				// Fall-through...
-			case 3:
-				CreateInfo.flags |= VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT;
-				// Fall-through...
-			case 2:
-				CreateInfo.flags |= VK_DEBUG_REPORT_WARNING_BIT_EXT;
-				// Fall-through...
-			case 1:
-				CreateInfo.flags |= VK_DEBUG_REPORT_ERROR_BIT_EXT;
-				break;
-			case 0:
-				// Nothing to do!
-				break;
-			}
-			VkResult Result = CreateMsgCallback(Instance, &CreateInfo, nullptr, &MsgCallback);
-			switch (Result)
-			{
-			case VK_SUCCESS:
-				break;
-			case VK_ERROR_OUT_OF_HOST_MEMORY:
-				UE_LOG(LogVulkanRHI, Warning, TEXT("CreateMsgCallback: out of host memory/CreateMsgCallback Failure; debug reporting skipped"));
-				break;
-			default:
-				UE_LOG(LogVulkanRHI, Warning, TEXT("CreateMsgCallback: unknown failure %d/CreateMsgCallback Failure; debug reporting skipped"), (int32)Result);
-				break;
-			}
-		}
-		else
-		{
-			UE_LOG(LogVulkanRHI, Warning, TEXT("GetProcAddr: Unable to find vkDbgCreateMsgCallback/vkGetInstanceProcAddr; debug reporting skipped!"));
 		}
 	}
 }
 
 void FVulkanDynamicRHI::RemoveDebugLayerCallback()
 {
-#if VULKAN_SUPPORTS_DEBUG_UTILS
 	if (Messenger != VK_NULL_HANDLE)
 	{
 		PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT)(void*)VulkanRHI::vkGetInstanceProcAddr(Instance, "vkDestroyDebugUtilsMessengerEXT");
@@ -390,14 +207,6 @@ void FVulkanDynamicRHI::RemoveDebugLayerCallback()
 		{
 			(*DestroyDebugUtilsMessengerEXT)(Instance, Messenger, nullptr);
 		}
-	}
-	else
-#endif
-	if (MsgCallback != VK_NULL_HANDLE)
-	{
-		PFN_vkDestroyDebugReportCallbackEXT DestroyMsgCallback = (PFN_vkDestroyDebugReportCallbackEXT)(void*)VulkanRHI::vkGetInstanceProcAddr(Instance, DESTROY_MSG_CALLBACK);
-		checkf(DestroyMsgCallback, TEXT("GetProcAddr: Unable to find vkDbgCreateMsgCallback\vkGetInstanceProcAddr Failure"));
-		DestroyMsgCallback(Instance, MsgCallback, nullptr);
 	}
 }
 
@@ -3339,6 +3148,22 @@ void FWrapLayer::ResetCommandPool(VkResult Result, VkDevice Device, VkCommandPoo
 	}
 }
 
+void FWrapLayer::TrimCommandPool(VkResult Result, VkDevice Device, VkCommandPool CommandPool, VkCommandPoolTrimFlags Flags)
+{
+	if (Result == VK_RESULT_MAX_ENUM)
+	{
+#if VULKAN_ENABLE_DUMP_LAYER
+		DevicePrintfBeginResult(Device, FString::Printf(TEXT("vkTrimCommandPool(CommandPool=0x%p, Flags=0x%08X)"), CommandPool, Flags));
+#endif
+	}
+	else
+	{
+#if VULKAN_ENABLE_DUMP_LAYER
+		PrintResult(Result);
+#endif
+	}
+}
+
 void FWrapLayer::AllocateCommandBuffers(VkResult Result, VkDevice Device, const VkCommandBufferAllocateInfo* AllocateInfo, VkCommandBuffer* CommandBuffers)
 {
 	if (Result == VK_RESULT_MAX_ENUM)
@@ -4562,6 +4387,56 @@ void FWrapLayer::GetDescriptorEXT(VkResult Result, VkDevice Device, const VkDesc
 	{
 #if VULKAN_ENABLE_DUMP_LAYER
 		PrintfBeginResult(FString::Printf(TEXT("GetDescriptorEXT(Device=0x%p, DataSize=%llu DescriptorType=%s)"), Device, DataSize, VK_TYPE_TO_STRING(VkDescriptorType, DescriptorInfo->type)));
+#endif
+	}
+}
+
+void FWrapLayer::CreateDeferredOperationKHR(VkResult Result, VkDevice Device, const VkAllocationCallbacks* Allocator, VkDeferredOperationKHR* DeferredOperation)
+{
+	if (Result == VK_RESULT_MAX_ENUM)
+	{
+#if VULKAN_ENABLE_DUMP_LAYER
+		PrintfBeginResult(FString::Printf(TEXT("CreateDeferredOperationKHR(Device=0x%p, DeferredOperation=0x%p)"), Device, DeferredOperation));
+#endif
+	}
+}
+
+void FWrapLayer::DestroyDeferredOperationKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation, const VkAllocationCallbacks* Allocator)
+{
+	if (Result == VK_RESULT_MAX_ENUM)
+	{
+#if VULKAN_ENABLE_DUMP_LAYER
+		PrintfBeginResult(FString::Printf(TEXT("DestroyDeferredOperationKHR(Device=0x%p, DeferredOperation=0x%p)"), Device, DeferredOperation));
+#endif
+	}
+}
+
+void FWrapLayer::DeferredOperationJoinKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation)
+{
+	if (Result == VK_RESULT_MAX_ENUM)
+	{
+#if VULKAN_ENABLE_DUMP_LAYER
+		PrintfBeginResult(FString::Printf(TEXT("DeferredOperationJoinKHR(Device=0x%p, DeferredOperation=0x%p)"), Device, DeferredOperation));
+#endif
+	}
+}
+
+void FWrapLayer::GetDeferredOperationMaxConcurrencyKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation)
+{
+	if (Result == VK_RESULT_MAX_ENUM)
+	{
+#if VULKAN_ENABLE_DUMP_LAYER
+		PrintfBeginResult(FString::Printf(TEXT("GetDeferredOperationMaxConcurrencyKHR(Device=0x%p, DeferredOperation=0x%p)"), Device, DeferredOperation));
+#endif
+	}
+}
+
+void FWrapLayer::GetDeferredOperationResultKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation)
+{
+	if (Result == VK_RESULT_MAX_ENUM)
+	{
+#if VULKAN_ENABLE_DUMP_LAYER
+		PrintfBeginResult(FString::Printf(TEXT("GetDeferredOperationResultKHR(Device=0x%p, DeferredOperation=0x%p)"), Device, DeferredOperation));
 #endif
 	}
 }

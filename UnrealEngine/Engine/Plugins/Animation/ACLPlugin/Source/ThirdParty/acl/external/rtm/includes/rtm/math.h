@@ -33,7 +33,13 @@
 //////////////////////////////////////////////////////////////////////////
 
 #if !defined(RTM_NO_INTRINSICS)
-	#if defined(__AVX2__)
+	// UE Change Begin
+	#if defined(RTM_ARCH_ARM64)
+		#define RTM_NEON_INTRINSICS
+		#define RTM_NEON64_INTRINSICS
+	#elif defined(RTM_ARCH_ARM)
+		#define RTM_NEON_INTRINSICS
+	#elif defined(__AVX2__)
 		#define RTM_AVX2_INTRINSICS
 		#define RTM_FMA_INTRINSICS
 		#define RTM_AVX_INTRINSICS
@@ -55,13 +61,7 @@
 	#elif defined(__SSE2__) || defined(RTM_ARCH_X86) || defined(RTM_ARCH_X64)
 		#define RTM_SSE2_INTRINSICS
 	#endif
-
-	#if defined(RTM_ARCH_ARM64)
-		#define RTM_NEON_INTRINSICS
-		#define RTM_NEON64_INTRINSICS
-	#elif defined(RTM_ARCH_ARM)
-		#define RTM_NEON_INTRINSICS
-	#endif
+	// UE Change End
 
 	// If SSE2 and NEON aren't used, we default to the scalar implementation
 	#if !defined(RTM_SSE2_INTRINSICS) && !defined(RTM_NEON_INTRINSICS)

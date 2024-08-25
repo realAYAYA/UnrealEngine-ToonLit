@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -13,48 +12,6 @@ using EpicGames.UHT.Utils;
 
 namespace EpicGames.UHT.Types
 {
-	/// <summary>
-	/// Extra information needed for a FStructProperty that is generated from a template wrapper struct
-	/// </summary>
-	/// <param name="TemplateSourceName">Source name of the template wrapper struct</param>
-	/// <param name="InnerScriptStruct">USTRUCTs referenced by the args of the template instance</param>
-	record class UhtStructTemplateWrapper(string TemplateSourceName, UhtScriptStruct InnerScriptStruct)
-	{
-		public StringBuilder AppendSourceName(StringBuilder builder)
-		{
-			builder.Append(TemplateSourceName);
-			builder.Append('<');
-			builder.Append(InnerScriptStruct.SourceName);
-			builder.Append('>');
-
-			return builder;
-		}
-
-		public StringBuilder AppendForwardDeclarations(StringBuilder builder)
-		{
-			builder.Append("struct ");
-			builder.Append(InnerScriptStruct.SourceName);
-			builder.Append(';');
-			builder.Append("\r\n");
-
-			builder.Append("template struct ");
-			AppendSourceName(builder);
-			builder.Append(';');
-
-			return builder;
-		}
-
-		public void ParseTemplateType(IUhtTokenReader tokenReader)
-		{
-			tokenReader
-				.Require(TemplateSourceName)
-				.Require('<')
-				.Optional("struct")
-				.Require(InnerScriptStruct.SourceName)
-				.Require('>');
-		}
-	};
-
 	/// <summary>
 	/// FStructProperty
 	/// </summary>
@@ -79,11 +36,6 @@ namespace EpicGames.UHT.Types
 		/// </summary>
 		[JsonConverter(typeof(UhtTypeSourceNameJsonConverter<UhtScriptStruct>))]
 		public UhtScriptStruct ScriptStruct { get; set; }
-
-		/// <summary>
-		/// Extra information for struct properties generated from a template wrapper struct
-		/// </summary>
-		private UhtStructTemplateWrapper? TemplateWrapper { get; set; }
 
 		/// <summary>
 		/// Construct property
@@ -158,14 +110,6 @@ namespace EpicGames.UHT.Types
 			{
 				return null;
 			}
-
-			if (TemplateWrapper != null)
-			{
-				StringBuilder builder = new();
-				TemplateWrapper.AppendForwardDeclarations(builder);
-				return builder.ToString();
-			}
-
 			return $"struct {ScriptStruct.SourceName};";
 		}
 
@@ -181,14 +125,7 @@ namespace EpicGames.UHT.Types
 			switch (textType)
 			{
 				default:
-					if (TemplateWrapper != null)
-					{
-						TemplateWrapper.AppendSourceName(builder);
-					}
-					else
-					{
-						builder.Append(ScriptStruct.SourceName);
-					}
+					builder.Append(ScriptStruct.SourceName);
 					break;
 			}
 			return builder;
@@ -302,6 +239,23 @@ namespace EpicGames.UHT.Types
 				}
 			}
 			return false;
+		}
+
+		/// <summary>
+		/// Perform default, default value parsing
+		/// </summary>
+		/// <param name="defaultValueReader">Default value reader</param>
+		/// <param name="innerDefaultValue">Sanitized default value</param>
+		/// <returns></returns>
+		public virtual bool DefaultDefaultValue(IUhtTokenReader defaultValueReader, StringBuilder innerDefaultValue)
+		{
+			defaultValueReader
+				.Require(ScriptStruct.SourceName);
+			defaultValueReader
+				.Require('(')
+				.Require(')');
+			innerDefaultValue.Append("()");
+			return true;
 		}
 
 		#region Structure default value sanitizers
@@ -516,20 +470,7 @@ namespace EpicGames.UHT.Types
 		[SuppressMessage("CodeQuality", "IDE0051:Remove unused private members", Justification = "Attribute accessed method")]
 		private static bool DefaultStructDefaultValue(UhtStructProperty property, IUhtTokenReader defaultValueReader, StringBuilder innerDefaultValue)
 		{
-			if (property.TemplateWrapper != null)
-			{
-				property.TemplateWrapper.ParseTemplateType(defaultValueReader);
-			}
-			else
-			{
-				defaultValueReader
-					.Require(property.ScriptStruct.SourceName);
-			}
-			defaultValueReader
-				.Require('(')
-				.Require(')');
-			innerDefaultValue.Append("()");
-			return true;
+			return property.DefaultDefaultValue(defaultValueReader, innerDefaultValue);
 		}
 		#endregion
 
@@ -568,6 +509,78 @@ namespace EpicGames.UHT.Types
 			return propertySettings.Outer.FindType(UhtFindOptions.SourceName | UhtFindOptions.ScriptStruct, ref identifier, tokenReader) as UhtScriptStruct;
 		}
 		#endregion
+	}
+
+	/// <summary>
+	/// FStructProperty
+	/// </summary>
+	[UnrealHeaderTool]
+	public class UhtTemplateStructProperty : UhtStructProperty
+	{
+		/// <summary>
+		/// When using the template wrapper pattern that provides a template wrapper to an existing structure that
+		/// can reference types, this is the name of the template.  For example, FInstancedStruct has TInstancedStruct
+		/// as a wrapper template.
+		/// </summary>
+		public string TemplateWrapperName { get; init; }
+
+		/// <summary>
+		/// The structure being wrapped by the template wrapper
+		/// </summary>
+		[JsonConverter(typeof(UhtTypeSourceNameJsonConverter<UhtScriptStruct>))]
+		public UhtScriptStruct TemplateArgumentStruct { get; init; }
+
+		/// <summary>
+		/// Construct property
+		/// </summary>
+		/// <param name="propertySettings">Property settings</param>
+		/// <param name="scriptStruct">USTRUCT being referenced</param>
+		/// <param name="templateWrapperName">The name of wrapping template type</param>
+		/// <param name="templateArgumentStruct">The path name of the type being managed by the template</param>
+		public UhtTemplateStructProperty(UhtPropertySettings propertySettings, UhtScriptStruct scriptStruct, string templateWrapperName, UhtScriptStruct templateArgumentStruct) : base(propertySettings, scriptStruct)
+		{
+			TemplateWrapperName = templateWrapperName;
+			TemplateArgumentStruct = templateArgumentStruct;
+			MetaData.Add("BaseStruct", templateArgumentStruct.PathName);
+		}
+
+		/// <inheritdoc/>
+		public override string? GetForwardDeclarations()
+		{
+			if (TemplateArgumentStruct.IsCoreType)
+			{
+				return null;
+			}
+			return $"struct {TemplateArgumentStruct.SourceName};\r\ntemplate struct {TemplateWrapperName}<{TemplateArgumentStruct.SourceName}>;";
+		}
+
+		/// <inheritdoc/>
+		public override StringBuilder AppendText(StringBuilder builder, UhtPropertyTextType textType, bool isTemplateArgument)
+		{
+			switch (textType)
+			{
+				default:
+					builder.Append(TemplateWrapperName).Append('<').Append(TemplateArgumentStruct.SourceName).Append('>');
+					break;
+			}
+			return builder;
+		}
+
+		/// <inheritdoc/>
+		public override bool DefaultDefaultValue(IUhtTokenReader defaultValueReader, StringBuilder innerDefaultValue)
+		{
+			defaultValueReader
+				.Require(TemplateWrapperName)
+				.Require('<')
+				.Optional("struct")
+				.Require(TemplateArgumentStruct.SourceName)
+				.Require('>');
+			defaultValueReader
+				.Require('(')
+				.Require(')');
+			innerDefaultValue.Append("()");
+			return true;
+		}
 
 		#region Keyword
 		[UhtPropertyType(Keyword = "TInstancedStruct")]
@@ -588,9 +601,90 @@ namespace EpicGames.UHT.Types
 			}
 
 			// With TInstancedStruct, BaseStruct is used as a type limiter.
-			UhtStructProperty instancedStructProperty = new UhtStructProperty(propertySettings, baseScriptStruct.Session.FInstancedStruct);
-			instancedStructProperty.TemplateWrapper = new UhtStructTemplateWrapper("TInstancedStruct", baseScriptStruct);
-			instancedStructProperty.MetaData.Add("BaseStruct", baseScriptStruct.PathName);
+			return new UhtTemplateStructProperty(propertySettings, baseScriptStruct.Session.FInstancedStruct, "TInstancedStruct", baseScriptStruct);
+		}
+
+		[UhtPropertyType(Keyword = "TStateTreePropertyRef")]
+		[SuppressMessage("CodeQuality", "IDE0051:Remove unused private members", Justification = "Attribute accessed method")]
+		[SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Attribute accessed method")]
+		private static UhtProperty? StateTreePropertyRefProperty(UhtPropertyResolvePhase resolvePhase, UhtPropertySettings propertySettings, IUhtTokenReader tokenReader, UhtToken matchedToken)
+		{
+			const string RefTypeName = "RefType";
+			const string IsRefToArrayName = "IsRefToArray";
+			UhtSession session = propertySettings.Outer.Session;
+
+			if(session.FStateTreePropertyRef == null)
+			{
+				return null;
+			}
+
+			if (propertySettings.MetaData.ContainsKey(RefTypeName))
+			{
+				tokenReader.LogError("{0} metadata is implicitly set from the TStateTreePropertyRef template argument and should not be explicitly specified.", RefTypeName);
+				return null;
+			}
+
+			if (propertySettings.MetaData.ContainsKey(IsRefToArrayName))
+			{
+				tokenReader.LogError("{0} metadata is implicitly set from the TStateTreePropertyRef template argument and should not be explicitly specified.", IsRefToArrayName);
+				return null;
+			}
+
+			if(!tokenReader.SkipExpectedType(matchedToken.Value, propertySettings.PropertyCategory == UhtPropertyCategory.Member))
+			{
+				return null;
+			}
+
+			tokenReader.Require('<');
+
+			bool isRefToArray = tokenReader.TryOptional("TArray");
+
+			if (isRefToArray)
+			{
+				tokenReader.Require('<');
+			}
+
+			UhtToken identifier = new();
+			tokenReader
+				.Optional("struct")
+				.Optional("class")
+				.RequireIdentifier((ref UhtToken token) => { identifier = token; });
+
+			session.Config!.RedirectTypeIdentifier(ref identifier);
+
+			UhtStructProperty instancedStructProperty = new UhtStructProperty(propertySettings, session.FStateTreePropertyRef);
+
+			// TStateTreePropertyRef supports UStructs, UClasses, enums and primitive types.
+			UhtType? foundType = propertySettings.Outer.FindType(UhtFindOptions.SourceName | UhtFindOptions.TypesMask, ref identifier);
+			if (foundType is UhtStruct foundStruct)
+			{
+				if (foundStruct.IsChildOf(session.UObject))
+				{
+					tokenReader.Require('*');
+				}
+
+				// It's a UStruct or UClass
+				instancedStructProperty.MetaData.Add(RefTypeName, foundStruct.PathName);
+			}
+			else if(foundType is UhtEnum foundEnum)
+			{
+				// It's an enum
+				instancedStructProperty.MetaData.Add(RefTypeName, foundEnum.PathName);
+			}
+			else
+			{
+				// It's a primitive or unknown type.
+				instancedStructProperty.MetaData.Add(RefTypeName, identifier.ToString());
+			}
+
+			if (isRefToArray)
+			{
+				tokenReader.Require(">");
+				instancedStructProperty.MetaData.Add(IsRefToArrayName, true);
+			}
+
+			tokenReader.Require(">");
+
 			return instancedStructProperty;
 		}
 		#endregion

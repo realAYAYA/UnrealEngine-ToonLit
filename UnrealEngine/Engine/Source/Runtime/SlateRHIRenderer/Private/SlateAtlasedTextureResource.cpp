@@ -3,8 +3,6 @@
 #include "SlateAtlasedTextureResource.h"
 #include "Slate/SlateTextureAtlasInterface.h"
 
-TSharedPtr<FSlateAtlasedTextureResource> FSlateAtlasedTextureResource::NullResource = MakeShareable( new FSlateAtlasedTextureResource(nullptr) );
-
 FSlateAtlasedTextureResource::FSlateAtlasedTextureResource(UTexture* InTexture)
 	: FSlateBaseUTextureResource(InTexture)
 {

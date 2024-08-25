@@ -23,24 +23,6 @@
 namespace ConcertSandboxPlatformFileUtil
 {
 
-FString GetContentFolderName(const FString& InContentPath)
-{
-	check(InContentPath.Len() > 0);
-
-	// Clean any trailing slash from the content path
-	FString ContentFolderName = InContentPath;
-	if (ContentFolderName[ContentFolderName.Len() - 1] == TEXT('/') || ContentFolderName[ContentFolderName.Len() - 1] == TEXT('\\'))
-	{
-		ContentFolderName.RemoveAt(ContentFolderName.Len() - 1, 1, /*bAllowShrinking*/false);
-	}
-
-	// Content paths are always in the form /Bla/Content, so we need to use GetBaseFilename after calling GetPath to get the 'Bla' part for the sandbox path
-	ContentFolderName = FPaths::GetPath(MoveTemp(ContentFolderName));
-	ContentFolderName = FPaths::GetCleanFilename(MoveTemp(ContentFolderName));
-
-	return ContentFolderName;
-}
-
 bool FlushPackageFile(const FString& InFilename, FName* OutPackageName = nullptr, bool bForceLoad = true)
 {
 	FString PackageName;
@@ -119,7 +101,7 @@ bool FConcertSandboxPlatformFile::Initialize(IPlatformFile* Inner, const TCHAR* 
 	FPackageName::QueryRootContentPaths(RootPaths);
 	for (const FString& RootPath : RootPaths)
 	{
-		RegisterContentMountPath(FPackageName::LongPackageNameToFilename(RootPath));
+		RegisterContentMountPath(RootPath, FPackageName::LongPackageNameToFilename(RootPath));
 	}
 
 	// Watch for new content mount paths
@@ -611,7 +593,7 @@ bool FConcertSandboxPlatformFile::IterateDirectory(const TCHAR* Directory, FDire
 		const TArray<FDirectoryItem> DirectoryItems = GetDirectoryContents(ResolvedPath, Directory);
 		for (const FDirectoryItem& DirectoryItem : DirectoryItems)
 		{
-			if (!Visitor.Visit(*DirectoryItem.Path, DirectoryItem.StatData.bIsDirectory))
+			if (!Visitor.CallShouldVisitAndVisit(*DirectoryItem.Path, DirectoryItem.StatData.bIsDirectory))
 			{
 				return false;
 			}
@@ -637,7 +619,7 @@ bool FConcertSandboxPlatformFile::IterateDirectoryStat(const TCHAR* Directory, F
 		const TArray<FDirectoryItem> DirectoryItems = GetDirectoryContents(ResolvedPath, Directory);
 		for (const FDirectoryItem& DirectoryItem : DirectoryItems)
 		{
-			if (!Visitor.Visit(*DirectoryItem.Path, DirectoryItem.StatData))
+			if (!Visitor.CallShouldVisitAndVisit(*DirectoryItem.Path, DirectoryItem.StatData))
 			{
 				return false;
 			}
@@ -1056,18 +1038,18 @@ TArray<FString> FConcertSandboxPlatformFile::GatherSandboxChangedFilenames() con
 
 void FConcertSandboxPlatformFile::OnContentPathMounted(const FString& InAssetPath, const FString& InFilesystemPath)
 {
-	RegisterContentMountPath(InFilesystemPath);
+	RegisterContentMountPath(InAssetPath, InFilesystemPath);
 }
 
 void FConcertSandboxPlatformFile::OnContentPathDismounted(const FString& InAssetPath, const FString& InFilesystemPath)
 {
-	UnregisterContentMountPath(InFilesystemPath);
+	UnregisterContentMountPath(InAssetPath, InFilesystemPath);
 }
 
-void FConcertSandboxPlatformFile::RegisterContentMountPath(const FString& InContentPath)
+void FConcertSandboxPlatformFile::RegisterContentMountPath(const FString& InAssetPath, const FString& InFilesystemPath)
 {
-	FString AbsoluteSandboxPath = FPaths::ConvertRelativePathToFull(SandboxRootPath / ConcertSandboxPlatformFileUtil::GetContentFolderName(InContentPath)) / TEXT("");
-	FString AbsoluteNonSandboxPath = FPaths::ConvertRelativePathToFull(InContentPath) / TEXT("");
+	FString AbsoluteSandboxPath = FPaths::ConvertRelativePathToFull(SandboxRootPath / InAssetPath) / TEXT("");
+	FString AbsoluteNonSandboxPath = FPaths::ConvertRelativePathToFull(InFilesystemPath) / TEXT("");
 	LowerLevel->CreateDirectory(*AbsoluteSandboxPath);
 	{
 		FScopeLock SandboxMountPointsLock(&SandboxMountPointsCS);
@@ -1082,9 +1064,9 @@ void FConcertSandboxPlatformFile::RegisterContentMountPath(const FString& InCont
 	}
 }
 
-void FConcertSandboxPlatformFile::UnregisterContentMountPath(const FString& InContentPath)
+void FConcertSandboxPlatformFile::UnregisterContentMountPath(const FString& InAssetPath, const FString& InFilesystemPath)
 {
-	const FString AbsoluteSandboxPath = FPaths::ConvertRelativePathToFull(SandboxRootPath / ConcertSandboxPlatformFileUtil::GetContentFolderName(InContentPath)) / TEXT("");
+	const FString AbsoluteSandboxPath = FPaths::ConvertRelativePathToFull(SandboxRootPath / InAssetPath) / TEXT("");
 	{
 		FScopeLock SandboxMountPointsLock(&SandboxMountPointsCS);
 		SandboxMountPoints.RemoveAll([&AbsoluteSandboxPath](FSandboxMountPoint& InSandboxMountPoint) -> bool

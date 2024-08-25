@@ -3,10 +3,16 @@
 #ifndef SYMS_CRT_OVERRIDES_C
 #define SYMS_CRT_OVERRIDES_C
 
-// NOTE(allen): use default arena
+////////////////////////////////
+//~ allen: use default helpers
+#include "syms_default_helpers.c"
+
+////////////////////////////////
+//~ allen: use default arena
 #include "syms_default_arena.c"
 
-// NOTE(allen): use default scratch
+////////////////////////////////
+//~ allen: use default scrtach
 #include "syms_default_scratch.c"
 
 #endif // SYMS_CRT_OVERRIDES_C

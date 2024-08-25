@@ -21,17 +21,14 @@ class UBlueprint;
 * If you wish to modify a subobject, use the SubobjectDataSubsystem.
 */
 USTRUCT(BlueprintType)
-struct SUBOBJECTDATAINTERFACE_API FSubobjectData
+struct SUBOBJECTDATAINTERFACE_API FSubobjectData final
 {
 friend class USubobjectDataSubsystem;
 public:
 	GENERATED_BODY()
 
 	FSubobjectData();
-
-	FSubobjectData(UObject* ContextObject, const FSubobjectDataHandle& ParentHandle);
-
-	virtual ~FSubobjectData();
+	FSubobjectData(UObject* ContextObject, const FSubobjectDataHandle& ParentHandle, const bool bIsInheritedSCS);
 
 	/** True if this subobject's handle is valid */
 	bool IsValid() const { return Handle.IsValid(); }
@@ -39,34 +36,34 @@ public:
 	/**
 	 * @return Whether or not we can edit properties for this subobject
 	 */
-	virtual bool CanEdit() const;
+	bool CanEdit() const;
 
 	/**
 	 * @return Whether or not this object represents a subobject that can be deleted
 	 */
-	virtual bool CanDelete() const;
+	bool CanDelete() const;
 
 	/**
 	* @return Whether or not this object represents a subobject that can be duplicated
 	*/
-	virtual bool CanDuplicate() const;
+	bool CanDuplicate() const;
 
 	/**
 	* @return Whether or not this object represents a subobject that can be copied
 	*/
-	virtual bool CanCopy() const;
+	bool CanCopy() const;
 
 	/**
 	 * @return Whether or not this object represents a subobject that can 
 	 * be reparented to other subobjects based on its context.
 	 */
-	virtual bool CanReparent() const;
+	bool CanReparent() const;
 
 	/**
 	* @return Whether or not this object represents a subobject that can 
 	* be renamed.
 	*/
-	virtual bool CanRename() const;
+	bool CanRename() const;
 
 	/**
 	* @return	A read-only reference to the object represented by this node.
@@ -119,30 +116,30 @@ public:
 
 	UBlueprint* GetBlueprint() const;
 
-	virtual bool IsInstancedComponent() const;
-	virtual bool IsInstancedActor() const;
-	virtual bool IsNativeComponent() const;
-	virtual bool IsBlueprintInheritedComponent() const;
-	virtual bool IsInheritedComponent() const;
-	virtual bool IsSceneComponent() const;
-	virtual bool IsRootComponent() const;
-	virtual bool IsDefaultSceneRoot() const;
+	bool IsInstancedComponent() const;
+	bool IsInstancedActor() const;
+	bool IsNativeComponent() const;
+	bool IsBlueprintInheritedComponent() const;
+	bool IsInheritedComponent() const;
+	bool IsSceneComponent() const;
+	bool IsRootComponent() const;
+	bool IsDefaultSceneRoot() const;
 	/** Returns true if the component template's FName starts with USceneComponent::GetDefaultSceneRootVariableName */
 	bool SceneRootHasDefaultName() const;
 	/* Returns true if this subobject is a component. */
-	virtual bool IsComponent() const;
-	virtual bool IsChildActor() const;
+	bool IsComponent() const;
+	bool IsChildActor() const;
 
 	/** Returns true if this subobject is a part of a child actor's hierarchy and not the root actor.  */
-	virtual bool IsChildActorSubtreeObject() const;
-	virtual bool IsRootActor() const;
-	virtual bool IsActor() const;
+	bool IsChildActorSubtreeObject() const;
+	bool IsRootActor() const;
+	bool IsActor() const;
 	/** True if this subobject is an instance of an inherited component (its owner is an instanced actor) */
-	virtual bool IsInstancedInheritedComponent() const;
+	bool IsInstancedInheritedComponent() const;
 
 	bool IsAttachedTo(const FSubobjectDataHandle& InHandle) const;
 
-	virtual FString GetDisplayString(bool bShowNativeComponentNames = true) const;
+	FString GetDisplayString(bool bShowNativeComponentNames = true) const;
 
 	/** Get the display name of this subobject that should be used during drag/drop operations */
 	FText GetDragDropDisplayText() const;
@@ -152,11 +149,11 @@ public:
 	 * components it will return "(Inherited)". For native components
 	 * this function will return "(NativeComponentName) (Inherited)"
 	 */
-	virtual FText GetDisplayNameContextModifiers(bool bShowNativeComponentNames = true) const;
+	FText GetDisplayNameContextModifiers(bool bShowNativeComponentNames = true) const;
 	
-	virtual FText GetDisplayName() const;
+	FText GetDisplayName() const;
 
-	virtual FName GetVariableName() const;
+	FName GetVariableName() const;
 
 	// Sockets for attaching in the viewport
 	FText GetSocketName() const;
@@ -211,10 +208,9 @@ public:
 	*/
 	FText GetIntroducedInToolTipText() const;
 
-	virtual FText GetActorDisplayText() const;
+	FText GetActorDisplayText() const;
 		
-protected:
-	
+private:
 	/**
 	* Add the given subobject handle as a child of this.
 	* NOTE: This does NOT do any actual manipulation of the subobject structure.
@@ -279,12 +275,11 @@ protected:
 
 	////////////////////////////////////////////////////
 	// Anything related to an SCS node will be changed with an upcoming refactor and should remain private
-protected:
-
+private:
 	// Tries to find a SCS node that was likely responsible for creating the specified instance component.  Note: This is not always possible to do!
 	static USCS_Node* FindSCSNodeForInstance(const UActorComponent* InstanceComponent, UClass* ClassToSearch);
 
-	virtual USCS_Node* GetSCSNode(bool bEvenIfPendingKill = false) const;
+	USCS_Node* GetSCSNode(bool bEvenIfPendingKill = false) const;
 
 	/**
 	* Attempts to set the SCS node member variable based on the WeakObjectPtr.
@@ -306,5 +301,11 @@ protected:
 	 * True if this SCS node's blueprint is a child of another Blueprint-generated class,
 	 * which means that we must use the InheritableComponentHandler
 	 */
-	virtual bool IsInheritedSCSNode() const;
+	bool IsInheritedSCSNode() const;
+	const UChildActorComponent* GetChildActorComponent(bool bEvenIfPendingKill = false) const;
+
+	/** True if this SCS node is inherited from another blueprint generated class. */
+	bool bIsInheritedSubobject = false;
+	bool bIsInheritedSCS = false;
+	bool bIsChildActor = false;
 };

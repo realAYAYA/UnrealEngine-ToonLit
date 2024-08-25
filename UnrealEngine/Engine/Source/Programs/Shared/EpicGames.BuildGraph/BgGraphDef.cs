@@ -288,7 +288,7 @@ namespace EpicGames.BuildGraph
 			}
 			NameToAggregate = newNameToAggregate;
 
-			// Remove any labels that are no longer value
+			// Remove any labels that are no longer valid
 			foreach (BgLabelDef label in Labels)
 			{
 				label.RequiredNodes.RemoveWhere(x => !retainNodes.Contains(x));
@@ -298,6 +298,17 @@ namespace EpicGames.BuildGraph
 
 			// Remove any badges which do not have all their dependencies
 			Badges.RemoveAll(x => x.Nodes.Any(y => !retainNodes.Contains(y)));
+
+			// Rebuild the tag name to output dictionary
+			Dictionary<string, BgNodeOutput> newTagNameToNodeOutput = new Dictionary<string, BgNodeOutput>(TagNameToNodeOutput.Comparer);
+			foreach (BgNodeOutput output in Agents.SelectMany(x => x.Nodes).SelectMany(x => x.Outputs))
+			{
+				newTagNameToNodeOutput.Add(output.TagName, output);
+			}
+			TagNameToNodeOutput = newTagNameToNodeOutput;
+
+			// Remove any artifacts which are not produced
+			Artifacts.RemoveAll(x => !TagNameToNodeOutput.ContainsKey(x.TagName));
 		}
 
 		/// <summary>
@@ -433,7 +444,34 @@ namespace EpicGames.BuildGraph
 				{
 					jsonWriter.WriteObjectStart();
 					jsonWriter.WriteValue("Name", artifact.Name);
-					jsonWriter.WriteValue("Tag", artifact.Tag);
+					if (!String.IsNullOrEmpty(artifact.Type))
+					{
+						jsonWriter.WriteValue("Type", artifact.Type);
+					}
+					if (!String.IsNullOrEmpty(artifact.Description))
+					{
+						jsonWriter.WriteValue("Description", artifact.Description);
+					}
+					if (!String.IsNullOrEmpty(artifact.BasePath))
+					{
+						jsonWriter.WriteValue("BasePath", artifact.BasePath);
+					}
+
+					jsonWriter.WriteArrayStart("Keys");
+					foreach (string key in artifact.Keys)
+					{
+						jsonWriter.WriteValue(key);
+					}
+					jsonWriter.WriteArrayEnd();
+
+					jsonWriter.WriteArrayStart("Metadata");
+					foreach (string metadata in artifact.Metadata)
+					{
+						jsonWriter.WriteValue(metadata);
+					}
+					jsonWriter.WriteArrayEnd();
+
+					jsonWriter.WriteValue("OutputName", artifact.TagName);
 					jsonWriter.WriteObjectEnd();
 				}
 				jsonWriter.WriteArrayEnd();
@@ -694,9 +732,20 @@ namespace EpicGames.BuildGraph
 				}
 				logger.LogInformation("");
 			}
+
+			// Print all the produced artifacts
+			BgArtifactDef[] artifacts = Artifacts.OrderBy(x => x.Name).ToArray();
+			if (artifacts.Length > 0)
+			{
+				logger.LogInformation("Artifacts:");
+				foreach (BgArtifactDef artifact in artifacts.OrderBy(x => x.Description))
+				{
+					logger.LogInformation("    {Name}", artifact.Name);
+				}
+				logger.LogInformation("");
+			}
 		}
 	}
-
 
 	/// <summary>
 	/// Definition of a graph from bytecode. Can be converted to regular graph definition.
@@ -762,7 +811,7 @@ namespace EpicGames.BuildGraph
 		{
 			if (uniqueNodes.Add(node))
 			{
-				foreach (BgNodeExpressionDef inputNode in node.InputDependencies)
+				foreach (BgNodeExpressionDef inputNode in node.InputDependencies.OfType<BgNodeExpressionDef>())
 				{
 					RegisterNode(graph, inputNode, uniqueNodes, uniqueAgents);
 				}

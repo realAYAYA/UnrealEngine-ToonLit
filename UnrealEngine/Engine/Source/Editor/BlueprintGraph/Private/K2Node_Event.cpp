@@ -13,6 +13,7 @@
 #include "Engine/Blueprint.h"
 #include "EngineLogs.h"
 #include "EventEntryHandler.h"
+#include "FindInBlueprints.h"
 #include "GameFramework/Actor.h"
 #include "GraphEditorSettings.h"
 #include "HAL/PlatformCrt.h"
@@ -31,7 +32,6 @@
 #include "Serialization/Archive.h"
 #include "Styling/AppStyle.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/UnrealTemplate.h"
 #include "Trace/Detail/Channel.h"
 #include "UObject/BlueprintsObjectVersion.h"
@@ -336,7 +336,7 @@ FName UK2Node_Event::GetFunctionName() const
 	return bOverrideFunction ? EventReference.GetMemberName() : CustomFunctionName;
 }
 
-UFunction* UK2Node_Event::FindEventSignatureFunction()
+UFunction* UK2Node_Event::FindEventSignatureFunction() const
 {
 	return EventReference.ResolveMember<UFunction>(GetBlueprintClassFromNode());
 }
@@ -899,23 +899,45 @@ FSlateIcon UK2Node_Event::GetIconAndTint(FLinearColor& OutColor) const
 	return Icon;
 }
 
-FString UK2Node_Event::GetFindReferenceSearchString() const
+FString UK2Node_Event::GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const
 {
-	// Behavior modeled after UK2Node_Event::GetNodeTitle but without "Event" prepended
+	// If searching by class member, try to construct search term from the UFunction.
+	// This may fail if the function was not found or for whatever reason, its owning 
+	// class is invalid. If it fails, proceed to search by name as fallback behavior.
+	if (EnumHasAnyFlags(InFlags, EGetFindReferenceSearchStringFlags::UseSearchSyntax) && !EnumHasAnyFlags(InFlags, EGetFindReferenceSearchStringFlags::Legacy))
+	{
+		// Resolve the function
+		if (const UFunction* Function = FFunctionFromNodeHelper::FunctionFromNode(this))
+		{
+			FString SearchTerm;
+			if (FindInBlueprintsHelpers::ConstructSearchTermFromFunction(Function, SearchTerm))
+			{
+				return SearchTerm;
+			}
+		}
+	}
+
+	// Searching by just name. When overriding a function, try to find the function that it overrides to return its name.
 	if (bOverrideFunction || (CustomFunctionName == NAME_None))
 	{
-		FString FunctionName = EventReference.GetMemberName().ToString(); // If we fail to find the function, still want to search for its expected name.
-
-		if (const UFunction* Function = EventReference.ResolveMember<UFunction>(GetBlueprintClassFromNode()))
+		// Attempt to find the function
+		if (const UFunction* Function = FFunctionFromNodeHelper::FunctionFromNode(this))
 		{
-			FunctionName = UEdGraphSchema_K2::GetFriendlySignatureName(Function).ToString();
+			// Search by native name
+			const FString FunctionNativeName = Function->GetName();
+			return FString::Printf(TEXT("\"%s\""), *FunctionNativeName);
 		}
-
-		return FunctionName;
+		else
+		{
+			// If we fail to find the function, still want to search for its expected name, in quotes
+			return FString::Printf(TEXT("\"%s\""), *EventReference.GetMemberName().ToString());
+		}
 	}
 	else
 	{
-		return CustomFunctionName.ToString();
+		// The function was not an override; its name is defined by this node.
+		// Return that name in quotes (treating special characters as part of name)
+		return FString::Printf(TEXT("\"%s\""), *CustomFunctionName.ToString());
 	}
 }
 
@@ -960,6 +982,25 @@ bool UK2Node_Event::HasExternalDependencies(TArray<class UStruct*>* OptionalOutp
 
 	const bool bSuperResult = Super::HasExternalDependencies(OptionalOutput);
 	return bSuperResult || bResult;
+}
+
+void UK2Node_Event::AddSearchMetaDataInfo(TArray<FSearchTagDataPair>& OutTaggedMetaData) const
+{
+	Super::AddSearchMetaDataInfo(OutTaggedMetaData);
+
+	if (const UFunction* Function = FFunctionFromNodeHelper::FunctionFromNode(this))
+	{
+		// Index the native name of the function, this will be used in search queries rather than node title
+		const FString FunctionNativeName = Function->GetName();
+		OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_NativeName, FText::FromString(FunctionNativeName)));
+
+		// Index the (ancestor) class or interface from which the function originates, can be self
+		if (const UClass* FuncOriginClass = FindInBlueprintsHelpers::GetFunctionOriginClass(Function))
+		{
+			const FString FuncOriginClassName = FuncOriginClass->GetPathName();
+			OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_FuncOriginClass, FText::FromString(FuncOriginClassName)));
+		}
+	}
 }
 
 TSharedPtr<FEdGraphSchemaAction> UK2Node_Event::GetEventNodeAction(const FText& ActionCategory)

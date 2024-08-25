@@ -4,9 +4,12 @@
 
 #include "HAL/Runnable.h"
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuR/Ptr.h"
 #include "MuT/Node.h"
 #include "MuCOE/CustomizableObjectEditorLogger.h"
+
+#include <atomic>
 
 class ITargetPlatform;
 
@@ -38,6 +41,18 @@ private:
 	mu::Ptr<mu::Node> MutableRoot;
 	TArray<FError> ArrayErrors;
 
+	/** */
+	struct FReferenceResourceRequest
+	{
+		int32 ID = -1;
+		TSharedPtr<mu::Ptr<mu::Image>> ResolvedImage;
+		TSharedPtr<UE::Tasks::FTaskEvent> CompletionEvent;
+	};
+	TQueue<FReferenceResourceRequest, EQueueMode::Mpsc> PendingResourceReferenceRequests;
+
+	mu::Ptr<mu::Image> LoadResourceReferenced(int32 ID);
+
+
 public:
 
 	FCustomizableObjectCompileRunnable(mu::Ptr<mu::Node> Root);
@@ -53,19 +68,18 @@ public:
 	//
 	const TArray<FError>& GetArrayErrors() const;
 
-public:
+	void Tick();
 
 	TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model;
 
 	FCompilationOptions Options;
+	
+	TArray<TSoftObjectPtr<UTexture>> ReferencedTextures;
 
 	FString ErrorMsg;
 
 	// Whether the thread has finished running
-	bool bThreadCompleted;
-
-	// If Mutable compile is disabled, to immediately finish the Run() method
-	bool MutableIsDisabled;
+	std::atomic<bool> bThreadCompleted;
 };
 
 
@@ -77,12 +91,6 @@ public:
 
 	// FRunnable interface
 	uint32 Run() override;
-
-	// Bytes where the model is stored
-	TArray64<uint8>& GetModelBytes();
-
-	// Bytes where the streamed data files are stored
-	TArray64<uint8>& GetBulkBytes();
 
 	//
 	bool IsCompleted() const;
@@ -104,14 +112,20 @@ private:
 
 	TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model;
 
+	bool bIsCooking = false;
+
+	// Whether the thread has finished running
+	std::atomic<bool> bThreadCompleted = false;
+
+public:
+
 	// Bytes where the model is stored
 	TArray64<uint8> Bytes;
 
 	// Bytes where the streamed data files are stored
 	TArray64<uint8> BulkDataBytes;
 
-	bool bIsCooking = false;
+	// Bytes store streameable files coming form the CO itself.
+	TArray64<uint8> MorphDataBytes;
 
-	// Whether the thread has finished running
-	bool bThreadCompleted = false;
 };

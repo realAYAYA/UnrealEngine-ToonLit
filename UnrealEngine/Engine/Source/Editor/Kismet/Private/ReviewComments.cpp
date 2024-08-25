@@ -377,7 +377,7 @@ FReviewComment FReviewComment::FromJson(const TSharedPtr<FJsonObject>& JsonObjec
 	
 	// set flags
 	Result.bIsClosed = false;
-	if (const TSharedPtr<FJsonValue> &FlagsField = JsonObject->TryGetField("flags"))
+	if (const TSharedPtr<FJsonValue> &FlagsField = JsonObject->TryGetField(TEXT("flags")))
 	{
 		if (!FlagsField->IsNull())
 		{

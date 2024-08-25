@@ -332,6 +332,13 @@ FInputCaptureUpdate UScalableSphereGizmoInputBehavior::BeginCapture(const FInput
 
 FInputCaptureUpdate UScalableSphereGizmoInputBehavior::UpdateCapture(const FInputDeviceState& input, const FInputCaptureData& data)
 {
+	// We have to check the device before going further because we get passed captures from 
+	// keyboard for modifier key press/releases, and those don't have valid ray data.
+	if (!input.IsFromDevice(GetSupportedDevices()))
+	{
+		return FInputCaptureUpdate::Continue();
+	}
+
 	FInputDeviceRay DeviceRay(input.Mouse.WorldRay, input.Mouse.Position2D);
 	LastWorldRay = DeviceRay.WorldRay;
 	LastScreenPosition = DeviceRay.ScreenPosition;

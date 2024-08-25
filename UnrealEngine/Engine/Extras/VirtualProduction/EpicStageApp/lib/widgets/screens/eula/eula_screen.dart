@@ -1,13 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import 'package:flutter/cupertino.dart';
-import 'package:provider/provider.dart';
+import 'package:epic_common/localizations.dart';
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:provider/provider.dart';
 
-import '../../../utilities/preferences_bundle.dart';
-import '../../../utilities/unreal_colors.dart';
-import '../../elements/parsed_rich_text.dart';
 import '../connect/connect.dart';
 
 /// Data types for EULA content.
@@ -24,9 +24,6 @@ class EulaScreen extends StatefulWidget {
 }
 
 class _EulaScreenState extends State<EulaScreen> {
-  /// Scroll controller for the EULA list view.
-  final ScrollController _scrollController = ScrollController();
-
   /// Persistent store state reference.
   late PreferencesBundle store;
 
@@ -48,9 +45,9 @@ class _EulaScreenState extends State<EulaScreen> {
           AppLocalizations.of(context)!.eulaAppBarTitle,
           style: Theme.of(context).textTheme.displayLarge,
         ),
+        backgroundColor: UnrealColors.gray10,
       ),
-      body: SingleChildScrollView(
-        controller: _scrollController,
+      body: EpicScrollView(
         child: Column(
           children: [
             Padding(
@@ -73,11 +70,12 @@ class _EulaScreenState extends State<EulaScreen> {
       ),
       bottomNavigationBar: Container(
         padding: EdgeInsets.symmetric(vertical: 18, horizontal: 18),
-        decoration: BoxDecoration(color: UnrealColors.gray06),
-        child: CupertinoButton(
+        decoration: BoxDecoration(color: UnrealColors.gray10),
+        child: EpicGenericButton(
+          color: UnrealColors.highlightBlue,
           child: Text(
             bHasAcceptedEula
-                ? AppLocalizations.of(context)!.menuButtonOK
+                ? EpicCommonLocalizations.of(context)!.menuButtonOK
                 : AppLocalizations.of(context)!.eulaAcceptButtonLabel,
           ),
           onPressed: () {

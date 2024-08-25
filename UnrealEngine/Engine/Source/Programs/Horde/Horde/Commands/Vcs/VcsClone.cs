@@ -1,15 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
 using EpicGames.Horde.Storage.Nodes;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Horde.Commands.Vcs
 {
-	[Command("vcs", "clone", "Initialize a directory for VCS-like operations")]
+	[Command("vcs", "clone", "Initialize a directory for VCS-like operations", Advertise = false)]
 	class VcsClone : VcsCheckout
 	{
 		public VcsClone(IStorageClientFactory storageClientFactory)
@@ -27,7 +25,7 @@ namespace Horde.Commands.Vcs
 
 			RefName branchName = new RefName(Branch ?? "ue5-main");
 
-			IStorageClient storageClient = await GetStorageClientAsync();
+			using IStorageClient storageClient = CreateStorageClient();
 
 			CommitNode? tip = await GetCommitAsync(storageClient, branchName, Change);
 			if (tip == null)

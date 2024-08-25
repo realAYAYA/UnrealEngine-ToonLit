@@ -9,8 +9,6 @@
 #include "MuT/NodeComponentEdit.h"
 #include "MuT/NodeComponentNew.h"
 
-#include <stdint.h>
-
 
 namespace mu
 {
@@ -19,21 +17,20 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeComponentType =
-			NODE_TYPE( "NodeComponent", Node::GetStaticType() );
+	static FNodeType s_nodeComponentType = FNodeType( "NodeComponent", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeComponent::GetType() const
+	const FNodeType* NodeComponent::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeComponent::GetStaticType()
+	const FNodeType* NodeComponent::GetStaticType()
 	{
 		return &s_nodeComponentType;
 	}
@@ -42,10 +39,10 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	void NodeComponent::Serialise( const NodeComponent* p, OutputArchive& arch )
 	{
-        uint32_t ver = 0;
+        uint32 ver = 0;
 		arch << ver;
 
-		arch << uint32_t(p->Type);
+		arch << uint32(p->Type);
 		p->SerialiseWrapper(arch);
 	}
 
@@ -53,11 +50,11 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	NodeComponentPtr NodeComponent::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (id)

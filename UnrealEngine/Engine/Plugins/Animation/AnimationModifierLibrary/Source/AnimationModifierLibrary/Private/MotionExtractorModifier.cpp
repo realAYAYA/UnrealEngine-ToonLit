@@ -20,7 +20,7 @@ UMotionExtractorModifier::UMotionExtractorModifier()
 	Axis = EMotionExtractor_Axis::Y;
 	bAbsoluteValue = false;
 	bRelativeToFirstFrame = false;
-	bComponentSpace = true;
+	bComponentSpace_DEPRECATED = true;
 	bNormalize = false;
 	bUseCustomCurveName = false;
 	CustomCurveName = NAME_None;
@@ -52,6 +52,22 @@ void UMotionExtractorModifier::OnApply_Implementation(UAnimSequence* Animation)
 		return;
 	}
 
+	int32 RelativeToBoneIndex = INDEX_NONE;
+	const bool bUseRelativeToBone = Space == EMotionExtractor_Space::RelativeToBone;
+	if (bUseRelativeToBone)
+	{
+		RelativeToBoneIndex = Skeleton->GetReferenceSkeleton().FindBoneIndex(RelativeToBoneName);
+		if (RelativeToBoneIndex == INDEX_NONE)
+		{
+			UE_LOG(LogAnimation, Error, TEXT("MotionExtractorModifier failed. Reason: Invalid Bone Index for RelativeToBoneName. BoneName: %s Animation: %s Skeleton: %s"),
+				*BoneName.ToString(), *GetNameSafe(Animation), *GetNameSafe(Skeleton));
+			return;
+		}
+	}
+
+	// When Space == EMotionExtractor_Space::RelativeToBone, operations only make sense to do in component space.
+	const bool bShouldUseComponentSpace = Space != EMotionExtractor_Space::LocalSpace;
+
 	// Ideally we would disable these options when any of those motion types are selected but AnimModifier doesn't support Details Customization atm.
 	if((MotionType == EMotionExtractor_MotionType::Translation || MotionType == EMotionExtractor_MotionType::Rotation || MotionType == EMotionExtractor_MotionType::Scale) && Axis > EMotionExtractor_Axis::Z)
 	{
@@ -65,12 +81,25 @@ void UMotionExtractorModifier::OnApply_Implementation(UAnimSequence* Animation)
 
 	TArray<FBoneIndexType> RequiredBones;
 	RequiredBones.Add(IntCastChecked<FBoneIndexType>(BoneIndex));
-	Skeleton->GetReferenceSkeleton().EnsureParentsExistAndSort(RequiredBones);
 
+	if (bUseRelativeToBone)
+	{
+		RequiredBones.Add(IntCastChecked<FBoneIndexType>(RelativeToBoneIndex));
+	}
+
+	Skeleton->GetReferenceSkeleton().EnsureParentsExistAndSort(RequiredBones);
 	FBoneContainer BoneContainer(RequiredBones, UE::Anim::ECurveFilterMode::DisallowAll, *Skeleton);
 	const FCompactPoseBoneIndex CompactPoseBoneIndex = BoneContainer.MakeCompactPoseIndex(FMeshPoseBoneIndex(BoneIndex));
 
-	FTransform FirstFrameBoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, CompactPoseBoneIndex, 0.f, bComponentSpace);
+	FCompactPoseBoneIndex CompactPoseRelativeToBoneIndex = FCompactPoseBoneIndex(INDEX_NONE);
+	FTransform FirstFrameRelativeToBoneTransform = FTransform::Identity;
+	if (bUseRelativeToBone)
+	{
+		CompactPoseRelativeToBoneIndex = BoneContainer.MakeCompactPoseIndex(FMeshPoseBoneIndex(RelativeToBoneIndex));
+	}
+
+	// If relative to first frame, use RelativeToBone's first frame as the reference frame.
+	FTransform FirstFrameBoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, bUseRelativeToBone ? CompactPoseRelativeToBoneIndex : CompactPoseBoneIndex, 0.f, bShouldUseComponentSpace);
 
 	const float AnimLength = Animation->GetPlayLength();
 	const float SampleInterval = 1.f / static_cast<float>(SampleRate);
@@ -87,11 +116,16 @@ void UMotionExtractorModifier::OnApply_Implementation(UAnimSequence* Animation)
 			Time = FMath::Clamp(static_cast<float>(SampleIndex) * SampleInterval, 0.f, AnimLength);
 			SampleIndex++;
 
-			FTransform BoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, CompactPoseBoneIndex, Time, bComponentSpace);
+			FTransform BoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, CompactPoseBoneIndex, Time, bShouldUseComponentSpace);
 
 			if(bRelativeToFirstFrame)
 			{
 				BoneTransform = BoneTransform.GetRelativeTransform(FirstFrameBoneTransform);
+			}
+			else if (bUseRelativeToBone)
+			{
+				const FTransform RelativeToBoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, CompactPoseRelativeToBoneIndex, Time, bShouldUseComponentSpace);
+				BoneTransform = BoneTransform.GetRelativeTransform(RelativeToBoneTransform);
 			}
 
 			// Ignore first frame if we are extracting something that depends on the previous bone transform
@@ -116,11 +150,16 @@ void UMotionExtractorModifier::OnApply_Implementation(UAnimSequence* Animation)
 		Time = FMath::Clamp(static_cast<float>(SampleIndex) * SampleInterval, 0.f, AnimLength);
 		SampleIndex++;
 
-		FTransform BoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, CompactPoseBoneIndex, Time, bComponentSpace);
+		FTransform BoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, CompactPoseBoneIndex, Time, bShouldUseComponentSpace);
 
-		if (bRelativeToFirstFrame)
+		if(bRelativeToFirstFrame)
 		{
 			BoneTransform = BoneTransform.GetRelativeTransform(FirstFrameBoneTransform);
+		}
+		else if (bUseRelativeToBone)
+		{
+			const FTransform RelativeToBoneTransform = UMotionExtractorUtilityLibrary::ExtractBoneTransform(Animation, BoneContainer, CompactPoseRelativeToBoneIndex, Time, bShouldUseComponentSpace);
+			BoneTransform = BoneTransform.GetRelativeTransform(RelativeToBoneTransform);
 		}
 
 		// Ignore first frame if we are extracting something that depends on the previous bone transform
@@ -189,6 +228,18 @@ float UMotionExtractorModifier::GetDesiredValue(const FTransform& BoneTransform,
 	}
 
 	return Value;
+}
+
+void UMotionExtractorModifier::PostLoad()
+{
+	// If bComponentSpace wasn't its default value, set the space property and revert to default.
+	if (bComponentSpace_DEPRECATED == false)
+	{
+		bComponentSpace_DEPRECATED = true;
+		Space = EMotionExtractor_Space::LocalSpace;
+	}
+
+	Super::PostLoad();
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -31,22 +31,40 @@ TArray<UCustomizableObjectNodeMaterial*> FCustomizableObjectNodeParentedMaterial
 	}
 	
 	TArray<UCustomizableObjectNodeObject*> ParentObjectNodes = Node.GetParentObjectNodes(LOD);
-	for (int32 Index = 1; Index < ParentObjectNodes.Num(); ++Index) // Skip first Object node since we do not support directly material siblings.
+
+	ECustomizableObjectAutomaticLODStrategy LODStrategy = ECustomizableObjectAutomaticLODStrategy::Inherited;
+
+	// Iterate backwards, from the Root CO to the parent CO, to propagate the LODStrategy. 
+	for (int32 Index = ParentObjectNodes.Num() - 1; Index > -1; --Index)
 	{
 		const UCustomizableObjectNodeObject* ParentObjectNode = ParentObjectNodes[Index];
-	
-		for (UCustomizableObjectNodeMaterial* MaterialNode : ParentObjectNode->GetMaterialNodes(LOD))
+		
+		if (ParentObjectNode->AutoLODStrategy != ECustomizableObjectAutomaticLODStrategy::Inherited)
 		{
-			if (UCustomizableObjectNodeCopyMaterial* TypedCopyMaterialNode = Cast<UCustomizableObjectNodeCopyMaterial>(MaterialNode))
+			LODStrategy = ParentObjectNode->AutoLODStrategy;
+		}
+		
+		// When using AutomaticFromMesh find all materials within range [0..LOD].
+		int32 LODIndex = LODStrategy == ECustomizableObjectAutomaticLODStrategy::AutomaticFromMesh ? 0 : LOD;
+
+		// If LODStrategy is set to AutomaticFromMesh, find MaterialNodes belonging to lower LODs.
+		for (; LODIndex <= LOD; ++LODIndex)
+		{
+			const TArray<UCustomizableObjectNodeMaterial*> MaterialNodes = ParentObjectNode->GetMaterialNodes(LODIndex);
+
+			for (UCustomizableObjectNodeMaterial* MaterialNode : MaterialNodes)
 			{
-				if (TypedCopyMaterialNode->GetMaterialNode())
+				if (UCustomizableObjectNodeCopyMaterial* TypedCopyMaterialNode = Cast<UCustomizableObjectNodeCopyMaterial>(MaterialNode))
 				{
-					Result.Add(TypedCopyMaterialNode);
+					if (TypedCopyMaterialNode->GetMaterialNode())
+					{
+						Result.Add(TypedCopyMaterialNode);
+					}
 				}
-			}
-			else if (UCustomizableObjectNodeMaterial* TypedMaterialNode = Cast<UCustomizableObjectNodeMaterial>(MaterialNode))
-			{
-				Result.Add(TypedMaterialNode);
+				else if (UCustomizableObjectNodeMaterial* TypedMaterialNode = Cast<UCustomizableObjectNodeMaterial>(MaterialNode))
+				{
+					Result.Add(TypedMaterialNode);
+				}
 			}
 		}
 	}

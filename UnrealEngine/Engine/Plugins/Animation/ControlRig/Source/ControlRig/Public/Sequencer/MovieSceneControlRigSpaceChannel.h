@@ -111,6 +111,8 @@ public:
 	virtual int32 GetNumKeys() const override;
 	virtual void Reset() override;
 	virtual void Offset(FFrameNumber DeltaPosition) override;
+	virtual FKeyHandle GetHandle(int32 Index) override;
+	virtual int32 GetIndex(FKeyHandle Handle) override;
 
 	void GetUniqueSpaceList(TArray<FRigElementKey>* OutList);
 	FMovieSceneControlRigSpaceChannelSpaceNoLongerUsedEvent& OnSpaceNoLongerUsed() { return SpaceNoLongerUsedEvent; }

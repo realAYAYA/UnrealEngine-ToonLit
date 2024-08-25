@@ -39,6 +39,7 @@ private:
 	FText GetShaderTextAsText() const;
 	void OnShaderTextChanged(const FText& InText) const;
 	void OnDiagnosticsUpdated() const;
+	bool IsShaderTextReadOnly() const;
 
 	TSharedRef<FOptimusHLSLSyntaxHighlighter> SyntaxHighlighterDeclarations;
 	TSharedRef<FOptimusHLSLSyntaxHighlighter> SyntaxHighlighterShaderText;

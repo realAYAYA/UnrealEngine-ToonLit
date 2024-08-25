@@ -232,18 +232,6 @@ protected:
 	/** DetermineNextSourceFrame implementration for Freerun Mode */
 	bool DetermineNextSourceFrameFreerunMode(uint64 FrameNumber, uint32& OutExpectedFrameNumber, uint32& OutSharedMemoryIdx);
 
-protected:
-
-	/** Used to make sure that players with the same UniqueName are not allowed to play at the same time, which is not supported.
-	 *  Only access from game thread.
-	 */
-	static TSet<FString> UniqueNamesRegistered;
-
-	/** Used by the player when it opens. The player should not play if the return value is false */
-	static bool RegisterUniqueName(FString& InUniqueName);
-
-	/** Used by the player when it closes. */
-	static void UnregisterUniqueName(FString& InUniqueName);
 
 protected:
 
@@ -255,6 +243,12 @@ protected:
 
 	/** Set of cross Gpu textures that the Media Capture allocates and the player opens */
 	FTextureRHIRef SharedCrossGpuTextures[NUMSHAREDMEM];
+
+	/** Receiver Index used to know what part of the shared metadata corresponds to this receiver */
+	int32 ReceiverIndex[NUMSHAREDMEM] = { 0 };
+
+	/** Unique number that identifies this receiver from any other */
+	FGuid ReceiverId = FGuid::NewGuid();
 
 	/** Shared memory allocated by the Media Capture for IPC purposes with the Media Player */
 	FPlatformMemory::FSharedMemoryRegion* SharedMemory[NUMSHAREDMEM] = { 0 };

@@ -103,7 +103,7 @@ namespace AudioModulation
 #if UE_BUILD_SHIPPING
 				UE_LOG(LogAudioModulation, Verbose, TEXT("Proxy released: Id '%u'."), Id);
 #else // UE_BUILD_SHIPPING
-				UE_LOG(LogAudioModulation, Verbose, TEXT("Proxy '%s' released: Id '%u'."), *Proxy.GetName(), Id);
+				UE_LOG(LogAudioModulation, Verbose, TEXT("Proxy '%s' released: Id '%u'."), *Proxy.GetName().ToString(), Id);
 #endif // !UE_BUILD_SHIPPING
 				ProxyMap->Remove(Id);
 			}
@@ -133,7 +133,7 @@ namespace AudioModulation
 			TProxyHandle<IdType, ProxyType, ProxySettings> NewHandle = Get(InSettings.GetId(), OutProxyMap);
 			if (!NewHandle.IsValid())
 			{
-				UE_LOG(LogAudioModulation, Verbose, TEXT("Proxy created: Id '%u' for object '%s'."), ObjectId, *InSettings.GetName());
+				UE_LOG(LogAudioModulation, Verbose, TEXT("Proxy created: Id '%u' for object '%s'."), ObjectId, *InSettings.GetName().ToString());
 				OutProxyMap.Add(ObjectId, ProxyType(MoveTemp(InSettings), OutModSystem));
 				NewHandle = TProxyHandle<IdType, ProxyType, ProxySettings>(ObjectId, OutProxyMap);
 			}
@@ -237,7 +237,7 @@ namespace AudioModulation
 		IdType Id;
 
 #if !UE_BUILD_SHIPPING
-		FString Name;
+		FName Name;
 #endif // !UE_BUILD_SHIPPING
 
 	public:
@@ -246,13 +246,21 @@ namespace AudioModulation
 		{
 		}
 
-		TModulatorBase(const FString& InName, const uint32 InId)
+		TModulatorBase(const FName InName, const uint32 InId)
 			: Id(static_cast<IdType>(InId))
 #if !UE_BUILD_SHIPPING
 			, Name(InName)
 #endif // !UE_BUILD_SHIPPING
 		{
 		}
+		
+		TModulatorBase(const FString& InName, const uint32 InId)
+        			: Id(static_cast<IdType>(InId))
+        #if !UE_BUILD_SHIPPING
+        			, Name(InName)
+        #endif // !UE_BUILD_SHIPPING
+        {
+        }
 
 		virtual ~TModulatorBase() = default;
 
@@ -263,10 +271,10 @@ namespace AudioModulation
 
 		// FOR DEBUG USE ONLY (Not available in shipped builds):
 		// Provides name of object that generated proxy.
-		const FString& GetName() const
+		const FName& GetName() const
 		{
 #if UE_BUILD_SHIPPING
-			static FString Name;
+			static FName Name;
 #endif // UE_BUILD_SHIPPING
 
 			return Name;
@@ -288,7 +296,7 @@ namespace AudioModulation
 		{
 		}
 
-		TModulatorProxyRefType(const FString& InName, const uint32 InId, FAudioModulationSystem& OutModSystem)
+		TModulatorProxyRefType(const FName& InName, const uint32 InId, FAudioModulationSystem& OutModSystem)
 			: TModulatorBase<IdType>(InName, InId)
 			, RefCount(0)
 			, ModSystem(&OutModSystem)

@@ -43,6 +43,7 @@ UMovieSceneTrack* FSpawnTrackEditor::AddTrack(UMovieScene* FocusedMovieScene, co
 
 	if (auto* SpawnTrack = Cast<UMovieSceneSpawnTrack>(NewTrack))
 	{
+		SpawnTrack->Modify();
 		SpawnTrack->SetObjectId(ObjectHandle);
 		SpawnTrack->AddSection(*SpawnTrack->CreateNewSection());
 	}

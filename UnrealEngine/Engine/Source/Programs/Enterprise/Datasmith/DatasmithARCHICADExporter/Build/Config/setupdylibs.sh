@@ -24,8 +24,8 @@ fi
 
 # Remove ArchiCAD resource tool from quarantine
 pushd "$UE_SDKS_ROOT/HostMac/Mac/Archicad"
-	chmod 777 23/Support/Tools/OSX/ResConv
-	xattr -r -d com.apple.quarantine 23/Support/Tools/OSX/ResConv
+	chmod 777 23.1/Support/Tools/OSX/ResConv
+	xattr -r -d com.apple.quarantine 23.1/Support/Tools/OSX/ResConv
 
 	chmod 777 24/Support/Tools/OSX/ResConv
 	xattr -r -d com.apple.quarantine 24/Support/Tools/OSX/ResConv
@@ -35,6 +35,9 @@ pushd "$UE_SDKS_ROOT/HostMac/Mac/Archicad"
 
 	chmod 777 26/Support/Tools/OSX/ResConv
 	xattr -r -d com.apple.quarantine 26/Support/Tools/OSX/ResConv
+
+	chmod 777 27/Support/Tools/OSX/ResConv
+	xattr -r -d com.apple.quarantine 27/Support/Tools/OSX/ResConv
 popd
 
 OurDylibFolder=$projectPath/Dylibs

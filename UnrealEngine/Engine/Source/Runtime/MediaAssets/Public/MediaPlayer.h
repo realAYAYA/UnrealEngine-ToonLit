@@ -7,6 +7,7 @@
 #include "Delegates/Delegate.h"
 #include "IMediaOptions.h"
 #include "IMediaMetadataItem.h"
+#include "IMediaControls.h"
 #include "Math/Quat.h"
 #include "Math/Rotator.h"
 #include "Templates/SharedPointer.h"
@@ -74,6 +75,21 @@ enum class EMediaPlayerTrack : uint8
 };
 
 
+/**
+ * Blueprint usable enum of EMediaTimeRangeType
+ */
+UENUM(BlueprintType)
+enum class EMediaTimeRangeBPType : uint8
+{
+	/** Total absolute time range as defined by the media. */
+	Absolute = (uint8)EMediaTimeRangeType::Absolute,
+
+	/** Current time range of the media, set by media internal means or through API calls. */
+	Current = (uint8)EMediaTimeRangeType::Current
+
+};
+
+
 UCLASS(BlueprintType, hidecategories = (Object), MinimalAPI)
 class UMediaTimeStampInfo
 	: public UObject
@@ -98,13 +114,13 @@ struct FMediaMetadataItemBPT
 public:
 	UPROPERTY(BlueprintReadOnly, Category = "Media|Metadata")
 	FString LanguageCode;
-	
+
 	UPROPERTY(BlueprintReadOnly, Category = "Media|Metadata")
 	FString MimeType;
-	
+
 	UPROPERTY(BlueprintReadOnly, Category = "Media|Metadata")
 	FString StringData;
-	
+
 	UPROPERTY(BlueprintReadOnly, Category = "Media|Metadata")
 	TArray<uint8> BinaryData;
 };
@@ -1038,6 +1054,72 @@ public:
 public:
 
 	/**
+	 * Check whether the player supports playing back of range within the media.
+	 *
+	 * @return true if playing back a range is supported, false otherwise.
+	 * @see GetPlaybackTimeRange, SetPlaybackTimeRange
+	 */
+	UFUNCTION(BlueprintCallable, Category="Media|MediaPlayer")
+	MEDIAASSETS_API bool SupportsPlaybackTimeRange() const;
+
+	/**
+	 * Returns the current playback range of the media.
+	 * If playing back a range is not supported, the range returned will be equal
+	 * to [ 0, GetDuration() ).
+	 * The media may have an implicit default range provided by the container format
+	 * or other means without having called SetPlaybackTimeRange().
+	 * The media may have internal time values not starting at 0, which are
+	 * conveyed by the range.
+	 * Since the range may be only a portion of the media, the duration of the
+	 * returned range may be less than the media overall duration returned by
+	 * GetDuration().
+	 * For live video streams the range may change dynamically as new content
+	 * becomes available and old content falls off the timeline.
+	 *
+	 * @param InRangeToGet The type of range to get.
+	 *                     `Absolute` returns the media's smallest and largest timeline values.
+	 *                       Unless continuously changing in a Live stream this is usually the
+	 *                       same as [ 0, GetDuration() ]. The base time does not have to be
+	 *                       zero though.
+	 *                     `Current` returns the currently set range, which is a subset of the
+	 *                       absolute range.
+	 * @return The playback range as queried for.
+	 * @see SupportsPlaybackTimeRange, SetPlaybackTimeRange, GetDuration
+	 */
+	MEDIAASSETS_API TRange<FTimespan> GetPlaybackTimeRange(EMediaTimeRangeType InRangeToGet);
+
+	/**
+	 * Blueprint accessible version of GetPlaybackTimeRange.
+	 * This returns the range truncated into a blueprint usable float interval and should not
+	 * be used for live streams as 32 bit floats can not store wallclock times with enough precision.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Media|MediaPlayer")
+	MEDIAASSETS_API FFloatInterval GetPlaybackTimeRange(EMediaTimeRangeBPType InRangeToGet);
+
+	/**
+	 * Sets a new media playback range.
+	 * Has an effect only if SupportsPlaybackTimeRange() returns true and the media supports it.
+	 * A live stream cannot be constrained to a range.
+	 * The range will be clamped if necessary to be within the media's absolute time range.
+	 * Changing the time range may trigger an implicit Seek() depending on where the current
+	 * playback position is located with regard to the new range.
+	 * Unless prevented by the media a playback range can be cleared by passing an empty range.
+	 *
+	 * @param InTimeRange The new playback range to set.
+	 * @return true if successful, false otherwise.
+	 * @see SupportsPlaybackTimeRange, GetPlaybackTimeRange
+	 */
+	MEDIAASSETS_API bool SetPlaybackTimeRange(const TRange<FTimespan>& InTimeRange);
+
+	/**
+	 * Blueprint accessible version of SetPlaybackTimeRange().
+	 * The range is set through a blueprint usable float interval which may not have enough
+	 * precision to represent the range accurately.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Media|MediaPlayer")
+	MEDIAASSETS_API bool SetPlaybackTimeRange(FFloatInterval InTimeRange);
+
+	/**
 	 * Clean up before this object is destroyed. Normally you would not need to call this,
 	 * but if you want to clean up resources before garbage collection (e.g. you are in the editor)
 	 * then this could be helpful.
@@ -1068,7 +1150,7 @@ public:
 	/**
 	 * Templated version of GetMediaInfo.
 	 * No need to deal with variants.
-	 * 
+	 *
 	 * @param	T			Type of the information.
 	 * @param	Result		If the information is found and is the correct type, then this will be
 	 *						set to its value. It will not be set otherwise.
@@ -1103,7 +1185,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Media|Metadata")
 	MEDIAASSETS_API TMap<FString, FMediaMetadataItemsBPT> GetMediaMetadataItems() const;
-	
+
 	/**
 	 * Get the media player facade that manages low-level media players
 	 *
@@ -1117,7 +1199,7 @@ public:
 	 */
 	MEDIAASSETS_API void RegisterWithMediaModule();
 
-	/** 
+	/**
 	 * When the player goes out of scope, make sure to clean up the clock sink
 	 */
 	MEDIAASSETS_API void UnregisterWithMediaModule();

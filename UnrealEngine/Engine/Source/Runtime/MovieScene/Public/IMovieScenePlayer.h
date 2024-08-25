@@ -7,18 +7,14 @@
 #include "Containers/ArrayView.h"
 #include "Misc/InlineValue.h"
 
-#include "MovieSceneSpawnRegister.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
+#include "Evaluation/IMovieScenePlaybackCapability.h"
 #include "Evaluation/MovieSceneAnimTypeID.h"
-#include "Evaluation/MovieScenePreAnimatedState.h"
-#include "Evaluation/MovieSceneEvaluationState.h"
 #include "Evaluation/MovieSceneEvaluationOperand.h"
-
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Evaluation/MovieSceneAnimTypeID.h"
-#include "Evaluation/MovieSceneEvaluationKey.h"
-#include "MovieSceneFwd.h"
-#include "Generators/MovieSceneEasingCurves.h"
-#endif
+#include "Evaluation/MovieSceneEvaluationState.h"
+#include "Evaluation/MovieScenePreAnimatedState.h"
+#include "Evaluation/SequenceDirectorPlaybackCapability.h"
+#include "MovieSceneSpawnRegister.h"
 
 enum class EMovieSceneBuiltInEasing : uint8;
 
@@ -30,10 +26,29 @@ class UMovieSceneEntitySystemLinker;
 struct FMovieSceneRootEvaluationTemplateInstance;
 class FMovieSceneSequenceInstance;
 class IMovieScenePlayer;
+class IMovieSceneSequencePlayerObserver;
 
 namespace UE::MovieScene
 {
 	enum class ESequenceInstanceUpdateFlags : uint8;
+	struct FSharedPlaybackState;
+
+	/**
+	 * Playback capability for storing an IMovieScenePlayer unique index.
+	 */
+	struct FPlayerIndexPlaybackCapability
+	{
+		static TPlaybackCapabilityID<FPlayerIndexPlaybackCapability> ID;
+
+		static MOVIESCENE_API IMovieScenePlayer* GetPlayer(TSharedRef<const FSharedPlaybackState> Owner);
+		static MOVIESCENE_API uint16 GetPlayerIndex(TSharedRef<const FSharedPlaybackState> Owner);
+
+		FPlayerIndexPlaybackCapability(uint16 InPlayerIndex)
+			: PlayerIndex(InPlayerIndex)
+		{}
+
+		uint16 PlayerIndex = (uint16)-1;
+	};
 }
 
 struct EMovieSceneViewportParams
@@ -62,7 +77,7 @@ struct EMovieSceneViewportParams
 };
 
 /** Camera cut parameters */
-struct EMovieSceneCameraCutParams
+struct FMovieSceneCameraCutParams
 {
 	/** If this is not null, release actor lock only if currently locked to this object */
 	UObject* UnlockIfCameraObject = nullptr;
@@ -85,11 +100,16 @@ struct EMovieSceneCameraCutParams
 #endif
 };
 
+/** Backwards compatibility to old struct name with typo */
+using EMovieSceneCameraCutParams = FMovieSceneCameraCutParams; 
+
 /**
  * Interface for movie scene players
  * Provides information for playback of a movie scene
  */
-class IMovieScenePlayer
+class IMovieScenePlayer 
+	: public UE::MovieScene::IObjectBindingNotifyPlaybackCapability
+	, public UE::MovieScene::IStaticBindingOverridesPlaybackCapability
 {
 public:
 	MOVIESCENE_API IMovieScenePlayer();
@@ -110,34 +130,6 @@ public:
 	 * Cast this player instance as a UObject if possible
 	 */
 	virtual UObject* AsUObject() { return nullptr; }
-
-	/**
-	 * Whether this player can update the camera cut
-	 */
-	virtual bool CanUpdateCameraCut() const { return true; }
-
-	/**
-	 * Updates the perspective viewports with the actor to view through
-	 *
-	 * @param CameraObject The object, probably a camera, that the viewports should lock to
-	 * @param UnlockIfCameraObject If this is not nullptr, release actor lock only if currently locked to this object.
-	 * @param bJumpCut Whether this is a jump cut, ie. the cut jumps from one shot to another shot
-	 */
-	void UpdateCameraCut(UObject* CameraObject, UObject* UnlockIfCameraObject = nullptr, bool bJumpCut = false)
-	{
-		EMovieSceneCameraCutParams CameraCutParams;
-		CameraCutParams.UnlockIfCameraObject = UnlockIfCameraObject;
-		CameraCutParams.bJumpCut = bJumpCut;
-		UpdateCameraCut(CameraObject, CameraCutParams);
-	}
-
-	/**
-	 * Updates the perspective viewports with the actor to view through
-	 *
-	 * @param CameraObject The object, probably a camera, that the viewports should lock to
-	 * @param CameraCutParams The parameters for this camera cut.
-	 */
-	virtual void UpdateCameraCut(UObject* CameraObject, const EMovieSceneCameraCutParams& CameraCutParams) = 0;
 
 	/*
 	 * Set the perspective viewport settings
@@ -167,6 +159,7 @@ public:
 	 * @param InBindingId	The ID relating to the object(s) to resolve
 	 * @param OutObjects	Container to populate with the bound objects
 	 */
+	UE_DEPRECATED(5.4, "Please either call IMovieScenePlayer::FindBoundObjects, FMovieSceneObjectBindingID::ResolveBoundObjects, or FMovieSceneEvaluationState::FindBoundObjects")
 	MOVIESCENE_API virtual void ResolveBoundObjects(const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& Sequence, UObject* ResolutionContext, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const;
 
 	/**
@@ -194,17 +187,53 @@ public:
 	 * @param InSequenceID	The ID of the sequence in which the object binding resides
 	 * @param Objects		The array of objects that were resolved
 	 */
-	virtual void NotifyBindingUpdate(const FGuid& InGuid, FMovieSceneSequenceIDRef InSequenceID, TArrayView<TWeakObjectPtr<>> Objects) { NotifyBindingsChanged(); }
+	virtual void NotifyBindingUpdate(const FGuid& InGuid, FMovieSceneSequenceIDRef InSequenceID, TArrayView<TWeakObjectPtr<>> Objects) override { NotifyBindingsChanged(); }
+
+	/**
+	 * Called whenever any object bindings have changed
+	 */
+	virtual void NotifyBindingsChanged() override {}
+
+	/** 
+	 * Retrieves any override for the given operand
+	 */
+	virtual FMovieSceneEvaluationOperand* GetBindingOverride(const FMovieSceneEvaluationOperand& InOperand) override
+	{
+		return BindingOverrides.Find(InOperand);
+	}
+
+	/** 
+	 * Adds an override for the given operand 
+	 */
+	virtual void AddBindingOverride(const FMovieSceneEvaluationOperand& InOperand, const FMovieSceneEvaluationOperand& InOverrideOperand) override
+	{
+		BindingOverrides.Add(InOperand, InOverrideOperand);
+	}
+
+	/** 
+	 * Removes any override set for the given operand
+	 */
+	virtual void RemoveBindingOverride(const FMovieSceneEvaluationOperand& InOperand) override
+	{
+		BindingOverrides.Remove(InOperand);
+	}
+
+	/**
+	 * Remove all director blueprint instances
+	 */
+	UE_DEPRECATED(5.4, "Director instances are now automanaged via FSequenceDirectorPlaybackCapability")
+	void ResetDirectorInstances();
+
+	/**
+	 * Gets a new or existing director blueprint instance for the given root or sub sequence
+	 */
+	UE_DEPRECATED(5.4, "Director instances are now automanaged via FSequenceDirectorPlaybackCapability")
+	UObject* GetOrCreateDirectorInstance(TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceIDRef SequenceID);
 
 	/**
 	 * Called to initialize the flag structure that denotes what functions need to be called on this updater
 	 */
 	MOVIESCENE_API virtual void PopulateUpdateFlags(UE::MovieScene::ESequenceInstanceUpdateFlags& OutFlags);
-
-	/**
-	 * Called whenever any object bindings have changed
-	 */
-	virtual void NotifyBindingsChanged() {}
 
 	/**
 	 * Access the playback context for this movie scene player
@@ -214,12 +243,12 @@ public:
 	/**
 	 * Access the event contexts for this movie scene player
 	 */
-	virtual TArray<UObject*> GetEventContexts() const { return TArray<UObject*>(); }
+	MOVIESCENE_API virtual TArray<UObject*> GetEventContexts() const;
 
 	/**
 	 * Returns whether event triggers are disabled and if so, until what time.
 	 */
-	virtual bool IsDisablingEventTriggers(FFrameTime& DisabledUntilTime) const { return false; }
+	MOVIESCENE_API virtual bool IsDisablingEventTriggers(FFrameTime& DisabledUntilTime) const;
 
 	/**
 	 * Test whether this is a preview player or not. As such, playback range becomes insignificant for things like spawnables
@@ -241,6 +270,11 @@ public:
 	 */
 	virtual void PostEvaluation(const FMovieSceneContext& Context) {}
 
+	/*
+	* Used to access the Observer in MovieSceneSequencePlayer
+	*/
+	virtual TScriptInterface<IMovieSceneSequencePlayerObserver> GetObserver() { return nullptr; }
+
 public:
 
 	/**
@@ -252,16 +286,7 @@ public:
 	 *
 	 * @return Iterable list of weak object pointers pertaining to the specified GUID
 	 */
-	TArrayView<TWeakObjectPtr<>> FindBoundObjects(const FGuid& ObjectBindingID, FMovieSceneSequenceIDRef SequenceID)
-	{
-		FMovieSceneObjectCache* Cache = State.FindObjectCache(SequenceID);
-		if (Cache)
-		{
-			return Cache->FindBoundObjects(ObjectBindingID, *this);
-		}
-
-		return TArrayView<TWeakObjectPtr<>>();
-	}
+	MOVIESCENE_API TArrayView<TWeakObjectPtr<>> FindBoundObjects(const FGuid& ObjectBindingID, FMovieSceneSequenceIDRef SequenceID);
 
 	/**
 	 * Locate objects bound to the specified sequence operand
@@ -287,7 +312,7 @@ public:
 	 */
 	FGuid FindObjectId(UObject& InObject, FMovieSceneSequenceIDRef SequenceID)
 	{
-		return State.FindObjectId(InObject, SequenceID, *this);
+		return State.FindObjectId(InObject, SequenceID, GetSharedPlaybackState());
 	}
 
 	/**
@@ -301,7 +326,7 @@ public:
 	*/
 	FGuid FindCachedObjectId(UObject& InObject, FMovieSceneSequenceIDRef SequenceID)
 	{
-		return State.FindCachedObjectId(InObject, SequenceID, *this);
+		return State.FindCachedObjectId(InObject, SequenceID, GetSharedPlaybackState());
 	}
 
 	/**
@@ -335,7 +360,16 @@ public:
 	void RestorePreAnimatedState()
 	{
 		PreAnimatedState.RestorePreAnimatedState();
-		State.ClearObjectCaches(*this);
+		State.ClearObjectCaches(GetSharedPlaybackState());
+	}
+
+	/**
+	 * Discard all pre-animated state without restoring it
+	 */
+	void DiscardPreAnimatedState()
+	{
+		PreAnimatedState.DiscardPreAnimatedState();
+		State.ClearObjectCaches(GetSharedPlaybackState());
 	}
 
 
@@ -352,10 +386,58 @@ public:
 
 	MOVIESCENE_API bool IsEvaluating() const;
 
+	/**
+	 * Returns the evaluated sequence instance's shared playback state, if any.
+	 */
+	MOVIESCENE_API TSharedPtr<UE::MovieScene::FSharedPlaybackState> FindSharedPlaybackState();
+	/**
+	 * Returns the evaluated sequence instance's shared playback state, asserts if there is none.
+	 */
+	MOVIESCENE_API TSharedRef<UE::MovieScene::FSharedPlaybackState> GetSharedPlaybackState();
+
 	uint16 GetUniqueIndex() const
 	{
 		return UniqueIndex;
 	}
+
+public:
+
+	/**
+	 * Initializes a new root sequence instance and its shared playback state.
+	 * This adds all the player's playback capabilities to the given state.
+	 */
+	MOVIESCENE_API virtual void InitializeRootInstance(TSharedRef<UE::MovieScene::FSharedPlaybackState> NewSharedPlaybackState);
+
+public:
+
+	UE_DEPRECATED(5.4, "Camera cut management has moved to UMovieSceneCameraCutTrackInstance")
+	virtual bool CanUpdateCameraCut() const { return true; }
+
+	UE_DEPRECATED(5.4, "Camera cut management has moved to UMovieSceneCameraCutTrackInstance")
+	virtual void UpdateCameraCut(UObject* CameraObject, UObject* UnlockIfCameraObject = nullptr, bool bJumpCut = false)
+	{
+		EMovieSceneCameraCutParams CameraCutParams;
+		CameraCutParams.UnlockIfCameraObject = UnlockIfCameraObject;
+		CameraCutParams.bJumpCut = bJumpCut;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		UpdateCameraCut(CameraObject, CameraCutParams);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+
+	UE_DEPRECATED(5.4, "Camera cut management has moved to UMovieSceneCameraCutTrackInstance")
+	virtual void UpdateCameraCut(UObject* CameraObject, const EMovieSceneCameraCutParams& CameraCutParams) {}
+
+protected:
+
+	friend struct FMovieSceneObjectCache;
+	/**
+	 * Resolve objects bound to the specified binding ID
+	 *
+	 * @param InBindingId	The ID relating to the object(s) to resolve
+	 * @param OutObjects	Container to populate with the bound objects
+	 */
+	MOVIESCENE_API virtual void ResolveBoundObjects(UE::UniversalObjectLocator::FResolveParams& ResolveParams, const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& Sequence, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const;
+
 
 public:
 

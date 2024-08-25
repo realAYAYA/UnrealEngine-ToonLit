@@ -18,6 +18,7 @@ MeshFilter::MeshFilter(MemoryResource* memRes_) :
 void MeshFilter::configure(std::uint16_t meshCount, UnorderedSet<std::uint16_t> allowedMeshIndices) {
     passingIndices = std::move(allowedMeshIndices);
     // Fill the structure that maps indices prior to deletion to indices after deletion
+    remappedIndices.clear();
     remap(meshCount, passingIndices, remappedIndices);
 }
 

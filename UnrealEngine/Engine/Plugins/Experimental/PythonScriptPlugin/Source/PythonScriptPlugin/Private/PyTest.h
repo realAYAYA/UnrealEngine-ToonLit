@@ -142,9 +142,22 @@ class UPyTestStructLibrary : public UBlueprintFunctionLibrary
 };
 
 /**
+ * Struct to allow testing of class sparse data on a Python exposed type.
+ */
+USTRUCT(BlueprintType)
+struct FPyTestClassSparseData
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Python|Internal")
+	int32 IntFromSparseData = 0;
+};
+
+/**
  * Object to allow testing of the various UObject features that are exposed to Python wrapped types.
  */
-UCLASS(Blueprintable)
+UCLASS(Blueprintable, SparseClassDataTypes = PyTestClassSparseData)
 class UPyTestObject : public UObject, public IPyTestChildInterface, public IPyTestOtherInterface
 {
 	GENERATED_BODY()
@@ -212,6 +225,9 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Python|Internal")
 	int32 FuncBlueprintImplementable(const int32 InValue) const;
 
+	UFUNCTION(BlueprintImplementableEvent, Category = "Python|Internal")
+	bool FuncBlueprintImplementablePackedGetter(int32& OutValue) const;
+
 	UFUNCTION(BlueprintNativeEvent, Category = "Python|Internal")
 	int32 FuncBlueprintNative(const int32 InValue) const;
 
@@ -220,6 +236,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Python|Internal")
 	int32 CallFuncBlueprintImplementable(const int32 InValue) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Python|Internal")
+	bool CallFuncBlueprintImplementablePackedGetter(int32& OutValue) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Python|Internal")
 	int32 CallFuncBlueprintNative(const int32 InValue) const;

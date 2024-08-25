@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "PathTracingDenoiser.h"
 #include "RHIDefinitions.h"
 
 #if RHI_RAYTRACING
@@ -26,6 +27,9 @@ struct FPathTracingSpatialTemporalDenoisingContext
 	FRDGTexture*	LastNormalTexture = nullptr;
 	FRDGTexture*	LastAlbedoTexture = nullptr;
 	FRDGBuffer*		LastVarianceBuffer = nullptr;
+
+	// Custom path tracing spacial temporal denoiser result, used by plugins
+	TRefCountPtr<UE::Renderer::Private::IPathTracingSpatialTemporalDenoiser::IHistory> SpatialTemporalDenoiserHistory;
 
 	int FrameIndex;
 

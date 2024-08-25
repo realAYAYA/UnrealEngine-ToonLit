@@ -4,48 +4,113 @@
 
 #include "HAL/FileManager.h"
 #include "MuCO/UnrealMutableModelDiskStreamer.h"
+#include "MuCO/UnrealToMutableTextureConversionUtils.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuR/Model.h"
 #include "MuT/Compiler.h"
 #include "MuT/ErrorLog.h"
+#include "MuT/UnrealPixelFormatOverride.h"
 #include "Serialization/MemoryWriter.h"
+#include "Async/Async.h"
+#include "Containers/Ticker.h"
 #include "Trace/Trace.inl"
 
 class ITargetPlatform;
 
-
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
+
+#define UE_MUTABLE_CORE_REGION	TEXT("Mutable Core")
+
+
+TAutoConsoleVariable<bool> CVarMutableCompilerConcurrency(
+	TEXT("mutable.ForceCompilerConcurrency"),
+	true,
+	TEXT("Force the use of multithreading when compiling CustomizableObjects both in editor and cook commandlets."),
+	ECVF_Default);
+
+TAutoConsoleVariable<bool> CVarMutableCompilerDiskCache(
+	TEXT("mutable.ForceCompilerDiskCache"),
+	false,
+	TEXT("Force the use of disk cache to reduce memory usage when compiling CustomizableObjects both in editor and cook commandlets."),
+	ECVF_Default);
 
 
 FCustomizableObjectCompileRunnable::FCustomizableObjectCompileRunnable(mu::Ptr<mu::Node> Root)
 	: MutableRoot(Root)
 	, bThreadCompleted(false)
-	, MutableIsDisabled(false)
 {
+	PrepareUnrealCompression();
+}
+
+
+mu::Ptr<mu::Image> FCustomizableObjectCompileRunnable::LoadResourceReferenced(int32 ID)
+{
+	check(IsInGameThread());
+
+	MUTABLE_CPUPROFILER_SCOPE(LoadResourceReferenced);
+
+	mu::Ptr<mu::Image> Image;
+	if (!ReferencedTextures.IsValidIndex(ID))
+	{
+		// The id is not valid for this CO
+		check(false);
+		return Image;
+	}
+
+	// Find the texture id
+	TSoftObjectPtr<UTexture> TexturePtr = ReferencedTextures[ID];
+
+	// This can cause a stall because of loading the asset.
+	UTexture2D* Texture = Cast<UTexture2D>(TexturePtr.LoadSynchronous());
+	if (!Texture)
+	{
+		// Failed to load the texture
+		check(false);
+		return Image;
+	}
+
+	// In the editor the src data can be directly accessed
+	Image = new mu::Image();
+	int32 MipmapsToSkip = 0;
+	bool bIsNormalComposite = false; // TODO?
+	EUnrealToMutableConversionError Error = ConvertTextureUnrealSourceToMutable(Image.get(), Texture, bIsNormalComposite, MipmapsToSkip);
+	check(Error == EUnrealToMutableConversionError::Success);
+	return Image;
 }
 
 
 uint32 FCustomizableObjectCompileRunnable::Run()
 {
+	TRACE_BEGIN_REGION(UE_MUTABLE_CORE_REGION);
+
 	UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] FCustomizableObjectCompileRunnable::Run start."), FPlatformTime::Seconds());
 
 	uint32 Result = 1;
 	ErrorMsg = FString();
 
-	if (MutableIsDisabled)
+	// Translate CO compile options into mu::CompilerOptions
+	mu::Ptr<mu::CompilerOptions> CompilerOptions = new mu::CompilerOptions();
+
+	bool bUseConcurrency = !Options.bIsCooking;
+	if (CVarMutableCompilerConcurrency->GetBool())
 	{
-		bThreadCompleted = true;
-		UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] FCustomizableObjectCompileRunnable::Run end. NOTE: Mutable compile is deactivated in Editor. To reactivate it, go to Project Settings -> Plugins -> Mutable and unmark the option Disable Mutable Compile In Editor"), FPlatformTime::Seconds());
-		return true;
+		bUseConcurrency = true;
 	}
 
-	mu::CompilerOptionsPtr CompilerOptions = new mu::CompilerOptions();
+	CompilerOptions->SetUseConcurrency(bUseConcurrency);
 
-	CompilerOptions->SetUseDiskCache(Options.bUseDiskCompilation);
+	bool bUseDiskCache = Options.bUseDiskCompilation;
+	if (CVarMutableCompilerDiskCache->GetBool())
+	{
+		bUseDiskCache = true;
+	}
 
-	if (Options.OptimizationLevel > 3)
+	CompilerOptions->SetUseDiskCache(bUseDiskCache);
+
+	if (Options.OptimizationLevel > 2)
 	{
 		UE_LOG(LogMutable, Log, TEXT("Mutable compile optimization level out of range. Clamping to maximum."));
-		Options.OptimizationLevel = 3;
+		Options.OptimizationLevel = 2;
 	}
 
 	switch (Options.OptimizationLevel)
@@ -65,35 +130,58 @@ uint32 FCustomizableObjectCompileRunnable::Run()
 	case 2:
 		CompilerOptions->SetOptimisationEnabled(true);
 		CompilerOptions->SetConstReductionEnabled(true);
-		CompilerOptions->SetOptimisationMaxIteration(16);
-		break;
-
-	case 3:
-		CompilerOptions->SetOptimisationEnabled(true);
-		CompilerOptions->SetConstReductionEnabled(true);
 		CompilerOptions->SetOptimisationMaxIteration(0);
 		break;
 
 	default:
-		CompilerOptions->SetOptimisationEnabled(false);
+		CompilerOptions->SetOptimisationEnabled(true);
 		CompilerOptions->SetConstReductionEnabled(true);
-		CompilerOptions->SetOptimisationMaxIteration(1);
+		CompilerOptions->SetOptimisationMaxIteration(0);
 		break;
 	}
 
-	// Minimum resident mip count.
-	const int MinResidentMips = UTexture::GetStaticMinTextureResidentMipCount();
-	// Data smaller than this will always be loaded, as part of the customizable object compiled model.
-	const int MinRomSize = 128;
-	CompilerOptions->SetDataPackingStrategy(MinRomSize, MinResidentMips);
+	// Texture compression override, if necessary
+	if (Options.TextureCompression== ECustomizableObjectTextureCompression::HighQuality)
+	{
+		CompilerOptions->SetImagePixelFormatOverride( UnrealPixelFormatFunc );
+	}
 
-	// At object compilation time we don't know if we will want progressive images or not. Assume we will. 
-	// TODO: Per-state setting?
+	auto ProviderTick = [this](float)
+		{
+			Tick();
+		};
+
+	CompilerOptions->SetReferencedResourceCallback([this, &ProviderTick](int32 ID, TSharedPtr<mu::Ptr<mu::Image>> ResolvedImage, bool bRunImmediatlyIfPossible)
+		{
+			// This runs in a random thread
+			UE::Tasks::FTaskEvent CompletionEvent(TEXT("ReferencedResourceCallbackCompletion"));			
+
+			if (IsInGameThread() && bRunImmediatlyIfPossible)
+			{
+				// Do everything now
+				mu::Ptr<mu::Image> Result = LoadResourceReferenced(ID);
+				*ResolvedImage = Result;
+				CompletionEvent.Trigger();
+			}
+			else
+			{
+				PendingResourceReferenceRequests.Enqueue(FReferenceResourceRequest{ ID, ResolvedImage, MakeShared<UE::Tasks::FTaskEvent>(CompletionEvent) });
+			}
+
+			return CompletionEvent;
+		}, 
+		ProviderTick
+	);
+
+	const int32 MinResidentMips = UTexture::GetStaticMinTextureResidentMipCount();
+	CompilerOptions->SetDataPackingStrategy( MinResidentMips, Options.EmbeddedDataBytesLimit, Options.PackagedDataBytesLimit );
+
+	// We always compile for progressive image generation.
 	CompilerOptions->SetEnableProgressiveImages(true);
 	
 	CompilerOptions->SetImageTiling(Options.ImageTiling);
 
-	mu::CompilerPtr Compiler = new mu::Compiler(CompilerOptions);
+	mu::Ptr<mu::Compiler> Compiler = new mu::Compiler(CompilerOptions);
 
 	UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] FCustomizableObjectCompileRunnable Compile start."), FPlatformTime::Seconds());
 	Model = Compiler->Compile(MutableRoot);
@@ -139,6 +227,10 @@ uint32 FCustomizableObjectCompileRunnable::Run()
 
 	UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] FCustomizableObjectCompileRunnable::Run end."), FPlatformTime::Seconds());
 
+	CompilerOptions->LogStats();
+
+	TRACE_END_REGION(UE_MUTABLE_CORE_REGION);
+
 	return Result;
 }
 
@@ -155,33 +247,78 @@ const TArray<FCustomizableObjectCompileRunnable::FError>& FCustomizableObjectCom
 }
 
 
+void FCustomizableObjectCompileRunnable::Tick()
+{
+	check(IsInGameThread());
+
+	constexpr double MaxSecondsPerFrame = 0.4;
+
+	double MaxTime = FPlatformTime::Seconds() + MaxSecondsPerFrame;
+
+	FReferenceResourceRequest Request;
+	while (PendingResourceReferenceRequests.Dequeue(Request))
+	{
+		*Request.ResolvedImage = LoadResourceReferenced(Request.ID);
+		Request.CompletionEvent->Trigger();
+
+		// Simple time limit enforcement to avoid blocking the game thread if there are many requests.
+		double CurrentTime = FPlatformTime::Seconds();
+		if (CurrentTime >= MaxTime)
+		{
+			break;
+		}
+	}
+}
+
+
 FCustomizableObjectSaveDDRunnable::FCustomizableObjectSaveDDRunnable(UCustomizableObject* CustomizableObject, const FCompilationOptions& InOptions)
 {
-	Model = CustomizableObject->GetModel();
+	MUTABLE_CPUPROFILER_SCOPE(FCustomizableObjectSaveDDRunnable::FCustomizableObjectSaveDDRunnable)
+		
+	Model = CustomizableObject->GetPrivate()->GetModel();
 	Options = InOptions;
 	
-	CustomizableObjectHeader.InternalVersion = CustomizableObject->GetCurrentSupportedVersion();
-	CustomizableObjectHeader.VersionId = Options.bIsCooking? FGuid::NewGuid() : CustomizableObject->GetVersionId();
+	CustomizableObjectHeader.InternalVersion = CustomizableObject->GetPrivate()->CurrentSupportedVersion;
+	CustomizableObjectHeader.VersionId = Options.bIsCooking? FGuid::NewGuid() : CustomizableObject->GetPrivate()->GetVersionId();
 
-	if (!Options.bIsCooking || Options.bSaveCookedDataToDisk)
+	if (!Options.bIsCooking)
 	{
 		// We will be saving all compilation data in two separate files, write CO Data
-		FolderPath = CustomizableObject->GetCompiledDataFolderPath(!InOptions.bIsCooking);
-		CompileDataFullFileName = FolderPath + CustomizableObject->GetCompiledDataFileName(true, InOptions.TargetPlatform);
-		StreamableDataFullFileName = FolderPath + CustomizableObject->GetCompiledDataFileName(false, InOptions.TargetPlatform);
+		FolderPath = CustomizableObject->GetPrivate()->GetCompiledDataFolderPath();
+		CompileDataFullFileName = FolderPath + CustomizableObject->GetPrivate()->GetCompiledDataFileName(true, InOptions.TargetPlatform);
+		StreamableDataFullFileName = FolderPath + CustomizableObject->GetPrivate()->GetCompiledDataFileName(false, InOptions.TargetPlatform);
 
 		// Serialize Customizable Object's data
 		FMemoryWriter64 MemoryWriter(Bytes);
-		CustomizableObject->SaveCompiledData(MemoryWriter, Options.bIsCooking);
+		CustomizableObject->GetPrivate()->SaveCompiledData(MemoryWriter, Options.bIsCooking);
 	}
+#if WITH_EDITORONLY_DATA
+	else
+	{
+		// Do a copy of the MorphData generated at compile time. Only needed when cooking.
+		
+		static_assert(TCanBulkSerialize<FMorphTargetVertexData>::Value);
+		constexpr bool bGetCookedFalse = false;
+		const TArray<FMorphTargetVertexData>& MorphVertexData = 
+				CustomizableObject->GetPrivate()->GetModelResources(bGetCookedFalse).EditorOnlyMorphTargetReconstructionData;
+
+		MorphDataBytes.SetNum(MorphVertexData.Num() * sizeof(FMorphTargetVertexData));
+		FMemory::Memcpy(MorphDataBytes.GetData(), MorphVertexData.GetData(), MorphDataBytes.Num());
+	}
+#endif // WITH_EDITORONLY_DATA
 }
 
 
 uint32 FCustomizableObjectSaveDDRunnable::Run()
 {
+	MUTABLE_CPUPROFILER_SCOPE(FCustomizableObjectSaveDDRunnable::Run)
+
+	// MorphDataBytes has data only if cooking. 
+	check(!!Options.bIsCooking || MorphDataBytes.IsEmpty());
+
 	bool bModelSerialized = Model.Get() != nullptr;
 
-	if (Options.bIsCooking && !Options.bSaveCookedDataToDisk)
+	if (Options.bIsCooking)
 	{
 		// Serialize mu::Model and streamable resources 
 		FMemoryWriter64 ModelMemoryWriter(Bytes, false, true);
@@ -192,9 +329,11 @@ uint32 FCustomizableObjectSaveDDRunnable::Run()
 		{
 			FUnrealMutableModelBulkWriter Streamer(&ModelMemoryWriter, &StreamableMemoryWriter);
 			mu::Model::Serialise(Model.Get(), Streamer);
+
+			//MorphData is already in the corresponding buffer copied from the compilation thread.
 		}
 	}
-	else if(bModelSerialized) // Save CO data + mu::Model and streamable resources to disk
+	else if (bModelSerialized) // Save CO data + mu::Model and streamable resources to disk
 	{
 		// Create folder...
 		IFileManager& FileManager = IFileManager::Get();
@@ -220,8 +359,8 @@ uint32 FCustomizableObjectSaveDDRunnable::Run()
 		if (bFilesDeleted)
 		{
 			// Create file writers...
-			TUniquePtr<FArchive> ModelMemoryWriter( FileManager.CreateFileWriter(*CompileDataFullFileName) );
-			TUniquePtr<FArchive> StreamableMemoryWriter( FileManager.CreateFileWriter(*StreamableDataFullFileName) );
+			TUniquePtr<FArchive> ModelMemoryWriter(FileManager.CreateFileWriter(*CompileDataFullFileName));
+			TUniquePtr<FArchive> StreamableMemoryWriter(FileManager.CreateFileWriter(*StreamableDataFullFileName));
 			check(ModelMemoryWriter);
 			check(StreamableMemoryWriter);
 
@@ -259,18 +398,6 @@ uint32 FCustomizableObjectSaveDDRunnable::Run()
 }
 
 
-TArray64<uint8>& FCustomizableObjectSaveDDRunnable::GetModelBytes()
-{
-	return Bytes;
-}
-
-
-TArray64<uint8>& FCustomizableObjectSaveDDRunnable::GetBulkBytes()
-{
-	return BulkDataBytes;
-}
-
-
 bool FCustomizableObjectSaveDDRunnable::IsCompleted() const
 {
 	return bThreadCompleted;
@@ -283,3 +410,4 @@ const ITargetPlatform* FCustomizableObjectSaveDDRunnable::GetTargetPlatform() co
 }
 
 #undef LOCTEXT_NAMESPACE
+

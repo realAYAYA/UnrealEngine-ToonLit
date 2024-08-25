@@ -11,7 +11,9 @@
 #include "Engine/Texture.h"
 #include "Materials/Material.h"
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCO/CustomizableObjectSystem.h"
+#include "MuCOE/GraphTraversal.h"
 #include "UObject/NameTypes.h"
 #include "UObject/Object.h"
 
@@ -22,22 +24,19 @@ UAssetValidator_CustomizableObjects::UAssetValidator_CustomizableObjects() : Sup
 	bIsEnabled = true;
 }
 
-
-bool UAssetValidator_CustomizableObjects::CanValidate_Implementation(const EDataValidationUsecase InUsecase) const
+bool UAssetValidator_CustomizableObjects::CanValidateAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
 	// Do not run if saving or running a commandlet (we do not want CIS failing due to our warnings and errors)
-	return !(InUsecase == EDataValidationUsecase::Save || InUsecase == EDataValidationUsecase::Commandlet);
+	if (InContext.GetValidationUsecase() == EDataValidationUsecase::Save || InContext.GetValidationUsecase() == EDataValidationUsecase::Commandlet)
+	{
+		return false;
+	}
+
+	return Cast<UCustomizableObject>(InAsset) != nullptr;
 }
 
 
-bool UAssetValidator_CustomizableObjects::CanValidateAsset_Implementation(UObject* InAsset) const
-{
-	return (InAsset ? InAsset->IsA(UCustomizableObject::StaticClass())  : false) ;
-}
-
-
-EDataValidationResult UAssetValidator_CustomizableObjects::ValidateLoadedAsset_Implementation(UObject* InAsset,
-	TArray<FText>& ValidationErrors)
+EDataValidationResult UAssetValidator_CustomizableObjects::ValidateLoadedAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext)
 {
 	check(InAsset);
 
@@ -61,11 +60,11 @@ EDataValidationResult UAssetValidator_CustomizableObjects::ValidateLoadedAsset_I
 		// Cache error logs -> They will tag the asset validation as failed
 		for (const FText& ErrorMessage : CoValidationErrors)
 		{
-			AssetFails(InAsset,ErrorMessage,ValidationErrors);
+			AssetFails(InAsset,ErrorMessage);
 		}
 
 		const FText ErrorMessage = FText::Format(LOCTEXT("CO_Validation_Failed", "Validation compilation of {0} CO failed."),  FText::FromString( CustomizableObjectToValidate->GetName()));
-		AssetFails(InAsset,ErrorMessage,ValidationErrors);
+		AssetFails(InAsset,ErrorMessage);
 	}
 	else
 	{
@@ -94,7 +93,7 @@ EDataValidationResult UAssetValidator_CustomizableObjects::IsCustomizableObjectV
 		TUniquePtr<FCustomizableObjectCompilerBase>(UCustomizableObjectSystem::GetInstance()->GetNewCompiler());
 	
 	// Find out which is the root for this CO (it may be itself but that is OK)
-	UCustomizableObject* RootObject = Compiler->GetRootObject(InCustomizableObject);
+	UCustomizableObject* RootObject = GetRootObject(InCustomizableObject);
 	check (RootObject);
 	
 	// Check that the object to be compiled has not already been compiled

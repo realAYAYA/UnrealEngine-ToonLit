@@ -14,6 +14,6 @@ namespace mu
 	extern void MeshRemoveMask(Mesh* Result, const Mesh* Source, const Mesh* Mask, bool& bOutSuccess);
 
 	/** Remove a list of vertices and related faces from a mesh. The list is stored as a bool map for every vertex in the mesh. */
-	extern void MeshRemoveVerticesWithMap(Mesh* Result, uint8* RemovedVertices, int32 RemovedVerticesCount);
+	extern void MeshRemoveVerticesWithMap(Mesh* Result, const uint8* RemovedVertices, uint32 RemovedVerticesCount);
 
 }

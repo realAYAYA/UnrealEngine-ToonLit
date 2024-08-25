@@ -4,6 +4,9 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:async/async.dart';
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -13,17 +16,11 @@ import '../../../models/property_modify_operations.dart';
 import '../../../utilities/math_utilities.dart';
 import '../../models/settings/color_wheel_settings.dart';
 import '../../models/settings/delta_widget_settings.dart';
-import '../../utilities/constants.dart';
 import '../../utilities/guarded_refresh_state.dart';
-import '../../utilities/preferences_bundle.dart';
-import '../../utilities/transient_preference.dart';
-import '../../utilities/unreal_colors.dart';
 import '../../utilities/unreal_utilities.dart';
-import 'asset_icon.dart';
 import 'color_slider.dart';
 import 'delta_slider.dart';
 import 'delta_widget_base.dart';
-import 'selector_bar.dart';
 import 'unreal_widget_base.dart';
 
 /// Diameter of a dot on the color wheel indicating a value.
@@ -577,8 +574,8 @@ class _DrivenColorWheelState extends State<DrivenColorWheel> with DeltaWidgetSta
                         icon: AssetIcon(
                           size: 20,
                           path: editMode == ColorWheelEditMode.wheel
-                              ? 'assets/images/icons/sliders.svg'
-                              : 'assets/images/icons/color_wheel.svg',
+                              ? 'packages/epic_common/assets/icons/sliders.svg'
+                              : 'packages/epic_common/assets/icons/color_wheel.svg',
                         ),
                       ),
                     ),
@@ -594,7 +591,7 @@ class _DrivenColorWheelState extends State<DrivenColorWheel> with DeltaWidgetSta
             child: widget.extraTopWidget!,
           ),
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: cardMargin),
+          padding: EdgeInsets.symmetric(horizontal: UnrealTheme.cardMargin),
           child: Column(
             children: [
               // Color wheel
@@ -661,8 +658,19 @@ class _DrivenColorWheelState extends State<DrivenColorWheel> with DeltaWidgetSta
       return;
     }
 
+    // Color value below which the color is effectively black
+    const double lowValue = 0.00001;
+
     final Offset scaledDeltaOffset = details.delta * deltaMultiplier / _getWheelDiameter(renderBox.constraints);
-    final List<WheelColor> deltaColors = List.filled(widget.wheelValues.length, WheelColor(scaledDeltaOffset, 0, 0));
+    final List<WheelColor> deltaColors = widget.wheelValues
+        .map((prevColor) => WheelColor(
+              scaledDeltaOffset,
+              // If the color's value is nearly 0, force it to 1 since otherwise the user won't see a color change.
+              // This imitates Unreal Editor's color editing behavior.
+              ((prevColor?.value.value ?? 0) < lowValue) ? 1 : 0,
+              0,
+            ))
+        .toList(growable: false);
     widget.onValueChanged(deltaColors);
   }
 

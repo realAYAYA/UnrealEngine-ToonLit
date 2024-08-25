@@ -91,11 +91,13 @@ void FLocalizationDashboardSettingsDetailCustomization::CustomizeDetails(IDetail
 				]
 			];
 
+#if LOCALIZATION_SERVICES_WITH_SLATE
 		const ILocalizationServiceProvider& LSP = ILocalizationServiceModule::Get().GetProvider();
 		if (ServiceProviderCategoryBuilder != nullptr)
 		{
 			LSP.CustomizeSettingsDetails(*ServiceProviderCategoryBuilder);
 		}
+#endif
 	}
 
 	// Source Control
@@ -187,10 +189,12 @@ void FLocalizationDashboardSettingsDetailCustomization::ServiceProviderComboBox_
 	FName ServiceProviderName = LSP ? LSP->GetName() : FName(TEXT("None"));
 	ILocalizationServiceModule::Get().SetProvider(ServiceProviderName);
 
+#if LOCALIZATION_SERVICES_WITH_SLATE
 	if (LSP && ServiceProviderCategoryBuilder)
 	{
 		LSP->CustomizeSettingsDetails(*ServiceProviderCategoryBuilder);
 	}
+#endif
 	DetailLayoutBuilder->ForceRefreshDetails();
 }
 

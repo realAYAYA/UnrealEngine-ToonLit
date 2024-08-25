@@ -3,8 +3,8 @@
 #pragma once
 
 #include "Cluster/Controller/IDisplayClusterClusterNodeController.h"
+#include "Network/IDisplayClusterClient.h"
 
-class IDisplayClusterClient;
 class IDisplayClusterServer;
 class FDisplayClusterTcpListener;
 class FDisplayClusterClusterEventsBinaryClient;
@@ -147,9 +147,9 @@ private:
 
 	// JSON client for sending events outside of the cluster
 	FCriticalSection ExternEventsClientJsonGuard;
-	TUniquePtr<FDisplayClusterClusterEventsJsonClient>   ExternalEventsClientJson;
+	TUniquePtr<FDisplayClusterClusterEventsJsonClient, FDisplayClusterClientDeleter> ExternalEventsClientJson;
 
 	// Binary client for sending events outside of the cluster
 	FCriticalSection ExternEventsClientBinaryGuard;
-	TUniquePtr<FDisplayClusterClusterEventsBinaryClient> ExternalEventsClientBinary;
+	TUniquePtr<FDisplayClusterClusterEventsBinaryClient, FDisplayClusterClientDeleter> ExternalEventsClientBinary;
 };

@@ -4,7 +4,6 @@
 
 #include "EdGraph/EdGraphNode.h"
 #include "Misc/AssertionMacros.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Package.h"
 
 class UObject;

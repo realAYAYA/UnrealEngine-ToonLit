@@ -115,7 +115,7 @@ FText BuildCrossConstraintCountText(const UPhysicsAsset* const PhysicsAsset)
 		{
 			const FReferenceSkeleton& RefSkeleton = SkeletalMesh->GetRefSkeleton();
 
-			for (TObjectPtr<UPhysicsConstraintTemplate> CurrentConstraintSetup : PhysicsAsset->ConstraintSetup)
+			for (const TObjectPtr<UPhysicsConstraintTemplate>& CurrentConstraintSetup : PhysicsAsset->ConstraintSetup)
 			{
 				if (CurrentConstraintSetup)
 				{

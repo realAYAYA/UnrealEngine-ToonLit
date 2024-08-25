@@ -50,6 +50,10 @@ public:
 	// Domain is [-0.5, 0.5] 
 	static FColor MakeTurboColorFromScalar(float Scalar);
 
+	// Wireframe Properties
+	static const float WireframeThickness;
+	static const float BoundaryEdgeThickness;
+
 	// Selection Highlighting Properties
 	static const float SelectionTriangleOpacity;
 	static const FColor SelectionTriangleFillColor;

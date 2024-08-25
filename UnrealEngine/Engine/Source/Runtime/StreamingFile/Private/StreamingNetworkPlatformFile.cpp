@@ -603,7 +603,7 @@ bool FStreamingNetworkPlatformFile::IterateDirectory(const TCHAR* InDirectory, I
 				bool bIsDirectory = It.Value() == 0;
 			
 				// visit (stripping off the path if needed)
-				RetVal = Visitor.Visit(bHadNoPath ? *FPaths::GetCleanFilename(It.Key()) : *It.Key(), bIsDirectory);
+				RetVal = Visitor.CallShouldVisitAndVisit(bHadNoPath ? *FPaths::GetCleanFilename(It.Key()) : *It.Key(), bIsDirectory);
 			}
 		}
 	}
@@ -633,7 +633,7 @@ bool FStreamingNetworkPlatformFile::IterateDirectoryRecursively(const TCHAR* InD
 				bool bIsDirectory = It.Value() == 0;
 
 				// visit!
-				RetVal = Visitor.Visit(*It.Key(), bIsDirectory);
+				RetVal = Visitor.CallShouldVisitAndVisit(*It.Key(), bIsDirectory);
 			}
 		}
 	}

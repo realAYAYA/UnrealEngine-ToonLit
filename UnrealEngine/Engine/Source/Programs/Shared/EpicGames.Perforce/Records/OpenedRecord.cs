@@ -12,9 +12,15 @@ namespace EpicGames.Perforce
 	public class OpenedRecord
 	{
 		/// <summary>
-		/// Depot path to file
+		/// The stream spec opened for edit
 		/// </summary>
-		[PerforceTag("depotFile")]
+		[PerforceTag("stream", Optional = true)]
+		public string Stream { get; set; } = String.Empty;
+
+		/// <summary>
+		/// Depot path to file. May be unset if this record describes a stream spec.
+		/// </summary>
+		[PerforceTag("depotFile", Optional = true)]
 		public string DepotFile { get; set; } = String.Empty;
 
 		/// <summary>
@@ -68,7 +74,7 @@ namespace EpicGames.Perforce
 		/// <summary>
 		/// Client with the file open
 		/// </summary>
-		[PerforceTag("client")]
+		[PerforceTag("client", Optional = true)]
 		public string Client { get; set; } = String.Empty;
 	}
 }

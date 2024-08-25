@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "PackageDependencyData.h"
+#include "Algo/Unique.h"
 
 FName FPackageDependencyData::GetImportPackageName(TConstArrayView<FObjectImport> ImportMap, int32 ImportIndex)
 {
@@ -30,6 +31,18 @@ FName FPackageDependencyData::GetImportPackageName(TConstArrayView<FObjectImport
 	return NAME_None;
 }
 
+struct FSortPackageDependency
+{
+	FORCEINLINE bool operator()(const FPackageDependencyData::FPackageDependency& A, const FPackageDependencyData::FPackageDependency& B) const
+	{
+		if (int32 Comparison = A.PackageName.CompareIndexes(B.PackageName))
+		{
+			return Comparison < 0;
+		}
+		return static_cast<uint8>(A.Property) < static_cast<uint8>(B.Property);
+	}
+};
+
 void FPackageDependencyData::LoadDependenciesFromPackageHeader(FName SourcePackageName, TConstArrayView<FObjectImport> ImportMap,
 	TArray<FName>& SoftPackageReferenceList, TMap<FPackageIndex, TArray<FName>>& SearchableNames,
 	TBitArray<>& ImportUsedInGame, TBitArray<>& SoftPackageUsedInGame)
@@ -46,6 +59,12 @@ void FPackageDependencyData::LoadDependenciesFromPackageHeader(FName SourcePacka
 		PackageDependencies.Add({ DependencyPackageName, DependencyProperty });
 	}
 
+	// Sort and make unique to reduce data saved and processed
+	PackageDependencies.Sort(FSortPackageDependency());
+
+	int UniqueNum = Algo::Unique(PackageDependencies);
+	PackageDependencies.SetNum(UniqueNum, EAllowShrinking::No);
+
 	check(SoftPackageReferenceList.Num() == SoftPackageUsedInGame.Num());
 	for (int32 SoftPackageIdx = 0; SoftPackageIdx < SoftPackageReferenceList.Num(); ++SoftPackageIdx)
 	{
@@ -53,6 +72,8 @@ void FPackageDependencyData::LoadDependenciesFromPackageHeader(FName SourcePacka
 		FAssetIdentifier AssetId(DependencyPackageName);
 		EDependencyProperty DependencyProperty = UE::AssetRegistry::EDependencyProperty::Build; // !EDependencyProperty::Hard
 		DependencyProperty |= (SoftPackageUsedInGame[SoftPackageIdx] ? EDependencyProperty::Game : EDependencyProperty::None);
+
+		// Don't need to remove duplicates here because SavePackage only writes unique elements into SoftPackageReferenceList
 		PackageDependencies.Add({ DependencyPackageName, DependencyProperty });
 	}
 

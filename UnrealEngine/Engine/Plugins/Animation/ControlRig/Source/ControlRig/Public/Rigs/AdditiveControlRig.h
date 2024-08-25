@@ -18,6 +18,10 @@ class CONTROLRIG_API UAdditiveControlRig : public UControlRig
 public: 
 	// BEGIN ControlRig
 	virtual void Initialize(bool bInitRigUnits = true) override;
+	virtual void InitializeVMs(bool bRequestInit = true) override { URigVMHost::Initialize(bRequestInit); }
+	virtual bool InitializeVMs(const FName& InEventName) override { return URigVMHost::InitializeVM(InEventName); }
+	virtual void InitializeVMsFromCDO() override { URigVMHost::InitializeFromCDO(); }
+	virtual void RequestInitVMs() override { URigVMHost::RequestInit(); }
 	virtual bool Execute_Internal(const FName& InEventName) override;
 	// END ControlRig
 

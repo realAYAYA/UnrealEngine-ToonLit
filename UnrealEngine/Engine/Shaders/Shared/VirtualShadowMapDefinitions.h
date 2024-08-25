@@ -18,13 +18,20 @@ VirtualShadowMapDefinitions.h: used in virtual shadow map shaders and C++ code t
 #define VIRTUAL_SHADOW_MAP_VISUALIZE_DIRTY_PAGE					(1 << 7)
 #define VIRTUAL_SHADOW_MAP_VISUALIZE_GPU_INVALIDATED_PAGE		(1 << 8)
 #define VIRTUAL_SHADOW_MAP_VISUALIZE_MERGED_PAGE				(1 << 9)
+#define VIRTUAL_SHADOW_MAP_VISUALIZE_NANITE_OVERDRAW			(1 << 10)
 
 
 #define VSM_PROJ_FLAG_CURRENT_DISTANT_LIGHT (1U << 0)
 #define VSM_PROJ_FLAG_UNCACHED (1U << 1) // Used to indicate that the light is uncached and should only render to dynamic pages
+#define VSM_PROJ_FLAG_UNREFERENCED (1U << 2) // Used to indicate that the light is not referenced/rendered to this render
 
 // Hard limit for max distant lights supported 8k for now - we may revise later. We need to keep them in a fixed range for now to make allocation easy and minimize overhead for indexing.
 #define VSM_MAX_SINGLE_PAGE_SHADOW_MAPS (1024U * 8U)
+
+#define VSM_INVALIDATION_PAYLOAD_FLAG_NONE                      0
+#define VSM_INVALIDATION_PAYLOAD_FLAG_FORCE_STATIC              (1 << 0)
+// 8 bit flags, 24 bit VSM ID
+#define VSM_INVALIDATION_PAYLOAD_FLAG_BITS                      8
 
 #ifdef __cplusplus
 #include "HLSLTypeAliases.h"

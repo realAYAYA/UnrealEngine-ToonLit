@@ -282,7 +282,10 @@ bool URigVMNode::IsMutable() const
 	{
 		if(const UScriptStruct* ScriptStruct = Pin->GetScriptStruct())
 		{
-			return ScriptStruct->IsChildOf(FRigVMExecuteContext::StaticStruct());
+			if (ScriptStruct->IsChildOf(FRigVMExecuteContext::StaticStruct()))
+			{
+				return true;
+			}
 		}
 	}
 	return false;
@@ -507,6 +510,25 @@ TSharedPtr<FStructOnScope> URigVMNode::GetDecoratorInstance(const URigVMPin* InD
 	return EmptyScope;
 }
 
+UScriptStruct* URigVMNode::GetDecoratorScriptStruct(const FName& InName) const
+{
+	return GetDecoratorScriptStruct(FindPin(InName.ToString()));
+}
+
+UScriptStruct* URigVMNode::GetDecoratorScriptStruct(const URigVMPin* InDecoratorPin) const
+{
+	if(const URigVMPin* RootPin = FindDecorator(InDecoratorPin))
+	{
+		check(RootPin->IsStruct());
+
+		UScriptStruct* ScriptStruct = RootPin->GetScriptStruct();
+		check(ScriptStruct->IsChildOf(FRigVMDecorator::StaticStruct()));
+		return ScriptStruct;
+	}
+
+	return nullptr;
+}
+
 URigVMLibraryNode* URigVMNode::FindFunctionForNode() const  
 {
 	const UObject* Subject = this;
@@ -634,10 +656,9 @@ TArray<int32> URigVMNode::GetInstructionsForVMImpl(const FRigVMExtendedExecuteCo
 	{
 		return InVM->GetByteCode().GetAllInstructionIndicesForSubject((URigVMNode*)this);
 	}
-	
-#endif
-
+#else
 	return Instructions;
+#endif
 }
 
 int32 URigVMNode::GetInstructionVisitedCount(const FRigVMExtendedExecuteContext& Context, URigVM* InVM, const FRigVMASTProxy& InProxy) const
@@ -696,6 +717,33 @@ const TArray<FName>& URigVMNode::GetControlFlowBlocks() const
 
 const bool URigVMNode::IsControlFlowBlockSliced(const FName& InBlockName) const
 {
+	return false;
+}
+
+bool URigVMNode::IsWithinLoop() const
+{
+	for(const URigVMPin* Pin : Pins)
+	{
+		const TArray<URigVMPin*> SourcePins = Pin->GetLinkedSourcePins(true);
+		for(const URigVMPin* SourcePin : SourcePins)
+		{
+			if(SourcePin->GetNode()->IsLoopNode())
+			{
+				if(!SourcePin->IsExecuteContext() || SourcePin->GetFName() != FRigVMStruct::ForLoopCompletedPinName)
+				{
+					return true;
+				}
+			}
+		}
+
+		for(const URigVMPin* SourcePin : SourcePins)
+		{
+			if(SourcePin->GetNode()->IsWithinLoop())
+			{
+				return true;
+			}
+		}
+	}
 	return false;
 }
 

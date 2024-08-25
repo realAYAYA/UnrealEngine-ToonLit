@@ -592,12 +592,8 @@ struct FLocalTransformEvaluator : ITransformEvaluator
 			UMovieScene3DTransformTrack* TransformTrack = TransformEval.GetSubtype<TTuple<UMovieScene3DTransformTrack*, UObject*>>().Get<0>();
 		 	return GetLocationAtTime(TransformTrack, InTime, *WeakAttachTrackEditor.Pin()->Interrogator.Get());
 		}
-		else
-		{
-		 	return TransformEval.GetSubtype<FTransform>();
-		}
 
-		return FTransform::Identity;
+		return TransformEval.GetSubtype<FTransform>();
 	}
 
 private:

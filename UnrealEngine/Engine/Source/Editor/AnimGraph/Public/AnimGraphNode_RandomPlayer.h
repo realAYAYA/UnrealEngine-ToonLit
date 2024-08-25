@@ -27,5 +27,6 @@ public:
 
 	// UAnimGraphNode_Base interface
 	virtual void GetOutputLinkAttributes(FNodeAttributeArray& OutAttributes) const override;
+	virtual void PreloadRequiredAssets() override;
 	// End of UAnimGraphNode_Base interface
 };

@@ -8,11 +8,11 @@
 =================================================================================================*/
 
 #ifdef __cplusplus
-	#define UINT32_TYPE uint32
-	#define UINT64_TYPE uint64
+#define UINT32_TYPE uint32
+#define UINT64_TYPE uint64
 #else
-	#define UINT32_TYPE uint
-	#define UINT64_TYPE uint64_t
+#define UINT32_TYPE uint
+#define UINT64_TYPE uint64_t
 #endif
 
 struct FRayTracingInstanceDebugData
@@ -52,6 +52,17 @@ struct FRayTracingPickingFeedback
 		: GeometryInstanceIndex(0xFFFFFFFF)
 		, InstanceIndex(0xFFFFFFFF)
 		, GeometryAddress(0xFFFFFFFFFFFFFFFF)
+	{}
+#endif
+};
+
+struct FRayTracingHitStatsEntry
+{
+	UINT32_TYPE PrimitiveID;
+	UINT32_TYPE Count;
+
+#ifdef __cplusplus
+	FRayTracingHitStatsEntry()
 	{}
 #endif
 };

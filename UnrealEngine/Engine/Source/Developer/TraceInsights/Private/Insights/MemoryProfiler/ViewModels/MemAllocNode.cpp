@@ -14,9 +14,9 @@ INSIGHTS_IMPLEMENT_RTTI(FMemAllocNode)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-uint32 FMemAllocNode::GetCallstackId() const
+uint32 FMemAllocNode::GetAllocCallstackId() const
 {
-	return IsValidMemAlloc() ? GetMemAllocChecked().GetCallstackId() : 0u;
+	return IsValidMemAlloc() ? GetMemAllocChecked().GetAllocCallstackId() : 0u;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -28,49 +28,49 @@ uint32 FMemAllocNode::GetFreeCallstackId() const
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FText FMemAllocNode::GetFullCallstack() const
+FText FMemAllocNode::GetFullCallstack(ECallstackType InCallstackType) const
 {
-	return IsValidMemAlloc() ? GetMemAllocChecked().GetFullCallstack() : FText();
+	return GetFullCallstackOrSourceFiles(InCallstackType, (uint8)EStackFrameFormatFlags::ModuleSymbolFileAndLine);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FText FMemAllocNode::GetFullCallstackSourceFiles() const
+FText FMemAllocNode::GetFullCallstackSourceFiles(ECallstackType InCallstackType) const
 {
-	return IsValidMemAlloc() ? GetMemAllocChecked().GetFullCallstackSourceFiles() : FText();
+	return GetFullCallstackOrSourceFiles(InCallstackType, (uint8)EStackFrameFormatFlags::File);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FText FMemAllocNode::GetTopFunction() const
+FText FMemAllocNode::GetTopFunction(ECallstackType InCallstackType) const
 {
-	return GetTopFunctionOrSourceFile((uint8)EStackFrameFormatFlags::ModuleAndSymbol);
+	return GetTopFunctionOrSourceFile(InCallstackType, (uint8)EStackFrameFormatFlags::ModuleAndSymbol);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FText FMemAllocNode::GetTopFunctionEx() const
+FText FMemAllocNode::GetTopFunctionEx(ECallstackType InCallstackType) const
 {
-	return GetTopFunctionOrSourceFile((uint8)EStackFrameFormatFlags::ModuleSymbolFileAndLine);
+	return GetTopFunctionOrSourceFile(InCallstackType, (uint8)EStackFrameFormatFlags::ModuleSymbolFileAndLine);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FText FMemAllocNode::GetTopSourceFile() const
+FText FMemAllocNode::GetTopSourceFile(ECallstackType InCallstackType) const
 {
-	return GetTopFunctionOrSourceFile((uint8)EStackFrameFormatFlags::File);
+	return GetTopFunctionOrSourceFile(InCallstackType, (uint8)EStackFrameFormatFlags::File);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FText FMemAllocNode::GetTopSourceFileEx() const
+FText FMemAllocNode::GetTopSourceFileEx(ECallstackType InCallstackType) const
 {
-	return GetTopFunctionOrSourceFile((uint8)EStackFrameFormatFlags::FileAndLine);
+	return GetTopFunctionOrSourceFile(InCallstackType, (uint8)EStackFrameFormatFlags::FileAndLine);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FText FMemAllocNode::GetTopFunctionOrSourceFile(uint8 Flags) const
+FText FMemAllocNode::GetFullCallstackOrSourceFiles(ECallstackType InCallstackType, uint8 Flags) const
 {
 	if (!IsValidMemAlloc())
 	{
@@ -78,7 +78,51 @@ FText FMemAllocNode::GetTopFunctionOrSourceFile(uint8 Flags) const
 	}
 
 	const Insights::FMemoryAlloc& Alloc = GetMemAllocChecked();
-	const TraceServices::FCallstack* Callstack = Alloc.GetCallstack();
+	const TraceServices::FCallstack* Callstack = 
+		InCallstackType == ECallstackType::AllocCallstack
+			? Alloc.GetAllocCallstack() 
+			: Alloc.GetFreeCallstack();
+
+	if (!Callstack)
+	{
+		return FText::FromString(GetCallstackNotAvailableString());
+	}
+
+	if (Callstack->Num() == 0)
+	{
+		return FText::FromString(GetEmptyCallstackString());
+	}
+
+	TStringBuilder<1024> Tooltip;
+	const uint32 NumCallstackFrames = Callstack->Num();
+	check(NumCallstackFrames <= 256); // see Callstack->Frame(uint8)
+	for (uint32 FrameIndex = 0; FrameIndex < NumCallstackFrames; ++FrameIndex)
+	{
+		if (FrameIndex != 0)
+		{
+			Tooltip << TEXT("\n");
+		}
+		const TraceServices::FStackFrame* Frame = Callstack->Frame(static_cast<uint8>(FrameIndex));
+		check(Frame != nullptr);
+		FormatStackFrame(*Frame, Tooltip, (EStackFrameFormatFlags)Flags);
+	}
+	return FText::FromString(FString(Tooltip));
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+FText FMemAllocNode::GetTopFunctionOrSourceFile(ECallstackType InCallstackType, uint8 Flags) const
+{
+	if (!IsValidMemAlloc())
+	{
+		return FText();
+	}
+
+	const Insights::FMemoryAlloc& Alloc = GetMemAllocChecked();
+	const TraceServices::FCallstack* Callstack = 
+		InCallstackType == ECallstackType::AllocCallstack
+			? Alloc.GetAllocCallstack() 
+			: Alloc.GetFreeCallstack();
 
 	if (!Callstack)
 	{

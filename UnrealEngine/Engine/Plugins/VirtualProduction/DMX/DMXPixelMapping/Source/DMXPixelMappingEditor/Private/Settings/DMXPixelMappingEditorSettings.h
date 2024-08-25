@@ -4,6 +4,7 @@
 
 #include "DMXPixelMappingEditorSettings.generated.h"
 
+enum class EDMXPixelMappingResetDMXMode : uint8;
 struct FPropertyChangedEvent;
 
 
@@ -14,7 +15,7 @@ struct FDMXPixelMappingHierarchySettings
 
 	/** If true, shows the editor color column */
 	UPROPERTY()
-	bool bShowEditorColorColumn = false;
+	bool bShowEditorColorColumn = true;
 
 	/** If true, shows the fixture ID column */
 	UPROPERTY()
@@ -50,6 +51,10 @@ struct FDMXPixelMappingDesignerSettings
 	UPROPERTY()
 	bool bApplyLayoutScriptWhenLoaded = true;
 
+	/** If true, a pivot is displayed for selected components */
+	UPROPERTY()
+	bool bShowPivot = true;
+
 	/**  If true, shows a widget for each cell. It is recommended that this is turned off when pixel mapping large quantities of fixtures. */
 	UPROPERTY()
 	bool bShowMatrixCells = true;
@@ -83,6 +88,10 @@ public:
 	/** Settings for the designer tab */
 	UPROPERTY(Config)
 	FDMXPixelMappingDesignerSettings DesignerSettings;
+
+	/** Reset DMX mode to be used in editor */
+	UPROPERTY(Config)
+	EDMXPixelMappingResetDMXMode EditorResetDMXMode;
 
 	/** Raised by the pixel mapping toolkit when settings changed */
 	static FSimpleMulticastDelegate OnEditorSettingsChanged;

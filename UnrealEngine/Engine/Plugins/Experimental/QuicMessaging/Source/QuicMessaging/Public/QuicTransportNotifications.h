@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreTypes.h"
+#include "Delegates/Delegate.h"
 
 struct FGuid;
 struct FIPv4Endpoint;

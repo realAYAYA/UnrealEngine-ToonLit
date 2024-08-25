@@ -18,6 +18,7 @@
 #include "Misc/Paths.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetRegistry/AssetData.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 
 IMPLEMENT_MODULE(FRigLogicEditor, RigLogicEditor)
@@ -33,7 +34,7 @@ void FRigLogicEditor::StartupModule()
 
 	MenuExtenderDelegates.Add(FContentBrowserMenuExtender_SelectedAssets::CreateStatic(&FRigLogicEditor::OnExtendSkelMeshWithDNASelectionMenu));
 
-	UObject::FAssetRegistryTag::OnGetExtraObjectTags.AddStatic(&GetAssetRegistryTagsForDNA);
+	UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddStatic(&GetAssetRegistryTagsForDNA);
 }
 
 
@@ -146,8 +147,9 @@ void FRigLogicEditor::ExecuteDNAReimport(class UObject* Mesh)
 	}
 }
 
-void FRigLogicEditor::GetAssetRegistryTagsForDNA(const class UObject* Object, TArray<UObject::FAssetRegistryTag>& OutTags)
+void FRigLogicEditor::GetAssetRegistryTagsForDNA(FAssetRegistryTagsContext Context)
 {
+	const UObject* Object = Context.GetObject();
 	if ((Object != nullptr) && (Object->GetClass() != nullptr) && Object->GetClass()->IsChildOf(USkeletalMesh::StaticClass()))
 	{
 		FString DNAname = (LOCTEXT("DnaNotOnSkeletalMesh", "No DNA Attached")).ToString();
@@ -166,7 +168,7 @@ void FRigLogicEditor::GetAssetRegistryTagsForDNA(const class UObject* Object, TA
 				}
 			}
 		}
-		OutTags.Add(UObject::FAssetRegistryTag("DNA", DNAname, UObject::FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(UObject::FAssetRegistryTag("DNA", DNAname, UObject::FAssetRegistryTag::TT_Alphabetical));
 	}
 }
 

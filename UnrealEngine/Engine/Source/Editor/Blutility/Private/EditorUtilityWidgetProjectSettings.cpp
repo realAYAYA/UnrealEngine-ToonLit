@@ -42,3 +42,23 @@ void UEditorUtilityWidgetProjectSettings::PostEditChangeChainProperty(FPropertyC
 		}
 	}
 }
+
+FNamePermissionList& UEditorUtilityWidgetProjectSettings::GetAllowedEditorUtilityActorActions()
+{
+	return AllowedEditorUtilityActorActions;
+}
+
+const FNamePermissionList& UEditorUtilityWidgetProjectSettings::GetAllowedEditorUtilityActorActions() const
+{
+	return AllowedEditorUtilityActorActions;
+}
+
+FNamePermissionList& UEditorUtilityWidgetProjectSettings::GetAllowedEditorUtilityAssetActions()
+{
+	return AllowedEditorUtilityAssetActions;
+}
+
+const FNamePermissionList& UEditorUtilityWidgetProjectSettings::GetAllowedEditorUtilityAssetActions() const
+{
+	return AllowedEditorUtilityAssetActions;
+}

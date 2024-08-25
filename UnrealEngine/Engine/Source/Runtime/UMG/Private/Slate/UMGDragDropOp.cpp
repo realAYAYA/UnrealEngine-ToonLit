@@ -118,7 +118,7 @@ void FUMGDragDropOp::OnDragged( const class FDragDropEvent& DragDropEvent )
 	
 		if ( DeltaTime < AnimationTime )
 		{
-			float T = DeltaTime / AnimationTime;
+			double T = DeltaTime / AnimationTime;
 			FVector2D LerpPosition = ( Position - StartingScreenPos ) * T;
 			
 			DecoratorPosition = StartingScreenPos + LerpPosition;
@@ -150,6 +150,17 @@ FCursorReply FUMGDragDropOp::OnCursorQuery()
 		if ( CursorWidget.IsSet() )
 		{
 			CursorReply.SetCursorWidget(GameViewportPtr->GetWindow(), CursorWidget.GetValue());
+		}
+	}
+
+	if (TSharedPtr<SObjectWidget> SourceUserWidgetObj = SourceUserWidget.Pin())
+	{
+		if (UUserWidget* SourceUserWidgetPtr = SourceUserWidgetObj->GetWidgetObject())
+		{
+			if (SourceUserWidgetPtr->bOverride_Cursor)
+			{
+				CursorReply = CursorReply.Cursor(SourceUserWidgetPtr->GetCursor());
+			}
 		}
 	}
 

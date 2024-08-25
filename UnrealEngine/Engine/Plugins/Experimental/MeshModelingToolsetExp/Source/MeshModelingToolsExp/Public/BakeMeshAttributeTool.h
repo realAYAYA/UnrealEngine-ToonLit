@@ -49,8 +49,12 @@ enum class EBakeMapType
 	MaterialID             = 1 << 10 UMETA(DisplayName = "Material ID"),
 	/* PolyGroup IDs as unique colors */
 	PolyGroupID            = 1 << 11 UMETA(DisplayName = "PolyGroup ID"),
+	/* Constant value of One */
+	One                    = 1 << 12,
+	/* Constant value of Zero */
+	Zero                   = 1 << 13,
 
-	All                    = 0x7FF UMETA(Hidden)
+	All                    = 0x1FFF UMETA(Hidden)
 };
 ENUM_CLASS_FLAGS(EBakeMapType);
 
@@ -80,7 +84,7 @@ static constexpr EBakeMapType ENUM_EBAKEMAPTYPE_ALL[] =
  * Base Mesh Bake tool
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UBakeMeshAttributeTool : public UMultiSelectionMeshEditingTool, public IInteractiveToolExclusiveToolAPI
+class MESHMODELINGTOOLSEXP_API UBakeMeshAttributeTool : public UMultiSelectionMeshEditingTool, public IInteractiveToolExclusiveToolAPI, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -94,6 +98,12 @@ public:
 	virtual bool HasAccept() const override { return true; }
 	virtual bool CanAccept() const override { return true; }
 	// End UInteractiveTool interface
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 	//
@@ -129,9 +139,8 @@ protected:
 	//
 	EBakeOpState OpState = EBakeOpState::Evaluate;
 
-	UE::Geometry::FDynamicMesh3 TargetMesh;
+	TSharedPtr<UE::Geometry::FDynamicMesh3, ESPMode::ThreadSafe> TargetMesh;
 	TSharedPtr<UE::Geometry::TMeshTangents<double>, ESPMode::ThreadSafe> TargetMeshTangents;
-	UE::Geometry::FDynamicMeshAABBTree3 TargetSpatial;
 
 	/**
 	 * Compute validity of the Target Mesh tangents. Only checks validity

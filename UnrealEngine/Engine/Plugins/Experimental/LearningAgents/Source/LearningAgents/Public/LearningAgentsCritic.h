@@ -2,10 +2,9 @@
 
 #pragma once
 
-#include "LearningAgentsManagerComponent.h"
+#include "LearningAgentsManagerListener.h"
 
 #include "LearningAgentsNeuralNetwork.h" // Included for ELearningAgentsActivationFunction
-#include "LearningAgentsDebug.h"
 #include "LearningArray.h"
 #include "UObject/ObjectPtr.h"
 
@@ -13,12 +12,12 @@
 
 namespace UE::Learning
 {
-	struct FNeuralNetwork;
-	struct FNeuralNetworkCriticFunction;
+	struct FNeuralNetworkCritic;
 }
 
-struct FFilePath;
 class ULearningAgentsNeuralNetwork;
+class ULearningAgentsInteractor;
+class ULearningAgentsPolicy;
 
 /** The configurable settings for a ULearningAgentsCritic. */
 USTRUCT(BlueprintType, Category = "LearningAgents")
@@ -28,9 +27,9 @@ struct LEARNINGAGENTS_API FLearningAgentsCriticSettings
 
 public:
 
-	/** Total layers for critic network including input, hidden, and output layers */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "2", UIMin = "2"))
-	int32 LayerNum = 3;
+	/** Number of hidden layers for critic network. */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0", UIMin = "0"))
+	int32 HiddenLayerNum = 1;
 
 	/** Number of neurons in each hidden layer of the critic network */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1"))
@@ -41,9 +40,9 @@ public:
 	ELearningAgentsActivationFunction ActivationFunction = ELearningAgentsActivationFunction::ELU;
 };
 
-/** A critic used by some algorithms for training the managed agents. */
-UCLASS(BlueprintType, Blueprintable)
-class LEARNINGAGENTS_API ULearningAgentsCritic : public ULearningAgentsManagerComponent
+/** A critic used for training the policy. Can be used at inference time to estimate the discounted returns.  */
+UCLASS(BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
+class LEARNINGAGENTS_API ULearningAgentsCritic : public ULearningAgentsManagerListener
 {
 	GENERATED_BODY()
 
@@ -55,67 +54,64 @@ public:
 	virtual ~ULearningAgentsCritic();
 
 	/**
-	 * Initializes this object to be used with the given agent interactor and critic settings.
-	 * @param InInteractor The input Interactor component
-	 * @param CriticSettings The critic settings to use
-	 * @param NeuralNetworkAsset Optional Network Asset to use. If provided must match the given CriticSettings. If not
-	 * provided or asset is empty then a new neural network object will be created according to the given 
-	 * CriticSettings and used.
+	 * Constructs a Critic to be used with the given agent interactor and critic settings.
+	 * 
+	 * @param InManager						The input Manager
+	 * @param InInteractor					The input Interactor object
+	 * @param InPolicy						The input Policy object
+	 * @param Class							The critic class
+	 * @param Name							The critic name
+	 * @param CriticNeuralNetworkAsset		Optional Network Asset to use. If not provided, asset is empty, or
+	 *										bReinitializeNetwork is set then a new neural network object will be created
+	 *										according to the given CriticSettings.
+	 * @param bReinitializeCriticNetwork	If to reinitialize the critic network
+	 * @param CriticSettings				The critic settings to use on creation of a new critic network
+	 * @param Seed							Random seed to use for initializing the critic weights
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
-	void SetupCritic(
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (Class = "/Script/LearningAgents.LearningAgentsCritic", DeterminesOutputType = "Class", AutoCreateRefTerm = "CriticSettings"))
+	static ULearningAgentsCritic* MakeCritic(
+		ULearningAgentsManager* InManager,
 		ULearningAgentsInteractor* InInteractor,
+		ULearningAgentsPolicy* InPolicy,
+		TSubclassOf<ULearningAgentsCritic> Class,
+		const FName Name = TEXT("Critic"),
+		ULearningAgentsNeuralNetwork* CriticNeuralNetworkAsset = nullptr,
+		const bool bReinitializeCriticNetwork = true,
 		const FLearningAgentsCriticSettings& CriticSettings = FLearningAgentsCriticSettings(),
-		ULearningAgentsNeuralNetwork* NeuralNetworkAsset = nullptr);
+		const int32 Seed = 1234);
+
+	/**
+	 * Initializes a critic to be used with the given agent interactor and critic settings.
+	 * 
+	 * @param InManager						The input Manager
+	 * @param InInteractor					The input Interactor object
+	 * @param InPolicy						The input Policy object
+	 * @param CriticNeuralNetworkAsset		Optional Network Asset to use. If not provided, asset is empty, or
+	 *										bReinitializeNetwork is set then a new neural network object will be created
+	 *										according to the given CriticSettings.
+	 * @param bReinitializeCriticNetwork	If to reinitialize the critic network
+	 * @param CriticSettings				The critic settings to use on creation of a new critic network
+	 * @param Seed							Random seed to use for initializing the critic weights
+	 */
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AutoCreateRefTerm = "CriticSettings"))
+	void SetupCritic(
+		ULearningAgentsManager* InManager,
+		ULearningAgentsInteractor* InInteractor,
+		ULearningAgentsPolicy* InPolicy,
+		ULearningAgentsNeuralNetwork* CriticNeuralNetworkAsset = nullptr,
+		const bool bReinitializeCriticNetwork = true,
+		const FLearningAgentsCriticSettings& CriticSettings = FLearningAgentsCriticSettings(),
+		const int32 Seed = 1234);
 
 public:
 
-	//~ Begin ULearningAgentsManagerComponent Interface
-	virtual void OnAgentsAdded(const TArray<int32>& AgentIds) override;
-	virtual void OnAgentsRemoved(const TArray<int32>& AgentIds) override;
-	virtual void OnAgentsReset(const TArray<int32>& AgentIds) override;
-	//~ End ULearningAgentsManagerComponent Interface
+	//~ Begin ULearningAgentsManagerListener Interface
+	virtual void OnAgentsAdded_Implementation(const TArray<int32>& AgentIds) override;
+	virtual void OnAgentsRemoved_Implementation(const TArray<int32>& AgentIds) override;
+	virtual void OnAgentsReset_Implementation(const TArray<int32>& AgentIds) override;
+	//~ End ULearningAgentsManagerListener Interface
 
-// ----- Load / Save -----
-public:
-
-	/**
-	 * Load a snapshot's weights into this critic.
-	 * @param File The snapshot file.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (RelativePath))
-	void LoadCriticFromSnapshot(const FFilePath& File);
-
-	/**
-	 * Save this critic's weights into a snapshot.
-	 * @param File The snapshot file.
-	 */
-	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "LearningAgents", meta = (RelativePath))
-	void SaveCriticToSnapshot(const FFilePath& File) const;
-
-	/**
-	 * Use a ULearningAgentsNeuralNetwork asset directly for this critic rather than making a copy. If used 
-	 * during training then this asset's weights will be updated as training progresses.
-	 * @param NeuralNetworkAsset The asset to use.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
-	void UseCriticFromAsset(ULearningAgentsNeuralNetwork* NeuralNetworkAsset);
-
-	/**
-	 * Load a ULearningAgentsNeuralNetwork asset's weights into this critic.
-	 * @param NeuralNetworkAsset The asset to load from.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
-	void LoadCriticFromAsset(ULearningAgentsNeuralNetwork* NeuralNetworkAsset);
-
-	/**
-	 * Save this critic's weights to a ULearningAgentsNeuralNetwork asset.
-	 * @param NeuralNetworkAsset The asset to save to.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", Meta=(DevelopmentOnly))
-	void SaveCriticToAsset(ULearningAgentsNeuralNetwork* NeuralNetworkAsset);
-
-// ----- Evaluation -----
+// ----- Blueprint public interface -----
 public:
 
 	/**
@@ -134,20 +130,18 @@ public:
 	 * @param AgentId	The AgentId to look-up the estimated discounted return for
 	 * @returns			The estimated average discounted return according to the critic
 	 */
-	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", Meta=(AgentId = -1))
 	float GetEstimatedDiscountedReturn(const int32 AgentId) const;
+
+	/** Gets the current Network Asset being used */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	ULearningAgentsNeuralNetwork* GetCriticNetworkAsset();
 
 // ----- Non-blueprint public interface -----
 public:
 
-	/** Gets the current Network Asset being used */
-	ULearningAgentsNeuralNetwork* GetNetworkAsset();
-
-	/** Get a reference to this critic's neural network. */
-	UE::Learning::FNeuralNetwork& GetCriticNetwork();
-	
 	/** Get a reference to this critic's critic function object. */
-	UE::Learning::FNeuralNetworkCriticFunction& GetCriticObject();
+	UE::Learning::FNeuralNetworkCritic& GetCriticObject();
 
 // ----- Private Data -----
 private:
@@ -156,29 +150,24 @@ private:
 	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
 	TObjectPtr<ULearningAgentsInteractor> Interactor;
 
+	/** The policy this critic is associated with. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
+	TObjectPtr<ULearningAgentsPolicy> Policy;
+
 	/** The underlying neural network. */
 	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
-	TObjectPtr<ULearningAgentsNeuralNetwork> Network;
+	TObjectPtr<ULearningAgentsNeuralNetwork> CriticNetwork;
 
 	/** Internal Critic Function Object */
-	TSharedPtr<UE::Learning::FNeuralNetworkCriticFunction> CriticObject;
-	
-// ----- Private Iteration Checks ----- 
-private:
+	TSharedPtr<UE::Learning::FNeuralNetworkCritic> CriticObject;
 
-	/** Number of times critic has been evaluated for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> DiscountedReturnAgentIteration;
+	/** Buffer to store the computed returns for each agent */
+	TLearningArray<1, float, TInlineAllocator<32>> Returns;
+
+	/** Number of times the returns have been computed for all agents */
+	TLearningArray<1, uint64, TInlineAllocator<32>> ReturnsIteration;
 
 	/** Temp buffers used to record the set of agents that are valid for evaluation */
 	TArray<int32> ValidAgentIds;
 	UE::Learning::FIndexSet ValidAgentSet;
-
-private:
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Color used to draw this action in the visual log */
-	FLinearColor VisualLogColor = FColor::Orange;
-
-	/** Describes this critic to the visual logger for debugging purposes. */
-	void VisualLog(const UE::Learning::FIndexSet AgentSet) const;
-#endif
 };

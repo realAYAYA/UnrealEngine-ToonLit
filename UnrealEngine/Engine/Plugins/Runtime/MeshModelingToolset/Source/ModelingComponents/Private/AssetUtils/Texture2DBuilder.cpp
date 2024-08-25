@@ -158,9 +158,6 @@ bool FTexture2DBuilder::InitializeInternal(ETextureType BuildTypeIn, FImageDimen
 		RawTexture2D->SRGB = false;
 		RawTexture2D->LODGroup = TEXTUREGROUP_WorldNormalMap;
 		//RawTexture2D->bFlipGreenChannel = true;
-#if WITH_EDITOR
-		RawTexture2D->MipGenSettings = TMGS_NoMipmaps;
-#endif
 		RawTexture2D->UpdateResource();
 	}
 
@@ -317,7 +314,7 @@ void FTexture2DBuilder::Clear(const FColor& ClearColor)
 {
 	if (ensure(IsEditable() && IsByteTexture()))
 	{
-		int32 Num = Dimensions.Num();
+		int64 Num = Dimensions.Num();
 		for (int64 k = 0; k < Num; ++k)
 		{
 			CurrentMipData[k] = ClearColor;
@@ -332,7 +329,7 @@ void FTexture2DBuilder::Clear(const FFloat16Color& ClearColor)
 {
 	if (ensure(IsEditable() && IsFloat16Texture()))
 	{
-		int32 Num = Dimensions.Num();
+		int64 Num = Dimensions.Num();
 		for (int64 k = 0; k < Num; ++k)
 		{
 			CurrentMipDataFloat16[k] = ClearColor;
@@ -353,14 +350,11 @@ bool FTexture2DBuilder::Copy(const TImageBuilder<FVector3f>& SourceImage, const 
 	}
 
 	int64 Num = Dimensions.Num();
-	for (int32 i = 0; i < Num; ++i)
+	for (int64 i = 0; i < Num; ++i)
 	{
 		FVector3f Pixel = SourceImage.GetPixel(i);
 		if (IsByteTexture())
 		{
-			Pixel.X = FMathf::Clamp(Pixel.X, 0.0, 1.0);
-			Pixel.Y = FMathf::Clamp(Pixel.Y, 0.0, 1.0);
-			Pixel.Z = FMathf::Clamp(Pixel.Z, 0.0, 1.0);
 			FColor Texel = ToLinearColor(Pixel).ToFColor(bConvertToSRGB);
 			SetTexel(i, Texel);
 		}
@@ -386,15 +380,11 @@ bool FTexture2DBuilder::Copy(const TImageBuilder<FVector4f>& SourceImage, const 
 	}
 
 	int64 Num = Dimensions.Num();
-	for (int32 i = 0; i < Num; ++i)
+	for (int64 i = 0; i < Num; ++i)
 	{
 		FVector4f Pixel = SourceImage.GetPixel(i);
 		if (IsByteTexture())
 		{
-			Pixel.X = FMathf::Clamp(Pixel.X, 0.0, 1.0);
-			Pixel.Y = FMathf::Clamp(Pixel.Y, 0.0, 1.0);
-			Pixel.Z = FMathf::Clamp(Pixel.Z, 0.0, 1.0);
-			Pixel.W = FMathf::Clamp(Pixel.W, 0.0, 1.0);
 			FColor Texel = ToLinearColor(Pixel).ToFColor(bConvertToSRGB);
 			SetTexel(i, Texel);
 		}
@@ -439,13 +429,9 @@ bool FTexture2DBuilder::CopyImageToSourceData(const TImageBuilder<FVector4f>& So
 	if (SourceDataFormat == TSF_BGRA8)
 	{
 		FColor* DestData = reinterpret_cast<FColor*>(RawTexture2D->Source.LockMip(0));
-		for (int32 i = 0; i < Num; ++i)
+		for (int64 i = 0; i < Num; ++i)
 		{
 			FVector4f Pixel = SourceImage.GetPixel(i);
-			Pixel.X = FMathf::Clamp(Pixel.X, 0.0, 1.0);
-			Pixel.Y = FMathf::Clamp(Pixel.Y, 0.0, 1.0);
-			Pixel.Z = FMathf::Clamp(Pixel.Z, 0.0, 1.0);
-			Pixel.W = FMathf::Clamp(Pixel.W, 0.0, 1.0);
 			const FColor Texel = ToLinearColor(Pixel).ToFColor(bConvertToSRGB);
 			DestData[i] = Texel;
 		}
@@ -453,7 +439,7 @@ bool FTexture2DBuilder::CopyImageToSourceData(const TImageBuilder<FVector4f>& So
 	else if (SourceDataFormat == TSF_RGBA16F)
 	{
 		FFloat16Color* DestData = reinterpret_cast<FFloat16Color*>(RawTexture2D->Source.LockMip(0));
-		for (int32 i = 0; i < Num; ++i)
+		for (int64 i = 0; i < Num; ++i)
 		{
 			FVector4f Pixel = SourceImage.GetPixel(i);
 			const FFloat16Color Texel(ToLinearColor(Pixel));
@@ -475,7 +461,7 @@ bool FTexture2DBuilder::CopyTo(TImageBuilder<FVector4f>& DestImage) const
 		return false;
 	}
 	int64 Num = Dimensions.Num();
-	for (int32 i = 0; i < Num; ++i)
+	for (int64 i = 0; i < Num; ++i)
 	{
 		if (IsByteTexture())
 		{

@@ -56,7 +56,7 @@ IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FRayTracingDecals, "RayTracingDecals");
 BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FDecalParametersRayTracing, )
 	SHADER_PARAMETER(FMatrix44f, WorldToDecal)
 	SHADER_PARAMETER(FMatrix44f, DecalToWorld)
-	SHADER_PARAMETER(FVector3f, DecalTilePosition)
+	SHADER_PARAMETER(FVector3f, DecalPositionHigh)
 	SHADER_PARAMETER(FVector3f, DecalToWorldInvScale)
 	SHADER_PARAMETER(FVector3f, DecalOrientation)
 	SHADER_PARAMETER(FVector2f, DecalParams)
@@ -72,19 +72,21 @@ static TUniformBufferRef<FDecalParametersRayTracing> CreateDecalParametersBuffer
 	const FTransientDecalRenderData& DecalData,
 	EUniformBufferUsage Usage)
 {
+	const FDeferredDecalProxy& DecalProxy = *DecalData.Proxy;
+
 	FDecalParametersRayTracing Parameters;
 
-	const FLargeWorldRenderPosition AbsoluteOrigin(View.ViewMatrices.GetInvViewMatrix().GetOrigin());
-	const FVector3f TilePosition = AbsoluteOrigin.GetTile();
-	const FMatrix WorldToDecalMatrix = DecalData.Proxy.ComponentTrans.ToInverseMatrixWithScale();
-	const FMatrix DecalToWorldMatrix = DecalData.Proxy.ComponentTrans.ToMatrixWithScale();
-	const FMatrix44f RelativeDecalToWorldMatrix = FLargeWorldRenderScalar::MakeToRelativeWorldMatrix(AbsoluteOrigin.GetTileOffset(), DecalToWorldMatrix);
-	const FVector3f OrientationVector = (FVector3f)DecalData.Proxy.ComponentTrans.GetUnitAxis(EAxis::X);
+	const FMatrix DecalToWorldMatrix = DecalProxy.ComponentTrans.ToMatrixWithScale();
+	const FMatrix WorldToDecalMatrix = DecalProxy.ComponentTrans.ToInverseMatrixWithScale();
+	const FDFVector3 AbsoluteOrigin(DecalToWorldMatrix.GetOrigin());
+	const FVector3f PositionHigh = AbsoluteOrigin.High;
+	const FMatrix44f RelativeDecalToWorldMatrix = FDFMatrix::MakeToRelativeWorldMatrix(PositionHigh, DecalToWorldMatrix).M;
+	const FVector3f OrientationVector = (FVector3f)DecalProxy.ComponentTrans.GetUnitAxis(EAxis::X);
 
-	Parameters.DecalTilePosition = TilePosition;
+	Parameters.DecalPositionHigh = PositionHigh;
 	Parameters.WorldToDecal = FMatrix44f(FTranslationMatrix(-View.ViewMatrices.GetPreViewTranslation()) * WorldToDecalMatrix);
 	Parameters.DecalToWorld = RelativeDecalToWorldMatrix;
-	Parameters.DecalToWorldInvScale = RelativeDecalToWorldMatrix.GetScaleVector().Reciprocal();
+	Parameters.DecalToWorldInvScale = static_cast<FVector3f>(DecalToWorldMatrix.GetScaleVector().Reciprocal());
 	Parameters.DecalOrientation = OrientationVector;
 	Parameters.DecalColorParam = DecalData.DecalColor;
 
@@ -93,7 +95,7 @@ static TUniformBufferRef<FDecalParametersRayTracing> CreateDecalParametersBuffer
 	// Certain engine captures (e.g. environment reflection) don't have a tick. Default to fully opaque.
 	if (View.Family->Time.GetWorldTimeSeconds())
 	{
-		LifetimeAlpha = FMath::Clamp(FMath::Min(View.Family->Time.GetWorldTimeSeconds() * -DecalData.Proxy.InvFadeDuration + DecalData.Proxy.FadeStartDelayNormalized, View.Family->Time.GetWorldTimeSeconds() * DecalData.Proxy.InvFadeInDuration + DecalData.Proxy.FadeInStartDelayNormalized), 0.0f, 1.0f);
+		LifetimeAlpha = FMath::Clamp(FMath::Min(View.Family->Time.GetWorldTimeSeconds() * -DecalProxy.InvFadeDuration + DecalProxy.FadeStartDelayNormalized, View.Family->Time.GetWorldTimeSeconds() * DecalProxy.InvFadeInDuration + DecalProxy.FadeInStartDelayNormalized), 0.0f, 1.0f);
 	}
 
 	Parameters.DecalParams = FVector2f(DecalData.FadeAlpha, LifetimeAlpha);
@@ -154,6 +156,11 @@ public:
 		if (!ShouldCompileRayTracingCallableShadersForProject(Parameters.Platform))
 		{
 			// is raytracing enabled at all?
+			return false;
+		}
+		if (!FDataDrivenShaderPlatformInfo::GetSupportsPathTracing(Parameters.Platform))
+		{
+			// this shader is currently only used by the path tracer
 			return false;
 		}
 		if (Parameters.MaterialParameters.MaterialDomain != MD_DeferredDecal)
@@ -221,11 +228,11 @@ private:
 	LAYOUT_FIELD(FShaderUniformBufferParameter, DecalParameter);
 };
 
-IMPLEMENT_RT_PAYLOAD_TYPE(ERayTracingPayloadType::Decals, 60);
+IMPLEMENT_RT_PAYLOAD_TYPE(ERayTracingPayloadType::Decals, 48);
 
 IMPLEMENT_SHADER_TYPE(, FRayTracingDecalMaterialShader, TEXT("/Engine/Private/RayTracing/RayTracingDecalMaterialShader.usf"), TEXT("RayTracingDecalMaterialShader"), SF_RayCallable);
 
-static bool NeedsAnyHitShader(EBlendMode BlendMode)
+static bool DecalNeedsAnyHitShader(EBlendMode BlendMode)
 {
 	return BlendMode != BLEND_Opaque;
 }
@@ -248,6 +255,11 @@ public:
 			// is raytracing enabled at all?
 			return false;
 		}
+		if (!FDataDrivenShaderPlatformInfo::GetSupportsPathTracing(Parameters.Platform))
+		{
+			// this shader is currently only used by the path tracer
+			return false;
+		}
 		if (!Parameters.VertexFactoryType->SupportsRayTracing())
 		{
 			// does the VF support ray tracing at all?
@@ -257,7 +269,7 @@ public:
 		{
 			return false;
 		}
-		if (NeedsAnyHitShader(Parameters.MaterialParameters.BlendMode) != bUseAnyHitShader)
+		if (DecalNeedsAnyHitShader(Parameters.MaterialParameters.BlendMode) != bUseAnyHitShader)
 		{
 			// the anyhit permutation is only required if the material is masked or has a non-opaque blend mode
 			return false;
@@ -314,7 +326,7 @@ IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, FRayTracingDecalMaterialCHS_AHS, TEXT
 
 FShaderType* GetRayTracingDecalMaterialShaderType(EBlendMode BlendMode)
 {
-	if (NeedsAnyHitShader(BlendMode))
+	if (DecalNeedsAnyHitShader(BlendMode))
 	{
 		return &FRayTracingDecalMaterialCHS_AHS::GetStaticType();
 	}
@@ -461,7 +473,7 @@ void BuildDecalGrid(FRDGBuilder& GraphBuilder, uint32 NumDecals, FRDGBufferSRVRe
 	}
 }
 
-FTransientDecalRenderDataList GetSortedDecals(const TSparseArray<FDeferredDecalProxy*>& Decals, FScene& Scene, const FViewInfo& View)
+FTransientDecalRenderDataList GetSortedDecals(TConstArrayView<FDeferredDecalProxy*> Decals, FScene& Scene, const FViewInfo& View)
 {
 	const float FadeMultiplier = DecalRendering::GetDecalFadeScreenSizeMultiplier();
 	const bool bIsPerspectiveProjection = View.IsPerspectiveProjection();
@@ -485,19 +497,20 @@ FTransientDecalRenderDataList GetSortedDecals(const TSparseArray<FDeferredDecalP
 
 		if (bIsShown)
 		{
-			FTransientDecalRenderData Data(Scene, *DecalProxy, 0.0f);
+			float FadeAlpha = 1.0f;
 
-			if (bIsPerspectiveProjection && Data.Proxy.FadeScreenSize != 0.0f)
+			if (bIsPerspectiveProjection && DecalProxy->FadeScreenSize != 0.0f)
 			{
-				const FMatrix ComponentToWorldMatrix = Data.Proxy.ComponentTrans.ToMatrixWithScale();
-				Data.FadeAlpha = DecalRendering::CalculateDecalFadeAlpha(Data.Proxy.FadeScreenSize, ComponentToWorldMatrix, View, FadeMultiplier);
+				const FMatrix ComponentToWorldMatrix = DecalProxy->ComponentTrans.ToMatrixWithScale();
+				FadeAlpha = DecalRendering::CalculateDecalFadeAlpha(DecalProxy->FadeScreenSize, ComponentToWorldMatrix, View, FadeMultiplier);
 			}
 
-			const bool bShouldRender = Data.FadeAlpha > 0.0f;
+			const bool bShouldRender = FadeAlpha > 0.0f;
 
 			if (bShouldRender)
 			{
-				SortedDecals.Add(Data);
+				FTransientDecalRenderData Data(*DecalProxy, 0.0f, FadeAlpha, Scene.GetShaderPlatform(), Scene.GetFeatureLevel());
+				SortedDecals.Add(MoveTemp(Data));
 			}
 		}
 	}
@@ -556,11 +569,10 @@ TRDGUniformBufferRef<FRayTracingDecals> CreateRayTracingDecalData(FRDGBuilder& G
 		Command.SetShader(CallableShader);
 		Command.SlotInScene = BaseCallableSlotIndex + Index;
 
-		int32 DataOffset = 0;
-		FMeshDrawSingleShaderBindings SingleShaderBindings = Command.ShaderBindings.GetSingleShaderBindings(SF_RayCallable, DataOffset);
+		FMeshDrawSingleShaderBindings SingleShaderBindings = Command.ShaderBindings.GetSingleShaderBindings(SF_RayCallable);
 		CallableShader->GetShaderBindings(&Scene, Scene.GetFeatureLevel(), *MaterialProxy, *MaterialResource, View, DecalParameters, SingleShaderBindings);
 
-		const FBox BoxBounds = DecalData.Proxy.GetBounds().GetBox();
+		const FBox BoxBounds = DecalData.Proxy->GetBounds().GetBox();
 
 		FRayTracingDecal& DestDecal = RayTracingDecals.AddDefaulted_GetRef();
 		DestDecal.TranslatedBoundMin = FVector3f(BoxBounds.Min + View.ViewMatrices.GetPreViewTranslation());

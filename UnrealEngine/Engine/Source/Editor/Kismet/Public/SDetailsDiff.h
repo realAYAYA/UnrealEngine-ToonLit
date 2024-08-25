@@ -8,6 +8,7 @@
 #include "Widgets/SWindow.h"
 #include "Widgets/SCompoundWidget.h"
 
+enum class ETreeDiffResult;
 class FSpawnTabArgs;
 class FTabManager;
 class IDiffControl;
@@ -65,16 +66,15 @@ public:
 	static TSharedRef<SDetailsDiff> CreateDiffWindow(const UObject* OldObject, const UObject* NewObject, const FRevisionInfo& OldRevision, const FRevisionInfo& NewRevision, const UClass* ObjectClass);
 
 	/** Enables actions like "Choose Left" and "Choose Right" which will modify the OutputObject */
-	void SetOutputObject(const UObject* OutputObject);
+	void SetOutputObject(UObject* OutputObject);
 	
 	/** Return a serialized buffer of change requests made by the user */
-	void GetModifications(FArchive& Archive) const;
-	
-	/** submit an archive with change requests to make to OutputObject */
-	void RequestModifications(FArchive& Archive) const;
+	UObject* GetOutputObject() const;
 
 	/** Returns whether SetOutputObject was called with a valid object */
 	bool IsOutputEnabled() const;
+
+	void ReportMergeConflicts(const TMap<FString, TMap<FPropertySoftPath, ETreeDiffResult>>& Conflicts);
 
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnWindowClosedEvent, TSharedRef<SDetailsDiff>)
 	FOnWindowClosedEvent OnWindowClosedEvent;
@@ -95,6 +95,8 @@ protected:
 	/** Called when editor may need to be closed */
 	void OnCloseAssetEditor(UObject* Asset, EAssetEditorCloseReason CloseReason);
 
+	void OnObjectReplaced(const FCoreUObjectDelegates::FReplacementObjectMap& Replacements);
+
 	struct FDiffControl
 	{
 		FDiffControl()
@@ -107,12 +109,13 @@ protected:
 		TSharedPtr< class IDiffControl > DiffControl;
 	};
 
-	FDiffControl GenerateDetailsPanel();
+	FDiffControl GenerateDetailsPanel(const TFunction<const UObject*(const UObject*)>& Redirector = nullptr);
 
 	TSharedRef<SBox> GenerateRevisionInfoWidgetForPanel(TSharedPtr<SWidget>& OutGeneratedWidget,const FText& InRevisionText) const;
 
 	/** Accessor and event handler for toggling between diff view modes (defaults, components, graph view, interface, macro): */
 	void SetCurrentMode(FName NewMode);
+	void RefreshCurrentModePanel();
 	FName GetCurrentMode() const { return CurrentMode; }
 	void OnModeChanged(const FName& InNewViewMode) const;
 
@@ -125,8 +128,7 @@ protected:
 	FDetailsDiffPanel PanelNew;
 	
 	/** If set, actions like "Choose Left" and "Choose Right" will be enabled and modify the OutputObject */
-	const UObject* OutputObjectUnmodified = nullptr;
-	UObject* OutputObjectModified = nullptr; // clone that can be mutated by user actions
+	UObject* OutputObject = nullptr; // clone that can be mutated by user actions
 
 	DECLARE_MULTICAST_DELEGATE(FOnSetOutputObjectEvent)
 	FOnSetOutputObjectEvent OnOutputObjectSetEvent;
@@ -155,6 +157,8 @@ protected:
 	TWeakPtr<SWindow> WeakParentWindow;
 
 	FDelegateHandle AssetEditorCloseDelegate;
+
+	TMap<FString, TMap<FPropertySoftPath, ETreeDiffResult>> MergeConflicts;
 };
 
 

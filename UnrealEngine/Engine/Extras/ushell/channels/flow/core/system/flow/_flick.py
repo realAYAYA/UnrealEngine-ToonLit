@@ -299,12 +299,10 @@ class Cmd(object):
             double_dashed = False
             for arg in in_args:
                 double_dashed |= (arg == "--")
-                if arg in ("--help", "-h", "/?"):
-                    if not double_dashed:
-                        self._print_help()
-                        raise SystemExit(127)
-                else:
-                    yield arg
+                if not double_dashed and arg in ("--help", "-h", "/?"):
+                    self._print_help()
+                    raise SystemExit(127)
+                yield arg
 
         def on_error(message):
             self._print_help(short=True)

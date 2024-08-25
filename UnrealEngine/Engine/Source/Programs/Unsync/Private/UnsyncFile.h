@@ -9,23 +9,39 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 
 namespace unsync {
 
 extern bool GForceBufferedFiles;
 
-enum class EFileMode
-{
-	ReadOnly,
-	ReadOnlyUnbuffered,
-	CreateReadWrite,
-	CreateWriteOnly,
+enum class EFileMode : uint32 {
+	None	   = 0,
+
+	Read	   = 1 << 0,
+	Write	   = 1 << 1,
+	Create	   = 1 << 2,
+	Unbuffered = 1 << 3,
+
+	// Extended modes
+	IgnoreDryRun = 1 << 4,	// allow write operations even in dry run mode
+
+	// Commonly used mode combinations
+	ReadOnly		   = Read,
+	ReadOnlyUnbuffered = Read | Unbuffered,
+	CreateReadWrite	   = Read | Write | Create,
+	CreateWriteOnly	   = Write | Create,
+
+	// Masks
+	CommonModeMask	 = Create | Read | Write | Unbuffered,
+	ExtendedModeMask = ~CommonModeMask,
 };
+UNSYNC_ENUM_CLASS_FLAGS(EFileMode, uint32)
 
 inline bool
 IsReadOnly(EFileMode Mode)
 {
-	switch (Mode)
+	switch (Mode & EFileMode::CommonModeMask)
 	{
 		case EFileMode::ReadOnly:
 		case EFileMode::ReadOnlyUnbuffered:
@@ -38,32 +54,19 @@ IsReadOnly(EFileMode Mode)
 inline bool
 IsWriteOnly(EFileMode Mode)
 {
-	switch (Mode)
-	{
-		case EFileMode::CreateWriteOnly:
-			return true;
-		default:
-			return false;
-	}
+	return (Mode & EFileMode::Read) == 0;
 }
 
 inline bool
 IsReadable(EFileMode Mode)
 {
-	return !IsWriteOnly(Mode);
+	return (Mode & EFileMode::Read) != 0;
 }
 
 inline bool
 IsWritable(EFileMode Mode)
 {
-	switch (Mode)
-	{
-		case EFileMode::CreateReadWrite:
-		case EFileMode::CreateWriteOnly:
-			return true;
-		default:
-			return false;
-	}
+	return (Mode & EFileMode::Write) != 0;
 }
 
 struct FIOBuffer
@@ -103,6 +106,7 @@ struct FIOBuffer
 	}
 
 	FBufferView GetBufferView() const { return FBufferView{GetData(), GetSize()}; }
+	FMutBufferView GetMutBufferView() { return FMutBufferView{GetData(), GetSize()}; }
 
 private:
 	static constexpr uint64 CANARY = 0x67aced0423000de5ull;
@@ -165,7 +169,7 @@ struct FWindowsFile : FIOReaderWriter
 	virtual void   FlushAll() override;
 	virtual void   FlushOne() override;
 	virtual uint64 GetSize() override { return FileSize; }
-	virtual bool   IsValid() override { return FileHandle != INVALID_HANDLE_VALUE; }
+	virtual bool   IsValid() override;
 	virtual void   Close() override;
 	virtual int32  GetError() override { return LastError; }
 
@@ -199,13 +203,18 @@ struct FWindowsFile : FIOReaderWriter
 	static constexpr uint32 UNBUFFERED_READ_ALIGNMENT = 4096;
 
 private:
+
+	// All internal methods expect the Mutex to be locked
+	void   InternalFlushAll();
 	uint32 CompleteReadCommand(Command& Cmd);
 	bool   OpenFileHandle(EFileMode InMode);
 
 private:
 	EFileMode Mode;
+
+	std::mutex Mutex;
 };
-using NativeFile = FWindowsFile;
+using FNativeFile = FWindowsFile;
 #endif	// UNSYNC_PLATFORM_WINDOWS
 
 #if UNSYNC_PLATFORM_UNIX
@@ -244,7 +253,7 @@ private:
 	FILE*	  FileHandle	 = nullptr;
 	int		  FileDescriptor = 0;
 };
-using NativeFile = FUnixFile;
+using FNativeFile = FUnixFile;
 #endif	// UNSYNC_PLATFORM_UNIX
 
 struct FVectorStreamOut
@@ -304,6 +313,7 @@ struct FMemReader : FIOReader
 struct FMemReaderWriter : FMemReader, FIOReaderWriter
 {
 	FMemReaderWriter(uint8* InData, uint64 InDataSize);
+	FMemReaderWriter(FMutBufferView Buffer) : FMemReaderWriter(Buffer.Data, Buffer.Size) {}
 
 	// IOBase
 	virtual void Close() override
@@ -422,10 +432,11 @@ struct FIOReaderStream
 };
 
 FBuffer ReadFileToBuffer(const FPath& Filename);
-bool	WriteBufferToFile(const FPath& Filename, const uint8* Data, uint64 Size);
-bool	WriteBufferToFile(const FPath& Filename, const FBuffer& Buffer);
+bool	WriteBufferToFile(const FPath& Filename, const uint8* Data, uint64 Size, EFileMode FileMode = EFileMode::CreateWriteOnly);
+bool	WriteBufferToFile(const FPath& Filename, const FBuffer& Buffer, EFileMode FileMode = EFileMode::CreateWriteOnly);
+bool	WriteBufferToFile(const FPath& Filename, const std::string& Buffer, EFileMode FileMode = EFileMode::CreateWriteOnly);
 
-struct FileAttributes
+struct FFileAttributes
 {
 	uint64 Mtime	  = 0;	// Windows file time (100ns ticks since 1601-01-01T00:00:00Z)
 	uint64 Size		  = 0;
@@ -436,22 +447,31 @@ struct FileAttributes
 
 struct FFileAttributeCache
 {
-	std::unordered_map<FPath::string_type, FileAttributes> Map;
+	std::unordered_map<FPath::string_type, FFileAttributes> Map;
 
 	const bool Exists(const FPath& Path) const;
 };
 
-FileAttributes GetFileAttrib(const FPath& Path, FFileAttributeCache* AttribCache = nullptr);
-bool		   SetFileMtime(const FPath& Path, uint64 Mtime);
-bool		   SetFileReadOnly(const FPath& Path, bool ReadOnly);
-bool		   IsDirectory(const FPath& Path);
-bool		   PathExists(const FPath& Path);
-bool		   PathExists(const FPath& Path, std::error_code& OutErrorCode);
-bool		   CreateDirectories(const FPath& Path);
-bool		   FileRename(const FPath& From, const FPath& To, std::error_code& OutErrorCode);
-bool		   FileCopy(const FPath& From, const FPath& To, std::error_code& OutErrorCode);
-bool		   FileCopyOverwrite(const FPath& From, const FPath& To, std::error_code& OutErrorCode);
-bool		   FileRemove(const FPath& Path, std::error_code& OutErrorCode);
+inline bool
+IsReadOnly(std::filesystem::perms Perms)
+{
+	return (Perms & std::filesystem::perms::owner_write) == std::filesystem::perms::none;
+}
+
+FFileAttributes GetFileAttrib(const FPath& Path, FFileAttributeCache* AttribCache = nullptr);
+FFileAttributes GetCachedFileAttrib(const FPath& Path, FFileAttributeCache& AttribCache);
+
+bool			SetFileMtime(const FPath& Path, uint64 Mtime, bool bAllowInDryRun = false);
+bool			SetFileReadOnly(const FPath& Path, bool ReadOnly);
+bool			IsDirectory(const FPath& Path);
+bool			PathExists(const FPath& Path);
+bool			PathExists(const FPath& Path, std::error_code& OutErrorCode);
+bool			CreateDirectories(const FPath& Path);
+bool			FileRename(const FPath& From, const FPath& To, std::error_code& OutErrorCode);
+bool			FileCopy(const FPath& From, const FPath& To, std::error_code& OutErrorCode);
+bool			FileCopyOverwrite(const FPath& From, const FPath& To, std::error_code& OutErrorCode);
+bool			FileRemove(const FPath& Path, std::error_code& OutErrorCode);
+FPath			GetRelativePath(const FPath& Path, const FPath& Base);
 
 // Returns number of bytes that can be written to the given path.
 // Returns ~0ull if the available space could not be determined.
@@ -460,6 +480,7 @@ uint64 GetAvailableDiskSpace(const FPath& Path);
 std::filesystem::recursive_directory_iterator RecursiveDirectoryScan(const FPath& Path);
 
 uint64 ToWindowsFileTime(const std::filesystem::file_time_type& T);
+std::filesystem::file_time_type FromWindowsFileTime(uint64 Ticks);
 
 struct FSyncFilter;
 FFileAttributeCache CreateFileAttributeCache(const FPath& Root, const FSyncFilter* SyncFilter = nullptr);
@@ -471,6 +492,6 @@ FPath MakeExtendedAbsolutePath(const FPath& InAbsolutePath);
 
 // Removes `\\?\` or `\\?\UNC\` prefix from a given path.
 // Returns original path on non-Windows.
-FPath RemoveExtendedPathPrefix(const FPath& InPath);
+FPathStringView RemoveExtendedPathPrefix(const FPath& InPath);
 
 }  // namespace unsync

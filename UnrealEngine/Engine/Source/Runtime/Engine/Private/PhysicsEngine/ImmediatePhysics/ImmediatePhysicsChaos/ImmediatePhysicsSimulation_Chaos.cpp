@@ -19,8 +19,7 @@
 #include "ChaosVisualDebugger/ChaosVisualDebuggerTrace.h"
 #include "Stats/StatsTrace.h"
 
-
-//PRAGMA_DISABLE_OPTIMIZATION
+//UE_DISABLE_OPTIMIZATION
 
 DECLARE_CYCLE_STAT(TEXT("FSimulation::Simulate_Chaos"), STAT_ImmediateSimulate_Chaos, STATGROUP_ImmediatePhysics);
 DECLARE_CYCLE_STAT(TEXT("FSimulation::Simulate_Chaos::InertiaConditioning"), STAT_ImmediateSimulate_Chaos_InertiaConditioning, STATGROUP_ImmediatePhysics);
@@ -200,7 +199,6 @@ Chaos::DebugDraw::FChaosDebugDrawSettings ChaosImmPhysDebugDebugDrawSettings(
 	/* BodyAxisLen =				*/ 4.0f,
 	/* ContactLen =					*/ 4.0f,
 	/* ContactWidth =				*/ 2.0f,
-	/* ContactPhiWidth =			*/ 0.0f,
 	/* ContactInfoWidth				*/ 2.0f,
 	/* ContactOwnerWidth =			*/ 0.0f,
 	/* ConstraintAxisLen =			*/ 5.0f,
@@ -231,7 +229,6 @@ FAutoConsoleVariableRef CVarChaosImmPhysBodyAxisLen(TEXT("p.Chaos.ImmPhys.DebugD
 FAutoConsoleVariableRef CVarChaosImmPhysContactLen(TEXT("p.Chaos.ImmPhys.DebugDraw.ContactLen"), ChaosImmPhysDebugDebugDrawSettings.ContactLen, TEXT("ContactLen."));
 FAutoConsoleVariableRef CVarChaosImmPhysContactWidth(TEXT("p.Chaos.ImmPhys.DebugDraw.ContactWidth"), ChaosImmPhysDebugDebugDrawSettings.ContactWidth, TEXT("ContactWidth."));
 FAutoConsoleVariableRef CVarChaosImmPhysContactInfoWidth(TEXT("p.Chaos.ImmPhys.DebugDraw.ContactInfoWidth"), ChaosImmPhysDebugDebugDrawSettings.ContactInfoWidth, TEXT("ContactInfoWidth."));
-FAutoConsoleVariableRef CVarChaosImmPhysContactPhiWidth(TEXT("p.Chaos.ImmPhys.DebugDraw.ContactPhiWidth"), ChaosImmPhysDebugDebugDrawSettings.ContactPhiWidth, TEXT("ContactPhiWidth."));
 FAutoConsoleVariableRef CVarChaosImmPhysContactOwnerWidth(TEXT("p.Chaos.ImmPhys.DebugDraw.ContactOwnerWidth"), ChaosImmPhysDebugDebugDrawSettings.ContactOwnerWidth, TEXT("ContactOwnerWidth."));
 FAutoConsoleVariableRef CVarChaosImmPhysConstraintAxisLen(TEXT("p.Chaos.ImmPhys.DebugDraw.ConstraintAxisLen"), ChaosImmPhysDebugDebugDrawSettings.ConstraintAxisLen, TEXT("ConstraintAxisLen."));
 FAutoConsoleVariableRef CVarChaosImmPhysLineThickness(TEXT("p.Chaos.ImmPhys.DebugDraw.LineThickness"), ChaosImmPhysDebugDebugDrawSettings.LineThickness, TEXT("LineThickness."));
@@ -371,7 +368,8 @@ namespace ImmediatePhysics_Chaos
 		DetectorSettings.bAllowManifoldReuse = false;
 		DetectorSettings.bDeferNarrowPhase = (ChaosImmediate_Collision_DeferNarrowPhase != 0);
 		DetectorSettings.bAllowManifolds = (ChaosImmediate_Collision_UseManifolds != 0);
-		DetectorSettings.bAllowCCD = false; 
+		DetectorSettings.bAllowCCD = false;
+		DetectorSettings.bAllowMACD = false;
 		Implementation->Collisions.SetDetectorSettings(DetectorSettings);
 	}
 
@@ -460,8 +458,8 @@ namespace ImmediatePhysics_Chaos
 		ActorHandle->GetParticle()->AuxilaryValue(Implementation->ParticleMaterials) = MakeSerializable(Material);
 		ActorHandle->GetParticle()->AuxilaryValue(Implementation->PerParticleMaterials) = MoveTemp(Material);
 		ActorHandle->GetParticle()->AuxilaryValue(Implementation->CollidedParticles) = false;
-		ActorHandle->GetParticle()->AuxilaryValue(Implementation->ParticlePrevXs) = ActorHandle->GetParticle()->X();
-		ActorHandle->GetParticle()->AuxilaryValue(Implementation->ParticlePrevRs) = ActorHandle->GetParticle()->R();
+		ActorHandle->GetParticle()->AuxilaryValue(Implementation->ParticlePrevXs) = ActorHandle->GetParticle()->GetX();
+		ActorHandle->GetParticle()->AuxilaryValue(Implementation->ParticlePrevRs) = ActorHandle->GetParticle()->GetR();
 
 		Implementation->bActorsDirty = true;
 
@@ -504,6 +502,36 @@ namespace ImmediatePhysics_Chaos
     {
         Implementation->Collisions.GetConstraintAllocator().RemoveParticle(ActorHandle->GetParticle());
     }
+
+	void FSimulation::SetIsKinematic(FActorHandle* ActorHandle, bool bKinematic)
+	{
+		bool bWasKinematic = ActorHandle->GetIsKinematic();
+		if (bKinematic != bWasKinematic)
+		{
+			ActorHandle->SetIsKinematic(bKinematic);
+			Implementation->bActorsDirty = true;
+		}
+	}
+
+	void FSimulation::SetEnabled(FActorHandle* ActorHandle, bool bEnable)
+	{
+		bool bWasEnabled = ActorHandle->GetEnabled();
+		if (bEnable != bWasEnabled)
+		{
+			ActorHandle->SetEnabled(bEnable);
+			Implementation->bActorsDirty = true;
+		}
+	}
+
+	void FSimulation::SetHasCollision(FActorHandle* ActorHandle, bool bCollision)
+	{
+		bool bWasCollision = ActorHandle->GetHasCollision();
+		if (bCollision != bWasCollision)
+		{
+			ActorHandle->SetHasCollision(bCollision);
+			Implementation->bActorsDirty = true;
+		}
+	}
 
 	FJointHandle* FSimulation::CreateJoint(FConstraintInstance* ConstraintInstance, FActorHandle* Body1, FActorHandle* Body2)
 	{
@@ -579,7 +607,7 @@ namespace ImmediatePhysics_Chaos
 		for (FActorHandle* OtherActorHandle : Implementation->ActorHandles)
 		{
 			FGeometryParticleHandle* Particle1 = OtherActorHandle->GetParticle();
-			if ((OtherActorHandle != ActorHandle) && OtherActorHandle->IsSimulated())
+			if ((OtherActorHandle != ActorHandle) && OtherActorHandle->CouldBeDynamic())
 			{
 				Implementation->PotentiallyCollidingPairs.Emplace(FParticlePair(Particle0, Particle1));
 			}
@@ -699,7 +727,8 @@ namespace ImmediatePhysics_Chaos
 			{
 				bool bAnyDisabled = FGenericParticleHandle(ParticlePair[0])->Disabled() || FGenericParticleHandle(ParticlePair[1])->Disabled();
 				bool bAnyDynamic = FGenericParticleHandle(ParticlePair[0])->IsDynamic() || FGenericParticleHandle(ParticlePair[1])->IsDynamic();
-				if (bAnyDynamic && !bAnyDisabled)
+				bool bBothCollide = ParticlePair[0]->HasCollision() && ParticlePair[1]->HasCollision();
+				if (bBothCollide && bAnyDynamic && !bAnyDisabled)
 				{
 					Implementation->ActivePotentiallyCollidingPairs.Add(ParticlePair);
 				}
@@ -804,6 +833,11 @@ namespace ImmediatePhysics_Chaos
 		Implementation->RollingAverageStepTime = FMath::Min(Implementation->RollingAverageStepTime, MaxStepTime);
 		Implementation->NumRollingAverageStepTimes = FMath::Min(Implementation->NumRollingAverageStepTimes + 1, Implementation->MaxNumRollingAverageStepTimes);
 		return Implementation->RollingAverageStepTime;
+	}
+
+	void FSimulation::SetRewindVelocities(bool bRewindVelocities)
+	{
+		Implementation->Evolution.SetRewindVelocities(bRewindVelocities);
 	}
 
 	void FSimulation::Simulate(FReal InDeltaTime, FReal MaxStepTime, int32 MaxSubSteps, const FVector& InGravity)

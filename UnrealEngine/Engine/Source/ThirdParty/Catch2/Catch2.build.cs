@@ -7,6 +7,7 @@ using UnrealBuildBase;
 
 public class Catch2 : ModuleRules
 {
+	public static readonly string Version = "v3.4.0";
 	/// <summary>
 	/// Library name can vary with platform.
 	/// For NDA platforms inherit from this module and override this property to set a different library name.
@@ -61,15 +62,16 @@ public class Catch2 : ModuleRules
 			{
 				Arch = "x86_64-unknown-linux-gnu";
 			}
+			else if (Target.Platform == UnrealTargetPlatform.LinuxArm64)
+			{
+				RelativeLibPath = UnrealTargetPlatform.Linux.ToString();
+				Arch = "aarch64-unknown-linux-gnueabi";
+			}
 			else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Windows))
 			{
 				RelativeLibPath = "Win64";
 				Arch = "x64";
-				if (Target.WindowsPlatform.ToolChain == WindowsCompiler.VisualStudio2019)
-				{
-					Variation = "VS2019";
-				}
-				else if (Target.WindowsPlatform.ToolChain == WindowsCompiler.VisualStudio2022)
+				if (Target.WindowsPlatform.ToolChain == WindowsCompiler.VisualStudio2022)
 				{
 					Variation = "VS2022";
 				}
@@ -95,7 +97,7 @@ public class Catch2 : ModuleRules
 
 		string RelativeLibPath = Path.Combine(RelativeBaseLibPath, IsDebugConfig ? "debug" : "release", LibName);
 
-		PublicAdditionalLibraries.Add(Path.Combine(Catch2Root, "v3.0.1", "lib", RelativeLibPath));
-		PublicSystemIncludePaths.Add(Path.Combine(Unreal.EngineDirectory.FullName, "Source", "ThirdParty", "Catch2", "v3.0.1", "src"));
+		PublicAdditionalLibraries.Add(Path.Combine(Catch2Root, Version, "lib", RelativeLibPath));
+		PublicSystemIncludePaths.Add(Path.Combine(Unreal.EngineDirectory.FullName, "Source", "ThirdParty", "Catch2", Version, "src"));
 	}
 }

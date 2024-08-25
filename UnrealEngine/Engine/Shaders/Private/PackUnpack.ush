@@ -109,6 +109,20 @@ float UnpackR8(uint In)
 }
 
 //
+//	float <-> u6
+//
+
+uint PackR6(float Value)
+{
+	return uint(saturate(Value) * 63.0f);
+}
+
+float UnpackR6(uint In)
+{
+	return float(In & 0x3F) * (1.0f / 63.0f);
+}
+
+//
 //	float4 <-> u32 as u8.u8.u8.u8
 //
 
@@ -141,6 +155,41 @@ float4 UnpackRGBA8(uint In)
 	Out.a = float((In >> 24) & 0xFF) * (1.0f / 255.0f);
 	return Out;
 #endif
+}
+
+uint PackUint4ToUint(uint4 In)
+{
+	// TODO use BitAlignU32
+	uint r = (In.r & 0xFFu);
+	uint g = (In.g & 0xFFu) << 8u;
+	uint b = (In.b & 0xFFu) << 16u;
+	uint a = (In.a & 0xFFu) << 24u;
+	return r | g | b | a;
+}
+
+uint4 UnpackUintToUint4(uint In)
+{
+	// TODO use BitAlignU32
+	uint4 Out;
+	Out.r = (In >> 0u)  & 0xFFu;
+	Out.g = (In >> 8u)  & 0xFFu;
+	Out.b = (In >> 16u) & 0xFFu;
+	Out.a = (In >> 24u) & 0xFFu;
+	return Out;
+}
+
+//
+//	float <-> unorm
+//
+
+uint PackUnorm10(float Value)
+{
+	return uint(saturate(Value) * 1023.0f);
+}
+
+float UnpackUnorm10(uint In)
+{
+	return float(In & 0x3FF) * (1.0f / 1023.0f);
 }
 
 //
@@ -230,8 +279,10 @@ float UnpackR24F(uint In)
 //
 
 #define PackTileCoordXXbits(In, InMask, InBits)  ((In.x & InMask) | ((In.y & InMask) << InBits))
-#define UnpackTileCoordXXbits(In,InMask, InBits) uint2(In & InMask, (In >> InBits) & InMask)
+#define UnpackTileCoordXXbits(In,InMask, InBits) uint2(BitFieldExtractU32(In, InBits, 0), BitFieldExtractU32(In, InBits, InBits))
 
+uint  PackTileCoord8bits(uint2 In)  { return PackTileCoordXXbits  (In, 0xFF,  8u); }
+uint2 UnpackTileCoord8bits(uint In) { return UnpackTileCoordXXbits(In, 0xFF,  8u); }
 uint  PackTileCoord10bits(uint2 In) { return PackTileCoordXXbits  (In, 0x3FF, 10u); }
 uint2 UnpackTileCoord10bits(uint In){ return UnpackTileCoordXXbits(In, 0x3FF, 10u); }
 uint  PackTileCoord12bits(uint2 In) { return PackTileCoordXXbits  (In, 0xFFF, 12u); }

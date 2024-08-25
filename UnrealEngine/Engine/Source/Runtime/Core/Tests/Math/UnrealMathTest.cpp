@@ -794,6 +794,54 @@ FQuat4f FindBetweenNormals_5_2(const FVector3f& A, const FVector3f& B)
 	return FindBetween_Helper_5_2(A, B, NormAB);
 }
 
+
+template<typename T>
+UE::Math::TQuat<T> Old_Slerp_NotNormalized(const UE::Math::TQuat<T>& Quat1, const UE::Math::TQuat<T>& Quat2, T Slerp)
+{
+	// Get cosine of angle between quats.
+	const T RawCosom =
+		Quat1.X * Quat2.X +
+		Quat1.Y * Quat2.Y +
+		Quat1.Z * Quat2.Z +
+		Quat1.W * Quat2.W;
+	// Unaligned quats - compensate, results in taking shorter route.
+	const T Cosom = FMath::FloatSelect(RawCosom, RawCosom, -RawCosom);
+
+	T Scale0, Scale1;
+
+	if (Cosom < T(0.9999f))
+	{
+		const T Omega = FMath::Acos(Cosom);
+		const T InvSin = T(1.f) / FMath::Sin(Omega);
+		Scale0 = FMath::Sin((T(1.f) - Slerp) * Omega) * InvSin;
+		Scale1 = FMath::Sin(Slerp * Omega) * InvSin;
+	}
+	else
+	{
+		// Use linear interpolation.
+		Scale0 = T(1.0f) - Slerp;
+		Scale1 = Slerp;
+	}
+
+	// In keeping with our flipped Cosom:
+	Scale1 = FMath::FloatSelect(RawCosom, Scale1, -Scale1);
+
+	UE::Math::TQuat<T> Result;
+
+	Result.X = Scale0 * Quat1.X + Scale1 * Quat2.X;
+	Result.Y = Scale0 * Quat1.Y + Scale1 * Quat2.Y;
+	Result.Z = Scale0 * Quat1.Z + Scale1 * Quat2.Z;
+	Result.W = Scale0 * Quat1.W + Scale1 * Quat2.W;
+
+	return Result;
+}
+
+template<typename T>
+UE::Math::TQuat<T> Old_Slerp(const UE::Math::TQuat<T>& Quat1, const UE::Math::TQuat<T>& Quat2, T Slerp)
+{
+	return Old_Slerp_NotNormalized(Quat1, Quat2, Slerp).GetNormalized();
+}
+
 // ROTATOR TESTS
 
 bool TestRotatorEqual0(const FRotator3f& A, const FRotator3f& B, const float Tolerance)
@@ -3493,6 +3541,7 @@ TEST_CASE_NAMED(FVectorRegisterAbstractionTest, "System::Core::Math::Vector Regi
 
 	// Quat Lerp/Slerp
 	{
+		// Note: Values chosen to have a positive 'RawCosom' within Slerp_NotNormalized()
 		const FRotator3f Rotator0 = FRotator3f(300.0f, -45.0f, 0.0f);
 		const FRotator3f Rotator1 = FRotator3f(10.0f, 270.0f, 30.0f);
 		const float FloatAlpha = 0.25f;
@@ -3506,41 +3555,58 @@ TEST_CASE_NAMED(FVectorRegisterAbstractionTest, "System::Core::Math::Vector Regi
 		Q2 = FMath::Lerp(Q0, Q1, FloatAlpha);
 		Q3 = FQuat4f::Slerp(Q0, Q1, FloatAlpha);
 		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
+		Q2 = Old_Slerp(Q0, Q1, FloatAlpha);
+		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
 
 		Q2 = FMath::Lerp<FQuat4f>(Q0, Q1, FloatAlpha);
 		Q3 = FQuat4f::Slerp(Q0, Q1, FloatAlpha);
 		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
-
-		// double alpha
-		Q2 = FMath::Lerp(Q0, Q1, DoubleAlpha);
-		Q3 = FQuat4f::Slerp(Q0, Q1, (float)DoubleAlpha);
+		Q2 = Old_Slerp(Q0, Q1, FloatAlpha);
 		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
 
-		Q2 = FMath::Lerp<FQuat4f>(Q0, Q1, DoubleAlpha);
-		Q3 = FQuat4f::Slerp(Q0, Q1, (float)DoubleAlpha);
+		// double alpha
+		Q2 = FMath::Lerp(Q0, Q1, -DoubleAlpha);
+		Q3 = FQuat4f::Slerp(Q0, Q1, float(-DoubleAlpha));
+		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
+		Q2 = Old_Slerp(Q0, Q1, float(-DoubleAlpha));
+		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
+
+		Q2 = FMath::Lerp<FQuat4f>(Q0, Q1, -DoubleAlpha);
+		Q3 = FQuat4f::Slerp(Q0, Q1, float(-DoubleAlpha));
+		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
+		Q2 = Old_Slerp(Q0, Q1, float(-DoubleAlpha));
 		LogTest<float>(TEXT("TestQuatLerp"), TestQuatsEqual(Q2, Q3, 1e-6f));
 
 		// Quat<double>
 		FQuat4d QD0, QD1, QD2, QD3;
-		QD0 = FQuat4d(FRotator3d(Rotator0));
-		QD1 = FQuat4d(FRotator3d(Rotator1));
+		// Note: Values chosen to have a negative 'RawCosom' within Slerp_NotNormalized()
+		QD0 = FQuat4d(FRotator3d(30.0f, 45.0f, 0.0f));
+		QD1 = FQuat4d(FRotator3d(10.0f, -270.0f, -130.0f));
 
 		// double alpha
 		QD2 = FMath::Lerp(QD0, QD1, DoubleAlpha);
 		QD3 = FQuat4d::Slerp(QD0, QD1, DoubleAlpha);
 		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
+		QD2 = Old_Slerp(QD0, QD1, DoubleAlpha);
+		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
 
 		QD2 = FMath::Lerp<FQuat4d>(QD0, QD1, DoubleAlpha);
 		QD3 = FQuat4d::Slerp(QD0, QD1, DoubleAlpha);
 		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
-
-		// float alpha
-		QD2 = FMath::Lerp(QD0, QD1, FloatAlpha);
-		QD3 = FQuat4d::Slerp(QD0, QD1, FloatAlpha);
+		QD2 = Old_Slerp(QD0, QD1, DoubleAlpha);
 		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
 
-		QD2 = FMath::Lerp<FQuat4d>(QD0, QD1, FloatAlpha);
-		QD3 = FQuat4d::Slerp(QD0, QD1, FloatAlpha);
+		// float alpha
+		QD2 = FMath::Lerp(QD0, QD1, -FloatAlpha);
+		QD3 = FQuat4d::Slerp(QD0, QD1, -FloatAlpha);
+		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
+		QD2 = Old_Slerp(QD0, QD1, double(-FloatAlpha));
+		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
+
+		QD2 = FMath::Lerp<FQuat4d>(QD0, QD1, -FloatAlpha);
+		QD3 = FQuat4d::Slerp(QD0, QD1, -FloatAlpha);
+		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
+		QD2 = Old_Slerp(QD0, QD1, double(-FloatAlpha));
 		LogTest<double>(TEXT("TestQuatLerp"), TestQuatsEqual(QD2, QD3, 1e-6f));
 	}
 
@@ -4491,36 +4557,180 @@ TEST_CASE_NAMED(FBitCastTest, "System::Core::Math::Bitcast", "[ApplicationContex
 
 TEST_CASE_NAMED(FMathWrapTest, "System::Core::Math::Wrap", "[ApplicationContextMask][SmokeFilter]")
 {
-	for (int Val = -5; Val != 5; ++Val)
+	// Tests wrapping of FMath::Wrap(Val, Min, Max) with a set of values in a set of ranges.
+	//
+	// The values to test are of the form ValFrom + X*ValStep, and do not exceed ValTo.
+	// The minimum values in the wrapping range are of the form: MinFrom + Y*MinStep, and do not exceed MinTo.
+	// The sizes of each range (where Max == Min + Size) are of the form: SizeFrom + Z*SizeStep, and do not exceed SizeTo.
+	auto WrapTest = []<typename T>(T ValFrom, T ValTo, T ValStep, T MinFrom, T MinTo, T MinStep, T SizeFrom, T SizeTo, T SizeStep)
 	{
-		for (int Min = -5; Min != 5; ++Min)
+		for (T Val = ValFrom; Val < ValTo; Val += ValStep)
 		{
-			// Size == 0
+			for (T Min = MinFrom; Min < MinTo; Min += MinStep)
 			{
-				int Wrap = FMath::Wrap(Val, Min, Min);
-
-				CHECK_MESSAGE(TEXT("Wrapped value should be in the empty range"), Wrap == Min);
-			}
-
-			for (int Size = 1; Size != 5; ++Size)
-			{
-				int Max = Min + Size;
-				int Wrap = FMath::Wrap(Val, Min, Max);
-
-				CHECK_MESSAGE(TEXT("Wrapped value should be in the non-empty range"), Wrap >= Min && Wrap <= Max);
-				CHECK_MESSAGE(FString::Printf(TEXT("Wrapped value should be at a distance which is an exact multiple of the range size: (Val: %d, Min: %d, Max: %d, Wrap: %d, Mod: %d)"), Val, Min, Max, Wrap, (Wrap - Val) % Size), (Wrap - Val) % Size == 0);
-
-				if (Val < Min)
+				for (T Size = SizeFrom; Size < SizeTo; Size += SizeStep)
 				{
-					CHECK_FALSE_MESSAGE(TEXT("Wrapping a value from below a non-empty range should never give the max"), Wrap == Max);
-				}
-				else if (Val > Max)
-				{
-					CHECK_FALSE_MESSAGE(TEXT("Wrapping a value from above a non-empty range should never give the min"), Wrap == Min);
+					if (Size == (T)0)
+					{
+						T Wrap = FMath::Wrap(Val, Min, Min);
+
+						CHECK_MESSAGE(TEXT("Wrapped value should be in the empty range"), Wrap == Min);
+					}
+					else
+					{
+						T Max = Min + Size;
+						T Wrap = FMath::Wrap(Val, Min, Max);
+
+						CHECK_MESSAGE(TEXT("Wrapped value should be in the non-empty range"), Wrap >= Min && Wrap <= Max);
+						T Mod = FMath::Modulo((Wrap - Val), Size);
+						if constexpr (std::is_integral_v<T>)
+						{
+							CHECK_MESSAGE(FString::Printf(TEXT("Wrapped value should be at a distance which is an exact multiple of the range size: (Val: %d, Min: %d, Max: %d, Wrap: %d, Mod: %d)"), Val, Min, Max, Wrap, Mod), Mod == 0);
+						}
+						else
+						{
+							T Tolerance;
+							if constexpr (std::is_same_v<T, float>)
+							{
+								Tolerance = UE_KINDA_SMALL_NUMBER;
+							}
+							else
+							{
+								Tolerance = UE_DOUBLE_KINDA_SMALL_NUMBER;
+							}
+
+							// We need to check that we're in the range of zero *or* +/- size because of rounding
+							bool bIsExactMultipleOfSize = FMath::Square(Mod) < Tolerance || FMath::Square(Mod - Size) < Tolerance || FMath::Square(Mod + Size) < Tolerance;
+							CHECK_MESSAGE(FString::Printf(TEXT("Wrapped value should be at a distance which is an exact multiple of the range size: (Val: %f, Min: %f, Max: %f, Wrap: %f, Mod: %f)"), Val, Min, Max, Wrap, Mod), bIsExactMultipleOfSize);
+						}
+
+						if (Val < Min)
+						{
+							CHECK_FALSE_MESSAGE(TEXT("Wrapping a value from below a non-empty range should never give the max"), Wrap == Max);
+						}
+						else if (Val > Max)
+						{
+							CHECK_FALSE_MESSAGE(TEXT("Wrapping a value from above a non-empty range should never give the min"), Wrap == Min);
+						}
+					}
 				}
 			}
 		}
-	}
+	};
+
+	// Integral
+	WrapTest(
+		/* ValFrom  */ -25,
+		/* ValTo    */  25,
+		/* ValStep  */   1,
+		/* MinFrom  */  -5,
+		/* MinTo    */   5,
+		/* MinStep  */   1,
+		/* SizeFrom */   0,
+		/* SizeTo   */   5,
+		/* SizeStep */   1
+	);
+
+	// Floats (with integral values)
+	WrapTest(
+		/* ValFrom  */ -25.0f,
+		/* ValTo    */  25.0f,
+		/* ValStep  */   1.0f,
+		/* MinFrom  */  -5.0f,
+		/* MinTo    */   5.0f,
+		/* MinStep  */   1.0f,
+		/* SizeFrom */   0.0f,
+		/* SizeTo   */   5.0f,
+		/* SizeStep */   1.0f
+	);
+
+	// Floats (with fractional values)
+	WrapTest(
+		/* ValFrom  */  -7.34f,
+		/* ValTo    */  12.19f,
+		/* ValStep  */   0.7361f,
+		/* MinFrom  */  -8.43f,
+		/* MinTo    */  11.84f,
+		/* MinStep  */   0.69f,
+		/* SizeFrom */   0.0f,
+		/* SizeTo   */   7.23f,
+		/* SizeStep */   0.59f
+	);
+
+	// Doubles (with integral values)
+	WrapTest(
+		/* ValFrom  */ -25.0,
+		/* ValTo    */  25.0,
+		/* ValStep  */   1.0,
+		/* MinFrom  */  -5.0,
+		/* MinTo    */   5.0,
+		/* MinStep  */   1.0,
+		/* SizeFrom */   0.0,
+		/* SizeTo   */   5.0,
+		/* SizeStep */   1.0
+	);
+
+	// Doubles (with fractional values)
+	WrapTest(
+		/* ValFrom  */  -7.34,
+		/* ValTo    */  12.19,
+		/* ValStep  */   0.7361,
+		/* MinFrom  */  -8.43,
+		/* MinTo    */  11.84,
+		/* MinStep  */   0.69,
+		/* SizeFrom */   0.0,
+		/* SizeTo   */   7.23,
+		/* SizeStep */   0.59
+	);
+
+	// Test large values far away from the range
+	WrapTest(
+		/* ValFrom  */  1 << 30,
+		/* ValTo    */  (1 << 30) + 1,
+		/* ValStep  */  1,
+		/* MinFrom  */  0,
+		/* MinTo    */  1,
+		/* MinStep  */  1,
+		/* SizeFrom */  2,
+		/* SizeTo   */  3,
+		/* SizeStep */  1
+	);
+	WrapTest(
+		/* ValFrom  */  (float)(1 << 25),
+		/* ValTo    */  (float)(1 << 25) + 4.0f,
+		/* ValStep  */  4.0f,
+		/* MinFrom  */  0.0f,
+		/* MinTo    */  1.0f,
+		/* MinStep  */  1.0f,
+		/* SizeFrom */  1.0f,
+		/* SizeTo   */  2.0f,
+		/* SizeStep */  1.0f
+	);
+	WrapTest(
+		/* ValFrom  */  (double)(1ull << 54),
+		/* ValTo    */  (double)(1ull << 54) + 4.0,
+		/* ValStep  */  4.0,
+		/* MinFrom  */  0.0,
+		/* MinTo    */  1.0,
+		/* MinStep  */  1.0,
+		/* SizeFrom */  1.0,
+		/* SizeTo   */  2.0,
+		/* SizeStep */  1.0
+	);
+
+	// Test constexpr
+	static_assert(FMath::Wrap(-3, 0, 5) == 2);
+	//static_assert(FMath::Wrap(-3.0f, 0.0f, 5.0f) == 2); // needs constexpr fmod support in C++23
+	//static_assert(FMath::Wrap(-3.0, 0.0, 5.0) == 2); // needs constexpr fmod support in C++23
+
+	// These will fail to compile due to signed overload if we don't use unsigned diffs in the implementation
+	static_assert(FMath::Wrap(MAX_int32, MIN_int32 + 2, MAX_int32)); // range size will overflow
+	static_assert(FMath::Wrap(MIN_int32, MAX_int32 - 2, MAX_int32)); // distance from val to min will overflow
+	static_assert(FMath::Wrap(MAX_int32, MIN_int32, MIN_int32 + 2)); // distance from max to val will overflow
+
+	// Try with bytes too, where the value is more than 128 away from the range
+	static_assert(FMath::Wrap((int8)123, (int8)-20, (int8)-10) == (int8)-17);
+	static_assert(FMath::Wrap((int8)-123, (int8)10, (int8)20) == (int8)17);
 }
 class FInitVectorTestClass {
 public:

@@ -37,12 +37,12 @@ void VSMain(
 	// (ii) take the full offset which means that grass can be missing or corrupt at edges of each tile.
 	// We choose (i) here.
 	float3 WPO = GetMaterialWorldPositionOffset(VertexParameters);
-	WPO = LWCMultiplyVector(WPO, VertexFactoryGetWorldToLocal(VFIntermediates)) * float3(0, 0, 1);
-	WPO = LWCMultiplyVector(WPO, VertexFactoryGetLocalToWorld(VFIntermediates));
+	WPO = DFMultiplyVector(WPO, VertexFactoryGetWorldToLocal(VFIntermediates)) * float3(0, 0, 1);
+	WPO = DFMultiplyVector(WPO, VertexFactoryGetLocalToWorld(VFIntermediates));
 	WorldPosition.xyz += WPO;
 #if VF_USE_PRIMITIVE_SCENE_DATA
-	FLWCVector3 AbsoluteWorldPosition = LWCSubtract(WorldPosition.xyz, ResolvedView.PreViewTranslation);
-	Output.LocalPosZ = LWCMultiply(AbsoluteWorldPosition, VertexFactoryGetWorldToLocal(VFIntermediates)).z;
+	FDFVector3 AbsoluteWorldPosition = DFFastSubtract(WorldPosition.xyz, ResolvedView.PreViewTranslation);
+	Output.LocalPosZ = DFMultiplyDemote(AbsoluteWorldPosition, VertexFactoryGetWorldToLocal(VFIntermediates)).z;
 #endif // VF_USE_PRIMITIVE_SCENE_DATA
 	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 
@@ -76,7 +76,7 @@ void PSMain(
 #if VF_USE_PRIMITIVE_SCENE_DATA
 	float Height = clamp(round(Interpolants.LocalPosZ / TERRAIN_ZSCALE) + 32768.0, 0, 65535);
 #else // !VF_USE_PRIMITIVE_SCENE_DATA
-	float3 LocalPos = LWCMultiply(MaterialParameters.AbsoluteWorldPosition, GetWorldToInstance(MaterialParameters));
+	float3 LocalPos = WSMultiplyDemote(GetWorldPosition(MaterialParameters), GetWorldToInstance(MaterialParameters));
 	float Height = clamp(round(LocalPos.z / TERRAIN_ZSCALE) + 32768.0, 0, 65535);
 #endif // VF_USE_PRIMITIVE_SCENE_DATA
 	float2 PackedHeight = float2(floor(Height / 256), fmod(Height, 256)) / 255;

@@ -1891,7 +1891,7 @@ public:
 
 		while (!Texmaps.IsEmpty())
 		{
-			Texmap* Texmap = Texmaps.Pop(false);
+			Texmap* Texmap = Texmaps.Pop(EAllowShrinking::No);
 
 			if (!Texmap)
 			{

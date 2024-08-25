@@ -17,6 +17,7 @@ struct FTimersViewColumns
 	static const FName MetaGroupNameColumnID;
 	static const FName TypeColumnID;
 	static const FName InstanceCountColumnID;
+	static const FName ChildInstanceCountColumnID;
 
 	// Inclusive Time columns
 	static const FName TotalInclusiveTimeColumnID;
@@ -97,6 +98,7 @@ public:
 	static TSharedRef<Insights::FTableColumn> CreateMetaGroupNameColumn();
 	static TSharedRef<Insights::FTableColumn> CreateTypeColumn();
 	static TSharedRef<Insights::FTableColumn> CreateInstanceCountColumn();
+	static TSharedRef<Insights::FTableColumn> CreateChildInstanceCountColumn();
 
 	static TSharedRef<Insights::FTableColumn> CreateTotalInclusiveTimeColumn();
 	static TSharedRef<Insights::FTableColumn> CreateMaxInclusiveTimeColumn();

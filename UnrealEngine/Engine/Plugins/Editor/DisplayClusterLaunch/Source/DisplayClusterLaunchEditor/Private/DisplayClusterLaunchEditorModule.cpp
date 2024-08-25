@@ -39,11 +39,6 @@
 
 #define LOCTEXT_NAMESPACE "FDisplayClusterLaunchEditorModule"
 
-void CloseAllMenus()
-{
-	FSlateApplication::Get().DismissAllMenus();
-}
-
 FString EnumToString(const FString EnumName, const int32 EnumValue)
 {
 	const FString EnumPath = "/Script/DisplayClusterLaunchEditor." + EnumName;
@@ -80,6 +75,14 @@ void FDisplayClusterLaunchEditorModule::StartupModule()
 {
 	FDisplayClusterLaunchEditorStyle::Initialize();
 	FCoreDelegates::OnFEngineLoopInitComplete.AddRaw(this, &FDisplayClusterLaunchEditorModule::OnFEngineLoopInitComplete);
+	if (IConcertSyncClientModule* ConcertSyncClientModule = (IConcertSyncClientModule*)FModuleManager::Get().GetModule("ConcertSyncClient"))
+	{
+		if (const TSharedPtr<IConcertSyncClient> ConcertSyncClient = ConcertSyncClientModule->GetClient(TEXT("MultiUser")))
+		{
+			const IConcertClientRef ConcertClient = ConcertSyncClient->GetConcertClient();
+			ConcertClient->StartDiscovery();
+		}
+	}
 }
 
 void FDisplayClusterLaunchEditorModule::ShutdownModule()
@@ -94,13 +97,18 @@ void FDisplayClusterLaunchEditorModule::ShutdownModule()
 		SettingsModule.UnregisterSettings("Project", "Plugins", "nDisplay Launch");
 	}
 
-	// Remove Concert delegates
 	if (IConcertSyncClientModule* ConcertSyncClientModule = (IConcertSyncClientModule*)FModuleManager::Get().GetModule("ConcertSyncClient"))
 	{
 		if (const TSharedPtr<IConcertSyncClient> ConcertSyncClient = ConcertSyncClientModule->GetClient(TEXT("MultiUser")))
 		{
 			const IConcertClientRef ConcertClient = ConcertSyncClient->GetConcertClient();
-		
+
+			// Concert may close all existing discovery requests so we have to check to see if we are still have discovery enabled before
+			// attempting to stop.
+			if (ConcertClient->IsDiscoveryEnabled())
+			{
+				ConcertClient->StopDiscovery();
+			}
 			ConcertClient->OnKnownServersUpdated().RemoveAll(this);
 		}
 	}
@@ -165,6 +173,12 @@ FString GetConcertArguments(const FString& ServerName, const FString& SessionNam
 	FString ReturnValue =
 		FString::Printf(TEXT("-CONCERTISHEADLESS -CONCERTRETRYAUTOCONNECTONERROR -CONCERTAUTOCONNECT -CONCERTSERVER=\"%s\" -CONCERTSESSION=\"%s\""),
 			 *ServerName, *SessionName);
+	return ReturnValue;
+}
+
+const FString GetInputArguments()
+{
+	const FString ReturnValue = FString::Printf(TEXT("-ini:Input:[/Script/Engine.InputSettings]:DefaultPlayerInputClass=/Script/DisplayCluster.DisplayClusterPlayerInput"));
 	return ReturnValue;
 }
 
@@ -539,6 +553,10 @@ void FDisplayClusterLaunchEditorModule::LaunchDisplayClusterProcess()
 		{
 			ConcatenatedCommandLineArguments += " " + ConcertArguments;
 		}
+
+		// Input arguments
+		ConcatenatedCommandLineArguments += " " + GetInputArguments();
+
 		// Log file
 		const FString LogFileName = (ProjectSettings->LogFileName.IsEmpty() ? Node : ProjectSettings->LogFileName) + ".log";
 		const FString Params =

@@ -9,6 +9,7 @@
 #include "UObject/WeakObjectPtrTemplates.h"
 #include "Delegates/MulticastDelegateBase.h" // IWYU pragma: export
 #include "Delegates/IntegerSequence.h" // IWYU pragma: export
+#include "AutoRTFM/AutoRTFM.h"
 
 /**
  *  C++ DELEGATES
@@ -370,8 +371,13 @@ class DynamicMulticastDelegateClassName : public TBaseDynamicMulticastDelegate<F
 		{
 			static FName Get()
 			{
-				static FName Result = Create();
-				return Result;
+				FName* Result = nullptr;
+				UE_AUTORTFM_OPEN(
+				{
+					static FName StaticResult = Create();
+					Result = &StaticResult;
+				});
+				return *Result;
 			}
 
 		private:

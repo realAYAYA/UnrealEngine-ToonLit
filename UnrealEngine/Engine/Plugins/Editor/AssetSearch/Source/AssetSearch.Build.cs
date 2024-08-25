@@ -13,6 +13,7 @@ public class AssetSearch : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Json",
+				"StudioTelemetry"
 			}
 		);
 
@@ -40,7 +41,7 @@ public class AssetSearch : ModuleRules
 		PrivateIncludePathModuleNames.AddRange(
 			new string[] {
 				"DerivedDataCache",
-				"MaterialEditor",
+				"MaterialEditor"
 			}
 		);
 	}

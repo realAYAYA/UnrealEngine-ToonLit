@@ -471,46 +471,6 @@ void UAnimBlueprintGeneratedClass::Link(FArchive& Ar, bool bRelinkExistingProper
 	{
 		MutablesStruct->Link(Ar, bRelinkExistingProperties);
 	}
-
-	// Link in sparse class data - it must mirror the generated class hierarchy
-	if(UAnimBlueprintGeneratedClass* ParentClass = Cast<UAnimBlueprintGeneratedClass>(GetSuperClass()))
-	{
-		if(UScriptStruct* ParentSparseClassDataStruct = ParentClass->GetSparseClassDataStruct())
-		{
-			if(SparseClassDataStruct)
-			{
-				// Make sure there are no duplicate SparseClassDataStructs in the parent heirarchy
-				bool bAllSparseClassDataStructsUnique = true;
-				TArray<UScriptStruct*, TInlineAllocator<4>> HierarchySparseClassDataStructs;
-				HierarchySparseClassDataStructs.Add(SparseClassDataStruct);
-				for (UClass* CurClass = ParentClass; CurClass; CurClass = CurClass->GetSuperClass())
-				{
-					if (UScriptStruct* CurSparseClassDataStruct = CurClass->GetSparseClassDataStruct())
-					{
-						if (HierarchySparseClassDataStructs.Contains(CurSparseClassDataStruct))
-						{
-							bAllSparseClassDataStructsUnique = false;
-							break;
-						}
-						else
-						{
-							HierarchySparseClassDataStructs.Add(CurSparseClassDataStruct);
-						}
-					}
-				}
-
-				if (bAllSparseClassDataStructsUnique)
-				{
-					// Ensure parent is linked before setting super
-					ParentSparseClassDataStruct->Link(Ar, bRelinkExistingProperties);
-					SparseClassDataStruct->SetSuperStruct(ParentSparseClassDataStruct);
-
-					// Link sparse class data now it is correctly parented
-					SparseClassDataStruct->Link(Ar, bRelinkExistingProperties);
-				}
-			}
-		}
-	}
 #endif	
 	
 	Super::Link(Ar, bRelinkExistingProperties);

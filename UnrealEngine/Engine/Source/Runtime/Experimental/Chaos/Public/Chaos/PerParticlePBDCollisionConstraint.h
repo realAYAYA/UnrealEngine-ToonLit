@@ -5,7 +5,10 @@
 #include "Chaos/PBDActiveView.h"
 #include "Chaos/PBDSoftsEvolutionFwd.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Chaos/KinematicGeometryParticles.h"
+#endif
+#include "Chaos/SoftsSolverCollisionParticles.h"
 #include "Chaos/WeightedLatticeImplicitObject.h"
 #include "Chaos/Levelset.h"
 #include "HAL/PlatformMath.h"
@@ -33,14 +36,14 @@ class FPerParticlePBDCollisionConstraint final
 	};
 
 public:
-	FPerParticlePBDCollisionConstraint(const TPBDActiveView<FSolverRigidParticles>& InParticlesActiveView, TArray<bool>& Collided, TArray<uint32>& DynamicGroupIds, TArray<uint32>& KinematicGroupIds, const TArray<FSolverReal>& PerGroupThickness, const TArray<FSolverReal>& PerGroupFriction)
+	FPerParticlePBDCollisionConstraint(const TPBDActiveView<FSolverCollisionParticles>& InParticlesActiveView, TArray<bool>& Collided, TArray<uint32>& DynamicGroupIds, TArray<uint32>& KinematicGroupIds, const TArray<FSolverReal>& PerGroupThickness, const TArray<FSolverReal>& PerGroupFriction)
 	: bFastPositionBasedFriction(true)
 	, MCollisionParticlesActiveView(InParticlesActiveView)
 	, MCollided(Collided), MDynamicGroupIds(DynamicGroupIds)
 	, MKinematicGroupIds(KinematicGroupIds), MPerGroupThickness(PerGroupThickness)
 	, MPerGroupFriction(PerGroupFriction) {}
 
-	FPerParticlePBDCollisionConstraint(const TPBDActiveView<FSolverRigidParticles>& InParticlesActiveView, TArray<bool>& Collided,
+	FPerParticlePBDCollisionConstraint(const TPBDActiveView<FSolverCollisionParticles>& InParticlesActiveView, TArray<bool>& Collided,
 		TArray<FSolverVec3>& InContacts,
 		TArray<FSolverVec3>& InNormals, 
 		TArray<FSolverReal>& InPhis,
@@ -118,21 +121,21 @@ private:
 					return;  // Continue
 				}
 
-				MCollisionParticlesActiveView.SequentialFor([this, &Particles, &Dt, &Index, DynamicGroupId, PerGroupFriction, PerGroupThickness](FSolverRigidParticles& CollisionParticles, int32 i)
+				MCollisionParticlesActiveView.SequentialFor([this, &Particles, &Dt, &Index, DynamicGroupId, PerGroupFriction, PerGroupThickness](FSolverCollisionParticles& CollisionParticles, int32 i)
 				{
 					const uint32 KinematicGroupId = MKinematicGroupIds[i];  // Collision group Id
 
-					if ((KinematicGroupId != (uint32)INDEX_NONE && DynamicGroupId != KinematicGroupId ) || CollisionParticles.Geometry(i)->GetType() == Chaos::ImplicitObjectType::WeightedLatticeBone)
+					if ((KinematicGroupId != (uint32)INDEX_NONE && DynamicGroupId != KinematicGroupId ) || CollisionParticles.GetGeometry(i)->GetType() == Chaos::ImplicitObjectType::WeightedLatticeBone)
 					{
 						return; // Bail out if the collision groups doesn't match the particle group id, or use INDEX_NONE (= global collision that affects all particle)
 					}
-					const FSolverRigidTransform3 Frame(CollisionParticles.X(i), CollisionParticles.R(i));
+					const FSolverRigidTransform3 Frame(CollisionParticles.GetX(i), CollisionParticles.GetR(i));
 					const FVec3 RigidSpacePosition(Frame.InverseTransformPosition(Particles.P(Index)));  // PhiWithNormal requires FReal based arguments
 					FVec3 ImplicitNormal;                                                                // since implicits don't use FSolverReal
 					FSolverReal Phi;
 					int32 VelocityBone = i;
 					FSolverReal Penetration;
-					if (const TWeightedLatticeImplicitObject<FLevelSet>* LevelSet = CollisionParticles.Geometry(i)->GetObject< TWeightedLatticeImplicitObject<FLevelSet> >())
+					if (const TWeightedLatticeImplicitObject<FLevelSet>* LevelSet = CollisionParticles.GetGeometry(i)->GetObject< TWeightedLatticeImplicitObject<FLevelSet> >())
 					{
 						FWeightedLatticeImplicitObject::FEmbeddingCoordinate SurfaceCoord;
 						Phi = (FSolverReal)LevelSet->PhiWithNormalAndSurfacePoint(RigidSpacePosition, ImplicitNormal, SurfaceCoord);
@@ -148,7 +151,7 @@ private:
 					}
 					else
 					{
-						Phi = (FSolverReal)CollisionParticles.Geometry(i)->PhiWithNormal(RigidSpacePosition, ImplicitNormal);
+						Phi = (FSolverReal)CollisionParticles.GetGeometry(i)->PhiWithNormal(RigidSpacePosition, ImplicitNormal);
 						Penetration = PerGroupThickness - Phi; // This is related to the Normal impulse
 					}
 					const FSolverVec3 Normal(ImplicitNormal);
@@ -173,8 +176,8 @@ private:
 
 						if (bFastPositionBasedFriction)
 						{
-							FSolverVec3 VectorToPoint = Particles.P(Index) - CollisionParticles.X(VelocityBone);
-							const FSolverVec3 RelativeDisplacement = (Particles.P(Index) - Particles.X(Index)) - (CollisionParticles.V(VelocityBone) + FSolverVec3::CrossProduct(CollisionParticles.W(VelocityBone), VectorToPoint)) * Dt; // This corresponds to the tangential velocity multiplied by dt (friction will drive this to zero if it is high enough)
+							FSolverVec3 VectorToPoint = Particles.GetP(Index) - CollisionParticles.GetX(VelocityBone);
+							const FSolverVec3 RelativeDisplacement = (Particles.GetP(Index) - Particles.GetX(Index)) - (CollisionParticles.V(VelocityBone) + FSolverVec3::CrossProduct(CollisionParticles.W(VelocityBone), VectorToPoint)) * Dt; // This corresponds to the tangential velocity multiplied by dt (friction will drive this to zero if it is high enough)
 							const FSolverVec3 RelativeDisplacementTangent = RelativeDisplacement - FSolverVec3::DotProduct(RelativeDisplacement, NormalWorld) * NormalWorld; // Project displacement into the tangential plane
 							const FSolverReal RelativeDisplacementTangentLength = RelativeDisplacementTangent.Size();
 							if (RelativeDisplacementTangentLength >= UE_SMALL_NUMBER)
@@ -188,7 +191,7 @@ private:
 						{
 							// Note, to fix: Only use fast position based friction for now, since adding to TMaps here is not thread safe when calling Apply on multiple threads (will cause crash)
 							FVelocityConstraint Constraint;
-							FSolverVec3 VectorToPoint = Particles.P(Index) - CollisionParticles.X(VelocityBone);
+							FSolverVec3 VectorToPoint = Particles.GetP(Index) - CollisionParticles.GetX(VelocityBone);
 							Constraint.Velocity = CollisionParticles.V(VelocityBone) + FSolverVec3::CrossProduct(CollisionParticles.W(VelocityBone), VectorToPoint);
 							Constraint.Normal = Frame.TransformVector(Normal);
 						
@@ -209,18 +212,18 @@ private:
 					return;  // Continue
 				}
 
-				MCollisionParticlesActiveView.SequentialFor([this, &Particles, &Dt, &Index, DynamicGroupId, PerGroupFriction, PerGroupThickness](FSolverRigidParticles& CollisionParticles, int32 i)
+				MCollisionParticlesActiveView.SequentialFor([this, &Particles, &Dt, &Index, DynamicGroupId, PerGroupFriction, PerGroupThickness](FSolverCollisionParticles& CollisionParticles, int32 i)
 				{
 					const uint32 KinematicGroupId = MKinematicGroupIds[i];  // Collision group Id
 
-					if ((KinematicGroupId != (uint32)INDEX_NONE && DynamicGroupId != KinematicGroupId) || CollisionParticles.Geometry(i)->GetType() == Chaos::ImplicitObjectType::WeightedLatticeBone)
+					if ((KinematicGroupId != (uint32)INDEX_NONE && DynamicGroupId != KinematicGroupId) || CollisionParticles.GetGeometry(i)->GetType() == Chaos::ImplicitObjectType::WeightedLatticeBone)
 					{
 						return; // Bail out if the collision groups doesn't match the particle group id, or use INDEX_NONE (= global collision that affects all particle)
 					}
-					const FSolverRigidTransform3 Frame(CollisionParticles.X(i), CollisionParticles.R(i));
+					const FSolverRigidTransform3 Frame(CollisionParticles.GetX(i), CollisionParticles.GetR(i));
 					const FVec3 RigidSpacePosition(Frame.InverseTransformPosition(Particles.P(Index)));  // PhiWithNormal requires FReal based arguments
 					FVec3 ImplicitNormal;                                                                // since implicits don't use FSolverReal
-					const FSolverReal Phi = (FSolverReal)CollisionParticles.Geometry(i)->PhiWithNormal(RigidSpacePosition, ImplicitNormal);
+					const FSolverReal Phi = (FSolverReal)CollisionParticles.GetGeometry(i)->PhiWithNormal(RigidSpacePosition, ImplicitNormal);
 					const FSolverVec3 Normal(ImplicitNormal);
 
 					const FSolverReal Penetration = PerGroupThickness - Phi; // This is related to the Normal impulse
@@ -251,7 +254,7 @@ private:
 private:
 	bool bFastPositionBasedFriction;
 	// TODO(mlentine): Need a bb hierarchy
-	const TPBDActiveView<FSolverRigidParticles>& MCollisionParticlesActiveView;
+	const TPBDActiveView<FSolverCollisionParticles>& MCollisionParticlesActiveView;
 	TArray<bool>& MCollided;
 	TArray<FSolverVec3>* const Contacts = nullptr;
 	TArray<FSolverVec3>* const Normals = nullptr;

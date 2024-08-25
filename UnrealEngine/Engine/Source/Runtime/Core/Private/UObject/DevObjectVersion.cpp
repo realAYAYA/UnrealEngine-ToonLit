@@ -68,11 +68,17 @@ private:
 	TMap<FGuid, FRegisteredGuid> RegisteredSystemGuids;
 };
 
-static FDevSystemGuidRegistry GSystemGuidRegistry;
+static FDevSystemGuidRegistry& GetSystemGuidRegistry()
+{
+	// Pass FDevSystemGuidRegistry singleton via a function to force its initialization
+	// before it is used by global static variables and prevent static initialization order fiasco
+	static FDevSystemGuidRegistry GSystemGuidRegistry;
+	return GSystemGuidRegistry;
+}
 
 FDevSystemGuidRegistration::FDevSystemGuidRegistration(const TMap<FGuid, FGuid>& SystemGuids)
 {
-	GSystemGuidRegistry.RegisterSystemGuids(SystemGuids);
+	GetSystemGuidRegistry().RegisterSystemGuids(SystemGuids);
 }
 
 void FDevSystemGuidRegistry::RegisterSystemGuid(FGuid System, FGuid Guid)
@@ -118,17 +124,18 @@ FGuid FDevSystemGuidRegistry::GetSystemGuid(FGuid System)
 }
 
 FDevSystemGuids::FDevSystemGuids()
-	: GLOBALSHADERMAP_DERIVEDDATA_VER(0x7912A706, 0x52B8450A, 0x9CD66FA7, 0xEFBBFA0A)
+	: GLOBALSHADERMAP_DERIVEDDATA_VER(0x7BB10A3C, 0xAC4E46F3, 0xAC78F4C1, 0xEFB3E34F)
 	, GROOM_BINDING_DERIVED_DATA_VERSION(0x30769E53, 0x0C574C7B, 0xA15C56F2, 0x24A64E32)
 	, GROOM_DERIVED_DATA_VERSION(0x05A37379, 0xF8A049D5, 0x986824E9, 0xAAA83F41)
 	, LANDSCAPE_MOBILE_COOK_VERSION(0x0E9ADF72, 0xD6B64E0D, 0x81C4A92B, 0x081A37AB)
-	, MATERIALSHADERMAP_DERIVEDDATA_VER(0x2579AAFE, 0x8F1D4E4F, 0xB04278C6, 0x35917C17)
+	, MATERIALSHADERMAP_DERIVEDDATA_VER(0x9131A169, 0x3E004B0D, 0x864390EF, 0xA1F12934)
 	, NANITE_DERIVEDDATA_VER(0xBEB0226A, 0x070E4ECA, 0x972C1E7D, 0xD8599E68)
 	, NIAGARASHADERMAP_DERIVEDDATA_VER(0x7BBD9913, 0xC1554D20, 0xADAE9F17, 0xB006299E)
 	, Niagara_LatestScriptCompileVersion(0x6D32B8EE, 0x909FCA7E, 0xA5CE4F17, 0x066A5F25)
 	, POSESEARCHDB_DERIVEDDATA_VER(0x389117E4, 0x807A4CC0, 0x9F37C2E6, 0xD808A78D)
 	, SkeletalMeshDerivedDataVersion(0x9B5F4544, 0x76D7481C, 0x9AD3F614, 0xA6C07904)
-	, STATICMESH_DERIVEDDATA_VER(0x5B7A05A7, 0x7371440C, 0xA314621A, 0x9B1E08BC)
+	, STATICMESH_DERIVEDDATA_VER(0x2C6C400C, 0x2EDF47B3, 0x9BD36689, 0x7B77B208)
+	, MaterialTranslationDDCVersion(0x59E1F296, 0x27064757, 0x8CA7EB9B, 0xFC366BD2)
 {
 }
 
@@ -140,7 +147,7 @@ const FDevSystemGuids& FDevSystemGuids::Get()
 
 FGuid FDevSystemGuids::GetSystemGuid(FGuid System)
 {
-	return GSystemGuidRegistry.GetSystemGuid(System);
+	return GetSystemGuidRegistry().GetSystemGuid(System);
 }
 
 void FDevVersionRegistration::RecordDevVersion(FGuid Key)

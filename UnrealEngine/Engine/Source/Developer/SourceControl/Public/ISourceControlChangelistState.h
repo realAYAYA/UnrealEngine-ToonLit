@@ -64,9 +64,11 @@ public:
 	 */
 	virtual const FDateTime& GetTimeStamp() const = 0;
 
-	virtual const TArray<FSourceControlStateRef>& GetFilesStates() const = 0;
+	virtual const TArray<FSourceControlStateRef> GetFilesStates() const = 0;
+	virtual int32 GetFilesStatesNum() const = 0;
 
-	virtual const TArray<FSourceControlStateRef>& GetShelvedFilesStates() const = 0;
+	virtual const TArray<FSourceControlStateRef> GetShelvedFilesStates() const = 0;
+	virtual int32 GetShelvedFilesStatesNum() const = 0;
 
 	/**
 	 * Returns the object on which this state was constructed

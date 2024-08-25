@@ -2,8 +2,6 @@
 
 using System;
 using System.Collections.Concurrent;
-using System.Reflection;
-using System.Xml;
 using EpicGames.Core;
 
 namespace Horde.Server.Utilities
@@ -13,7 +11,7 @@ namespace Horde.Server.Utilities
 	/// </summary>
 	static class Schemas
 	{
-		static readonly ConcurrentDictionary<Assembly, XmlDocument?> s_cachedDocumentation = new ConcurrentDictionary<Assembly, XmlDocument?>();
+		static readonly XmlDocReader s_cachedReader = new XmlDocReader();
 		static readonly ConcurrentDictionary<Type, JsonSchema> s_cachedSchemas = new ConcurrentDictionary<Type, JsonSchema>();
 
 		/// <summary>
@@ -26,19 +24,7 @@ namespace Horde.Server.Utilities
 			JsonSchema? schema;
 			if (!s_cachedSchemas.TryGetValue(type, out schema))
 			{
-				XmlDocument? documentation;
-				if (!s_cachedDocumentation.TryGetValue(type.Assembly, out documentation))
-				{
-					FileReference inputDocumentationFile = new FileReference(type.Assembly.Location).ChangeExtension(".xml");
-					if (FileReference.Exists(inputDocumentationFile))
-					{
-						documentation = new XmlDocument();
-						documentation.Load(inputDocumentationFile.FullName);
-					}
-					s_cachedDocumentation.TryAdd(type.Assembly, documentation);
-				}
-
-				schema = JsonSchema.FromType(type, documentation);
+				schema = JsonSchema.FromType(type, s_cachedReader);
 				s_cachedSchemas.TryAdd(type, schema);
 			}
 			return schema;

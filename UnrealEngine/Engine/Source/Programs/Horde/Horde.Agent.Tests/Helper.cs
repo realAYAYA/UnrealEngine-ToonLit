@@ -8,13 +8,11 @@ using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Horde.Agent.Execution;
-using Horde.Agent.Services;
 using Horde.Agent.Utility;
 using Horde.Common.Rpc;
 using HordeCommon;
 using HordeCommon.Rpc;
 using HordeCommon.Rpc.Messages;
-using HordeCommon.Rpc.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -23,15 +21,21 @@ namespace Horde.Agent.Tests
 {
 	// Stub for fulfilling IOptionsMonitor interface during testing
 	// Copied from HordeServerTests until a good way to share code between these is decided.
-	public class TestOptionsMonitor<T> : IOptions<T>
+	public class TestOptionsMonitor<T> : IOptionsMonitor<T>
 		where T : class, new()
 	{
 		public TestOptionsMonitor(T value)
 		{
-			Value = value;
+			CurrentValue = value;
 		}
 
-		public T Value { get; }
+		public T CurrentValue { get; }
+
+		public T Get(string? name)
+			=> CurrentValue;
+
+		public IDisposable? OnChange(Action<T, string?> listener)
+			=> null;
 	}
 
 	class RpcClientRefStub<TClient> : IRpcClientRef<TClient> where TClient : ClientBase<TClient>
@@ -155,13 +159,6 @@ namespace Horde.Agent.Tests
 			return Wrap(res);
 		}
 
-		public override AsyncUnaryCall<Empty> WriteOutputAsync(WriteOutputRequest request, CallOptions options)
-		{
-			_logger.LogDebug("WriteOutputAsync: {Data}", request.Data);
-			Empty res = new Empty();
-			return Wrap(res);
-		}
-
 		public override AsyncUnaryCall<Empty> UpdateStepAsync(UpdateStepRequest request, CallOptions options)
 		{
 			_logger.LogDebug("UpdateStepAsync(Request: {Request})", request);
@@ -183,12 +180,12 @@ namespace Horde.Agent.Tests
 			{
 				return Wrap(_getStepFunc(request));
 			}
-		
+
 			if (GetStepResponses.TryGetValue(request, out GetStepResponse? res))
 			{
 				return Wrap(res);
 			}
-			
+
 			return Wrap(new GetStepResponse());
 		}
 
@@ -203,11 +200,15 @@ namespace Horde.Agent.Tests
 	{
 		public const string Name = "Simple";
 
-		private readonly Func<BeginStepResponse, ILogger, CancellationToken, Task<JobStepOutcome>> _func;
+		private readonly Func<JobStepInfo, ILogger, CancellationToken, Task<JobStepOutcome>> _func;
 
-		public SimpleTestExecutor(Func<BeginStepResponse, ILogger, CancellationToken, Task<JobStepOutcome>> func)
+		public SimpleTestExecutor(Func<JobStepInfo, ILogger, CancellationToken, Task<JobStepOutcome>> func)
 		{
 			_func = func;
+		}
+
+		public void Dispose()
+		{
 		}
 
 		public Task InitializeAsync(ILogger logger, CancellationToken cancellationToken)
@@ -216,7 +217,7 @@ namespace Horde.Agent.Tests
 			return Task.CompletedTask;
 		}
 
-		public Task<JobStepOutcome> RunAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken)
+		public Task<JobStepOutcome> RunAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken)
 		{
 			logger.LogDebug("SimpleTestExecutor.RunAsync(Step: {Step})", step);
 			return _func(step, logger, cancellationToken);

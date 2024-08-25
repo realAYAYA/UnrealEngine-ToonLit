@@ -3,11 +3,13 @@
 #pragma once
 
 #include "InterchangeImportTestStepBase.h"
+
+#include "UObject/StrongObjectPtr.h"
+
 #include "InterchangeImportTestStepImport.generated.h"
 
-
 class UInterchangePipelineBase;
-
+class UWorld;
 
 UCLASS(BlueprintType, Meta = (DisplayName = "Import a file"))
 class INTERCHANGETESTS_API UInterchangeImportTestStepImport : public UInterchangeImportTestStepBase
@@ -42,4 +44,7 @@ public:
 		StartStep(FInterchangeImportTestData& Data) override;
 	virtual FTestStepResults FinishStep(FInterchangeImportTestData& Data, FAutomationTestExecutionInfo& ExecutionInfo) override;
 	virtual FString GetContextString() const override;
+
+private:
+	TStrongObjectPtr<UWorld> TransientWorld;
 };

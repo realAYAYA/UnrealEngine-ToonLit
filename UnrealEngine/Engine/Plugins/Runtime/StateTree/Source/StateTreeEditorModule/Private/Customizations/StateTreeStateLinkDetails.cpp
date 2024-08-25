@@ -172,6 +172,9 @@ void FStateTreeStateLinkDetails::OnStateComboChange(int Idx)
 			case ComboNextState:
 				LinkTypeProperty->SetValue((uint8)EStateTreeTransitionType::NextState);
 				break;
+			case ComboNextSelectableState:
+				LinkTypeProperty->SetValue((uint8)EStateTreeTransitionType::NextSelectableState);
+				break;
 			case ComboNotSet:
 			default:
 				LinkTypeProperty->SetValue((uint8)EStateTreeTransitionType::None);
@@ -195,6 +198,9 @@ TSharedRef<SWidget> FStateTreeStateLinkDetails::OnGetStateContent() const
 
 		const FUIAction NextItemAction(FExecuteAction::CreateSP(const_cast<FStateTreeStateLinkDetails*>(this), &FStateTreeStateLinkDetails::OnStateComboChange, ComboNextState));
 		MenuBuilder.AddMenuEntry(LOCTEXT("TransitionNextState", "Next State"), LOCTEXT("TransitionNextTooltip", "Goto next sibling State."), FSlateIcon(), NextItemAction);
+
+		const FUIAction NextSelectableItemAction(FExecuteAction::CreateSP(const_cast<FStateTreeStateLinkDetails*>(this), &FStateTreeStateLinkDetails::OnStateComboChange, ComboNextSelectableState));
+		MenuBuilder.AddMenuEntry(LOCTEXT("TransitionNextSelectableState", "Next Selectable State"), LOCTEXT("TransitionNextSelectableTooltip", "Goto next sibling state, whose enter conditions pass."), FSlateIcon(), NextSelectableItemAction);
 
 		const FUIAction SucceededItemAction(FExecuteAction::CreateSP(const_cast<FStateTreeStateLinkDetails*>(this), &FStateTreeStateLinkDetails::OnStateComboChange, ComboSucceeded));
 		MenuBuilder.AddMenuEntry(LOCTEXT("TransitionTreeSucceeded", "Tree Succeeded"), LOCTEXT("TransitionTreeSuccessTooltip", "Complete tree with success."), FSlateIcon(), SucceededItemAction);
@@ -231,6 +237,9 @@ FText FStateTreeStateLinkDetails::GetCurrentStateDesc() const
 		break;
 	case EStateTreeTransitionType::NextState:
 		Result = LOCTEXT("TransitionNextState", "Next State");
+		break;
+	case EStateTreeTransitionType::NextSelectableState:
+		Result = LOCTEXT("TransitionNextSelectableState", "Next Selectable State");
 		break;
 	case EStateTreeTransitionType::Succeeded:
 		Result = LOCTEXT("TransitionTreeSucceeded", "Tree Succeeded");
@@ -287,6 +296,7 @@ bool FStateTreeStateLinkDetails::IsValidLink() const
 	// all these are unconditionally valid		
 	case EStateTreeTransitionType::None: // fall through on purpose
 	case EStateTreeTransitionType::NextState: // fall through on purpose
+	case EStateTreeTransitionType::NextSelectableState: // fall through on purpose
 	case EStateTreeTransitionType::Succeeded: // fall through on purpose
 	case EStateTreeTransitionType::Failed:
 		bIsValid = true;

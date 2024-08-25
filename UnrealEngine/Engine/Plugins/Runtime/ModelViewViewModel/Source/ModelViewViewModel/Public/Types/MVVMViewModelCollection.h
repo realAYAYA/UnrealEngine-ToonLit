@@ -39,7 +39,7 @@ private:
 
 /** */
 UCLASS(meta = (DisplayName = "MVVM View Model Collection Object"))
-class UMVVMViewModelCollectionObject : public UObject
+class MODELVIEWVIEWMODEL_API UMVVMViewModelCollectionObject : public UObject
 {
 	GENERATED_BODY()
 

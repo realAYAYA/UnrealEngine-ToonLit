@@ -62,6 +62,20 @@ FText FTableColumn::GetValueAsGroupingText(const FBaseTreeNode& InNode) const
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+FText FTableColumn::CopyValue(const FBaseTreeNode& InNode) const
+{
+	return ValueFormatter->CopyValue(*this, InNode);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+FText FTableColumn::CopyTooltip(const FBaseTreeNode& InNode) const
+{
+	return ValueFormatter->CopyTooltip(*this, InNode);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 inline void TrimEndingZero(FString& Str)
 {
 	const TCHAR* Start = *Str;
@@ -88,6 +102,10 @@ inline void TrimEndingZero(FString& Str)
 FString FTableColumn::GetValueAsSerializableString(const FBaseTreeNode& InNode) const
 {
 	const TOptional<FTableCellValue> Value = GetValue(InNode);
+	if (!Value.IsSet())
+	{
+		return FString();
+	}
 	switch (Value->DataType)
 	{
 		case ETableCellDataType::Double:

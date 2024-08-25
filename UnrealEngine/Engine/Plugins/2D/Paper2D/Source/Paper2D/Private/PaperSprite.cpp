@@ -2,6 +2,7 @@
 
 #include "PaperSprite.h"
 #include "BodySetupEnums.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Materials/MaterialInterface.h"
 #include "Engine/CollisionProfile.h"
@@ -16,6 +17,7 @@
 #include "PaperFlipbook.h"
 #include "Paper2DModule.h"
 #include "Paper2DPrivate.h"
+#include "UObject/ICookInfo.h"
 #include "UObject/LinkerLoad.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PaperSprite)
@@ -1437,26 +1439,22 @@ void UPaperSprite::SetPivotMode(ESpritePivotMode::Type InPivotMode, FVector2D In
 
 #if WITH_EDITOR
 
-static TAutoConsoleVariable<bool> CVarDisableSyncLoadInEditor(
-	TEXT("Paper2d.DisableSyncLoadInEditor"),
-	true,
-	TEXT("Don't attempt to load the source texture synchronous if we are inside the AsyncLoading thread alreayd."),
-	ECVF_Cheat);
-
 UTexture2D* UPaperSprite::GetSourceTexture() const
 {
 	// Verify the cache is still valid.
-	if (SourceTextureCacheNeverSerialized && SourceTexture.Get() != nullptr && SourceTexture.Get() == SourceTextureCacheNeverSerialized)
+	UTexture2D* SourceTexturePtr = SourceTexture.Get();
+	if (SourceTextureCacheNeverSerialized && SourceTexturePtr == SourceTextureCacheNeverSerialized)
 	{
 		return SourceTextureCacheNeverSerialized;
 	}
-	
-	// We don't want to load synchronously unless we are OUTSIDE of an async loading thread.
-	// We could be in the Async loading thread if we are in the editor with cooked content already
-	UTexture2D* SourceTexturePtr =
-			CVarDisableSyncLoadInEditor.GetValueOnGameThread() && IsInAsyncLoadingThread() ?
-			nullptr :
-			SourceTexture.LoadSynchronous();
+
+	if (SourceTexturePtr == nullptr)
+	{
+		// The SourceTexture is editoronly and does not need to be cooked, but we sometimes load it during PostLoad due
+		// to testing NeedRescaleSpriteData
+		FCookLoadScope CookLoadScope(ECookLoadType::EditorOnly);
+		SourceTexturePtr = SourceTexture.LoadSynchronous();
+	}
 
 	// We need to completely load the texture if we're in post load and this texture is needed immediately,
 	// not safe to do in a game with EDL, but safe at editor time.
@@ -1654,11 +1652,18 @@ FVector2D UPaperSprite::GetPivotPosition() const
 
 void UPaperSprite::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UPaperSprite::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	if (AtlasGroup != nullptr)
 	{
-		OutTags.Add(FAssetRegistryTag(TEXT("AtlasGroupGUID"), AtlasGroup->AtlasGUID.ToString(EGuidFormats::Digits), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(TEXT("AtlasGroupGUID"), AtlasGroup->AtlasGUID.ToString(EGuidFormats::Digits), FAssetRegistryTag::TT_Hidden));
 	}
 }
 

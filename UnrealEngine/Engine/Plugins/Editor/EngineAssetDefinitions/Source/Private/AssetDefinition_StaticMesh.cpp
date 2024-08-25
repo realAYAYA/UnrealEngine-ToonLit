@@ -22,6 +22,11 @@ UThumbnailInfo* UAssetDefinition_StaticMesh::LoadThumbnailInfo(const FAssetData&
 	return UE::Editor::FindOrCreateThumbnailInfo(InAssetData.GetAsset(), USceneThumbnailInfo::StaticClass());
 }
 
+FAssetOpenSupport UAssetDefinition_StaticMesh::GetAssetOpenSupport(const FAssetOpenSupportArgs& OpenSupportArgs) const
+{
+	return FAssetOpenSupport(OpenSupportArgs.OpenMethod,OpenSupportArgs.OpenMethod == EAssetOpenMethod::Edit || OpenSupportArgs.OpenMethod == EAssetOpenMethod::View); 
+}
+
 EAssetCommandResult UAssetDefinition_StaticMesh::OpenAssets(const FAssetOpenArgs& OpenArgs) const
 {
 	IStaticMeshEditorModule* StaticMeshEditorModule = &FModuleManager::LoadModuleChecked<IStaticMeshEditorModule>( "StaticMeshEditor" );

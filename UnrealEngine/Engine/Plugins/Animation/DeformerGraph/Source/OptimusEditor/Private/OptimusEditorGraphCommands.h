@@ -19,4 +19,7 @@ public:
 	TSharedPtr<FUICommandInfo> CollapseNodesToFunction;
 	TSharedPtr<FUICommandInfo> CollapseNodesToSubGraph;
 	TSharedPtr<FUICommandInfo> ExpandCollapsedNode;
+	
+	TSharedPtr<FUICommandInfo> ConvertToFunction;
+	TSharedPtr<FUICommandInfo> ConvertToSubGraph;
 };

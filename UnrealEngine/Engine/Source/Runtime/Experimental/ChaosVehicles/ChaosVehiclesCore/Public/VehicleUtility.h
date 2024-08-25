@@ -21,6 +21,11 @@ namespace Chaos
 
 	struct CHAOSVEHICLESCORE_API RealWorldConsts
 	{
+		FORCEINLINE static float WaterDensity()
+		{
+			return 997.0f; // kg / m3;
+		}
+
 		FORCEINLINE static float AirDensity()
 		{
 			return 1.225f; // kg / m3;
@@ -218,8 +223,20 @@ namespace Chaos
 		return Cm * 0.01f;
 	}
 
+	/** cm to meters */
+	FORCEINLINE FVector CmToM(const FVector& Cm)
+	{
+		return Cm * 0.01f;
+	}
+
 	/** meters to cm */
 	FORCEINLINE float MToCm(float M)
+	{
+		return M * 100.0f;
+	}
+
+	/** cm to meters */
+	FORCEINLINE FVector MToCm(const FVector& M)
 	{
 		return M * 100.0f;
 	}

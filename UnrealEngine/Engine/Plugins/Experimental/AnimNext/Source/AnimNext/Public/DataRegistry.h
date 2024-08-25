@@ -100,6 +100,8 @@ public:
 
 			Private::FAllocatedBlock* AllocatedBlock = new Private::FAllocatedBlock(Memory, NumElements, ParamTypeHandle); // TODO : avoid memory fragmentation
 			AllocatedBlock->AddRef();
+
+			FRWScopeLock Lock(AllocatedBlocksLock, SLT_Write);
 			AllocatedBlocks.Add(AllocatedBlock);
 			return FDataHandle(AllocatedBlock);
 		}

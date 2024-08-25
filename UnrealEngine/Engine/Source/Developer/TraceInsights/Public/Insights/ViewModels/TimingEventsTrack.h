@@ -85,6 +85,7 @@ protected:
 	void DrawMarkers(const ITimingTrackDrawContext& Context, float LineY, float LineH) const;
 
 	void DrawSelectedEventInfo(const FString& InText, const FTimingTrackViewport& Viewport, const FDrawContext& DrawContext, const FSlateBrush* WhiteBrush, const FSlateFontInfo& Font) const;
+	void DrawSelectedEventInfoEx(const FString& InText, const FString& InLeftText, const FString& InTopText, const FTimingTrackViewport& Viewport, const FDrawContext& DrawContext, const FSlateBrush* WhiteBrush, const FSlateFontInfo& Font) const;
 
 	int32 GetHeaderBackgroundLayerId(const ITimingTrackDrawContext& Context) const;
 	int32 GetHeaderTextLayerId(const ITimingTrackDrawContext& Context) const;
@@ -92,6 +93,9 @@ protected:
 	virtual const TSharedPtr<const ITimingEvent> GetEvent(double InTime, double SecondsPerPixel, int32 Depth) const;
 
 	virtual bool HasCustomFilter() const { return false; }
+
+	/* Can be overridden to force a max depth for the track. */
+	virtual int32 GetMaxDepth() const { return -1; }
 
 private:
 	int32 NumLanes; // number of lanes (sub-tracks)

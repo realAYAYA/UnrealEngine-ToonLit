@@ -179,7 +179,7 @@ ULevelSequencePlayer* UE::RenderGrid::Private::SRenderGridEditorViewport::GetSeq
 		PlaybackSettings.LoopCount.Value = 0;
 		PlaybackSettings.bAutoPlay = false;
 		PlaybackSettings.bPauseAtEnd = true;
-		PlaybackSettings.bRestoreState = true;
+		PlaybackSettings.FinishCompletionStateOverride = EMovieSceneCompletionModeOverride::ForceRestoreState;
 
 		ALevelSequenceActor* PlayerActor = nullptr;
 		if (ULevelSequencePlayer* Player = ULevelSequencePlayer::CreateLevelSequencePlayer(World, LevelSequence, PlaybackSettings, PlayerActor); IsValid(Player))

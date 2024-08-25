@@ -21,6 +21,7 @@ namespace UE::PixelStreamingServers
 		virtual bool Launch(FLaunchArgs& InLaunchArgs) override;
 		virtual bool IsReady() override;
 		virtual bool IsTimedOut() override;
+		virtual void GetNumStreamers(TFunction<void(uint16)> OnNumStreamersReceived) = 0;
 		/* End IServer */
 
 		/* Begin FTickableGameObject */

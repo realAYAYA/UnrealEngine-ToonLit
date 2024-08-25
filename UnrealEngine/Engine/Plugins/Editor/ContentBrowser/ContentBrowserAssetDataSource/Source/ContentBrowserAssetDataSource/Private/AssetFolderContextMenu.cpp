@@ -47,11 +47,10 @@ void FAssetFolderContextMenu::AddMenuOptions(UToolMenu* Menu)
 			{
 				FToolMenuEntry& Entry = Section.AddMenuEntry(
 					"FixUpRedirectorsInFolder",
-					LOCTEXT("FixUpRedirectorsInFolder", "Fix Up Redirectors"),
-					LOCTEXT("FixUpRedirectorsInFolderTooltip", "Finds referencers to all redirectors in the selected items and resaves them if possible, then deletes any redirectors that had all their referencers fixed."),
+					LOCTEXT("FixUpRedirectorsInFolder", "Update Redirector References"),
+					LOCTEXT("FixUpRedirectorsInFolderTooltip", "Finds references to all redirectors in the selected items and resaves the referencing assets if possible, so that they reference the target of the redirector directly instead."),
 					FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Adjust"),
-					FUIAction(FExecuteAction::CreateSP(this, &FAssetFolderContextMenu::ExecuteFixUpRedirectorsInFolder))
-					);
+					FUIAction(FExecuteAction::CreateSP(this, &FAssetFolderContextMenu::ExecuteFixUpRedirectorsInFolder)));
 				Entry.InsertPosition = FToolMenuInsert("Delete", EToolMenuInsertType::After);
 			}
 
@@ -147,33 +146,32 @@ void FAssetFolderContextMenu::ExecuteFixUpRedirectorsInFolder()
 	{
 		return;
 	}
-	
-	TArray<FString> ObjectPaths;
-	for (const FAssetData& Asset : AssetList)
-	{
-		ObjectPaths.Add(Asset.GetObjectPathString());
-	}
 
 	FScopedSlowTask SlowTask(3, LOCTEXT("FixupRedirectorsSlowTask", "Fixing up redirectors"));
-	SlowTask.MakeDialog();
+	SlowTask.MakeDialog(true);
 
-	TArray<UObject*> Objects;
-	const bool bAllowedToPromptToLoadAssets = true;
-	const bool bLoadRedirects = true;
 	SlowTask.EnterProgressFrame(1, LOCTEXT("FixupRedirectors_LoadAssets", "Loading Assets..."));
-	if (AssetViewUtils::LoadAssetsIfNeeded(ObjectPaths, Objects, bAllowedToPromptToLoadAssets, bLoadRedirects))
+	TArray<UObject*> Objects;
+	AssetViewUtils::FLoadAssetsSettings Settings{
+		.bFollowRedirectors = false,
+		.bAllowCancel = true,
+	};
+	AssetViewUtils::ELoadAssetsResult Result = AssetViewUtils::LoadAssetsIfNeeded(AssetList, Objects, Settings);
+	if (Result != AssetViewUtils::ELoadAssetsResult::Cancelled && !SlowTask.ShouldCancel())
 	{
-		// Transform Objects array to ObjectRedirectors array
 		TArray<UObjectRedirector*> Redirectors;
 		for (UObject* Object : Objects)
 		{
-			Redirectors.Add(CastChecked<UObjectRedirector>(Object));
+			if (UObjectRedirector* Redirector = Cast<UObjectRedirector>(Object))
+			{
+				Redirectors.Add(Redirector);
+			}
 		}
 
 		SlowTask.EnterProgressFrame(1, LOCTEXT("FixupRedirectors_FixupReferencers", "Fixing up referencers..."));
 		// Load the asset tools module
 		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
-		AssetToolsModule.Get().FixupReferencers(Redirectors);
+		AssetToolsModule.Get().FixupReferencers(Redirectors, true, ERedirectFixupMode::PromptForDeletingRedirectors);
 	}
 }
 

@@ -46,7 +46,7 @@
   StartFractionFilled: this is the neutral value slider position with no exponent
   SliderExponent: this is the slider exponent
 */
-namespace UE::DMX::ControlConsole::SDMXControlConsoleEditorSpinBoxVertical::Private
+namespace UE::DMX::Private
 {
 	float SpinBoxVertComputeExponentSliderFraction(float FractionFilled, float StartFractionFilled, float SliderExponent);
 }
@@ -78,7 +78,8 @@ public:
 		, _MinValue(0)
 		, _MaxValue(10)
 		, _Delta(0)
-		, _ShiftMouseMovePixelPerDelta(1)
+		, _ShiftMultiplier(10.f)
+		, _CtrlMultiplier(0.1f)
 		, _IsActive(true)
 		, _SupportDynamicSliderMaxValue(false)
 		, _SupportDynamicSliderMinValue(false)
@@ -107,15 +108,18 @@ public:
 		SLATE_ATTRIBUTE( TOptional< NumericType >, MaxSliderValue )
 		/** Delta to increment the value as the slider moves.  If not specified will determine automatically */
 		SLATE_ATTRIBUTE( NumericType, Delta )
-		/** How many pixel the mouse must move to change the value of the delta step */
-		SLATE_ATTRIBUTE( int32, ShiftMouseMovePixelPerDelta )
+		/** Multiplier to use when shift is held down */
+		SLATE_ATTRIBUTE(float, ShiftMultiplier)
+		/** Multiplier to use when ctrl is held down */
+		SLATE_ATTRIBUTE(float, CtrlMultiplier)
+		SLATE_ATTRIBUTE_DEPRECATED( int32, ShiftMouseMovePixelPerDelta, 5.4, "Shift Mouse Move Pixel Per Delta is deprecated and incrementing by a fixed delta per pixel is no longer supported. Please use ShiftMultiplier and CtrlMultiplier which will multiply the step per mouse move")
 		/** If we're an unbounded spinbox, what value do we divide mouse movement by before multiplying by Delta. Requires Delta to be set. */
 		SLATE_ATTRIBUTE( int32, LinearDeltaSensitivity)
 		/** Tell us if the SpinBox should be considered active for visual feedbacks */
 		SLATE_ATTRIBUTE(bool, IsActive)
-		/** Tell us if we want to support dynamically changing of the max value using ctrl */
+		/** Tell us if we want to support dynamically changing of the max value using alt */
 		SLATE_ATTRIBUTE(bool, SupportDynamicSliderMaxValue)
-		/** Tell us if we want to support dynamically changing of the min value using ctrl */
+		/** Tell us if we want to support dynamically changing of the min value using alt */
 		SLATE_ATTRIBUTE(bool, SupportDynamicSliderMinValue)
 		/** Called right after the max slider value is changed (only relevant if SupportDynamicSliderMaxValue is true) */
 		SLATE_EVENT(FOnDynamicSliderMinMaxValueChanged, OnDynamicSliderMaxValueChanged)
@@ -127,6 +131,8 @@ public:
 		SLATE_ATTRIBUTE( NumericType, SliderExponentNeutralValue )
 		/** Font used to display text in the slider */
 		SLATE_ATTRIBUTE( FSlateFontInfo, Font )
+		/** The value being observed by the spinbox as FText */
+		SLATE_ATTRIBUTE(FText, ValueText)
 		/** Padding to add around this widget and its internal widgets */
 		SLATE_ATTRIBUTE( FMargin, ContentPadding )
 		/** Called when the value is changed by slider or typing */
@@ -181,6 +187,8 @@ public:
 		IsActive = InArgs._IsActive;
 		SupportDynamicSliderMaxValue = InArgs._SupportDynamicSliderMaxValue;
 		SupportDynamicSliderMinValue = InArgs._SupportDynamicSliderMinValue;
+		ValueText = InArgs._ValueText;
+
 		OnDynamicSliderMaxValueChanged = InArgs._OnDynamicSliderMaxValueChanged;
 		OnDynamicSliderMinValueChanged = InArgs._OnDynamicSliderMinValueChanged;
 
@@ -207,7 +215,8 @@ public:
 		PreDragValue = 0;
 
 		Delta = InArgs._Delta;
-		ShiftMouseMovePixelPerDelta = InArgs._ShiftMouseMovePixelPerDelta;
+		ShiftMultiplier = InArgs._ShiftMultiplier;
+		CtrlMultiplier = InArgs._CtrlMultiplier;
 		LinearDeltaSensitivity = InArgs._LinearDeltaSensitivity;
 	
 		BackgroundHoveredBrush = &InArgs._Style->HoveredBackgroundBrush;
@@ -305,7 +314,7 @@ public:
 					//Compute a log curve on both side of the neutral value
 					float StartFractionFilled = Fraction((double)SliderExponentNeutralValue.Get(), (double)GetMinSliderValue(), (double)GetMaxSliderValue());
 					
-					using namespace UE::DMX::ControlConsole::SDMXControlConsoleEditorSpinBoxVertical::Private;
+					using namespace UE::DMX::Private;
 					FractionFilled = SpinBoxVertComputeExponentSliderFraction(FractionFilled, StartFractionFilled, CachedSliderExponent);
 				}
 				else
@@ -328,6 +337,11 @@ public:
 		return FMath::Max(FilledLayer, SCompoundWidget::OnPaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, FilledLayer, InWidgetStyle, bEnabled));
 	}
 
+	const bool CommitWithMultiplier(const FPointerEvent& MouseEvent)
+	{
+		return MouseEvent.IsShiftDown() || MouseEvent.IsControlDown();
+	}
+
 	/**
 	 * The system calls this method to notify the widget that a mouse button was pressed within it. This event is bubbled.
 	 *
@@ -347,7 +361,10 @@ public:
 		}
 
 		// Don't handle the mouse event, instead propagonate the event to allow selection in the outer widget, in case this was clicked directly.
-		return FReply::Unhandled();
+		return FReply::Unhandled()
+			.CaptureMouse(SharedThis(this))
+			.UseHighPrecisionMouseMovement(SharedThis(this))
+			.SetUserFocus(SharedThis(this), EFocusCause::Mouse);
 	}
 	
 	/**
@@ -373,7 +390,7 @@ public:
 			if( bDragging )
 			{
 				NumericType CurrentDelta = Delta.Get();
-				if (CurrentDelta != 0)
+				if (CurrentDelta != 0 && !CommitWithMultiplier(MouseEvent))
 				{
 					InternalValue = Snap(InternalValue, CurrentDelta);
 				}
@@ -493,13 +510,7 @@ public:
 				const float MinSliderWidth = 100.f;
 				float SliderWidthInSlateUnits = FMath::Max(MyGeometry.GetDrawSize().X, MinSliderWidth);
 				
-				const int32 CachedShiftMouseMovePixelPerDelta = ShiftMouseMovePixelPerDelta.Get();
-				if (CachedShiftMouseMovePixelPerDelta > 1 && MouseEvent.IsShiftDown())
-				{
-					SliderWidthInSlateUnits *= CachedShiftMouseMovePixelPerDelta;
-				}
-
-				if (MouseEvent.IsControlDown())
+				if (MouseEvent.IsAltDown())
 				{
 					float DeltaToAdd = MouseEvent.GetCursorDelta().Y / SliderWidthInSlateUnits;
 
@@ -514,7 +525,23 @@ public:
 						ApplySliderMinValueChanged(DeltaToAdd, bUpdateOnlyIfLower);
 					}
 				}
-				
+
+				ECommitMethod CommitMethod = CommittedViaSpin;
+
+				const bool bIsSmallStep = (GetMaxSliderValue() - GetMinSliderValue()) <= 10.0;
+				double Step = bIsSmallStep ? 0.1 : 1.0;
+
+				if (MouseEvent.IsControlDown())
+				{
+					Step *= CtrlMultiplier.Get();
+					CommitMethod = CommittedViaSpinMultiplier;
+				}
+				else if (MouseEvent.IsShiftDown())
+				{
+					Step *= ShiftMultiplier.Get();
+					CommitMethod = CommittedViaSpinMultiplier;
+				}
+
 				//if we have a range to draw in
 				if ( !bUnlimitedSpinRange) 
 				{
@@ -531,7 +558,7 @@ public:
 							//Compute a log curve on both side of the neutral value
 							float StartFractionFilled = Fraction(SliderExponentNeutralValue.Get(), GetMinSliderValue(), GetMaxSliderValue());
 
-							using namespace UE::DMX::ControlConsole::SDMXControlConsoleEditorSpinBoxVertical::Private;
+							using namespace UE::DMX::Private;
 							FractionFilled = SpinBoxVertComputeExponentSliderFraction(FractionFilled, StartFractionFilled, CachedSliderExponent);
 						}
 						else
@@ -542,7 +569,7 @@ public:
 					FractionFilled *= SliderWidthInSlateUnits;
 
 					// Now add the delta to the fraction filled, this causes the spin.
-					FractionFilled -= MouseEvent.GetCursorDelta().Y;
+					FractionFilled -= MouseEvent.GetCursorDelta().Y * Step;
 						
 					// Clamp the fraction to be within the bounds of the geometry.
 					FractionFilled = FMath::Clamp(FractionFilled, 0.0f, SliderWidthInSlateUnits);
@@ -557,7 +584,7 @@ public:
 							//Compute a log curve on both side of the neutral value
 							float StartFractionFilled = Fraction(SliderExponentNeutralValue.Get(), GetMinSliderValue(), GetMaxSliderValue());
 
-							using namespace UE::DMX::ControlConsole::SDMXControlConsoleEditorSpinBoxVertical::Private;
+							using namespace UE::DMX::Private;
 							Percent = SpinBoxVertComputeExponentSliderFraction(Percent, StartFractionFilled, 1.0/CachedSliderExponent);
 						}
 						else
@@ -574,20 +601,21 @@ public:
 				{
 					// If this control has a specified delta and sensitivity then we use that instead of the current value for determining how much to change.
 					const float Sign = (MouseEvent.GetCursorDelta().Y > 0) ? 1.f : -1.f;
+
 					if (LinearDeltaSensitivity.IsSet() && Delta.IsSet() && Delta.Get() > 0)
 					{
 						const float MouseDelta = FMath::Abs(MouseEvent.GetCursorDelta().Y / LinearDeltaSensitivity.Get());
-						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow(Delta.Get(), SliderExponent.Get()));
+						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow(Delta.Get(), SliderExponent.Get())) * Step;
 					}
 					else
 					{
 						const float MouseDelta = FMath::Abs(MouseEvent.GetCursorDelta().Y / SliderWidthInSlateUnits);
 						const double CurrentValue = FMath::Clamp<double>(FMath::Abs(InternalValue),1.0,TNumericLimits<NumericType>::Max());
-						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow(CurrentValue, static_cast<double>(SliderExponent.Get())));
+						NewValue = InternalValue + (Sign * MouseDelta * FMath::Pow(CurrentValue, static_cast<double>(SliderExponent.Get()))) * Step;
 					}
 				}
 			
-				CommitValue( NewValue, CommittedViaSpin, ETextCommit::OnEnter );
+				CommitValue( NewValue, CommitMethod, ETextCommit::OnEnter );
 			}
 
 			return FReply::Handled();
@@ -708,7 +736,7 @@ protected:
 	/** @return the value being observed by the spinbox as FText - todo: spinbox FText support (reimplement me) */
 	FText GetValueAsText() const
 	{
-		return FText::FromString(GetValueAsString());
+		return ValueText.IsSet() ? ValueText.Get() : FText::FromString(GetValueAsString());
 	}
 
 	/**
@@ -742,7 +770,8 @@ protected:
 	{
 		CommittedViaSpin,
 		CommittedViaTypeIn,
-		CommittedViaArrowKey
+		CommittedViaArrowKey,
+		CommittedViaSpinMultiplier
 	};
 
 	/**
@@ -872,7 +901,8 @@ private:
 
 	float DistanceDragged;
 	TAttribute<NumericType> Delta;
-	TAttribute<int32> ShiftMouseMovePixelPerDelta;
+	TAttribute<float> ShiftMultiplier;
+	TAttribute<float> CtrlMultiplier;
 	TAttribute<int32> LinearDeltaSensitivity;
 	TAttribute<float> SliderExponent;
 	TAttribute<NumericType> SliderExponentNeutralValue;
@@ -883,6 +913,7 @@ private:
 	TAttribute<bool> IsActive;
 	TAttribute<bool> SupportDynamicSliderMaxValue;
 	TAttribute<bool> SupportDynamicSliderMinValue;
+	TAttribute<FText> ValueText;
 	FOnDynamicSliderMinMaxValueChanged OnDynamicSliderMaxValueChanged;
 	FOnDynamicSliderMinMaxValueChanged OnDynamicSliderMinValueChanged;
 

@@ -53,6 +53,7 @@ static inline bool ReadShaderOptionalData(FShaderCodeReader& InShaderCode, TShad
 #endif
 
 	UE::RHICore::SetupShaderCodeValidationData(&OutShader, InShaderCode);
+	UE::RHICore::SetupShaderDiagnosticData(&OutShader, InShaderCode);
 
 	return true;
 }
@@ -65,7 +66,9 @@ static bool ValidateShaderIsUsable(FD3D12ShaderData* InShader, EShaderFrequency 
 		return false;
 	}
 
-	if (EnumHasAnyFlags(InShader->Features, EShaderCodeFeatures::WaveOps) && !GRHISupportsWaveOperations)
+	// When we're using the SM5 shader library plus raytracing, GRHISupportsWaveOperations is false because DXBC shaders can't do wave ops,
+	// but RT shaders are compiled to DXIL and can use wave ops (HW support is guaranteed too).
+	if (EnumHasAnyFlags(InShader->Features, EShaderCodeFeatures::WaveOps) && !GRHISupportsWaveOperations && !IsRayTracingShaderFrequency(InFrequency))
 	{
 		return false;
 	}
@@ -80,6 +83,11 @@ static bool ValidateShaderIsUsable(FD3D12ShaderData* InShader, EShaderFrequency 
 	}
 
 	if (InFrequency == SF_Pixel && EnumHasAnyFlags(InShader->Features, EShaderCodeFeatures::StencilRef) && !GRHISupportsStencilRefFromPixelShader)
+	{
+		return false;
+	}
+
+	if (EnumHasAnyFlags(InShader->Features, EShaderCodeFeatures::BarycentricsSemantic) && !GRHIGlobals.SupportsBarycentricsSemantic)
 	{
 		return false;
 	}
@@ -103,6 +111,7 @@ bool InitShaderCommon(FShaderCodeReader& ShaderCode, int32 Offset, TShaderType* 
 
 	// Copy the native shader data only, skipping any of our own headers.
 	InShader->Code = ShaderCode.GetOffsetShaderCode(Offset);
+	InShader->SetShaderBundleUsage(EnumHasAnyFlags(InShader->ResourceCounts.UsageFlags, EShaderResourceUsageFlags::ShaderBundle));
 
 	return true;
 }
@@ -120,7 +129,8 @@ TShaderType* CreateStandardShader(TArrayView<const uint8> InCode)
 
 	if (!InitShaderCommon(ShaderCode, Offset, Shader))
 	{
-		delete Shader;
+		Shader->AddRef();
+		Shader->Release();
 		return nullptr;
 	}
 
@@ -159,6 +169,7 @@ FComputeShaderRHIRef FD3D12DynamicRHI::RHICreateComputeShader(TArrayView<const u
 	if (Shader)
 	{
 		Shader->RootSignature = GetAdapter().GetRootSignature(Shader);
+		Shader->SetNoDerivativeOps(EnumHasAnyFlags(Shader->ResourceCounts.UsageFlags, EShaderResourceUsageFlags::NoDerivativeOps));
 	}
 
 	return Shader;
@@ -199,7 +210,10 @@ FRayTracingShaderRHIRef FD3D12DynamicRHI::RHICreateRayTracingShader(TArrayView<c
 
 	if (!InitShaderCommon(ShaderCode, Offset, Shader))
 	{
-		delete Shader;
+		// We can't just call delete on the shader since it's an FRHIResource, so it must use the deletion queue mechanism.
+		// However, since it starts with refcount 0, we must first AddRef it in order to be able to call Release.
+		Shader->AddRef();
+		Shader->Release();
 		return nullptr;
 	}
 
@@ -211,6 +225,12 @@ FRayTracingShaderRHIRef FD3D12DynamicRHI::RHICreateRayTracingShader(TArrayView<c
 }
 
 #endif // D3D12_RHI_RAYTRACING
+
+FShaderBundleRHIRef FD3D12DynamicRHI::RHICreateShaderBundle(uint32 NumRecords)
+{
+	FD3D12ShaderBundle* ShaderBundle = new FD3D12ShaderBundle(GetRHIDevice(0), NumRecords);
+	return ShaderBundle;
+}
 
 void FD3D12CommandContext::RHISetMultipleViewports(uint32 Count, const FViewportBounds* Data)
 {

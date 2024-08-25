@@ -12,6 +12,10 @@
 #include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "Misc/SingleThreadRunnable.h"
 
+#include "UObject/TopLevelAssetPath.h"
+#include "UObject/WeakObjectPtr.h"
+#include "UObject/WeakObjectPtrTemplates.h"
+
 #include "UdpMessageSegmenter.h"
 #include "UdpMessagingPrivate.h"
 #include "Transport/UdpCircularQueue.h"
@@ -802,6 +806,11 @@ protected:
 	void DeliverMessage(const TSharedPtr<FUdpReassembledMessage, ESPMode::ThreadSafe>& ReassembledMessage, FNodeInfo& NodeInfo);
 
 	/**
+	 * Lookup the reassembled message type and try to determine the source struct type.
+	 */
+	void LookupAndCacheMessageType(TSharedPtr<FUdpReassembledMessage, ESPMode::ThreadSafe>& ReassembledMessage);
+
+	/**
 	 * Removes the specified node from the list of known remote endpoints.
 	 *
 	 * @param NodeId The identifier of the node to remove.
@@ -949,6 +958,9 @@ private:
 
 	/** If our round-robin work queues couldn't accept the last outbound message then store a deferred message for next round. */
 	TOptional<FOutboundMessage> DeferredOutboundMessage;
+
+	/** Stores a cache of discovered UScriptStruct types found during message processing. */
+	TMap<FString, TWeakObjectPtr<UScriptStruct>> CachedTypeInfoMap;
 
 	/** Defines the maximum number of Hello segments that can be dropped before a remote endpoint is considered dead. */
 	static const int32 DeadHelloIntervals;

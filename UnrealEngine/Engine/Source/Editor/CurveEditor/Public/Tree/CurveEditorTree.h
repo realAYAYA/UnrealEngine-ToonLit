@@ -151,6 +151,16 @@ struct CURVEEDITOR_API FCurveEditorTreeItem
 	}
 
 	/**
+	*Get optional unique path name for the tree editor item
+	*/
+	TOptional<FString> GetUniquePathName() const { return UniquePathName; } 
+
+	/**
+	*Set optional unique path name for the tree editor item
+	*/
+	void SetUniquePathName(const TOptional<FString>& InName) { UniquePathName = InName; }
+
+	/**
 	 * Access the user-specified implementation for this tree item
 	 * @return A strong pointer to the implementation or null if it has expired, or was never assigned
 	 */
@@ -208,6 +218,8 @@ private:
 	FCurveEditorTreeItemID ThisID;
 	/** This parent's ID or FCurveEditorTreeItemID::Invalid() for root nodes */
 	FCurveEditorTreeItemID ParentID;
+	/** Optional Unique Path Name*/
+	TOptional<FString> UniquePathName;
 	/** A weak pointer to an externally held implementation. Mutually exclusive to StrongItemImpl. */
 	TWeakPtr<ICurveEditorTreeItem> WeakItemImpl;
 	/** A strong pointer to an implementation for this tree item. Mutually exclusive to WeakItemImpl. */
@@ -505,6 +517,16 @@ public:
 		return ToggleExpansionStateDelegate;
 	}
 
+	/*
+	* Get cached expanded items
+	*/
+	TArray<FCurveEditorTreeItemID> GetCachedExpandedItems() const;
+	
+	/*
+	* Set Item expansion state
+	*/
+	void SetItemExpansion(FCurveEditorTreeItemID InTreeItemID, bool bInExpansion);
+
 	/**
 	Whether or not we are are doign a direct selection, could be used to see why a curve model is being created or destroyed, by direct selection or by sequencer filtering?
 	*/
@@ -562,6 +584,9 @@ private:
 
 	/** Delegate for when toggle expansion state is invoked */
 	FOnCurveEditorToggleExpansionState ToggleExpansionStateDelegate;
+
+	/** Set of cached expanded items, based on GetTypedHash(FString)*/
+	TSet<int32> CachedExpandedItems;
 
 	/** Whether or not we are are doign a direct selection, could be used to see why a curve model is being created or destroyed, by direct selection or by sequencer filtering?*/
 	bool bIsDoingDirectSelection = false;

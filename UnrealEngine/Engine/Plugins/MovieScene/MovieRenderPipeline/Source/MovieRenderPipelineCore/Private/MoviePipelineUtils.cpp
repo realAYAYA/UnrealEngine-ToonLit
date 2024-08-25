@@ -38,7 +38,7 @@ namespace UE
 {
 	namespace MovieRenderPipeline
 	{
-		TArray<UClass*> FindMoviePipelineSettingClasses(UClass* InBaseClass)
+		TArray<UClass*> FindMoviePipelineSettingClasses(UClass* InBaseClass, const bool bIncludeBlueprints)
 		{
 			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 
@@ -46,7 +46,10 @@ namespace UE
 
 			FARFilter Filter;
 			Filter.ClassPaths.Add(InBaseClass->GetClassPathName());
-			Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+			if (bIncludeBlueprints)
+			{
+				Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+			}
 
 			// Include any Blueprint based objects as well, this includes things like Blutilities, UMG, and GameplayAbility objects
 			Filter.bRecursiveClasses = true;
@@ -659,6 +662,38 @@ namespace UE
 	{
 		DECLARE_CYCLE_STAT(TEXT("STAT_MoviePipeline_HardwareMetadata"), STAT_HardwareMetadata, STATGROUP_MoviePipeline);
 
+		void ConformOutputFormatStringToken(FString& InOutFilenameFormatString, const FStringView InToken, const FName& InNodeName, const FName& InBranchName)
+		{
+			static const FString FrameNumberIdentifiers[] = { TEXT("{frame_number}"), TEXT("{frame_number_shot}"), TEXT("{frame_number_rel}"), TEXT("{frame_number_shot_rel}") };
+
+			if (!InOutFilenameFormatString.Contains(InToken, ESearchCase::IgnoreCase))
+			{
+				UE_LOG(LogMovieRenderPipeline, Warning, TEXT("Missing expected %s format token on node '%s' in branch '%s'. Automatically adding!"), InToken.GetData(), *InNodeName.ToString(), *InBranchName.ToString());
+
+				// Search for a frame number in the output string
+				int32 FrameNumberIndex = INDEX_NONE;
+				for (const FString& Identifier : FrameNumberIdentifiers)
+				{
+					FrameNumberIndex = InOutFilenameFormatString.Find(Identifier, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+					if (FrameNumberIndex != INDEX_NONE)
+					{
+						break;
+					}
+				}
+
+				if (FrameNumberIndex == INDEX_NONE)
+				{
+					// No frame number found, so just append the token
+					InOutFilenameFormatString += InToken;
+				}
+				else
+				{
+					// If a frame number is found, we need to insert the token first before it, so various editing
+					// software will still be able to identify if this is an image sequence
+					InOutFilenameFormatString.InsertAt(FrameNumberIndex, FString(InToken) + TEXT("."));
+				}
+			}
+		}
 
 		void ValidateOutputFormatString(FString& InOutFilenameFormatString, const bool bTestRenderPass, const bool bTestFrameNumber, const bool bTestCameraName)
 		{
@@ -817,35 +852,45 @@ namespace UE
 			return FPlatformProcess::UserName(false);
 		}
 
-		void GetSharedFormatArguments(TMap<FString, FString>& InFilenameArguments, TMap<FString, FString>& InFileMetadata, const FDateTime& InDateTime, const int32 InVersionNumber, const UMoviePipelineExecutorJob* InJob)
+		void GetSharedFormatArguments(TMap<FString, FString>& InFilenameArguments, TMap<FString, FString>& InFileMetadata, const FDateTime& InDateTime, const int32 InVersionNumber, const UMoviePipelineExecutorJob* InJob, const FTimespan& InInitializationTimeOffset)
 		{
-			InFilenameArguments.Add(TEXT("date"), InDateTime.ToString(TEXT("%Y.%m.%d")));
-			InFilenameArguments.Add(TEXT("time"), InDateTime.ToString(TEXT("%H.%M.%S")));
-			InFilenameArguments.Add(TEXT("year"), InDateTime.ToString(TEXT("%Y")));
-			InFilenameArguments.Add(TEXT("month"), InDateTime.ToString(TEXT("%m")));
-			InFilenameArguments.Add(TEXT("day"), InDateTime.ToString(TEXT("%d")));
+			FDateTime DateTimeLocal = InDateTime + InInitializationTimeOffset; 
+
+			FString LocalDateStr = DateTimeLocal.ToString(TEXT("%Y.%m.%d"));
+			FString LocalTimeStr = DateTimeLocal.ToString(TEXT("%H.%M.%S"));
+			FString LocalYearStr = DateTimeLocal.ToString(TEXT("%Y"));
+			FString LocalMonthStr = DateTimeLocal.ToString(TEXT("%m"));
+			FString LocalDayStr = DateTimeLocal.ToString(TEXT("%d"));
+
+
+			InFilenameArguments.Add(TEXT("date"), LocalDateStr);
+			InFilenameArguments.Add(TEXT("time"), LocalTimeStr);
+			InFilenameArguments.Add(TEXT("year"), LocalYearStr);
+			InFilenameArguments.Add(TEXT("month"), LocalMonthStr);
+			InFilenameArguments.Add(TEXT("day"), LocalDayStr);
 
 
 			FString VersionText = FString::Printf(TEXT("v%0*d"), 3, InVersionNumber);
 
 			InFilenameArguments.Add(TEXT("version"), VersionText);
 
-			InFileMetadata.Add(TEXT("unreal/jobDate"), InDateTime.ToString(TEXT("%Y.%m.%d")));
-			InFileMetadata.Add(TEXT("unreal/jobTime"), InDateTime.ToString(TEXT("%H.%M.%S")));
-			InFileMetadata.Add(TEXT("unreal/jobYear"), InDateTime.ToString(TEXT("%Y")));
-			InFileMetadata.Add(TEXT("unreal/jobMonth"), InDateTime.ToString(TEXT("%m")));
-			InFileMetadata.Add(TEXT("unreal/jobDay"), InDateTime.ToString(TEXT("%d")));
+			InFileMetadata.Add(TEXT("unreal/jobDate"), LocalDateStr);
+			InFileMetadata.Add(TEXT("unreal/jobTime"), LocalTimeStr);
+			InFileMetadata.Add(TEXT("unreal/jobYear"), LocalYearStr);
+			InFileMetadata.Add(TEXT("unreal/jobMonth"), LocalMonthStr);
+			InFileMetadata.Add(TEXT("unreal/jobDay"), LocalDayStr);
 
 			InFileMetadata.Add(TEXT("unreal/jobVersion"), FString::FromInt(InVersionNumber));
 
-			if (InJob)
-			{
-				InFilenameArguments.Add(TEXT("job_author"), GetJobAuthor(InJob));
-				InFilenameArguments.Add(TEXT("job_name"), InJob->JobName);
-				InFileMetadata.Add(TEXT("unreal/jobName"), InJob->JobName);
-				InFileMetadata.Add(TEXT("unreal/jobAuthor"), GetJobAuthor(InJob));
-				InFileMetadata.Add(TEXT("unreal/jobComment"), InJob->Comment);
-			}
+			const FString JobAuthor = InJob ? GetJobAuthor(InJob) : FString();
+			const FString JobName = InJob ? InJob->JobName : FString();
+			const FString JobComment = InJob ? InJob->Comment : FString();
+
+			InFilenameArguments.Add(TEXT("job_author"), JobAuthor);
+			InFilenameArguments.Add(TEXT("job_name"), JobName);
+			InFileMetadata.Add(TEXT("unreal/jobName"), JobName);
+			InFileMetadata.Add(TEXT("unreal/jobAuthor"), JobAuthor);
+			InFileMetadata.Add(TEXT("unreal/jobComment"), JobComment);
 		}
 
 		void GetCachedGPUDriverInfo(TMap<FString, FString>& InFileMetadata)
@@ -1018,6 +1063,38 @@ namespace UE
 			}
 
 			return OutRenderPassMetrics;
+		}
+
+		FVector2f GetSubPixelJitter(int32 InFrameIndex, int32 InSamplesPerFrame)
+		{
+			// Repeat the Halton Offset equally on each output frame so non-moving objects don't have any chance to crawl between frames.
+			int32 HaltonIndex = (InFrameIndex % InSamplesPerFrame) + 1;
+			float HaltonOffsetX = Halton(HaltonIndex, 2);
+			float HaltonOffsetY = Halton(HaltonIndex, 3);
+
+			float SpatialShiftX = 0.0f;
+			float SpatialShiftY = 0.0f;
+
+			static auto CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.TemporalAAFilterSize"));
+			float FilterSize = CVar->GetFloat();
+
+			// Scale distribution to set non-unit variance
+			// Variance = Sigma^2
+			float Sigma = 0.47f * FilterSize;
+
+			// Window to [-0.5, 0.5] output
+			// Without windowing we could generate samples far away on the infinite tails.
+			float OutWindow = 0.5f;
+			float InWindow = FMath::Exp(-0.5 * FMath::Square(OutWindow / Sigma));
+
+			// Box-Muller transform
+			float Theta = 2.0f * PI * HaltonOffsetY;
+			float r = Sigma * FMath::Sqrt(-2.0f * FMath::Loge((1.0f - HaltonOffsetX) * InWindow + HaltonOffsetX));
+
+			SpatialShiftX = r * FMath::Cos(Theta);
+			SpatialShiftY = r * FMath::Sin(Theta);
+
+			return FVector2f(SpatialShiftX, SpatialShiftY);
 		}
 	}
 }

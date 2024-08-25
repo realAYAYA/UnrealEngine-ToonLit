@@ -21,16 +21,17 @@ namespace mu
 		const float blendedGf = (static_cast<float>((blended >> 8)  & 0xFF) / 255.0f) * 2.0f - 1.0f;
 		const float blendedBf = (static_cast<float>((blended >> 16) & 0xFF) / 255.0f) * 2.0f - 1.0f;
 
-		vec3f a = vec3f(baseRf, baseGf, baseBf);
-		vec3f b = vec3f(-blendedRf, -blendedGf, blendedBf);
+		FVector3f a = FVector3f(baseRf, baseGf, baseBf);
+		FVector3f b = FVector3f(-blendedRf, -blendedGf, blendedBf);
 
 		// The original does not normalize but if not done results don't look good due to signal clipping.
-		vec3f n = normalise_approx(a*dot(a, b) - b*a.z());
+		FVector3f n = (a* FVector3f::DotProduct(a, b) - b*a.Z);
+		n.Normalize();
 
 		return 
-			(mu::clamp(static_cast<unsigned>((n.x() + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 0) |
-			(mu::clamp(static_cast<unsigned>((n.y() + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 8) |
-			(mu::clamp(static_cast<unsigned>((n.z() + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 16);
+			(FMath::Clamp(static_cast<unsigned>((n.X + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 0) |
+			(FMath::Clamp(static_cast<unsigned>((n.Y + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 8) |
+			(FMath::Clamp(static_cast<unsigned>((n.Z + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 16);
 	}
 
 	inline unsigned CombineNormalMasked(unsigned base, unsigned blended, unsigned mask)
@@ -48,17 +49,17 @@ namespace mu
 
 		const float maskRf = (static_cast<float>(mask & 0xFF) / 255.0f);
 
-		vec3f a = vec3f(baseRf, baseGf, baseBf + 1.0f);
-		vec3f b = vec3f(-blendedRf, -blendedGf, blendedBf);
+		FVector3f a = FVector3f(baseRf, baseGf, baseBf + 1.0f);
+		FVector3f b = FVector3f(-blendedRf, -blendedGf, blendedBf);
 
 		// The original does not normalize but if not done results don't look good due to signal clipping.
-		vec3f n = mu::normalise_approx( 
-					mu::lerp( vec3f(baseRf, baseGf, baseBf), a*dot(a, b) - b*a.z(), maskRf ) );
+		FVector3f n = ( FMath::Lerp( FVector3f(baseRf, baseGf, baseBf), a*FVector3f::DotProduct(a, b) - b*a.Z, maskRf ) );
+		n.Normalize();
 
 		return 
-			(mu::clamp(static_cast<unsigned>((n.x() + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 0) |
-			(mu::clamp(static_cast<unsigned>((n.y() + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 8) |
-			(mu::clamp(static_cast<unsigned>((n.z() + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 16);
+			(FMath::Clamp(static_cast<unsigned>((n.X + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 0) |
+			(FMath::Clamp(static_cast<unsigned>((n.Y + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 8) |
+			(FMath::Clamp(static_cast<unsigned>((n.Z + 1.0f) * 0.5f * 255.0f), 0u, 255u) << 16);
 	}
 
 	inline void ImageNormalCombine(Image* pResult, const Image* pBase, FVector4f col)

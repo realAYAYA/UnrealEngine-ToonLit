@@ -18,6 +18,10 @@ namespace Chaos
 class FGeometryCollectionConvexPropertiesInterface;
 class FGeometryCollectionProximityPropertiesInterface;
 
+struct FGeometryCollectionDefaults
+{
+	FLinearColor DefaultVertexColor = FLinearColor::White;
+};
 
 /**
 * FGeometryCollection (FTransformCollection)
@@ -30,7 +34,7 @@ class FGeometryCollection : public FTransformCollection,
 public:
 	typedef FTransformCollection Super;
 
-	CHAOS_API FGeometryCollection();
+	CHAOS_API FGeometryCollection(FGeometryCollectionDefaults InDefaults = FGeometryCollectionDefaults() );
 	FGeometryCollection(FGeometryCollection &) = delete;
 	FGeometryCollection& operator=(const FGeometryCollection &) = delete;
 	FGeometryCollection(FGeometryCollection &&) = default;
@@ -100,7 +104,8 @@ public:
 	static CHAOS_API const FName SimulatableParticlesAttribute;
 	static CHAOS_API const FName SimulationTypeAttribute;
 	static CHAOS_API const FName StatusFlagsAttribute;
-
+	static CHAOS_API const FName ExternalCollisionsAttribute;
+	
 	enum ESimulationTypes : uint8
 	{
 		FST_None = 0,
@@ -127,7 +132,7 @@ public:
 	/**
 	 * Create a GeometryCollection from Vertex and Indices arrays
 	 */
-	static CHAOS_API FGeometryCollection* NewGeometryCollection(const TArray<float>& RawVertexArray, const TArray<int32>& RawIndicesArray, bool ReverseVertexOrder = true);
+	static CHAOS_API FGeometryCollection* NewGeometryCollection(const TArray<float>& RawVertexArray, const TArray<int32>& RawIndicesArray, bool ReverseVertexOrder = true, FGeometryCollectionDefaults InDefaults = FGeometryCollectionDefaults());
 	static CHAOS_API void Init(FGeometryCollection* Collection, const TArray<float>& RawVertexArray, const TArray<int32>& RawIndicesArray, bool ReverseVertexOrder = true);
 	static CHAOS_API void DefineGeometrySchema(FManagedArrayCollection&);
 
@@ -142,7 +147,8 @@ public:
 		const TManagedArray<int32>& RawParentArray,
 		const TManagedArray<TSet<int32>>& RawChildrenArray,
 		const TManagedArray<int32>& RawSimulationTypeArray,
-		const TManagedArray<int32>& RawStatusFlagsArray);
+		const TManagedArray<int32>& RawStatusFlagsArray,
+		FGeometryCollectionDefaults InDefaults = FGeometryCollectionDefaults());
 
 	//
 	//
@@ -272,7 +278,7 @@ public:
 	//
 	//
 	//
-
+	FGeometryCollectionDefaults Defaults;
 	CHAOS_API virtual void SetDefaults(FName Group, uint32 StartSize, uint32 NumElements) override;
 
 	// Transform Group

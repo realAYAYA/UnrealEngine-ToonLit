@@ -186,9 +186,9 @@ void FAdaptiveStreamingPlayer::InternalLoadManifest(const FString& InURL, const 
 	if (CurrentState == EPlayerState::eState_Idle)
 	{
 		FString mimeType = MimeType;
-		if (GetOptions().HaveKey(OptionKeyMimeType))
+		if (PlayerOptions.HaveKey(OptionKeyMimeType))
 		{
-			mimeType = GetOptions().GetValue(OptionKeyMimeType).GetFString();
+			mimeType = PlayerOptions.GetValue(OptionKeyMimeType).GetFString();
 		}
 		else if (mimeType.IsEmpty())
 		{
@@ -285,8 +285,6 @@ bool FAdaptiveStreamingPlayer::SelectManifest()
 		if (ManifestType != EMediaFormatType::Unknown)
 		{
 			TArray<FTimespan> SeekablePositions;
-			FPlaybackRange PlaybackRange;
-			FTimeRange RestrictedPlaybackRange;
 			TSharedPtrTS<IManifest> NewPresentation = ManifestReader->GetManifest();
 			check(NewPresentation.IsValid());
 
@@ -295,11 +293,13 @@ bool FAdaptiveStreamingPlayer::SelectManifest()
 			PlaybackState.SetSeekablePositions(SeekablePositions);
 			PlaybackState.SetTimelineRange(NewPresentation->GetTotalTimeRange());
 			PlaybackState.SetDuration(NewPresentation->GetDuration());
-			
+
 			// Check for playback range restriction. This is currently assumed to come from URL fragment parameters
-			// like example.mp4#t=10.8,18.4
+			// like example.mp4#r=10.8,18.4
 			// These do not override any user defined range values!
-			RestrictedPlaybackRange = NewPresentation->GetPlaybackRange();
+			FPlaybackRange PlaybackRange;
+			FTimeRange RestrictedPlaybackRange;
+			RestrictedPlaybackRange = NewPresentation->GetPlaybackRange(IManifest::EPlaybackRangeType::LockedPlaybackRange);
 			PlaybackState.GetPlayRange(PlaybackRange);
 			if (RestrictedPlaybackRange.Start.IsValid() && !PlaybackRange.Start.Get(FTimeValue()).IsValid())
 			{

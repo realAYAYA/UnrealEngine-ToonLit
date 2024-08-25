@@ -41,6 +41,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Editor/EditorEngine.h"
 #include "BlueprintEditorSettings.h"
+#include "AnimNotifyEventNodeSpawner.h"
 
 #if ENABLE_BLUEPRINT_ACTION_FILTER_PROFILING
 #include "HAL/PlatformStackWalk.h"
@@ -501,6 +502,7 @@ namespace BlueprintActionFilterImpl
 		uint32* CpuSpecIdPtr = FuncPtrToCpuSpecIdMap.Find(TestFuncPtr);
 		if (!CpuSpecIdPtr)
 		{
+			check(UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel));
 			CpuSpecIdPtr = &FuncPtrToCpuSpecIdMap.Add(TestFuncPtr, FCpuProfilerTrace::OutputEventType(*FilterTestFuncPtrToFuncName(TestFuncPtr)));
 		}
 
@@ -914,7 +916,7 @@ static bool BlueprintActionFilterImpl::IsAssetPermissionNotGranted(FBlueprintAct
 	{
 		if (Filter.AssetReferenceFilter.IsValid())
 		{
-			bool const bIsAccessible = Filter.AssetReferenceFilter->PassesFilter(FAssetData(Owner));
+			bool const bIsAccessible = Filter.AssetReferenceFilter->PassesFilter(FAssetData(Owner, FAssetData::ECreationFlags::SkipAssetRegistryTagsGathering));
 			if (!bIsAccessible)
 			{
 				bIsFilteredOut = true;
@@ -1788,19 +1790,21 @@ static bool BlueprintActionFilterImpl::IsIncompatibleAnimNotification(FBlueprint
 
 	if ( BlueprintAction.GetNodeClass()->IsChildOf<UK2Node_Event>() )
 	{
-		if( const USkeleton* SkeletonOwningEvent = Cast<USkeleton>(BlueprintAction.GetActionOwner()) )
+		if (UAnimNotifyEventNodeSpawner const* const AnimNotifyEventNodeSpawner = Cast<UAnimNotifyEventNodeSpawner>(BlueprintAction.NodeSpawner))
 		{
 			// The event is owned by a skeleton. Only show if it the current anim blueprint is targetting
 			// that skeleton:
+			const FSoftObjectPath& SkeletonObjectPath = AnimNotifyEventNodeSpawner->GetSkeletonObjectPath();
 			FBlueprintActionContext const& FilterContext = Filter.Context;
 			bool bFoundInAllBlueprints = true;
+			const bool bUseSkeletonCheck = Filter.TargetClasses.Num() != 0;	// If we are 'context sensitive' then we will have classes here
 
 			for (const UBlueprint* Blueprint : FilterContext.Blueprints)
 			{
 				bool bFoundInCurrentBlueprint = false;
 				if (const UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(Blueprint))
 				{
-					if( AnimBlueprint->TargetSkeleton == SkeletonOwningEvent )
+					if( !bUseSkeletonCheck || FSoftObjectPath(AnimBlueprint->TargetSkeleton) == SkeletonObjectPath )
 					{
 						bFoundInCurrentBlueprint = true;
 						break;
@@ -2357,12 +2361,16 @@ bool FBlueprintActionFilter::IsFilteredByThis(FBlueprintActionInfo& BlueprintAct
 		checkSlow(RejectionTestDelegate.IsBound());
 
 #if ENABLE_BLUEPRINT_ACTION_FILTER_PROFILING
+		bool bTraceEventEmitted = false;
 		double StartTime = 0;
 		FFilterTestProfileRecord* FilterTestProfileRecord = nullptr;
 		if (bIsFilterTestProfilingEnabled)
 		{
-			FCpuProfilerTrace::OutputBeginDynamicEvent(BlueprintActionFilterImpl::FilterTestProfileEventName);
-
+			if (UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel))
+			{
+				FCpuProfilerTrace::OutputBeginDynamicEvent(BlueprintActionFilterImpl::FilterTestProfileEventName);
+				bTraceEventEmitted = true;
+			}
 			StartTime = FPlatformTime::Seconds();
 			FilterTestProfileRecord = BeginFilterTestProfileEvent(TestIndex, RejectionTestDelegate.GetBoundProgramCounterForTimerManager());
 		}
@@ -2374,7 +2382,10 @@ bool FBlueprintActionFilter::IsFilteredByThis(FBlueprintActionInfo& BlueprintAct
 		if (FilterTestProfileRecord)
 		{
 			EndFilterTestProfileEvent(FilterTestProfileRecord, bIsFiltered, StartTime);
-			FCpuProfilerTrace::OutputEndEvent();
+			if (bTraceEventEmitted)
+			{
+				FCpuProfilerTrace::OutputEndEvent();
+			}
 		}
 #endif	// ENABLE_BLUEPRINT_ACTION_FILTER_PROFILING
 
@@ -2393,12 +2404,16 @@ bool FBlueprintActionFilter::IsFilteredByThis(FBlueprintActionInfo& BlueprintAct
 		for (const FBlueprintGraphModule::FActionMenuRejectionTest& ExtraRejectionTest : BluprintGraphModule->GetExtendedActionMenuFilters())
 		{
 #if ENABLE_BLUEPRINT_ACTION_FILTER_PROFILING
+			bool bTraceEventEmitted = false;
 			double StartTime = 0;
 			FFilterTestProfileRecord* FilterTestProfileRecord = nullptr;
 			if (bIsFilterTestProfilingEnabled)
 			{
-				FCpuProfilerTrace::OutputBeginDynamicEvent(BlueprintActionFilterImpl::FilterTestProfileEventName);
-
+				if (UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel))
+				{
+					FCpuProfilerTrace::OutputBeginDynamicEvent(BlueprintActionFilterImpl::FilterTestProfileEventName);
+					bTraceEventEmitted = true;
+				}
 				StartTime = FPlatformTime::Seconds();
 				FilterTestProfileRecord = BeginFilterTestProfileEvent(ExtraTestProfileRecordIndex++, ExtraRejectionTest.GetBoundProgramCounterForTimerManager());
 			}
@@ -2410,7 +2425,10 @@ bool FBlueprintActionFilter::IsFilteredByThis(FBlueprintActionInfo& BlueprintAct
 			if (FilterTestProfileRecord)
 			{
 				EndFilterTestProfileEvent(FilterTestProfileRecord, bIsFiltered, StartTime);
-				FCpuProfilerTrace::OutputEndEvent();
+				if (bTraceEventEmitted)
+				{
+					FCpuProfilerTrace::OutputEndEvent();
+				}
 			}
 #endif	// ENABLE_BLUEPRINT_ACTION_FILTER_PROFILING
 
@@ -2475,9 +2493,11 @@ FBlueprintActionFilter::FFilterTestProfileRecord* FBlueprintActionFilter::BeginF
 		FilterTestProfileRecord->TestFuncPtr = FilterTestFuncPtr;
 	}
 
-	if (IsFilterTestTraceLoggingEnabled())
+	if (IsFilterTestTraceLoggingEnabled() && UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel))
 	{
 		FCpuProfilerTrace::OutputBeginEvent(BlueprintActionFilterImpl::FilterTestFuncPtrToCpuSpecId(FilterTestFuncPtr));
+		check(FilterTestProfileRecord->bOutputBeginEventEmitted == false);
+		FilterTestProfileRecord->bOutputBeginEventEmitted = true;
 	}
 
 	return FilterTestProfileRecord;
@@ -2487,9 +2507,10 @@ void FBlueprintActionFilter::EndFilterTestProfileEvent(FFilterTestProfileRecord*
 {
 	if (InEvent)
 	{
-		if (IsFilterTestTraceLoggingEnabled())
+		if (InEvent->bOutputBeginEventEmitted)
 		{
 			FCpuProfilerTrace::OutputEndEvent();
+			InEvent->bOutputBeginEventEmitted = false;
 		}
 
 		if (IsFilterTestStatsLoggingEnabled())

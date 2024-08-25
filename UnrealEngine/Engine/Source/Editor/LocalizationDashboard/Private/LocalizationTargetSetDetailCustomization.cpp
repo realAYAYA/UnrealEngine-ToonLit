@@ -145,10 +145,12 @@ void FLocalizationTargetSetDetailCustomization::CustomizeDetails(IDetailLayoutBu
 
 			// Let the localization service extend this toolbar
 			TSharedRef<FExtender> LocalizationServiceExtender = MakeShareable(new FExtender);
+#if LOCALIZATION_SERVICES_WITH_SLATE
 			if (TargetSet.IsValid() && ILocalizationServiceModule::Get().IsEnabled())
 			{
 				LSP.CustomizeTargetSetToolbar(LocalizationServiceExtender, TargetSet);
 			}
+#endif
 
 			FToolBarBuilder ToolBarBuilder( CommandList, FMultiBoxCustomization::AllowCustomization("LocalizationDashboard"), LocalizationServiceExtender, /*bForceSmallIcons*/true );
 

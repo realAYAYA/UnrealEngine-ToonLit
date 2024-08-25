@@ -33,6 +33,9 @@
 #include "Misc/TextFilter.h"
 #include "Kismet2/Kismet2NameValidators.h"
 #include "SPositiveActionButton.h"
+#include "GraphEditorActions.h"
+#include "BlueprintModes/WidgetBlueprintApplicationModes.h"
+#include "Engine/MemberReference.h"
 
 #define LOCTEXT_NAMESPACE "UMG"
 
@@ -391,7 +394,7 @@ public:
 		[
 			SNew(SBorder)
 			.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
-			.Padding( FMargin(bIsDrawerTab ? 8.0 : 2.0, 2.0) )
+			.Padding( FMargin(bIsDrawerTab ? 8.0f : 2.0f, 2.0f) )
 			[
 				SNew(SOverlay)
 				+SOverlay::Slot()
@@ -681,7 +684,7 @@ private:
 		}
 	}
 
-	TSharedPtr<SWidget> OnContextMenuOpening() const
+	TSharedPtr<SWidget> OnContextMenuOpening()
 	{
 		FMenuBuilder MenuBuilder( true, CommandList.ToSharedRef() );
 
@@ -690,12 +693,32 @@ private:
 			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Rename);
 			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Duplicate);
 			MenuBuilder.AddMenuSeparator();
-
+			MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindReferences);
 			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Delete);
 		}
 		MenuBuilder.EndSection();
 
 		return MenuBuilder.MakeWidget();
+	}
+
+	void FindReferencesToSelectedAnimation()
+	{
+		if (TSharedPtr<FWidgetBlueprintEditor> WidgetEditor = BlueprintEditor.Pin())
+		{
+			TArray< TSharedPtr<FWidgetAnimationListItem> > SelectedAnimations = AnimationListView->GetSelectedItems();
+			if (SelectedAnimations.Num() == 1)
+			{
+				TSharedPtr<FWidgetAnimationListItem> SelectedAnimation = SelectedAnimations[0];
+				const FString VariableName = SelectedAnimation->Animation->GetName();
+				
+				FMemberReference MemberReference;
+				MemberReference.SetSelfMember(*VariableName);
+				const FString SearchTerm = MemberReference.GetReferenceSearchString(WidgetEditor->GetWidgetBlueprintObj()->SkeletonGeneratedClass);
+
+				WidgetEditor->SetCurrentMode(FWidgetBlueprintApplicationModes::GraphMode);
+				WidgetEditor->SummonSearchUI(true, SearchTerm);
+			}
+		}
 	}
 
 	TSharedRef<ITableRow> OnGenerateWidgetForMovieScene( TSharedPtr<FWidgetAnimationListItem> InListItem, const TSharedRef< STableViewBase >& InOwnerTableView )
@@ -722,6 +745,12 @@ private:
 		CommandList->MapAction(
 			FGenericCommands::Get().Rename,
 			FExecuteAction::CreateSP(this, &SUMGAnimationList::OnRenameAnimation),
+			FCanExecuteAction::CreateSP(this, &SUMGAnimationList::CanExecuteContextMenuAction)
+			);
+		
+		CommandList->MapAction(
+			FGraphEditorCommands::Get().FindReferences,
+			FExecuteAction::CreateSP(this, &SUMGAnimationList::FindReferencesToSelectedAnimation),
 			FCanExecuteAction::CreateSP(this, &SUMGAnimationList::CanExecuteContextMenuAction)
 			);
 

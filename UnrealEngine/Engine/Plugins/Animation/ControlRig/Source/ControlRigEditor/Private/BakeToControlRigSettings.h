@@ -21,6 +21,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Reduce Keys")
 	float Tolerance = 0.001f;
 
+	/** Reset controls to initial value on every frame */
+	UPROPERTY(EditAnywhere, Category = "Reset Controls")
+	bool bResetControls = true;
+
 	/** Resets the default properties. */
 	void Reset();
 };

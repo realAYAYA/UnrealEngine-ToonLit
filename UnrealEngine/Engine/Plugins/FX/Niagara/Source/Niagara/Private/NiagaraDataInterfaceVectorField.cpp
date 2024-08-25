@@ -104,7 +104,8 @@ void UNiagaraDataInterfaceVectorField::PostInitProperties()
 
 /*--------------------------------------------------------------------------------------------------------------------------*/
 
-void UNiagaraDataInterfaceVectorField::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceVectorField::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature Sig;
@@ -166,6 +167,7 @@ void UNiagaraDataInterfaceVectorField::GetFunctions(TArray<FNiagaraFunctionSigna
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceVectorField, SampleVectorField);
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceVectorField, LoadVectorField);
@@ -236,7 +238,7 @@ void UNiagaraDataInterfaceVectorField::GetFeedback(UNiagaraSystem* InAsset, UNia
 			{
 				if (DI == this || DI->Equals(this))
 				{
-					const FNiagaraVariableBase* Var = InComponent->GetOverrideParameters().FindVariable(DI);
+					const FNiagaraVariableBase* Var = InComponent->GetOverrideParameters().FindVariableFromDataInterface(DI);
 					if (Var)
 					{
 						DIAliases.AddUnique(Var->GetName());
@@ -253,7 +255,7 @@ void UNiagaraDataInterfaceVectorField::GetFeedback(UNiagaraSystem* InAsset, UNia
 			{
 				if (DI == this || DI->Equals(this))
 				{
-					const FNiagaraVariableBase* Var = InAsset->GetExposedParameters().FindVariable(DI);
+					const FNiagaraVariableBase* Var = InAsset->GetExposedParameters().FindVariableFromDataInterface(DI);
 					if (Var)
 					{
 						DIAliases.AddUnique(Var->GetName());
@@ -589,12 +591,16 @@ void UNiagaraDataInterfaceVectorField::SampleVectorField(FVectorVMExternalFuncti
 #if INTEL_ISPC && VECTOR_FIELD_DATA_AS_HALF
 			if (GNiagaraVectorFieldUseIspc)
 			{
-				TConstArrayView<FFloat16> FieldSamples = StaticVectorField->ReadCPUData();
+				constexpr int32 DataSamplesPerVector = sizeof(ispc::FHalfVector) / sizeof(FFloat16);
+
+				TConstArrayView<FFloat16> FieldSamplesData = StaticVectorField->ReadCPUData();
+				TConstArrayView<ispc::FHalfVector> FieldSamples(reinterpret_cast<const ispc::FHalfVector*>(FieldSamplesData.GetData()), FieldSamplesData.Num() / DataSamplesPerVector);
 
 				ispc::SampleVectorField(XParam.GetDest(), YParam.GetDest(), ZParam.GetDest(),
 					XParam.IsConstant(), YParam.IsConstant(), ZParam.IsConstant(),
 					OutSampleX.GetDest(), OutSampleY.GetDest(), OutSampleZ.GetDest(),
-					(ispc::FHalfVector*) FieldSamples.GetData(), FieldSamples.Num() - sizeof(ispc::FHalfVector), (ispc::FVector&)MinBounds, (ispc::FVector&)OneOverBoundSize,
+					OutSampleX.IsValid(), OutSampleY.IsValid(), OutSampleZ.IsValid(),
+					FieldSamples.GetData(), FieldSamples.Num() - 1, (ispc::FVector&)MinBounds, (ispc::FVector&)OneOverBoundSize,
 					(ispc::FVector&)Size, (ispc::FVector&)TilingAxes, Context.GetNumInstances());
 			}
 			else

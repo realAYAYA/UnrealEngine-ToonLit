@@ -16,6 +16,7 @@
 #include "ViewModels/Stack/NiagaraStackRenderItemGroup.h"
 #include "ViewModels/Stack/NiagaraStackRendererItem.h"
 #include "NiagaraMessages.h"
+#include "ViewModels/NiagaraSystemSelectionViewModel.h"
 #include "Widgets/SNiagaraDebugger.h"
 
 #define LOCTEXT_NAMESPACE "EmitterHandleViewModel"
@@ -60,12 +61,16 @@ void FNiagaraEmitterHandleViewModel::GetRendererEntries(TArray<UNiagaraStackEntr
 	if (StackRoot)
 	{
 		TArray<UNiagaraStackEntry*> Children;
-		StackRoot->GetRenderGroup()->GetUnfilteredChildren(Children);
-		for (UNiagaraStackEntry* Child : Children)
+		UNiagaraStackRenderItemGroup* RendererGroup = StackRoot->GetRenderGroup();
+		if (RendererGroup != nullptr)
 		{
-			if (UNiagaraStackRendererItem* RendererItem = Cast<UNiagaraStackRendererItem>(Child))
+			RendererGroup->GetUnfilteredChildren(Children);
+			for (UNiagaraStackEntry* Child : Children)
 			{
-				InRenderingEntries.Add(Child);
+				if (UNiagaraStackRendererItem* RendererItem = Cast<UNiagaraStackRendererItem>(Child))
+				{
+					InRenderingEntries.Add(Child);
+				}
 			}
 		}
 	}
@@ -111,6 +116,7 @@ void FNiagaraEmitterHandleViewModel::Initialize(TSharedRef<FNiagaraSystemViewMod
 	EmitterHandle = &InOwningSystemViewModel->GetSystem().GetEmitterHandle(InEmitterHandleIndex);
 	FVersionedNiagaraEmitter Emitter = EmitterHandle != nullptr ? EmitterHandle->GetInstance() : FVersionedNiagaraEmitter();
 	EmitterViewModel->Initialize(Emitter, InSimulation);
+	EmitterViewModel->OnEmitterSelectionRequested().BindSP(this, &FNiagaraEmitterHandleViewModel::RequestEmitterSelection);
 	EmitterStackViewModel->InitializeWithViewModels(InOwningSystemViewModel, this->AsShared(), FNiagaraStackViewModelOptions(false, true));
 }
 
@@ -120,6 +126,7 @@ void FNiagaraEmitterHandleViewModel::Reset()
 	OwningSystemViewModelWeak.Reset();
 	EmitterHandleIndex = INDEX_NONE;
 	EmitterHandle = nullptr;
+	EmitterViewModel->OnEmitterSelectionRequested().Unbind();
 	EmitterViewModel->Reset();
 }
 
@@ -301,6 +308,16 @@ void FNiagaraEmitterHandleViewModel::SetIsIsolated(bool bInIsIsolated)
 	}
 }
 
+void FNiagaraEmitterHandleViewModel::ToggleIsIsolated()
+{
+	GetOwningSystemViewModel()->ToggleEmitterIsolation(AsShared());
+}
+
+void FNiagaraEmitterHandleViewModel::RequestCaptureThumbnail()
+{
+	GetOwningSystemViewModel()->OnEmitterThumbnailRequested().ExecuteIfBound(GetEmitterHandle()->GetId());
+}
+
 ENiagaraSystemViewModelEditMode FNiagaraEmitterHandleViewModel::GetOwningSystemEditMode() const
 {
 	return GetOwningSystemViewModel()->GetEditMode();
@@ -343,6 +360,11 @@ bool FNiagaraEmitterHandleViewModel::GetIsRenamePending() const
 void FNiagaraEmitterHandleViewModel::SetIsRenamePending(bool bInIsRenamePending)
 {
 	bIsRenamePending = bInIsRenamePending;
+}
+
+void FNiagaraEmitterHandleViewModel::RequestEmitterSelection(bool bClearSelection)
+{
+	GetOwningSystemViewModel()->GetSelectionViewModel()->UpdateSelectedEntries({GetEmitterStackViewModel()->GetRootEntry()}, {}, bClearSelection);
 }
 
 void FNiagaraEmitterHandleViewModel::BeginDebugEmitter()

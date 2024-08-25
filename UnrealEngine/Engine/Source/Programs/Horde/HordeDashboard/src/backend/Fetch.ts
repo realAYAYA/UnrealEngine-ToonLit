@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import { ErrorHandler, ErrorInfo } from "../components/ErrorHandler";
+import { GetDashboardChallengeResponse } from "./Api";
 //import { setDatadogUser } from './Datadog';
 
 export enum ChallengeStatus {
@@ -13,7 +14,10 @@ export interface FetchRequestConfig {
     formData?: boolean;
     responseBlob?: boolean;
     params?: Record<string, string | string[] | number | boolean | undefined>;
+    // does not report 404 error
     suppress404?: boolean;
+    // shows error dialog for 404, in addition to logging it
+    show404Error?: boolean;
 }
 
 export type FetchResponse = {
@@ -53,6 +57,25 @@ export class Fetch {
                         });
                         return null;
                     }
+
+
+                    if (!response.ok && response.status === 404 && config?.show404Error) {
+                        response.json().then(o => {
+                            handleError({
+                                response: response,
+                                title: "404 Not Found",
+                                reason: "404 Not Found",
+                                mode: "GET",
+                                url: url,
+                                message: o?.message ?? "Malformed json on response object"
+                            }, true);            
+                        }).catch(reason => {
+                            console.error("Unable to parse response json on 404: ", reason)
+                        });
+                        return null;
+                    }
+
+
                     return response;
                 });
 
@@ -156,6 +179,30 @@ export class Fetch {
 
     }
 
+    patch(url: string, data?: any, config?: FetchRequestConfig) {
+
+        url = this.buildUrl(url, config);
+
+        return new Promise<FetchResponse>((resolve, reject) => {
+
+            fetch(url, this.buildRequest("PATCH", data)).then(response => {
+
+                this.handleResponse(response, url, "PATCH", resolve, reject, config);
+
+            }).catch(reason => {
+
+                handleError({
+                    reason: reason,
+                    mode: "PATCH",
+                    url: url
+                }, true);
+
+                reject(reason);
+            });
+        });
+
+    }
+
 
     delete(url: string, config?: FetchRequestConfig) {
 
@@ -180,7 +227,7 @@ export class Fetch {
         });
     }
 
-    login(redirect: string) {
+    login(redirect?: string) {
 
         if (this.debugToken || this.logout) {
             return;
@@ -305,13 +352,13 @@ export class Fetch {
 
     }
 
-    private buildRequest(method: "GET" | "POST" | "PUT" | "DELETE", data?: any, config?: FetchRequestConfig): RequestInit {
+    private buildRequest(method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH", data?: any, config?: FetchRequestConfig): RequestInit {
 
         const headers = this.buildHeaders();
 
         let body: any = undefined;
 
-        if (method === "POST" || method === "PUT") {
+        if (method === "POST" || method === "PUT" || method === "PATCH") {
             if (data) {
                 if (config?.formData) {
                     body = data;
@@ -360,7 +407,7 @@ export class Fetch {
         }
 
         while (url.endsWith("/")) {
-            url = url.slice(0, url.length);
+            url = url.slice(0, url.length - 1);
         }
 
         url = `${this.baseUrl}/${url}`;
@@ -391,28 +438,29 @@ export class Fetch {
 
     async challenge(): Promise<ChallengeStatus> {
 
+        if (this.debugToken) {
+            return ChallengeStatus.Ok;
+        }
+
         try {
             const url = this.buildUrl("/api/v1/dashboard/challenge");
 
             const result = await fetch(url, this.buildRequest("GET"));
-
-            if (result.ok) {
+            const response = await result.json() as GetDashboardChallengeResponse;      
+            
+            if (response.needsFirstTimeSetup) {
+                window.location.assign("/setup");
+                // give the window assignment a couple seconds, so we don't continue down challenge route
+                await new Promise(r => setTimeout(r, 2000));
                 return ChallengeStatus.Ok;
             }
 
-            if (result.status === 401 || result.status === 404) {
-
-                if (this.debugToken) {
-                    // raise error to check debug token expired
-                    handleError({
-                        reason: "Unauthorized challenge with debug token, it may have expired",
-                        mode: "GET",
-                        url: url
-                    });
-                }
-
-                return ChallengeStatus.Unauthorized;
+            if (!response.needsAuthorization) {
+                return ChallengeStatus.Ok;
             }
+
+            return ChallengeStatus.Unauthorized;
+
         } catch (reason) {
             console.error(reason);
         }

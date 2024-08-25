@@ -94,7 +94,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() > 0);
 			check(OutputTensors.Num() == 1);
@@ -211,11 +211,21 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterElementWiseVariadicOperators(FOperatorRegistryHlsl& Registry)
 	{
-#define OP(Name) Registry.OpAdd(TEXT(#Name), CreateElementWiseVariadicOperator<NNE::Internal::EElementWiseVariadicOperatorType::Name>)
-		OP(Max);
-		OP(Min);
-		OP(Mean);
-		OP(Sum);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+#define OP(Name, Version) Registry.OpAdd({{TEXT(#Name), TEXT("Onnx")}, Version}, CreateElementWiseVariadicOperator<NNE::Internal::EElementWiseVariadicOperatorType::Name>);
+#define OP_ALL_VERSIONS(Name) \
+OP(Name, 6) \
+OP(Name, 8) \
+OP(Name, 12) \
+OP(Name, 13)
+		OP_ALL_VERSIONS(Max)
+		OP_ALL_VERSIONS(Min)
+		OP(Mean, 6)
+		OP(Mean, 8)
+		OP(Mean, 13)
+		OP(Sum, 6)
+		OP(Sum, 8)
+		OP(Sum, 13)
 #undef OP
 
 		return true;

@@ -183,7 +183,7 @@ namespace UnrealBuildTool
 		/// <returns>Directory containing the 64-bit toolchain binaries</returns>
 		public static DirectoryReference GetVCToolPath(DirectoryReference VCToolChainDir, UnrealArch Architecture)
 		{
-			FileReference CompilerPath = FileReference.Combine(VCToolChainDir, "bin", "Hostx64", Architecture.WindowsToolChain, "cl.exe");
+			FileReference CompilerPath = FileReference.Combine(VCToolChainDir, "bin", MicrosoftPlatformSDK.MSVCHostDirectoryName, Architecture.WindowsToolChain, "cl.exe");
 			if (FileReference.Exists(CompilerPath))
 			{
 				return CompilerPath.Directory;
@@ -207,7 +207,7 @@ namespace UnrealBuildTool
 			}
 			else if (Compiler == WindowsCompiler.Intel)
 			{
-				return FileReference.Combine(CompilerDir, "windows", "bin", "icx.exe");
+				return FileReference.Combine(CompilerDir, "bin", "icx.exe");
 			}
 			return FileReference.Combine(GetVCToolPath(CompilerDir, Architecture), "cl.exe");
 		}
@@ -223,7 +223,8 @@ namespace UnrealBuildTool
 			}
 			else if (Compiler == WindowsCompiler.Intel && bAllowClangLinker)
 			{
-				return FileReference.Combine(CompilerDir, "windows", "bin", "intel64", "xilink.exe");
+				return FileReference.Combine(CompilerDir, "bin", "compiler", "lld-link.exe");
+				//return FileReference.Combine(CompilerDir, "bin", "xilink.exe");
 			}
 			return FileReference.Combine(GetVCToolPath(ToochainDir, Architecture), "link.exe");
 
@@ -241,7 +242,9 @@ namespace UnrealBuildTool
 			}
 			else if (Compiler == WindowsCompiler.Intel && bAllowClangLinker)
 			{
-				return FileReference.Combine(CompilerDir, "windows", "bin", "intel64", "xilib.exe");
+				// @todo: lld-link is not currently working for building .lib
+				//return FileReference.Combine(CompilerDir, "bin", "compiler", "lld-link.exe");
+				//return FileReference.Combine(CompilerDir, "bin", "xilib.exe");
 			}
 			return FileReference.Combine(GetVCToolPath(ToochainDir, Architecture), "lib.exe");
 		}
@@ -274,7 +277,12 @@ namespace UnrealBuildTool
 			string ArchFolder = Architecture.WindowsSystemLibDir;
 
 			// Add the standard Visual C++ library paths
-			if (ToolChain.IsMSVC())
+			if(Compiler.IsIntel() && bAllowClangLinker)
+			{
+				VersionNumber ClangVersion = MicrosoftPlatformSDK.GetClangVersionForIntelCompiler(CompilerPath);
+				return DirectoryReference.Combine(CompilerDir, "lib", "clang", ClangVersion.GetComponent(0).ToString(), "lib", "windows");
+			}
+			else if (ToolChain.IsMSVC())
 			{
 				return DirectoryReference.Combine(ToolChainDir, "lib", ArchFolder);
 			}
@@ -352,8 +360,10 @@ namespace UnrealBuildTool
 			// Add path to Intel math libraries when using Intel oneAPI
 			if (Compiler == WindowsCompiler.Intel)
 			{
-				IncludePaths.Add(DirectoryReference.Combine(CompilerDir, "windows", "compiler", "include"));
-				LibraryPaths.Add(DirectoryReference.Combine(CompilerDir, "windows", "compiler", "lib", "intel64_win"));
+				VersionNumber ClangVersion = MicrosoftPlatformSDK.GetClangVersionForIntelCompiler(CompilerPath);
+				IncludePaths.Add(DirectoryReference.Combine(CompilerDir, "compiler", "include"));
+				IncludePaths.Add(DirectoryReference.Combine(CompilerDir, "lib", "clang", ClangVersion.GetComponent(0).ToString(), "include"));
+				LibraryPaths.Add(DirectoryReference.Combine(CompilerDir, "lib"));
 			}
 		}
 
@@ -471,7 +481,7 @@ namespace UnrealBuildTool
 
 				if (!WindowsPlatform.TryGetToolChainDir(ToolChain, ToolchainVersion, Architecture, Logger, out SelectedToolChainVersion, out SelectedToolChainDir, out SelectedRedistDir))
 				{
-					throw new BuildException("{0} or {1} must be installed in order to build this target.", WindowsPlatform.GetCompilerName(WindowsCompiler.VisualStudio2019), WindowsPlatform.GetCompilerName(WindowsCompiler.VisualStudio2022));
+					throw new BuildException("{0} must be installed in order to build this target.", WindowsPlatform.GetCompilerName(WindowsCompiler.VisualStudio2022));
 				}
 			}
 			else

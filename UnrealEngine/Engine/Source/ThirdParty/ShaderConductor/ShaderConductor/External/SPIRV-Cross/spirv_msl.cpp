@@ -8762,8 +8762,11 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
 			uint32_t var_index = get_metal_resource_index(*var, var_type->basetype);
 			if (type.image.dim == Dim2D || type.image.dim == Dim3D)
 			{
+				auto *combined = maybe_get<SPIRCombinedImageSampler>(ops[2]);
+				bool flatten_array = !combined && msl_options.flatten_2d_array_names.find(to_expression(ops[2])) != msl_options.flatten_2d_array_names.end();
+
 				// UE Change Begin: Support for image atomics on M2+ devices
-				if (msl_options.flatten_2d_array && type.image.arrayed)
+				if (msl_options.flatten_2d_array && flatten_array && type.image.arrayed)
 				{
 					std::string coord_3d = coord;
 					coord = "uint2( " + coord_3d + ".xy + " 
@@ -11000,7 +11003,9 @@ string CompilerMSL::to_function_args(const TextureFunctionArguments &args, bool 
 			else
 			{
 				// UE Change Begin: Support for image atomics on M2+ devices
-				if (args.base.is_fetch && msl_options.flatten_2d_array)
+				auto *combined = maybe_get<SPIRCombinedImageSampler>(img);
+				bool flatten_array = !combined && msl_options.flatten_2d_array_names.find(to_expression(img)) != msl_options.flatten_2d_array_names.end();
+				if (args.base.is_fetch && msl_options.flatten_2d_array && flatten_array)
 				{
 					string array_idx = "uint(" +
 						round_fp_tex_coords(to_extract_component_expression(args.coord, alt_coord_component), coord_is_fp) +
@@ -15260,9 +15265,14 @@ string CompilerMSL::image_type_glsl(const SPIRType &type, uint32_t id)
 			else if (img_type.ms)
 				img_type_name += "texture2d_ms";
 			else if (img_type.arrayed || subpass_array)
+			{
 				// UE Change Begin: Support for image atomics on M2+ devices
-				img_type_name += (msl_options.flatten_2d_array) ? "texture2d" : "texture2d_array";
+
+				bool flatten_array = msl_options.flatten_2d_array_names.find(to_name(id)) != msl_options.flatten_2d_array_names.end();
+
+				img_type_name += (msl_options.flatten_2d_array && flatten_array) ? "texture2d" : "texture2d_array";
 				// UE Change End: Support for image atomics on M2+ devices
+			}
 			else
 				img_type_name += "texture2d";
 			break;

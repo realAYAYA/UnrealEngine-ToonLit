@@ -5,6 +5,7 @@
 #include "CoreTypes.h"
 #include "Containers/ArrayView.h"
 #include "Containers/StringView.h"
+#include "TraceAnalysisDebug.h"
 #include "Trace/Trace.h"
 
 #include <type_traits>
@@ -66,9 +67,13 @@ public:
 		/** Is this field signed (only relevant for integer types) */
 		bool IsSigned() const;
 
+#if UE_TRACE_ANALYSIS_DEBUG_API
+		/** Offset from the start of the event to this field's data. */
+		uint32 GetOffset() const;
+#endif // UE_TRACE_ANALYSIS_DEBUG_API
+
 		/** Gets the size in bytes for this field */
 		uint8 GetSize() const;
-
 	};
 
 	struct FEventFieldHandle
@@ -82,6 +87,11 @@ public:
 		/** Each event is assigned a unique ID when logged. Note that this is not
 		 * guaranteed to be the same for the same event from one trace to the next. */
 		uint32 GetId() const;
+
+#if UE_TRACE_ANALYSIS_DEBUG_API
+		/** Returns the event's flags. */
+		uint8 GetFlags() const;
+#endif // UE_TRACE_ANALYSIS_DEBUG_API
 
 		/** The name of the event. */
 		const ANSICHAR* GetName() const;
@@ -98,7 +108,10 @@ public:
 		/** By-index access to fields' type information. */
 		const FEventFieldInfo* GetFieldInfo(uint32 Index) const;
 
-		/** Returns a handle that can used to access events' fields. There is 
+		/** Returns the field index or -1 (if the event does not contains a field with the specified name). */
+		int32 GetFieldIndex(const ANSICHAR* FieldName) const;
+
+		/** Returns a handle that can used to access events' fields. There is
 		 * loose validation via ValueType, but one should still exercise caution
 		 * when reading fields with handles.
 		 * @param ValueType The intended type that the field will be interpreted as */
@@ -117,8 +130,19 @@ public:
 
 	struct TRACEANALYSIS_API FArrayReader
 	{
-		/* Returns the number of elements in the array */
+		/* Returns the number of elements in the array. */
 		uint32 Num() const;
+
+#if UE_TRACE_ANALYSIS_DEBUG_API
+		/* Returns the pointer to the raw data array. */
+		const uint8* GetRawData() const;
+
+		/* Returns the size in bytes of the raw data array. */
+		uint32 GetRawDataSize() const;
+
+		/* Returns the size and type of an array element. */
+		int8 GetSizeAndType() const;
+#endif // UE_TRACE_ANALYSIS_DEBUG_API
 
 	protected:
 		const void* GetImpl(uint32 Index, int8& SizeAndType) const;
@@ -135,6 +159,15 @@ public:
 		/** Get a pointer to the contiguous array data */
 		const ValueType* GetData() const;
 	};
+
+	enum class EStyle : uint32
+	{
+		Normal,
+		EnterScope,
+		LeaveScope,
+	};
+
+	struct FOnEventContext;
 
 	struct TRACEANALYSIS_API FEventData
 	{
@@ -179,7 +212,7 @@ public:
 
 		template<typename DefinitionType>
 		TEventRef<DefinitionType> GetReferenceValue(uint32 FieldIndex) const;
-		
+
 		/** If this is a spec event, gets the unique Id for this spec.
 		 * @return A valid spec id if the event is valid, otherwise an empty id.
 		 */
@@ -189,7 +222,7 @@ public:
 		uint32 GetSize() const;
 
 		/** Serializes the event to Cbor object.
-		 * @param Recipient of the Cbor serialization. Data is appeneded to Out. */
+		 * @param Recipient of the Cbor serialization. Data is appended to Out. */
 		void SerializeToCbor(TArray<uint8>& Out) const;
 
 		/**
@@ -207,9 +240,22 @@ public:
 		/** Returns the size of the events attachment, or 0 if none. */
 		uint32 GetAttachmentSize() const;
 
+#if UE_TRACE_ANALYSIS_DEBUG_API
+		/** Provides a pointer to the raw event data. */
+		const uint8* GetRawPointer() const;
+
+		/** Returns the size of the raw event data (including attachment). */
+		uint32 GetRawSize() const;
+
+		/** Returns the total uncompressed size of the aux data (including size of aux headers and terminator), in bytes. */
+		uint32 GetAuxSize() const;
+
+		/** Returns the total uncompressed size of the event, in bytes (including headers and aux data). */
+		uint32 GetTotalSize(IAnalyzer::EStyle Style, const IAnalyzer::FOnEventContext& Context, uint32 ProtocolVersion = 7) const;
+#endif // UE_TRACE_ANALYSIS_DEBUG_API
+
 	private:
 		bool IsDefinitionImpl(uint32& OutTypeId) const;
-		uint32 GetReferenceTypeIdImpl(FEventFieldHandle Handle) const;
 		const void* GetReferenceValueImpl(const char* FieldName, uint16& OutSizeType, uint32& OutTypeUid) const;
 		const void* GetReferenceValueImpl(uint32 FieldIndex, uint32& OutTypeUid) const;
 		const void* GetValueImpl(const ANSICHAR* FieldName, int8& SizeAndType) const;
@@ -221,7 +267,7 @@ public:
 		/* Returns the trace-specific id for the thread */
 		uint32 GetId() const;
 
-		/* Returns the system if for the thread. Because this may not be known by
+		/* Returns the system id for the thread. Because this may not be known by
 		 * trace and because IDs can be reused by the system, relying on the value
 		 * of this is discouraged. */
 		uint32 GetSystemId() const;
@@ -241,7 +287,7 @@ public:
 		/** Returns the integer timestamp for the event or zero if there no associated timestamp. */
 		uint64 GetTimestamp() const;
 
-		/** Time of the event in seconds (from teh start of the trace). Zero if there is no time for the event. */
+		/** Time of the event in seconds (from the start of the trace). Zero if there is no time for the event. */
 		double AsSeconds() const;
 
 		/** Returns a timestamp for the event compatible with FPlatformTime::Cycle64(), or zero if the event has no timestamp. */
@@ -294,13 +340,6 @@ public:
 		return true;
 	}
 
-	enum class EStyle : uint32
-	{
-		Normal,
-		EnterScope,
-		LeaveScope,
-	};
-
 	/** For each event subscribed to in OnAnalysisBegin(), the analysis engine
 	 * will call this method when those events are encountered in a trace log
 	 * @param RouteId User-provided identifier given when subscribing to a particular event.
@@ -311,6 +350,12 @@ public:
 	{
 		return true;
 	}
+
+#if UE_TRACE_ANALYSIS_DEBUG_API
+	virtual void OnVersion(uint32 TransportVersion, uint32 ProtocolVersion)
+	{
+	}
+#endif // UE_TRACE_ANALYSIS_DEBUG_API
 
 private:
 	template <typename ValueType> static ValueType CoerceValue(const void* Addr, int8 SizeAndType);
@@ -451,6 +496,6 @@ TEventRef<DefinitionType> IAnalyzer::FEventData::GetReferenceValue(uint32 FieldI
 	DefinitionType* Id = (DefinitionType*) GetReferenceValueImpl(FieldIndex, RefTypeUid);
 	return MakeEventRef<DefinitionType>(*Id, RefTypeUid);
 }
-	
+
 } // namespace Trace
 } // namespace UE

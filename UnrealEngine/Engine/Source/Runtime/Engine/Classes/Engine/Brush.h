@@ -154,7 +154,7 @@ public:
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	ENGINE_API virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
 	ENGINE_API virtual FName GetCustomIconName() const override;
-	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = false) override;
+	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = true) override;
 #endif // WITH_EDITOR
 
 	virtual bool NeedsLoadForClient() const override

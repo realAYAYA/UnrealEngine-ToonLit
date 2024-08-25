@@ -20,6 +20,7 @@ class UActorComponent;
 
 class FConcertSyncWorldRemapper;
 class FConcertLocalIdentifierTable;
+class UConcertClientObjectFactory;
 
 struct FConcertObjectId;
 struct FConcertWorldNodeId;
@@ -41,14 +42,17 @@ namespace ConcertSyncClientUtil
 
 	struct FGetObjectResult
 	{
-		FGetObjectResult()
-			: Obj(nullptr)
-			, Flags(EGetObjectResultFlags::None)
-		{
-		}
+		FGetObjectResult() = default;
 
 		explicit FGetObjectResult(UObject* InObj, const EGetObjectResultFlags InFlags = EGetObjectResultFlags::None)
 			: Obj(InObj)
+			, Flags(InFlags)
+		{
+		}
+
+		explicit FGetObjectResult(UObject* InObj, const UConcertClientObjectFactory* InFactory, const EGetObjectResultFlags InFlags)
+			: Obj(InObj)
+			, Factory(InFactory)
 			, Flags(InFlags)
 		{
 		}
@@ -63,8 +67,9 @@ namespace ConcertSyncClientUtil
 			return EnumHasAnyFlags(Flags, EGetObjectResultFlags::NewlyCreated);
 		}
 
-		UObject* Obj;
-		EGetObjectResultFlags Flags;
+		UObject* Obj = nullptr;
+		const UConcertClientObjectFactory* Factory = nullptr;
+		EGetObjectResultFlags Flags = EGetObjectResultFlags::None;
 	};
 
 	bool IsUserEditing();
@@ -142,6 +147,9 @@ namespace ConcertSyncClientUtil
 
 	/** Return the Persistent Level if it is currently using external objects, i.e. one file per actor for world partitioning. */
 	ULevel* GetExternalPersistentWorld();
+
+	/** Return true if we are in a world partition world. */
+	bool IsWorldPartitionWorld();
 
 	void FillPackageInfo(UPackage* InPackage, UObject* InAsset, const EConcertPackageUpdateType InPackageUpdateType, FConcertPackageInfo& OutPackageInfo);
 }

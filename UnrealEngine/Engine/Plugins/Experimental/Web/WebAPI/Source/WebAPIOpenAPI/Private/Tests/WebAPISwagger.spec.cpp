@@ -14,7 +14,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FWebAPISwaggerSpec,
-	TEXT("Plugin.WebAPI.Swagger"),
+	TEXT("Plugins.WebAPI.Swagger"),
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter | EAutomationTestFlags::ApplicationContextMask)
 
 	TSharedPtr<UE::WebAPI::OpenAPI::V2::FSwagger> InputDefinition;

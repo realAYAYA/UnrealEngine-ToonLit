@@ -24,6 +24,8 @@ public:
 
 private:
 
+	FText GetSlotName() const;
+	void OnSlotNameCommitted(const FText& NewText, ETextCommit::Type InTextCommit) const;
 	void OnCopy() const;
 	void OnPaste() const;
 	void CacheOuterDefinition();
@@ -31,4 +33,6 @@ private:
 	USmartObjectDefinition* Definition = nullptr;
 	IPropertyUtilities* PropUtils = nullptr;
 	TSharedPtr<IPropertyHandle> StructProperty;
+	TSharedPtr<IPropertyHandle> NamePropertyHandle;
+	TSharedPtr<IPropertyHandle> DefinitionDataPropertyHandle;
 };

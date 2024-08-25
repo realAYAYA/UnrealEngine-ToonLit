@@ -36,6 +36,12 @@ public:
 
 	/** Cached NetRefHandle to simplify testing. DO NOT use this for multi-system tests. */
 	UE::Net::FNetRefHandle NetRefHandle;
+
+	/** If this is set to true, this instance will fail to instantiate on remote end. */
+	bool bForceFailToInstantiateOnRemote = false;
+
+	// To determine if this object is a root object or a subobject
+	bool bIsSubObject = false;
 };
 
 USTRUCT()
@@ -102,6 +108,8 @@ class UTestReplicatedIrisPushModelComponentWithObjectReference : public UObject
 	GENERATED_BODY()
 public:
 	UTestReplicatedIrisPushModelComponentWithObjectReference();
+
+	void ModifyIntA();
 
 	UPROPERTY(Transient, Replicated)
 	int32 IntA;
@@ -223,6 +231,8 @@ public:
 	int32 ToOwnerA = 0;
 	UPROPERTY(Replicated, Transient)
 	int32 ToOwnerB = 0;
+	UPROPERTY(Replicated, Transient)
+	int32 ReplayOrOwner = 0;
 
 	UPROPERTY(Replicated, Transient)
 	int32 SkipOwnerA = 0;
@@ -239,6 +249,14 @@ public:
 	int32 SimulatedOnlyNoReplayInt = 0;
 	UPROPERTY(Replicated, Transient)
 	int32 SimulatedOrPhysicsNoReplayInt = 0;
+	UPROPERTY(Replicated, Transient)
+	int32 NoneInt = 0;
+	UPROPERTY(Replicated, Transient)
+	int32 NeverInt = 0;
+	UPROPERTY(Replicated, Transient)
+	int32 SkipReplayInt = 0;
+	UPROPERTY(Replicated, Transient)
+	int32 ReplayOnlyInt = 0;
 
 	// Network data only for test
 	TArray<UE::Net::FReplicationFragment*> ReplicationFragments;
@@ -342,6 +360,9 @@ public:
 	UPROPERTY(Transient, Replicated)
 	TWeakObjectPtr<UObject> WeakObjectPtrObjectRef;
 
+	UPROPERTY(Transient, Replicated)
+	TSoftObjectPtr<UObject> SoftObjectPtrRef;
+
 public:
 	// Network data only for test
 	TArray<UE::Net::FReplicationFragment*> ReplicationFragments;
@@ -409,6 +430,43 @@ public:
 	TArray<UE::Net::FReplicationFragment*> ReplicationFragments;
 };
 
+UCLASS()
+class UTestReplicatedObjectWithRepNotifies : public UReplicatedTestObject
+{
+	GENERATED_BODY()
+
+public:
+
+	UTestReplicatedObjectWithRepNotifies();
+
+	// Network interface must be part of base.
+	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Fragments, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
+
+public:
+
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_IntA)
+	int32 IntA = -1;
+	int32 PrevIntAStoredInOnRep = -1;
+
+	UPROPERTY(Transient, ReplicatedUsing=OnRep_IntB)
+	int32 IntB = -1;
+	int32 PrevIntBStoredInOnRep = -1;
+
+	UPROPERTY(Transient, Replicated)
+	int8 IntC = -1;
+
+public:
+	UFUNCTION()
+	void OnRep_IntA(int32 OldInt);
+
+	UFUNCTION()
+	void OnRep_IntB(int32 OldInt);
+
+	// Network data only for test
+	TArray<UE::Net::FReplicationFragment*> ReplicationFragments;
+};
+
+
 
 /**
  *  A test class for Replication on an object with no replicated members
@@ -441,7 +499,7 @@ public:
 	// In this example we have methods that directly uses UReplicatedTestObject;
 	FNetRefHandle BeginReplication(UReplicatedTestObject* Instance);
 	FNetRefHandle BeginReplication(UReplicatedTestObject* Instance, const UObjectReplicationBridge::FCreateNetRefHandleParams& Params);
-	FNetRefHandle BeginReplication(FNetRefHandle OwnerHandle, UReplicatedTestObject* Instance, FNetRefHandle InsertRelativeToSubObjectHandle = FNetRefHandle(), ESubObjectInsertionOrder InsertionOrder = UReplicationBridge::ESubObjectInsertionOrder::None);
+	FNetRefHandle BeginReplication(FNetRefHandle OwnerHandle, UReplicatedTestObject* Instance, FNetRefHandle InsertRelativeToSubObjectHandle = FNetRefHandle::GetInvalid(), ESubObjectInsertionOrder InsertionOrder = UReplicationBridge::ESubObjectInsertionOrder::None);
 
 	// For testing we expose some things that normally are not accessible
 	const UE::Net::FReplicationInstanceProtocol* GetReplicationInstanceProtocol(FNetRefHandle Handle) const;
@@ -452,7 +510,29 @@ public:
 
 	float GetMaxTickRate() const { return Super::GetMaxTickRate(); }
 
+	// Scope to suppress ensure when testing instantiation failure on clients
+	class FSupressCreateInstanceFailedEnsureScope
+	{
+	public:
+		explicit FSupressCreateInstanceFailedEnsureScope(UReplicatedTestObjectBridge& BridgeIn) : Bridge(BridgeIn), bSuppressCreateInstanceFailedEnsure(Bridge.bSuppressCreateInstanceFailedEnsure)
+		{
+			Bridge.bSuppressCreateInstanceFailedEnsure = true;
+		}
+		~FSupressCreateInstanceFailedEnsureScope()
+		{
+			// Restore
+			Bridge.bSuppressCreateInstanceFailedEnsure = bSuppressCreateInstanceFailedEnsure;			
+		}
+			
+	private:
+		UReplicatedTestObjectBridge& Bridge;
+		bool bSuppressCreateInstanceFailedEnsure;
+	};
+
 protected:
+
+	friend FSupressCreateInstanceFailedEnsureScope;
+
 	// Type specifics for serializing creation data this will most likely be made into a separate interface to support different types of header data for different types
 	// But if we can avoid having custom data per type for instantiating remote objects as we would like to be able to fully express the state of a replicated object using the define protocol alone. 
 	// This will probably be specified as a Iris generated struct
@@ -463,19 +543,22 @@ protected:
 		uint32 NumIrisComponentsToSpawn;
 		uint32 NumDynamicComponentsToSpawn;
 		uint32 NumConnectionFilteredComponentsToSpawn;
+		uint32 NumObjectReferenceComponentsToSpawn;
+		bool bForceFailCreateRemoteInstance;
 	};
 
 	virtual bool WriteCreationHeader(UE::Net::FNetSerializationContext& Context, FNetRefHandle Handle) override;
 	virtual FCreationHeader* ReadCreationHeader(UE::Net::FNetSerializationContext& Context) override;
 
-	virtual FObjectReplicationBridgeInstantiateResult BeginInstantiateFromRemote(FNetRefHandle SubObjectOwnerHandle, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* InHeader) override;
+	virtual FObjectReplicationBridgeInstantiateResult BeginInstantiateFromRemote(FNetRefHandle RootObjectOfSubObject, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* InHeader) override;
 	virtual void EndInstantiateFromRemote(FNetRefHandle Handle) override;
-	virtual void DestroyInstanceFromRemote(UObject* Instance, EReplicationBridgeDestroyInstanceReason DestroyReason, EReplicationBridgeDestroyInstanceFlags DestroyFlags) override;
+	virtual void DestroyInstanceFromRemote(const FDestroyInstanceParams& Params) override;
 	virtual bool IsAllowedToDestroyInstance(const UObject* Instance) const override;
 
 	TArray<TStrongObjectPtr<UObject>>* CreatedObjectsOnNode;
 
 	TFunction<void(FNetRefHandle NetHandle, const UObject* ReplicatedObject, FVector& OutLocation, float& OutCullDistance)> WorldLocationUpdateFunc;
+	bool bForceFailCreateRemoteInstance = false;
 };
 
 extern const UE::Net::FRepTag RepTag_FakeGeneratedReplicationState_IntB;

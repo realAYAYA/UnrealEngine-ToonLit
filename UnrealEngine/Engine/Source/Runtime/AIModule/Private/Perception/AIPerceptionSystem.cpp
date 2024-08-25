@@ -418,7 +418,7 @@ void UAIPerceptionSystem::UnregisterSource(AActor& SourceActor, const TSubclassO
 			// A single sense can be targeted, or Sense == null for all senses
 			if (!Sense || SourcesToRegister[RemoveIndex].SenseID == UAISense::GetSenseID(Sense))
 			{
-				SourcesToRegister.RemoveAt(RemoveIndex, 1, false);
+				SourcesToRegister.RemoveAt(RemoveIndex, 1, EAllowShrinking::No);
 			}
 		}
 	}
@@ -525,7 +525,7 @@ bool UAIPerceptionSystem::DeliverDelayedStimuli(UAIPerceptionSystem::EDelayedSti
 		++Index;
 	}
 
-	DelayedStimuli.RemoveAt(0, Index, /*bAllowShrinking=*/false);
+	DelayedStimuli.RemoveAt(0, Index, EAllowShrinking::No);
 
 	return Index > 0;
 }

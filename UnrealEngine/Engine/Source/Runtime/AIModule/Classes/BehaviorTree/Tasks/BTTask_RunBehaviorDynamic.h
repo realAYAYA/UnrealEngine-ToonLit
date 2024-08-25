@@ -29,6 +29,7 @@ class UBTTask_RunBehaviorDynamic : public UBTTaskNode
 
 #if WITH_EDITOR
 	AIMODULE_API virtual FName GetNodeIconName() const override;
+	AIMODULE_API UBehaviorTree* GetBehaviorAssetFromRuntimeValue(const FString& RuntimeValue) const;
 #endif // WITH_EDITOR
 
 	AIMODULE_API bool HasMatchingTag(const FGameplayTag& Tag) const;

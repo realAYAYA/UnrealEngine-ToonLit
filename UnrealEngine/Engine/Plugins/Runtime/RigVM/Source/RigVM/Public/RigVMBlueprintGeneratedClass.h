@@ -9,6 +9,15 @@
 #include "RigVMCore/RigVMGraphFunctionHost.h"
 #include "RigVMBlueprintGeneratedClass.generated.h"
 
+USTRUCT()
+struct FRigVMGraphFunctionHeaderArray
+{
+	GENERATED_BODY()
+	
+	UPROPERTY()
+	TArray<FRigVMGraphFunctionHeader> Headers;
+};
+
 UCLASS()
 class RIGVM_API URigVMBlueprintGeneratedClass : public UBlueprintGeneratedClass, public IRigVMGraphFunctionHost
 {
@@ -21,7 +30,11 @@ public:
 	virtual void PostInitInstance(UObject* InObj, FObjectInstancingGraph* InstanceGraph) override;
 
 	// UObject interface
-	void Serialize(FArchive& Ar);
+	virtual void Serialize(FArchive& Ar) override;
+	virtual void PostLoad() override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
 
 	// IRigVMGraphFunctionHost interface
 	virtual const FRigVMGraphFunctionStore* GetRigVMGraphFunctionStore() const override { return &GraphFunctionStore; }

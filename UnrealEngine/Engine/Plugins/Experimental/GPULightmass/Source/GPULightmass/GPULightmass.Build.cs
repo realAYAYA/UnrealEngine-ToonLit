@@ -6,11 +6,12 @@ namespace UnrealBuildTool.Rules
 	{
 		public GPULightmass(ReadOnlyTargetRules Target) : base(Target)
 		{
-			PublicIncludePaths.AddRange(
-				new string[] {
-					"../Shaders/Shared"
+			PublicIncludePathModuleNames.AddRange(
+				new string[]
+				{
+					"Shaders"
 				}
-				);
+			);
 
 			PrivateIncludePaths.AddRange(
 				new string[]

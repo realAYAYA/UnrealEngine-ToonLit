@@ -1,0 +1,10 @@
+.sarif/
+.vs/
+vcpkg_installed/
+x64/
+arm64/
+Bin/
+
+**/*.vcxproj.user
+**/obj/
+**/bin/

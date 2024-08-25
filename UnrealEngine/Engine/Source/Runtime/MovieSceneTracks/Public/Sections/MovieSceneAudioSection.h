@@ -189,7 +189,6 @@ public:
 	MOVIESCENETRACKS_API virtual UMovieSceneSection* SplitSection(FQualifiedFrameTime SplitTime, bool bDeleteKeys) override;
 	MOVIESCENETRACKS_API virtual TOptional<FFrameTime> GetOffsetTime() const override;
 	MOVIESCENETRACKS_API virtual void MigrateFrameTimes(FFrameRate SourceRate, FFrameRate DestinationRate) override;
-	MOVIESCENETRACKS_API virtual void Serialize(FArchive& Ar) override;
 	MOVIESCENETRACKS_API virtual void PostEditImport() override;
 	MOVIESCENETRACKS_API virtual EMovieSceneChannelProxyType CacheChannelProxy() override;
 
@@ -212,7 +211,7 @@ private:
 		}	
 	}
 
-	MOVIESCENETRACKS_API void SetupSoundInputParameters(const USoundBase* InSoundBase);
+	MOVIESCENETRACKS_API void SetupSoundInputParameters(USoundBase* InSoundBase);
 
 	/** The sound cue or wave that this section plays */
 	UPROPERTY(EditAnywhere, Category="Audio", BlueprintGetter=GetSound, BlueprintSetter=SetSound)
@@ -273,7 +272,7 @@ private:
 	bool bOverrideAttenuation;
 
 	/** The attenuation settings to use. */
-	UPROPERTY( EditAnywhere, Category="Attenuation" )
+	UPROPERTY( EditAnywhere, Category="Attenuation", meta = (EditCondition = "bOverrideAttenuation") )
 	TObjectPtr<class USoundAttenuation> AttenuationSettings;
 
 	/** Called when subtitles are sent to the SubtitleManager.  Set this delegate if you want to hijack the subtitles for other purposes */

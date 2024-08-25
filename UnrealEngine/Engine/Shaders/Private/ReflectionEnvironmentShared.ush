@@ -213,17 +213,17 @@ half ComputeMixingWeight(half IndirectIrradiance, half AverageBrightness, half R
 }
 
 #if ES3_1_PROFILE
-#define GetReflectionPositionAndRadius(CaptureIndex) ReflectionCaptureES31.PositionAndRadius[CaptureIndex]
+#define GetReflectionPositionAndRadius(CaptureIndex) ReflectionCaptureES31.PositionHighAndRadius[CaptureIndex]
 #define GetReflectionCaptureProperties(CaptureIndex) ReflectionCaptureES31.CaptureProperties[CaptureIndex]
 #define GetReflectionCaptureOffsetAndAverageBrightness(CaptureIndex) ReflectionCaptureES31.CaptureOffsetAndAverageBrightness[CaptureIndex]
 #define GetReflectionBoxTransform(CaptureIndex) ReflectionCaptureES31.BoxTransform[CaptureIndex]
 #define GetReflectionBoxScales(CaptureIndex) ReflectionCaptureES31.BoxScales[CaptureIndex]
-#define GetReflectionTilePosition(CaptureIndex) ReflectionCaptureES31.TilePosition[CaptureIndex]
+#define GetReflectionPositionLow(CaptureIndex) ReflectionCaptureES31.PositionLow[CaptureIndex]
 #else
-#define GetReflectionPositionAndRadius(CaptureIndex) ReflectionCaptureSM5.PositionAndRadius[CaptureIndex]
+#define GetReflectionPositionAndRadius(CaptureIndex) ReflectionCaptureSM5.PositionHighAndRadius[CaptureIndex]
 #define GetReflectionCaptureProperties(CaptureIndex) ReflectionCaptureSM5.CaptureProperties[CaptureIndex]
 #define GetReflectionCaptureOffsetAndAverageBrightness(CaptureIndex) ReflectionCaptureSM5.CaptureOffsetAndAverageBrightness[CaptureIndex]
 #define GetReflectionBoxTransform(CaptureIndex) ReflectionCaptureSM5.BoxTransform[CaptureIndex]
 #define GetReflectionBoxScales(CaptureIndex) ReflectionCaptureSM5.BoxScales[CaptureIndex]
-#define GetReflectionTilePosition(CaptureIndex) ReflectionCaptureSM5.TilePosition[CaptureIndex]
+#define GetReflectionPositionLow(CaptureIndex) ReflectionCaptureSM5.PositionLow[CaptureIndex]
 #endif

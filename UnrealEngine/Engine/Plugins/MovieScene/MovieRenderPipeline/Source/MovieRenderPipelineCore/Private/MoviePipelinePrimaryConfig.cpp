@@ -130,9 +130,10 @@ void UMoviePipelinePrimaryConfig::GetFormatArguments(FMoviePipelineFormatArgs& I
 
 		// Normally these are filled when resolving the file name by the job (so that the time is shared), but stub them in here so
 		// they show up in the UI with a value.
-		FDateTime CurrentTime = FDateTime::Now();
+		FDateTime CurrentTime = FDateTime::UtcNow();
 		int32 DummyVersionNumber = 1;
-		UE::MoviePipeline::GetSharedFormatArguments(InOutFormatArgs.FilenameArguments, InOutFormatArgs.FileMetadata, CurrentTime, DummyVersionNumber, InOutFormatArgs.InJob);
+		const FTimespan InitializationTimeOffset = FDateTime::Now() - FDateTime::UtcNow();
+		UE::MoviePipeline::GetSharedFormatArguments(InOutFormatArgs.FilenameArguments, InOutFormatArgs.FileMetadata, CurrentTime, DummyVersionNumber, InOutFormatArgs.InJob, InitializationTimeOffset);
 
 		// Let the output state fill out some too, since its the keeper of the information.
 		UMoviePipelineOutputSetting* OutputSettings = FindSetting<UMoviePipelineOutputSetting>();

@@ -11,26 +11,26 @@
 
 namespace PluginDescriptor
 {
-	bool ReadFile(const FString& FileName, FString& Text, FText* OutFailReason = nullptr)
+	bool ReadFile(const TCHAR* FileName, FString& Text, FText* OutFailReason = nullptr)
 	{
-		if (!FFileHelper::LoadFileToString(Text, *FileName))
+		if (!FFileHelper::LoadFileToString(Text, FileName))
 		{
 			if (OutFailReason)
 			{
-				*OutFailReason = FText::Format(LOCTEXT("FailedToLoadDescriptorFile", "Failed to open descriptor file '{0}'"), FText::FromString(FileName));
+				*OutFailReason = FText::Format(LOCTEXT("FailedToLoadDescriptorFile", "Failed to open descriptor file '{0}'"), FText::FromStringView(FileName));
 			}
 			return false;
 		}
 		return true;
 	}
 
-	bool WriteFile(const FString& FileName, const FString& Text, FText* OutFailReason = nullptr)
+	bool WriteFile(const TCHAR* FileName, const FString& Text, FText* OutFailReason = nullptr)
 	{
-		if (!FFileHelper::SaveStringToFile(Text, *FileName))
+		if (!FFileHelper::SaveStringToFile(Text, FileName))
 		{
 			if (OutFailReason)
 			{
-				*OutFailReason = FText::Format(LOCTEXT("FailedToWriteDescriptorFile", "Failed to write plugin descriptor file '{0}'. Perhaps the file is Read-Only?"), FText::FromString(FileName));
+				*OutFailReason = FText::Format(LOCTEXT("FailedToWriteDescriptorFile", "Failed to write plugin descriptor file '{0}'. Perhaps the file is Read-Only?"), FText::FromStringView(FileName));
 			}
 			return false;
 		}
@@ -77,7 +77,7 @@ const FString& FPluginDescriptor::GetFileExtension()
 
 FPluginDescriptor::FPluginDescriptor()
 	: Version(0)
-	, VerseScope(EVerseScope::User)
+	, VerseScope(EVerseScope::PublicUser)
 	, EnabledByDefault(EPluginEnabledByDefault::Unspecified)
 	, bCanContainContent(false)
 	, bCanContainVerse(false)
@@ -94,8 +94,7 @@ FPluginDescriptor::FPluginDescriptor()
 {
 }
 
-
-bool FPluginDescriptor::Load(const FString& FileName, FText* OutFailReason /*= nullptr*/)
+bool FPluginDescriptor::Load(const TCHAR* FileName, FText* OutFailReason /*= nullptr*/)
 {
 #if WITH_EDITOR
 	CachedJson.Reset();
@@ -110,9 +109,14 @@ bool FPluginDescriptor::Load(const FString& FileName, FText* OutFailReason /*= n
 	return false;
 }
 
+bool FPluginDescriptor::Load(const FString& FileName, FText* OutFailReason /*= nullptr*/)
+{
+	return Load(*FileName, OutFailReason);
+}
+
 bool FPluginDescriptor::Load(const FString& FileName, FText& OutFailReason)
 {
-	return Load(FileName, &OutFailReason);
+	return Load(*FileName, &OutFailReason);
 }
 
 bool FPluginDescriptor::Read(const FString& Text, FText* OutFailReason /*= nullptr*/)
@@ -189,7 +193,7 @@ bool FPluginDescriptor::Read(const FJsonObject& Object, FText* OutFailReason /*=
 	// a category name with escaped quotes. Remove them here to make sure we can list them in the right category.
 	if (Category.Len() >= 2 && Category.StartsWith(TEXT("\""), ESearchCase::CaseSensitive) && Category.EndsWith(TEXT("\""), ESearchCase::CaseSensitive))
 	{
-		Category.MidInline(1, Category.Len() - 2, false);
+		Category.MidInline(1, Category.Len() - 2, EAllowShrinking::No);
 	}
 
 	Object.TryGetStringField(TEXT("CreatedBy"), CreatedBy);
@@ -219,7 +223,7 @@ bool FPluginDescriptor::Read(const FJsonObject& Object, FText* OutFailReason /*=
 	TSharedPtr<FJsonValue> VerseScopeValue = Object.TryGetField(TEXT("VerseScope"));
 	if (VerseScopeValue.IsValid() && VerseScopeValue->Type == EJson::String)
 	{
-		if(TOptional<EVerseScope::Type> MaybeVerseScope = EVerseScope::FromString(*VerseScopeValue->AsString()))
+		if (TOptional<EVerseScope::Type> MaybeVerseScope = EVerseScope::FromString(*VerseScopeValue->AsString()))
 		{
 			VerseScope = *MaybeVerseScope;
 		}
@@ -228,6 +232,25 @@ bool FPluginDescriptor::Read(const FJsonObject& Object, FText* OutFailReason /*=
 			if (OutFailReason)
 			{
 				*OutFailReason = FText::Format(LOCTEXT("PluginWithInvalidVerseScope", "Plugin entry 'VerseScope' specified an unrecognized value '{1}'"), FText::FromString(VerseScopeValue->AsString()));
+			}
+			return false;
+		}
+	}
+
+	// Read the Verse version.
+	TSharedPtr<FJsonValue> VerseVersionValue = Object.TryGetField(TEXT("VerseVersion"));
+	if (VerseVersionValue.IsValid())
+	{
+		uint32 PluginVerseVersion;
+		if (VerseVersionValue->TryGetNumber(PluginVerseVersion))
+		{
+			VerseVersion = PluginVerseVersion;
+		}
+		else
+		{
+			if (OutFailReason)
+			{
+				*OutFailReason = FText::Format(LOCTEXT("PluginWithInvalidVerseVersion", "Plugin entry 'VerseVersion' specified an unrecognized value '{1}'"), FText::FromString(VerseVersionValue->AsString()));
 			}
 			return false;
 		}
@@ -254,7 +277,7 @@ bool FPluginDescriptor::Read(const FJsonObject& Object, FText* OutFailReason /*=
 	Object.TryGetBoolField(TEXT("HasExplicitPlatforms"), bHasExplicitPlatforms);
 
 	bool bCanBeUsedWithUnrealHeaderTool;
-	if(Object.TryGetBoolField("CanBeUsedWithUnrealHeaderTool", bCanBeUsedWithUnrealHeaderTool) && bCanBeUsedWithUnrealHeaderTool)
+	if(Object.TryGetBoolField(TEXT("CanBeUsedWithUnrealHeaderTool"), bCanBeUsedWithUnrealHeaderTool) && bCanBeUsedWithUnrealHeaderTool)
 	{
 		SupportedPrograms.Add(TEXT("UnrealHeaderTool"));
 	}
@@ -267,7 +290,21 @@ bool FPluginDescriptor::Read(const FJsonObject& Object, FText* OutFailReason /*=
 		return false;
 	}
 
-	Object.TryGetStringArrayField(TEXT("DisallowedPlugins"), DisallowedPlugins);
+	// Backwards compatibility support
+	TArray<FString> DisallowedPluginNameStrings;
+	if (Object.TryGetStringArrayField(TEXT("DisallowedPlugins"), DisallowedPluginNameStrings))
+	{
+		DisallowedPlugins.Reserve(DisallowedPluginNameStrings.Num());
+		for (int32 Index = 0; Index < DisallowedPluginNameStrings.Num(); ++Index)
+		{
+			FPluginDisallowedDescriptor& PluginDisallowedDescriptor = DisallowedPlugins.AddDefaulted_GetRef();
+			PluginDisallowedDescriptor.Name = DisallowedPluginNameStrings[Index];
+		}
+	}
+	else if (!FPluginDisallowedDescriptor::ReadArray(Object, TEXT("DisallowedPlugins"), DisallowedPlugins, OutFailReason))
+	{
+		return false;
+	}
 
 	return true;
 }
@@ -277,7 +314,7 @@ bool FPluginDescriptor::Read(const FJsonObject& Object, FText& OutFailReason)
 	return Read(Object, &OutFailReason);
 }
 
-bool FPluginDescriptor::Save(const FString& FileName, FText* OutFailReason /*= nullptr*/) const
+bool FPluginDescriptor::Save(const TCHAR* FileName, FText* OutFailReason /*= nullptr*/) const
 {
 	// Write the descriptor to text
 	FString Text;
@@ -287,9 +324,14 @@ bool FPluginDescriptor::Save(const FString& FileName, FText* OutFailReason /*= n
 	return PluginDescriptor::WriteFile(FileName, Text, OutFailReason);
 }
 
+bool FPluginDescriptor::Save(const FString& FileName, FText* OutFailReason /*= nullptr*/) const
+{
+	return Save(*FileName, OutFailReason);
+}
+
 bool FPluginDescriptor::Save(const FString& FileName, FText& OutFailReason) const
 {
-	return Save(FileName, &OutFailReason);
+	return Save(*FileName, &OutFailReason);
 }
 
 void FPluginDescriptor::Write(FString& Text) const
@@ -353,15 +395,36 @@ void FPluginDescriptor::UpdateJson(FJsonObject& JsonObject) const
 	{
 		JsonObject.SetStringField(TEXT("VersePath"), VersePath);
 	}
+	else
+	{
+		JsonObject.RemoveField(TEXT("VersePath"));
+	}
 
-	if (VerseScope != EVerseScope::User)
+	if (VerseScope != EVerseScope::PublicUser)
 	{
 		JsonObject.SetStringField(TEXT("VerseScope"), EVerseScope::ToString(VerseScope));
+	}
+	else
+	{
+		JsonObject.RemoveField(TEXT("VerseScope"));
+	}
+
+	if (VerseVersion.IsSet())
+	{
+		JsonObject.SetNumberField(TEXT("VerseVersion"), VerseVersion.GetValue());
+	}
+	else
+	{
+		JsonObject.RemoveField(TEXT("VerseVersion"));
 	}
 
 	if (bEnableVerseAssetReflection)
 	{
 		JsonObject.SetBoolField(TEXT("EnableVerseAssetReflection"), bEnableVerseAssetReflection);
+	}
+	else
+	{
+		JsonObject.RemoveField(TEXT("EnableVerseAssetReflection"));
 	}
 
 	if (EnabledByDefault != EPluginEnabledByDefault::Unspecified)
@@ -378,6 +441,11 @@ void FPluginDescriptor::UpdateJson(FJsonObject& JsonObject) const
 	{
 		JsonObject.SetBoolField(TEXT("CanContainVerse"), bCanContainVerse);
 	}
+	else
+	{
+		JsonObject.RemoveField(TEXT("CanContainVerse"));
+	}
+
 	if (bNoCode)
 	{
 		JsonObject.SetBoolField(TEXT("NoCode"), bNoCode);
@@ -469,27 +537,19 @@ void FPluginDescriptor::UpdateJson(FJsonObject& JsonObject) const
 	}
 	else
 	{
-		JsonObject.RemoveField("HasExplicitPlatforms");
+		JsonObject.RemoveField(TEXT("HasExplicitPlatforms"));
 	}
 
 	PreBuildSteps.UpdateJson(JsonObject, TEXT("PreBuildSteps"));
 	PostBuildSteps.UpdateJson(JsonObject, TEXT("PostBuildSteps"));
 
+	// Removing the plugins field to force the array to be rebuilt in the same order as the Plugins array otherwise 
+	// all new items are appended at the back.
+	JsonObject.RemoveField(TEXT("Plugins"));
+
 	FPluginReferenceDescriptor::UpdateArray(JsonObject, TEXT("Plugins"), Plugins);
 
-	if (DisallowedPlugins.Num() > 0)
-	{
-		TArray<TSharedPtr<FJsonValue>> DisallowedPluginsValues;
-		for (const FString& DisallowedPlugin : DisallowedPlugins)
-		{
-			DisallowedPluginsValues.Add(MakeShareable(new FJsonValueString(DisallowedPlugin)));
-		}
-		JsonObject.SetArrayField(TEXT("DisallowedPlugins"), DisallowedPluginsValues);
-	}
-	else
-	{
-		JsonObject.RemoveField(TEXT("DisallowedPlugins"));
-	}
+	FPluginDisallowedDescriptor::UpdateArray(JsonObject, TEXT("DisallowedPlugins"), DisallowedPlugins);
 
 #if WITH_EDITOR
 	for (const auto& KVP : AdditionalFieldsToWrite)
@@ -506,7 +566,7 @@ bool FPluginDescriptor::UpdatePluginFile(const FString& FileName, FText* OutFail
 		// Plugin file exists so we need to read it and update it.
 
 		FString JsonText;
-		if (!PluginDescriptor::ReadFile(FileName, JsonText, OutFailReason))
+		if (!PluginDescriptor::ReadFile(*FileName, JsonText, OutFailReason))
 		{
 			return false;
 		}
@@ -534,7 +594,7 @@ bool FPluginDescriptor::UpdatePluginFile(const FString& FileName, FText* OutFail
 #if WITH_EDITOR
 		CachedJson = JsonObject;
 #endif
-		return PluginDescriptor::WriteFile(FileName, JsonText, OutFailReason);
+		return PluginDescriptor::WriteFile(*FileName, JsonText, OutFailReason);
 	}
 	else
 	{

@@ -3,10 +3,10 @@
 #pragma once
 
 #include "Policy/DisplayClusterProjectionPolicyBase.h"
+#include "Containers/DisplayClusterWarpContext.h"
+#include "IDisplayClusterWarpBlend.h"
 
-#include "WarpBlend/IDisplayClusterWarpBlend.h"
-#include "WarpBlend/DisplayClusterWarpContext.h"
-
+class UMeshComponent;
 
 /**
  * MPCDI projection policy
@@ -16,32 +16,15 @@ class FDisplayClusterProjectionMPCDIPolicy
 	: public FDisplayClusterProjectionPolicyBase
 {
 public:
-	enum class EWarpType : uint8
-	{
-		mpcdi = 0,
-		mesh
-	};
-
-public:
 	FDisplayClusterProjectionMPCDIPolicy(const FString& ProjectionPolicyId, const FDisplayClusterConfigurationProjection* InConfigurationProjectionPolicy);
 	virtual ~FDisplayClusterProjectionMPCDIPolicy();
 
 public:
-	virtual EWarpType GetWarpType() const
-	{
-		return EWarpType::mpcdi;
-	}
-
 	// This policy can support ICVFX rendering
-	virtual bool ShouldSupportICVFX() const
-	{
-		return true;
-	}
+	virtual bool ShouldSupportICVFX(IDisplayClusterViewport* InViewport) const override;
 
 public:
-	//////////////////////////////////////////////////////////////////////////////////////////////
-	// IDisplayClusterProjectionPolicy
-	//////////////////////////////////////////////////////////////////////////////////////////////
+	//~Begin IDisplayClusterProjectionPolicy
 	virtual const FString& GetType() const override;
 
 	virtual bool HandleStartScene(IDisplayClusterViewport* InViewport) override;
@@ -70,35 +53,46 @@ public:
 
 	virtual void UpdateProxyData(IDisplayClusterViewport* InViewport) override;
 
+	virtual void SetWarpPolicy(IDisplayClusterWarpPolicy* InWarpPolicy) override;
+	virtual IDisplayClusterWarpPolicy* GetWarpPolicy() const override;
+	virtual IDisplayClusterWarpPolicy* GetWarpPolicy_RenderThread() const override;
+
+	virtual bool HasPreviewMesh(IDisplayClusterViewport* InViewport) override;
+	virtual UMeshComponent* GetOrCreatePreviewMeshComponent(IDisplayClusterViewport* InViewport, bool& bOutIsRootActorComponent) override;
+
+	virtual bool HasPreviewEditableMesh(IDisplayClusterViewport* InViewport) override;
+	virtual UMeshComponent* GetOrCreatePreviewEditableMeshComponent(IDisplayClusterViewport* InViewport) override;
+	virtual USceneComponent* const GetPreviewEditableMeshOriginComponent(IDisplayClusterViewport* InViewport) const override;
+
+	//~~End IDisplayClusterProjectionPolicy
+
 protected:
 	bool CreateWarpBlendFromConfig(IDisplayClusterViewport* InViewport);
 	void ImplRelease();
 
 protected:
+	// GameThread: WarpBlend and WarpPolicy interfaces
 	TSharedPtr<IDisplayClusterWarpBlend, ESPMode::ThreadSafe> WarpBlendInterface;
-	TArray<FDisplayClusterWarpContext> WarpBlendContexts;
+	TSharedPtr<IDisplayClusterWarpPolicy, ESPMode::ThreadSafe> WarpPolicyInterface;
 
+	// RenderingThread: WarpBlend and WarpPolicy interfaces
 	TSharedPtr<IDisplayClusterWarpBlend, ESPMode::ThreadSafe> WarpBlendInterface_Proxy;
+	TSharedPtr<IDisplayClusterWarpPolicy, ESPMode::ThreadSafe> WarpPolicyInterface_Proxy;
+
+	// Context for both game and rendering threads
+	TArray<FDisplayClusterWarpContext> WarpBlendContexts;
 	TArray<FDisplayClusterWarpContext> WarpBlendContexts_Proxy;
 
-private:
 	bool bInvalidConfiguration = false;
 	bool bIsPreviewMeshEnabled = false;
 
-#if WITH_EDITOR
-protected:
-	//////////////////////////////////////////////////////////////////////////////////////////////
-	// IDisplayClusterProjectionPolicyPreview
-	//////////////////////////////////////////////////////////////////////////////////////////////
-	virtual bool HasPreviewMesh() override
-	{
-		return true;
-	}
-	virtual class UMeshComponent* GetOrCreatePreviewMeshComponent(IDisplayClusterViewport* InViewport, bool& bOutIsRootActorComponent) override;
-
-	void ReleasePreviewMeshComponent();
-
 private:
+	// Stored value of the preview mesh
 	FDisplayClusterSceneComponentRef PreviewMeshComponentRef;
-#endif
+
+	// Stored value of the preview meshes belonging flag. True if this component exists in DCRA and cannot be deleted with preview.
+	bool bIsRootActorHasPreviewMeshComponent = false;
+
+	// Stored value of the editable preview mesh
+	FDisplayClusterSceneComponentRef PreviewEditableMeshComponentRef;
 };

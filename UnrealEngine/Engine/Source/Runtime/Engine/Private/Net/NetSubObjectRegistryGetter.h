@@ -25,7 +25,7 @@ public:
 		return InActor->ReplicatedSubObjects;
 	}
 
-	static const FSubObjectRegistry* GetSubObjectsOfActorCompoment(AActor* InActor, UActorComponent* InActorComp)
+	static const FSubObjectRegistry* GetSubObjectsOfActorComponent(AActor* InActor, UActorComponent* InActorComp)
 	{
 		UE::Net::FReplicatedComponentInfo* ComponentInfo = InActor->ReplicatedComponentsInfo.FindByKey(InActorComp);
 		return ComponentInfo ? &(ComponentInfo->SubObjects) : nullptr;

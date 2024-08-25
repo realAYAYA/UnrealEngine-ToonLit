@@ -17,18 +17,20 @@ USkeletonThumbnailRenderer::USkeletonThumbnailRenderer(const FObjectInitializer&
 
 bool USkeletonThumbnailRenderer::CanVisualizeAsset(UObject* Object)
 {
-	USkeleton* Skeleton = Cast<USkeleton>(Object);
-
-	constexpr bool bFindIfNotSet = true;
-	if (USkeletalMesh* SkeletalMesh = Skeleton->GetPreviewMesh(bFindIfNotSet))
+	//The const version of GetPreviewMesh function simply return the preview mesh, it wont verify the skeleton compatibility.
+	//If we are not compiling call the function that are verifying the compatibility.
+	const USkeleton* ConstSkeleton = Cast<USkeleton>(Object);
+	USkeletalMesh* SkeletalMesh = ConstSkeleton->GetPreviewMesh();
+	if (!SkeletalMesh || !SkeletalMesh->IsCompiling())
 	{
-		if (SkeletalMesh && (SkeletalMesh->IsCompiling() || SkeletalMesh->GetResourceForRendering() == nullptr))
-		{
-			return false;
-		}
+		USkeleton* Skeleton = Cast<USkeleton>(Object);
+		//This case can stall this thread (GameThread) since it will verify this skeleton compatibility with the preview skeletal mesh.
+		//If the skeletal mesh is compiling a wait until compile will happen when doing USkeletalMesh::GetSkeleton()
+		constexpr bool bFindIfNotSet = true;
+		SkeletalMesh = Skeleton->GetPreviewMesh(bFindIfNotSet);
 	}
-
-	return true;
+	//Only visualize thumbnail if the skeletal mesh preview exist and is not compiling and have valid render data
+	return (SkeletalMesh && SkeletalMesh->IsReadyToRenderInThumbnail());
 }
 
 void USkeletonThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, uint32 Width, uint32 Height, FRenderTarget* RenderTarget, FCanvas* Canvas, bool bAdditionalViewFamily)

@@ -21,6 +21,7 @@ struct FCachedGeometry
 		
 		FRHIShaderResourceView* PositionBuffer = nullptr;			// Valid when the input comes from the GPUSkinCache (since it is doesn't use RDG)
 		FRHIShaderResourceView* PreviousPositionBuffer = nullptr;	// Valid when the input comes from the GPUSkinCache (since it is doesn't use RDG)
+		FRHIShaderResourceView* TangentBuffer = nullptr;			// Valid when the input comes from the GPUSkinCache (since it is doesn't use RDG)
 		
 		FRHIShaderResourceView* UVsBuffer = nullptr;
 		FRHIShaderResourceView* IndexBuffer = nullptr;
@@ -39,9 +40,5 @@ struct FCachedGeometry
 
 	int32 LODIndex = -1;
 	TArray<Section> Sections;
-
-	FRDGBufferRef DeformedPositionBuffer = nullptr;
-	FRDGBufferRef DeformedPreviousPositionBuffer = nullptr;
-
 	FTransform LocalToWorld = FTransform::Identity;
 };

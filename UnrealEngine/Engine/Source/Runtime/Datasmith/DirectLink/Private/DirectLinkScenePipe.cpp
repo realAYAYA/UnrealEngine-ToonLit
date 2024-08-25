@@ -68,7 +68,7 @@ bool CompressInline(TArray<uint8>& UncompressedData, ECompressionMethod Method)
 	{
 		float CompressionRatio = float(CompressedSize) / UncompressedSize;
 		UE_LOG(LogDirectLinkNet, Verbose, TEXT("Message compression: %f%% (%d -> %d, %s)"), 100*CompressionRatio, UncompressedSize, CompressedSize, *MethodName.ToString());
-		CompressedData.SetNum(CompressedSize + HeaderSize, true);
+		CompressedData.SetNum(CompressedSize + HeaderSize, EAllowShrinking::Yes);
 		UncompressedData = MoveTemp(CompressedData);
 
 		return true;

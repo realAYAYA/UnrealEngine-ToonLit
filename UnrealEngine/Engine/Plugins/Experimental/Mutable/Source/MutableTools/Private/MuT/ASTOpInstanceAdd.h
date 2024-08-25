@@ -16,7 +16,7 @@ struct FProgram;
 	//---------------------------------------------------------------------------------------------
 	//! Operations to add elements to an instance
 	//---------------------------------------------------------------------------------------------
-	class ASTOpInstanceAdd : public ASTOp
+	class ASTOpInstanceAdd final : public ASTOp
 	{
 	public:
 
@@ -28,7 +28,7 @@ struct FProgram;
 		uint32_t id = 0;
 		uint32_t ExternalId = 0;
 		int32 SharedSurfaceId = INDEX_NONE;
-		string name;
+		FString name;
 
 	public:
 

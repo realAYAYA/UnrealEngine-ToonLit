@@ -7,139 +7,33 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GroomAssetCards)
 
-FHairCardsClusterSettings::FHairCardsClusterSettings()
-{
-	ClusterDecimation = 0.1f;
-	Type = EHairCardsClusterType::High;
-	bUseGuide = true;
-}
-
-FHairCardsGeometrySettings::FHairCardsGeometrySettings()
-{
-	GenerationType = EHairCardsGenerationType::UseGuides;
-	CardsCount = 5000;
-	ClusterType = EHairCardsClusterType::High;
-	MinSegmentLength = 1;
-	AngularThreshold = 5;
-	MinCardsLength = 0;
-	MaxCardsLength = 0;
-};
-
-FHairCardsTextureSettings::FHairCardsTextureSettings()
-{
-	AtlasMaxResolution = 2048;
-	PixelPerCentimeters = 60;
-	LengthTextureCount = 10;
-	DensityTextureCount = 1;
-};
-
-FHairGroupsProceduralCards::FHairGroupsProceduralCards()
-{
-	ClusterSettings	= FHairCardsClusterSettings();
-	GeometrySettings= FHairCardsGeometrySettings();
-	TextureSettings	= FHairCardsTextureSettings();
-	Version = 0;
-}
-
 FHairGroupsCardsSourceDescription::FHairGroupsCardsSourceDescription()
 {
 	MaterialSlotName = NAME_None;
-	SourceType = EHairCardsSourceType::Imported;
-	ProceduralMeshKey.Empty();
-	ProceduralSettings = FHairGroupsProceduralCards();
+	SourceType_DEPRECATED = EHairCardsSourceType::Imported;
+	GuideType = EHairCardsGuideType::Generated;
 	GroupIndex = 0;
 	LODIndex = -1;
 }
 
-bool FHairCardsClusterSettings::operator==(const FHairCardsClusterSettings& A) const
+void FHairGroupCardsTextures::SetLayout(EHairTextureLayout InLayout)
 {
-	return
-		Type == A.Type &&
-		ClusterDecimation == A.ClusterDecimation &&
-		bUseGuide == A.bUseGuide;
+	Layout = InLayout;
+
+	uint32 TextureCount = GetHairTextureLayoutTextureCount(Layout);
+	Textures.SetNum(TextureCount, EAllowShrinking::Yes);
 }
 
-bool FHairCardsGeometrySettings::operator==(const FHairCardsGeometrySettings& A) const
+void FHairGroupCardsTextures::SetTexture(int32 SlotIdx, UTexture2D* Texture)
 {
-	return
-		MinSegmentLength == A.MinSegmentLength &&
-		AngularThreshold == A.AngularThreshold &&
-		MinCardsLength == A.MinCardsLength &&
-		MaxCardsLength == A.MaxCardsLength &&
-		GenerationType == A.GenerationType &&
-		CardsCount == A.CardsCount &&
-		ClusterType == A.ClusterType;
-}
-
-bool FHairCardsTextureSettings::operator==(const FHairCardsTextureSettings& A) const
-{
-	return
-		AtlasMaxResolution == A.AtlasMaxResolution &&
-		PixelPerCentimeters == A.PixelPerCentimeters &&
-		LengthTextureCount == A.LengthTextureCount &&
-		DensityTextureCount == A.DensityTextureCount;
-}
-
-bool FHairGroupsProceduralCards::operator==(const FHairGroupsProceduralCards& A) const
-{
-	return
-		ClusterSettings == A.ClusterSettings &&
-		GeometrySettings == A.GeometrySettings &&
-		TextureSettings == A.TextureSettings &&
-		Version == A.Version;
-}
-
-void FHairGroupCardsTextures::SetTexture(EHairAtlasTextureType SlotID, UTexture2D* Texture)
-{
-	switch (SlotID)
-	{
-	case EHairAtlasTextureType::Depth:
-		DepthTexture = Texture;
-		break;
-
-	case EHairAtlasTextureType::Coverage:
-		CoverageTexture = Texture;
-		break;
-
-	case EHairAtlasTextureType::Tangent:
-		TangentTexture = Texture;
-		break;
-
-	case EHairAtlasTextureType::Attribute:
-		AttributeTexture = Texture;
-		break;
-
-	case EHairAtlasTextureType::AuxilaryData:
-		AuxilaryDataTexture = Texture;
-		break;
-	};
-}
-
-void FHairGroupsProceduralCards::BuildDDCKey(FArchive& Ar)
-{
-	Ar << GeometrySettings.GenerationType;
-	if (GeometrySettings.GenerationType == EHairCardsGenerationType::CardsCount)
-	{
-		Ar << GeometrySettings.CardsCount;
-	}
-	Ar << GeometrySettings.ClusterType;
-	Ar << GeometrySettings.MinSegmentLength;
-	Ar << GeometrySettings.AngularThreshold;
-	Ar << GeometrySettings.MinCardsLength;
-	Ar << GeometrySettings.MaxCardsLength;
-
-	Ar << TextureSettings.AtlasMaxResolution;
-	Ar << TextureSettings.PixelPerCentimeters;
-	Ar << TextureSettings.LengthTextureCount;
-	Ar << Version;
+	check(SlotIdx < Textures.Num());
+	Textures[SlotIdx] = Texture;
 }
 
 bool FHairGroupsCardsSourceDescription::operator==(const FHairGroupsCardsSourceDescription& A) const
 {
 	return
 		MaterialSlotName == A.MaterialSlotName &&
-		SourceType == A.SourceType &&
-		ProceduralSettings == A.ProceduralSettings &&
 		GroupIndex == A.GroupIndex &&
 		LODIndex == A.LODIndex &&
 		ImportedMesh == A.ImportedMesh;
@@ -164,14 +58,9 @@ FString FHairGroupsCardsSourceDescription::GetMeshKey() const
 bool FHairGroupsCardsSourceDescription::HasMeshChanged() const
 {
 #if WITH_EDITORONLY_DATA
-	if (SourceType == EHairCardsSourceType::Imported && ImportedMesh)
+	if (ImportedMesh)
 	{
 		return ImportedMeshKey == GetMeshKey();
-	}
-	else if (SourceType == EHairCardsSourceType::Procedural && ProceduralMesh)
-	{
-		ProceduralMesh->ConditionalPostLoad();
-		return ProceduralMeshKey == GetMeshKey();
 	}
 #endif
 	return false;
@@ -180,13 +69,9 @@ bool FHairGroupsCardsSourceDescription::HasMeshChanged() const
 void FHairGroupsCardsSourceDescription::UpdateMeshKey()
 {
 #if WITH_EDITORONLY_DATA
-	if (SourceType == EHairCardsSourceType::Imported && ImportedMesh)
+	if (ImportedMesh)
 	{
 		ImportedMeshKey = GetMeshKey();
-	}
-	else if (SourceType == EHairCardsSourceType::Procedural && ProceduralMesh)
-	{
-		ProceduralMeshKey = GetMeshKey();
 	}
 #endif
 }
@@ -194,17 +79,78 @@ void FHairGroupsCardsSourceDescription::UpdateMeshKey()
 UStaticMesh* FHairGroupsCardsSourceDescription::GetMesh() const
 {
 #if WITH_EDITORONLY_DATA
-	if (SourceType == EHairCardsSourceType::Imported)
-	{
-		return ImportedMesh;
-
-	}
-	else if (SourceType == EHairCardsSourceType::Procedural)
-	{
-		return ProceduralMesh;
-	}
-#endif
+	return ImportedMesh;
+#else
 	return nullptr;
+#endif
 }
 
+uint32 GetHairTextureLayoutTextureCount(EHairTextureLayout In)
+{
+	uint32 OutCount = 0;
+	switch (In)
+	{
+		case EHairTextureLayout::Layout0: OutCount = 6u; break;
+		case EHairTextureLayout::Layout1: OutCount = 6u; break;
+		case EHairTextureLayout::Layout2: OutCount = 3u; break;
+		case EHairTextureLayout::Layout3: OutCount = 3u; break;
+	}
+	check(OutCount <= HAIR_CARDS_MAX_TEXTURE_COUNT);
+	return OutCount;
+}
 
+const TCHAR* GetHairTextureLayoutTextureName(EHairTextureLayout InLayout, uint32 InIndex, bool bDetail)
+{
+	switch (InLayout)
+	{
+		case EHairTextureLayout::Layout0:
+		{
+			check(6 == GetHairTextureLayoutTextureCount(EHairTextureLayout::Layout0));
+			switch (InIndex)
+			{
+				case 0: return bDetail ? TEXT("Depth\n R8")									: TEXT("Depth");
+				case 1: return bDetail ? TEXT("Coverage\n R8")								: TEXT("Coverage");
+				case 2: return bDetail ? TEXT("Tangent\n RGB8")								: TEXT("Tangent");
+				case 3: return bDetail ? TEXT("Attributes\n RootUV | CoordU | Seed\n RGB8")	: TEXT("Attributes");
+				case 4: return bDetail ? TEXT("Material\n Color | Roughess\n RBGA8 ")		: TEXT("Material");
+				case 5: return bDetail ? TEXT("Auxiliary\n RGBA8")							: TEXT("Auxiliary");
+			}
+		} break;
+		case EHairTextureLayout::Layout1:
+		{
+			check(6 == GetHairTextureLayoutTextureCount(EHairTextureLayout::Layout1));
+			switch (InIndex)
+			{
+				case 0: return bDetail ? TEXT("Depth\n R8") 								: TEXT("Depth");
+				case 1: return bDetail ? TEXT("Coverage\n R8") 								: TEXT("Coverage");
+				case 2: return bDetail ? TEXT("Tangent\n RGB8") 							: TEXT("Tangent");
+				case 3: return bDetail ? TEXT("Attributes\n RootUV | CoordU | Seed\n RGB8") : TEXT("Attributes");
+				case 4: return bDetail ? TEXT("Material\n Color | GroupID\n RBGA8") 		: TEXT("Material");
+				case 5: return bDetail ? TEXT("Auxiliary\n RGBA8") 							: TEXT("Auxiliary");
+			}
+		} break;
+		case EHairTextureLayout::Layout2:
+		{
+			check(3 == GetHairTextureLayoutTextureCount(EHairTextureLayout::Layout2));
+			switch (InIndex)
+			{
+				case 0: return bDetail ? TEXT("Tangent | CoordU\n RGBA8")					: TEXT("TangentCoordU");
+				case 1: return bDetail ? TEXT("Coverage | Depth | Seed\n RGB8")				: TEXT("CoverageDepthSeed");
+				case 2: return bDetail ? TEXT("Color | Roughness\n RGBA8")					: TEXT("ColorRoughness");
+			}
+		} break;
+		case EHairTextureLayout::Layout3:
+		{
+			check(3 == GetHairTextureLayoutTextureCount(EHairTextureLayout::Layout3));
+			switch (InIndex)
+			{
+				case 0: return bDetail ? TEXT("Tangent | CoordU\n RGB8")					: TEXT("TangentCoordU");
+				case 1: return bDetail ? TEXT("ColorXY | Depth | GroupID\n RGBA8")			: TEXT("ColorXYDepthGroupID");
+				case 2: return bDetail ? TEXT("RooUV | Seed | Coverage \n RGBA8")			: TEXT("RooUVSeedCoverage");
+			}
+		} break;
+	}
+
+	check(false);
+	return TEXT("Unknown");
+}

@@ -46,11 +46,11 @@ class FRCTransactionListenerManager
 	 	* @param InDelegateToBroadcast Multicast delegate to broadcast
 	 	* @param InArgs Ordered arguments that should be passed to the MulticastDelegate
 		*/
-		FRCTransactionListener(ERCTransaction::Type InType, TMulticastDelegate<void(ListenerCallbackArgs...)> InDelegateToBroadcast, ListenerCallbackArgs&&... InArgs) : Type(InType)
+		FRCTransactionListener(ERCTransaction::Type InType, TMulticastDelegate<void(ListenerCallbackArgs...)>& InDelegateToBroadcast, ListenerCallbackArgs&&... InArgs) : Type(InType)
 		{
-			OnUndoRedoDelegate.AddLambda([InDelegateToBroadcast, InArgs...]()
+			OnUndoRedoDelegate.AddLambda([&InDelegateToBroadcast, InArgs...]()
 			{
-				InDelegateToBroadcast.Broadcast(InArgs...);	
+				InDelegateToBroadcast.Broadcast(InArgs...);
 			});
 		}
 
@@ -81,7 +81,7 @@ public:
 	/**
  	 * Create a listener with the parameter passed and Register it into the Manager to be called during Undo/Redo callbacks
  	 */
-	static void CreateListenerAndRegister(ERCTransaction::Type InType, TMulticastDelegate<void(CallbackArgs...)> InDelegateToBroadcast, CallbackArgs&&... InOrderedArgs)
+	static void CreateListenerAndRegister(ERCTransaction::Type InType, TMulticastDelegate<void(CallbackArgs...)>& InDelegateToBroadcast, CallbackArgs&&... InOrderedArgs)
 	{
 		FRCTransactionListener<CallbackArgs...> Listener = FRCTransactionListener<CallbackArgs...>(InType, InDelegateToBroadcast, Forward<CallbackArgs>(InOrderedArgs)...);
 		Get().Register(Listener);

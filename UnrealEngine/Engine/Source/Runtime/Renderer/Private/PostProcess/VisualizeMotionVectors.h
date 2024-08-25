@@ -5,6 +5,12 @@
 #include "ScreenPass.h"
 
 
+enum class EVisualizeMotionVectors : uint8
+{
+	ReprojectionAlignment,
+	HasPixelAnimationFlag,
+};
+
 struct FVisualizeMotionVectorsInputs
 {
 	// [Optional] Render to the specified output. If invalid, a new texture is created and returned.
@@ -15,4 +21,4 @@ struct FVisualizeMotionVectorsInputs
 	FScreenPassTexture SceneVelocity;
 };
 
-FScreenPassTexture AddVisualizeMotionVectorsPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FVisualizeMotionVectorsInputs& Inputs);
+FScreenPassTexture AddVisualizeMotionVectorsPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FVisualizeMotionVectorsInputs& Inputs, EVisualizeMotionVectors Visualize);

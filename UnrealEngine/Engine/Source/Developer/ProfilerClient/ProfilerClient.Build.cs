@@ -6,18 +6,18 @@ namespace UnrealBuildTool.Rules
 	{
 		public ProfilerClient(ReadOnlyTargetRules Target) : base(Target)
 		{
+			UnsafeTypeCastWarningLevel = WarningLevel.Error;
+
 			PublicIncludePathModuleNames.Add("ProfilerService");
 
 			PublicDependencyModuleNames.AddRange(
-				new string[]
-				{
+				new string[] {
 					"Core",
 				}
 			);
 
 			PrivateDependencyModuleNames.AddRange(
-				new string[]
-				{
+				new string[] {
 					"CoreUObject",
 					"ProfilerMessages",
 				}
@@ -26,7 +26,7 @@ namespace UnrealBuildTool.Rules
 			PrivateIncludePathModuleNames.AddRange(
 				new string[] {
 					"Messaging",
-                    "MessagingCommon",
+					"MessagingCommon",
 				}
 			);
 		}

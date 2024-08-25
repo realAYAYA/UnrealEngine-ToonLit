@@ -170,7 +170,7 @@ int TryToMerge( FPoly *Poly1, FPoly *Poly2 )
 	int32 Vertex = End1;
 	for( int32 i=0; i<Poly1->Vertices.Num(); i++ )
 	{
-		new(NewPoly.Vertices) FVector3f(Poly1->Vertices[Vertex]);
+		NewPoly.Vertices.Add(Poly1->Vertices[Vertex]);
 		if( ++Vertex >= Poly1->Vertices.Num() )
 			Vertex=0;
 	}
@@ -179,7 +179,7 @@ int TryToMerge( FPoly *Poly1, FPoly *Poly2 )
 	{
 		if( ++Vertex >= Poly2->Vertices.Num() )
 			Vertex=0;
-		new(NewPoly.Vertices) FVector3f(Poly2->Vertices[Vertex]);
+		NewPoly.Vertices.Add(Poly2->Vertices[Vertex]);
 	}
 
 	// Remove colinear vertices and check convexity.
@@ -230,7 +230,7 @@ void MakeEdPolys( UModel* Model, int32 iNode, TArray<FPoly>* DestArray )
 	FPoly Temp;
 	if( FBSPUtils::bspNodeToFPoly(Model,iNode,&Temp) >= 3 )
 	{
-		new(*DestArray)FPoly(Temp);
+		DestArray->Add(Temp);
 	}
 
 	if( Node->iFront!=INDEX_NONE )
@@ -553,7 +553,7 @@ void IntersectBrushWithWorldFunc( UModel* Model, int32 iNode, FPoly *EdPoly,
 		case F_INSIDE:
 		case F_COPLANAR_INSIDE:
 			if( EdPoly->Fix()>=3 )
-				new(GModel->Polys->Element)FPoly(*EdPoly);
+				GModel->Polys->Element.Add(*EdPoly);
 			break;
 	}
 }
@@ -572,7 +572,7 @@ void IntersectWorldWithBrushFunc( UModel *Model, int32 iNode, FPoly *EdPoly,
 		case F_COPLANAR_INSIDE:
 		case F_COSPATIAL_FACING_OUT:
 			if( EdPoly->Fix() >= 3 )
-				new(GModel->Polys->Element)FPoly(*EdPoly);
+				GModel->Polys->Element.Add(*EdPoly);
 			break;
 	}
 }
@@ -591,7 +591,7 @@ void DeIntersectBrushWithWorldFunc( UModel* Model, int32 iNode, FPoly* EdPoly,
 		case F_OUTSIDE:
 		case F_COPLANAR_OUTSIDE:
 			if( EdPoly->Fix()>=3 )
-				new(GModel->Polys->Element)FPoly(*EdPoly);
+				GModel->Polys->Element.Add(*EdPoly);
 			break;
 	}
 }
@@ -612,7 +612,7 @@ void DeIntersectWorldWithBrushFunc( UModel* Model, int32 iNode, FPoly* EdPoly,
 			if( EdPoly->Fix() >= 3 )
 	        {
 				EdPoly->Reverse();
-				new(GModel->Polys->Element)FPoly(*EdPoly);
+				GModel->Polys->Element.Add(*EdPoly);
 				EdPoly->Reverse();
 			}
 			break;
@@ -964,7 +964,7 @@ int FBSPUtils::bspNodeToFPoly
 
 	for(int32 VertexIndex = 0;VertexIndex < Node.NumVertices;VertexIndex++)
 	{
-		new(EdPoly->Vertices) FVector3f(Model->Points[VertPool[VertexIndex].pVertex]);
+		EdPoly->Vertices.Add(Model->Points[VertPool[VertexIndex].pVertex]);
 	}
 
 	if(EdPoly->Vertices.Num() < 3)
@@ -1049,8 +1049,7 @@ void FilterWorldThroughBrush
 				{
 					// Get rid of all the fragments we added.
 					Model->Nodes[GLastCoplanar].iPlane = INDEX_NONE;
-					const bool bAllowShrinking = false;
-					Model->Nodes.RemoveAt( GNumNodes, Model->Nodes.Num()-GNumNodes, bAllowShrinking );
+					Model->Nodes.RemoveAt( GNumNodes, Model->Nodes.Num()-GNumNodes, EAllowShrinking::No );
 				}
 				else
 				{
@@ -1222,7 +1221,7 @@ int FBSPUtils::bspBrushCSG
 		}
 
 		// Add poly to the temp model.
-		new(TempModel->Polys->Element)FPoly( DestEdPoly );
+		TempModel->Polys->Element.Add( DestEdPoly );
 	}
 	if( ReallyBig ) GWarn->StatusUpdate( 0, 0, NSLOCTEXT("UnrealEd", "FilteringBrush", "Filtering brush") );
 
@@ -2049,14 +2048,14 @@ void FBSPUtils::polyGetLinkedPolys
 	if( InPoly->iLink == INDEX_NONE )
 	{
 		// If this poly has no links, just stick the one poly in the final list.
-		new(*InPolyList)FPoly( *InPoly );
+		InPolyList->Add( *InPoly );
 	}
 	else
 	{
 		// Find all polys that match the source polys link value.
 		for( int32 poly = 0 ; poly < InBrush->Brush->Polys->Element.Num() ; poly++ )
 			if( InBrush->Brush->Polys->Element[poly].iLink == InPoly->iLink )
-				new(*InPolyList)FPoly( InBrush->Brush->Polys->Element[poly] );
+				InPolyList->Add( InBrush->Brush->Polys->Element[poly] );
 	}
 }
 
@@ -2111,7 +2110,7 @@ void FBSPUtils::polySplitOverlappingEdges( TArray<FPoly>* InPolyList, TArray<FPo
 			}
 		}
 
-		new(*InResult)FPoly( NewPoly );
+		InResult->Add( NewPoly );
 	}
 
 }
@@ -2133,7 +2132,7 @@ void FBSPUtils::polyGetOuterEdgeList
 	{
 		FPoly* Poly = &NewPolyList[poly];
 		for( int32 vtx = 0 ; vtx < Poly->Vertices.Num() ; vtx++ )
-			new( TempEdges )FEdge( (FVector)Poly->Vertices[vtx], (FVector)Poly->Vertices[ vtx+1 < Poly->Vertices.Num() ? vtx+1 : 0] );
+			TempEdges.Emplace( (FVector)Poly->Vertices[vtx], (FVector)Poly->Vertices[ vtx+1 < Poly->Vertices.Num() ? vtx+1 : 0] );
 	}
 
 	// Add all the unique edges into the final edge list.
@@ -2151,14 +2150,14 @@ void FBSPUtils::polyGetOuterEdgeList
 		}
 
 		if( EdgeCount == 1 )
-			new( FinalEdges )FEdge( *TestEdge );
+			FinalEdges.Add( *TestEdge );
 	}
 
 	// Reorder all the edges so that they line up, end to end.
 	InEdgeList->Empty();
 	if( !FinalEdges.Num() ) return;
 
-	new( *InEdgeList )FEdge( FinalEdges[0] );
+	InEdgeList->Add( FinalEdges[0] );
 	FVector Comp = FinalEdges[0].Vertex[1];
 	FinalEdges.RemoveAt(0);
 
@@ -2173,7 +2172,7 @@ void FBSPUtils::polyGetOuterEdgeList
 
 		if( FinalEdges[x].Vertex[0] == Comp )
 		{
-			new( *InEdgeList )FEdge( FinalEdges[x] );
+			InEdgeList->Add( FinalEdges[x] );
 			Comp = FinalEdges[x].Vertex[1];
 			FinalEdges.RemoveAt(x);
 			x = -1;

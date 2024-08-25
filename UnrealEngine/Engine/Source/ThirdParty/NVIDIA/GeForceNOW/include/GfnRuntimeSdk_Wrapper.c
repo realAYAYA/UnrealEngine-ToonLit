@@ -87,6 +87,7 @@ typedef GfnRuntimeError(*gfnGetClientCountryCodeFn)(char* clientCountryCode, uns
 typedef GfnRuntimeError(*gfnGetClientInfoFn)(GfnClientInfo* clientInfo);
 typedef GfnRuntimeError(*gfnRegisterClientInfoCallbackFn)(ClientInfoCallbackSig clientInfoCallback, void* pUserContext);
 typedef GfnRuntimeError(*gfnRegisterNetworkStatusCallbackFn)(NetworkStatusCallbackSig networkStatusCallback, unsigned int updateRateMs, void* pUserContext);
+typedef GfnRuntimeError(*gfnRegisterMessageCallbackFn)(MessageCallbackSig messageCallback, void* pUserContext);
 
 typedef GfnRuntimeError(*gfnGetSessionInfoFn)(GfnSessionInfo* sessionInfo);
 
@@ -111,6 +112,7 @@ typedef GfnRuntimeError(*gfnRegisterCallbackFn)(_cb callback, void* userContext)
 typedef GfnRuntimeError(*gfnRegisteCallbackFnWithUIntParam)(_cb callback, unsigned int param, void* userContext);
 typedef GfnRuntimeError(*gfnAppReadyFn)(bool success, const char* status);
 typedef GfnRuntimeError (*gfnSetActionZoneFn)(GfnActionType type, unsigned int id, GfnRect* zone);
+typedef GfnRuntimeError(*gfnSendMessageFn)(const char* pchMessage, unsigned int length);
 typedef struct GfnSdkCloudLibrary_t
 {
     void* handle;
@@ -137,10 +139,12 @@ typedef struct GfnSdkCloudLibrary_t
     gfnFreeFn Free;
     gfnAppReadyFn AppReady;
     gfnSetActionZoneFn SetActionZone;
+    gfnSendMessageFn SendMessage;
 
     gfnGetClientInfoFn GetClientInfo;
     gfnRegisterCallbackFn RegisterClientInfoCallback;
     gfnRegisteCallbackFnWithUIntParam RegisterNetworkStatusCallback;
+    gfnRegisterCallbackFn RegisterMessageCallback;
 
     gfnGetSessionInfoFn GetSessionInfo;
 
@@ -301,6 +305,7 @@ GfnRuntimeError gfnLoadCloudLibrary(GfnSdkCloudLibrary** ppCloudLibrary)
     pCloudLibrary->Free = (gfnFreeFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnFree");
     pCloudLibrary->AppReady = (gfnAppReadyFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnAppReady");
     pCloudLibrary->SetActionZone = (gfnSetActionZoneFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnSetActionZone");
+    pCloudLibrary->SendMessage = (gfnSendMessageFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnSendCustomMessageToClient");
     pCloudLibrary->RegisterExitCallback = (gfnRegisterCallbackFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnRegisterExitCallback");
     pCloudLibrary->RegisterPauseCallback = (gfnRegisterCallbackFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnRegisterPauseCallback");
     pCloudLibrary->RegisterInstallCallback = (gfnRegisterCallbackFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnRegisterInstallCallback");
@@ -310,6 +315,7 @@ GfnRuntimeError gfnLoadCloudLibrary(GfnSdkCloudLibrary** ppCloudLibrary)
     pCloudLibrary->GetClientInfo = (gfnGetClientInfoFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnGetClientInfo");
     pCloudLibrary->RegisterClientInfoCallback = (gfnRegisterCallbackFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnRegisterClientInfoCallback");
     pCloudLibrary->RegisterNetworkStatusCallback = (gfnRegisteCallbackFnWithUIntParam)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnRegisterNetworkStatusCallback");
+    pCloudLibrary->RegisterMessageCallback = (gfnRegisterCallbackFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnRegisterCustomMessageCallback");
     pCloudLibrary->GetSessionInfo = (gfnGetSessionInfoFn)(void*)GetProcAddress((HMODULE)pCloudLibrary->handle, "gfnGetSessionInfo");
 
     GFN_SDK_LOG("Successfully loaded cloud libary");
@@ -343,7 +349,7 @@ GfnRuntimeError gfnInitializeCloudSdk(void)
 
     if (g_pCloudLibrary->InitializeRuntimeSdkV3)
     {
-        g_cloudLibraryStatus = g_pCloudLibrary->InitializeRuntimeSdkV3((char *)NVGFNSDK_VERSION_STR);
+        g_cloudLibraryStatus = g_pCloudLibrary->InitializeRuntimeSdkV3((char*)NVGFNSDK_VERSION_STR);
     }
     // Old Initialization method. Deprecate when all libraries have updated to 1.7.1 or greater.
     else if (g_pCloudLibrary->InitializeRuntimeSdk)
@@ -966,6 +972,29 @@ GfnRuntimeError GfnSetActionZone(GfnActionType type, unsigned int id, GfnRect* z
     DELEGATE_TO_CLOUD_LIBRARY(SetActionZone, type, id, zone);
 }
 
+GfnRuntimeError GfnSendMessage(const char* pchMessage, unsigned int length) {
+    if (g_pCloudLibrary != NULL && g_pCloudLibrary->SendMessage != NULL)                                        \
+    {                                                                       \
+        DELEGATE_TO_CLOUD_LIBRARY(SendMessage, pchMessage, length);              \
+    }
+    else
+    {
+        if (g_gfnSdkModule == NULL)
+        {
+            return gfnAPINotInit;
+        }
+
+        gfnSendMessageFn fnSendMessage = (gfnSendMessageFn)(void*)GetProcAddress(g_gfnSdkModule, "gfnSendMessage");
+
+        if (fnSendMessage == NULL)
+        {
+            return gfnAPINotFound;
+        }
+
+        return fnSendMessage(pchMessage, length);
+    }
+}
+
 static void GFN_CALLBACK _gfnExitCallbackWrapper(int status, void* pUnused, void* pContext)
 {
     (void)status;
@@ -1096,6 +1125,49 @@ GfnRuntimeError GfnRegisterSessionInitCallback(SessionInitCallbackSig sessionIni
     // Suppress CppCheck warning about memory leak. The cloud DLL takes ownership of the memory and will free on call to gfnShutdownSdk
     // cppcheck-suppress memleak
 	DELEGATE_TO_CLOUD_LIBRARY(RegisterSessionInitCallback, &_gfnSessionInitCallbackWrapper, pWrappedContext)
+}
+
+static void GFN_CALLBACK _gfnMessageCallbackWrapper(int status, void* pMessage, void* pContext)
+{
+    (void)status;
+    _gfnUserContextCallbackWrapper* pWrappedContext = (_gfnUserContextCallbackWrapper*)(pContext);
+    if (pWrappedContext == NULL || pWrappedContext->fnCallback == NULL)
+    {
+        return;
+    }
+    MessageCallbackSig cb = (MessageCallbackSig)(pWrappedContext->fnCallback);
+    cb((GfnString*)pMessage, pWrappedContext->pOrigUserContext);
+}
+
+GfnRuntimeError GfnRegisterMessageCallback(MessageCallbackSig messageCallback, void* pUserContext)
+{
+    CHECK_NULL_PARAM(messageCallback);
+
+    if (g_pCloudLibrary != NULL && g_pCloudLibrary->RegisterMessageCallback != NULL)
+    {
+        _gfnUserContextCallbackWrapper* pWrappedContext = (_gfnUserContextCallbackWrapper*)malloc(sizeof(_gfnUserContextCallbackWrapper));
+        pWrappedContext->fnCallback = (void*)messageCallback;
+        pWrappedContext->pOrigUserContext = pUserContext;
+
+        // Suppress CppCheck warning about memory leak. The cloud DLL takes ownership of the memory and will free on call to gfnShutdownSdk
+        // cppcheck-suppress memleak
+        DELEGATE_TO_CLOUD_LIBRARY(RegisterMessageCallback, &_gfnMessageCallbackWrapper, pWrappedContext);
+    }
+    else
+    {
+        if (g_gfnSdkModule == NULL)
+        {
+            return gfnAPINotInit;
+        }
+
+        gfnRegisterMessageCallbackFn fnRegisterMessageCallback = (gfnRegisterMessageCallbackFn)(void*)GetProcAddress(g_gfnSdkModule, "gfnRegisterMessageCallback");
+        if (fnRegisterMessageCallback == NULL)
+        {
+            return gfnAPINotFound;
+        }
+
+        return fnRegisterMessageCallback(messageCallback, pUserContext);
+    }
 }
 
 

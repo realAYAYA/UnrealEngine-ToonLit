@@ -4,6 +4,11 @@
 #include "Iris/ReplicationSystem/NetBlob/NetBlob.h"
 #include "UObject/WeakObjectPtr.h"
 
+namespace UE::Net
+{
+	class FNetRPCCallContext;
+}
+
 namespace UE::Net::Private
 {
 
@@ -22,7 +27,7 @@ public:
 
 	static FNetRPC* Create(UReplicationSystem* ReplicationSystem, const FNetBlobCreationInfo& CreationInfo, const FNetObjectReference& ObjectReference, const UFunction* Function, const void* FunctionParameters);
 
-	void CallFunction(FNetSerializationContext& Context);
+	void CallFunction(FNetRPCCallContext& Context);
 
 	void SetFunctionLocator(const FFunctionLocator& InfFunctionLocator) { FunctionLocator = InfFunctionLocator; }
 	const FFunctionLocator& GetFunctionLocator() const { return FunctionLocator; }

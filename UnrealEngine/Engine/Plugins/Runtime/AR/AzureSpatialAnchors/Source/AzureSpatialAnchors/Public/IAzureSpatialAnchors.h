@@ -70,7 +70,7 @@ public:
 
 	static void OnLog(const wchar_t* LogMsg)
 	{
-		UE_LOG(LogAzureSpatialAnchors, Log, TEXT("%s"), LogMsg);
+		UE_LOG(LogAzureSpatialAnchors, Log, TEXT("%s"), StringCast<TCHAR>(LogMsg).Get());
 	}
 
 public:

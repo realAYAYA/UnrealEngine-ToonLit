@@ -282,21 +282,9 @@ FFrameNumber UMoviePipelineBlueprintLibrary::GetCurrentShotFrameNumber(const UMo
 
 float UMoviePipelineBlueprintLibrary::GetCurrentFocusDistance(const UMoviePipeline* InMoviePipeline)
 {
-	if (InMoviePipeline)
+	if (const UCineCameraComponent* CineCameraComponent = Utility_GetCurrentCineCamera(InMoviePipeline->GetWorld()))
 	{
-		if (InMoviePipeline->GetWorld()->GetFirstPlayerController()->PlayerCameraManager)
-		{
-			// This only works if you use a Cine Camera (which is almost guranteed with Sequencer) and it's easier (and less human error prone) than re-deriving the information
-			ACineCameraActor* CineCameraActor = Cast<ACineCameraActor>(InMoviePipeline->GetWorld()->GetFirstPlayerController()->PlayerCameraManager->GetViewTarget());
-			if (CineCameraActor)
-			{
-				UCineCameraComponent* CineCameraComponent = CineCameraActor->GetCineCameraComponent();
-				if (CineCameraComponent)
-				{
-					return CineCameraComponent->CurrentFocusDistance;
-				}
-			}
-		}
+		return CineCameraComponent->CurrentFocusDistance;
 	}
 
 	return -1.0f;
@@ -304,21 +292,9 @@ float UMoviePipelineBlueprintLibrary::GetCurrentFocusDistance(const UMoviePipeli
 
 float UMoviePipelineBlueprintLibrary::GetCurrentFocalLength(const UMoviePipeline* InMoviePipeline)
 {
-	if (InMoviePipeline)
+	if (const UCineCameraComponent* CineCameraComponent = Utility_GetCurrentCineCamera(InMoviePipeline->GetWorld()))
 	{
-		if (InMoviePipeline->GetWorld()->GetFirstPlayerController()->PlayerCameraManager)
-		{
-			// This only works if you use a Cine Camera (which is almost guranteed with Sequencer) and it's easier (and less human error prone) than re-deriving the information
-			ACineCameraActor* CineCameraActor = Cast<ACineCameraActor>(InMoviePipeline->GetWorld()->GetFirstPlayerController()->PlayerCameraManager->GetViewTarget());
-			if (CineCameraActor)
-			{
-				UCineCameraComponent* CineCameraComponent = CineCameraActor->GetCineCameraComponent();
-				if (CineCameraComponent)
-				{
-					return CineCameraComponent->CurrentFocalLength;
-				}
-			}
-		}
+		return CineCameraComponent->CurrentFocalLength;
 	}
 
 	return -1.0f;
@@ -326,21 +302,9 @@ float UMoviePipelineBlueprintLibrary::GetCurrentFocalLength(const UMoviePipeline
 
 float UMoviePipelineBlueprintLibrary::GetCurrentAperture(const UMoviePipeline* InMoviePipeline)
 {
-	if (InMoviePipeline)
+	if (const UCineCameraComponent* CineCameraComponent = Utility_GetCurrentCineCamera(InMoviePipeline->GetWorld()))
 	{
-		if (InMoviePipeline->GetWorld()->GetFirstPlayerController()->PlayerCameraManager)
-		{
-			// This only works if you use a Cine Camera (which is almost guranteed with Sequencer) and it's easier (and less human error prone) than re-deriving the information
-			ACineCameraActor* CineCameraActor = Cast<ACineCameraActor>(InMoviePipeline->GetWorld()->GetFirstPlayerController()->PlayerCameraManager->GetViewTarget());
-			if (CineCameraActor)
-			{
-				UCineCameraComponent* CineCameraComponent = CineCameraActor->GetCineCameraComponent();
-				if (CineCameraComponent)
-				{
-					return CineCameraComponent->CurrentAperture;
-				}
-			}
-		}
+		return CineCameraComponent->CurrentAperture;
 	}
 
 	return 0.0f;
@@ -416,7 +380,7 @@ void UMoviePipelineBlueprintLibrary::UpdateJobShotListFromSequence(ULevelSequenc
 				TRange<FFrameNumber> LocalCameraRange = Section->GetRange();
 
 				// Intersect it with the root range so that if the parent has trimmed down the sub-section we don't render outside that.
-				TRange<FFrameNumber> RootCameraRange = TRange<FFrameNumber>::Intersection(LocalSpace.RootClampRange, LocalCameraRange * LocalSpace.RootToSequenceTransform.InverseLinearOnly());
+				TRange<FFrameNumber> RootCameraRange = TRange<FFrameNumber>::Intersection(LocalSpace.RootClampRange, LocalSpace.RootToSequenceTransform.InverseNoLooping().TransformRangeUnwarped(LocalCameraRange));
 				if (!RootCameraRange.IsEmpty())
 				{
 					if (UMovieSceneCinematicShotSection* ShotSection = Cast<UMovieSceneCinematicShotSection>(Section))
@@ -468,7 +432,7 @@ void UMoviePipelineBlueprintLibrary::UpdateJobShotListFromSequence(ULevelSequenc
 			TTuple<FString, FString> Name;
 			TSharedPtr<MoviePipeline::FCameraCutSubSectionHierarchyNode> LeafNode;
 			TRange<FFrameNumber> CameraCutWarmUpRange;
-			FMovieSceneTimeTransform InnerToOuterTransform;
+			FMovieSceneSequenceTransform InnerToOuterTransform;
 		};
 
 		TArray<FLinearizedEntity> Entities;
@@ -668,11 +632,11 @@ void UMoviePipelineBlueprintLibrary::UpdateJobShotListFromSequence(ULevelSequenc
 				}
 			}
 
-			FMovieSceneTimeTransform InnerToOuterTransform = FMovieSceneTimeTransform();
+			FMovieSceneSequenceTransform InnerToOuterTransform;
 			FMovieSceneSubSequenceData* SubSequenceData = SequenceHierarchyCache.FindSubData(Entity.SequenceID);
 			if (SubSequenceData)
 			{
-				InnerToOuterTransform = SubSequenceData->RootToSequenceTransform.InverseFromAllFirstWarps();
+				InnerToOuterTransform = SubSequenceData->RootToSequenceTransform.InverseFromAllFirstLoops();
 			}
 
 			// To make the camera cut range detection more consistent, we'll convert the start of this Entity into root sequence space, and then we'll convert the start of the
@@ -681,7 +645,7 @@ void UMoviePipelineBlueprintLibrary::UpdateJobShotListFromSequence(ULevelSequenc
 			TRange<FFrameNumber> CameraCutRangeInRoot = EntityRangeInRoot;
 			if (LeafNode->CameraCutSection.IsValid())
 			{
-				CameraCutRangeInRoot = LeafNode->CameraCutSection->GetRange() * InnerToOuterTransform;
+				CameraCutRangeInRoot = InnerToOuterTransform.TransformRangeConstrained(LeafNode->CameraCutSection->GetRange());
 			}
 
 			TRange<FFrameNumber> CameraCutWarmUpRange = TRange<FFrameNumber>::Empty();
@@ -716,7 +680,7 @@ void UMoviePipelineBlueprintLibrary::UpdateJobShotListFromSequence(ULevelSequenc
 			Entity.CameraCutWarmUpRange = TRange<FFrameNumber>::Empty();
 			Entity.LeafNode = LeafNode;
 			Entity.Name = MoviePipeline::GetNameForShot(SequenceHierarchyCache, InSequence, LeafNode);
-			Entity.InnerToOuterTransform = FMovieSceneTimeTransform();
+			Entity.InnerToOuterTransform = FMovieSceneSequenceTransform();
 		}
 
 		// We need to generate all of the linearized segments first so that we have all of the names available.
@@ -788,6 +752,8 @@ void UMoviePipelineBlueprintLibrary::UpdateJobShotListFromSequence(ULevelSequenc
 			if (!NewShot)
 			{
 				NewShot = NewObject<UMoviePipelineExecutorShot>(InJob);
+				NewShot->SetFlags(RF_Transactional);
+				
 				UE_LOG(LogMovieRenderPipeline, Log, TEXT("Generated new ShotInfo for Inner: %s Outer: %s (No existing shot found in the job)."), *Entity.Name.Get<0>(), *Entity.Name.Get<1>());
 			}
 			else
@@ -804,7 +770,7 @@ void UMoviePipelineBlueprintLibrary::UpdateJobShotListFromSequence(ULevelSequenc
 			NewShot->ShotInfo.SubSectionHierarchy = Entity.LeafNode;
 			NewShot->ShotInfo.TotalOutputRangeRoot = Entity.Range;
 			NewShot->ShotInfo.WarmupRangeRoot = Entity.CameraCutWarmUpRange;
-			NewShot->ShotInfo.OuterToInnerTransform = Entity.InnerToOuterTransform.Inverse();
+			NewShot->ShotInfo.OuterToInnerTransform = Entity.InnerToOuterTransform.InverseNoLooping();
 			NewShot->SidecarCameras = Entity.SidecarCameras;
 			UE_LOG(LogMovieRenderPipeline, Log, TEXT("Registering range: %s (InnerName: %s OuterName: %s)"), *LexToString(NewShot->ShotInfo.TotalOutputRangeRoot), *NewShot->InnerName, *NewShot->OuterName);
 		}
@@ -924,6 +890,23 @@ FIntPoint UMoviePipelineBlueprintLibrary::Utility_GetEffectiveOutputResolution(c
 	return EffectiveResolution;
 }
 
+UCineCameraComponent* UMoviePipelineBlueprintLibrary::Utility_GetCurrentCineCamera(const UWorld* InWorld)
+{
+	if (InWorld)
+	{
+		if (const TObjectPtr<APlayerCameraManager> PlayerCameraManager = InWorld->GetFirstPlayerController()->PlayerCameraManager)
+		{
+			// This only works if you use a Cine Camera (which is almost guaranteed with Sequencer) and it's easier (and less human error prone) than re-deriving the information
+			if (const ACineCameraActor* CineCameraActor = Cast<ACineCameraActor>(PlayerCameraManager->GetViewTarget()))
+			{
+				return CineCameraActor->GetCineCameraComponent();
+			}
+		}
+	}
+
+	return nullptr;
+}
+
 UMoviePipelineSetting* UMoviePipelineBlueprintLibrary::FindOrGetDefaultSettingForShot(TSubclassOf<UMoviePipelineSetting> InSettingType, const UMoviePipelinePrimaryConfig* InPrimaryConfig, const UMoviePipelineExecutorShot* InShot)
 {
 	// Check to see if this setting is in the shot override, if it is we'll use the shot version of that.
@@ -1013,7 +996,7 @@ void UMoviePipelineBlueprintLibrary::ResolveFilenameFormatArguments(const FStrin
 	// And from ourself
 	{
 		// Use the shared function as UMoviePipelinePrimaryConfig::GetFormatArguments to ensure all the time variables get overwritten.
-		UE::MoviePipeline::GetSharedFormatArguments(OutMergedFormatArgs.FilenameArguments, OutMergedFormatArgs.FileMetadata, InParams.InitializationTime, InParams.InitializationVersion, InParams.Job);
+		UE::MoviePipeline::GetSharedFormatArguments(OutMergedFormatArgs.FilenameArguments, OutMergedFormatArgs.FileMetadata, InParams.InitializationTime, InParams.InitializationVersion, InParams.Job, InParams.InitializationTimeOffset);
 		
 		// By default, we don't want to show frame duplication numbers. If we need to start writing them,
 		// they need to come before the frame number (so that tools recognize them as a sequence).

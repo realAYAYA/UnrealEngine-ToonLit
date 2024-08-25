@@ -800,7 +800,7 @@ void ULyraReplicationGraphNode_AlwaysRelevant_ForConnection::GatherActorListsFor
 		{
 			// No always relevant lists for that level
 			UE_CLOG(Lyra::RepGraph::DisplayClientLevelStreaming > 0, LogLyraRepGraph, Display, TEXT("CLIENTSTREAMING Removing %s from AlwaysRelevantStreamingLevelActors because FActorRepListRefView is null. %s "), *StreamingLevel.ToString(),  *Params.ConnectionManager.GetName());
-			AlwaysRelevantStreamingLevelsNeedingReplication.RemoveAtSwap(Idx, 1, false);
+			AlwaysRelevantStreamingLevelsNeedingReplication.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 			continue;
 		}
 
@@ -822,7 +822,7 @@ void ULyraReplicationGraphNode_AlwaysRelevant_ForConnection::GatherActorListsFor
 			if (bAllDormant)
 			{
 				UE_CLOG(Lyra::RepGraph::DisplayClientLevelStreaming > 0, LogLyraRepGraph, Display, TEXT("CLIENTSTREAMING All AlwaysRelevant Actors Dormant on StreamingLevel %s for %s. Removing list."), *StreamingLevel.ToString(), *Params.ConnectionManager.GetName());
-				AlwaysRelevantStreamingLevelsNeedingReplication.RemoveAtSwap(Idx, 1, false);
+				AlwaysRelevantStreamingLevelsNeedingReplication.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 			}
 			else
 			{

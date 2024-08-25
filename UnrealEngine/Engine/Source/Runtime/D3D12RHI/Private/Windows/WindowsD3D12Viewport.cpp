@@ -5,16 +5,12 @@
 =============================================================================*/
 
 #include "D3D12RHIPrivate.h"
-#include "RenderCore.h"
+#include "Features/IModularFeatures.h"
 #include "HDRHelper.h"
+#include "HAL/ThreadHeartBeat.h"
+#include "Windows/IDXGISwapchainProvider.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows.h"
-
-#include "HAL/ThreadHeartBeat.h"
-
-#include "Windows/IDXGISwapchainProvider.h"
-#include "Features/IModularFeatures.h"
 
 static const uint32 WindowsDefaultNumBackBuffers = 3;
 
@@ -175,9 +171,15 @@ void FD3D12Viewport::Init()
 
 			TRefCountPtr<IDXGISwapChain> SwapChain;
 			
-			HRESULT hr = DXGISwapchainProvider ?
-				DXGISwapchainProvider->CreateSwapChain(Factory2, CommandQueue, &SwapChainDesc, SwapChain.GetInitReference()) :
-				Factory2->CreateSwapChain(CommandQueue, &SwapChainDesc, SwapChain.GetInitReference());
+			HRESULT hr;
+						
+			{
+				// Don't create swap chain and release back buffer at the same time (see notes on critical section)
+				FScopeLock Lock(&DXGIBackBufferLock); 
+				hr = DXGISwapchainProvider ?
+					DXGISwapchainProvider->CreateSwapChain(Factory2, CommandQueue, &SwapChainDesc, SwapChain.GetInitReference()) :
+					Factory2->CreateSwapChain(CommandQueue, &SwapChainDesc, SwapChain.GetInitReference());
+			}
 			
 			if (FAILED(hr))
 			{
@@ -470,7 +472,10 @@ static const FString GetDXGIColorSpaceString(DXGI_COLOR_SPACE_TYPE ColorSpace)
 
 void FD3D12Viewport::EnsureColorSpace(EDisplayColorGamut DisplayGamut, EDisplayOutputFormat OutputDevice)
 {
-	ensure(SwapChain4.GetReference());
+	if (!SwapChain4.GetReference())
+	{
+		return;
+	}
 
 	DXGI_COLOR_SPACE_TYPE NewColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;	// sRGB;
 	const bool bPrimaries2020 = (DisplayGamut == EDisplayColorGamut::Rec2020_D65);

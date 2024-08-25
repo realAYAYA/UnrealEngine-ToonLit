@@ -99,6 +99,8 @@ public:
 	 * Remove asset from the the search database that are not in this set of assets.
 	 */
 	void RemoveAssetsNotInThisSet(const TArray<FAssetData>& InAssets);
+	
+	bool bEnableIntegrityChecks = false;
 
 private:
 	void LogLastError() const;

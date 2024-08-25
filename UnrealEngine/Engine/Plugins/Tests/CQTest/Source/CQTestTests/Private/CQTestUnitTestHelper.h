@@ -3,6 +3,8 @@
 #pragma once
 #include "Misc/AutomationTest.h"
 
+bool DoesEventExist(FAutomationTestBase& TestRunner, const FAutomationEvent& Event);
+
 // When testing the framework, occasionally we need the error to live on the test framework
 // for short-circuiting logic.  We use this method to manually clear the error
 // (Normally from AFTER_EACH) to cause the test to pass

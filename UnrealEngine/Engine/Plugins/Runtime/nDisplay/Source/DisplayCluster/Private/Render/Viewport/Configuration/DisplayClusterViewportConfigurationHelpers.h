@@ -5,31 +5,24 @@
 #include "CoreMinimal.h"
 
 #include "DisplayClusterConfigurationTypes_Enums.h"
+#include "Render/Viewport/Containers/DisplayClusterViewport_OverscanSettings.h"
 
 class FDisplayClusterViewport;
-class ADisplayClusterRootActor;
 class UDisplayClusterConfigurationViewport;
-
-struct FDisplayClusterConfigurationICVFX_OverlayAdvancedRenderSettings;
-struct FDisplayClusterConfigurationPostRender_Override;
-struct FDisplayClusterConfigurationPostRender_BlurPostprocess;
 struct FDisplayClusterConfigurationViewport_Overscan;
-struct FDisplayClusterConfigurationPostRender_GenerateMips;
-struct FDisplayClusterConfigurationProjection;
 
+/**
+* Base configuration helper class.
+*/
 class FDisplayClusterViewportConfigurationHelpers
 {
 public:
-	static void UpdateViewportStereoMode(FDisplayClusterViewport& DstViewport, const EDisplayClusterConfigurationViewport_StereoMode StereoMode);
-	
-	static void UpdateViewportSetting_OverlayRenderSettings(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationICVFX_OverlayAdvancedRenderSettings& InOverlaySettings);
-	static void UpdateViewportSetting_Override(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationPostRender_Override& InOverride);
+	/** Returns true if this viewport should be rendered in monoscopic mode. */
+	static bool IsForceMonoscopicRendering(const EDisplayClusterConfigurationViewport_StereoMode StereoMode);
 
-	static void UpdateViewportSetting_PostprocessBlur(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationPostRender_BlurPostprocess& InBlurPostprocess);
-	static void UpdateViewportSetting_Overscan(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationViewport_Overscan& InOverscan);
-	static void UpdateViewportSetting_GenerateMips(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationPostRender_GenerateMips& InGenerateMips);
+	/** Update base settings of DC viewport.*/
+	static void UpdateBaseViewportSetting(FDisplayClusterViewport& DstViewport, const UDisplayClusterConfigurationViewport& InConfigurationViewport);
 
-	static void UpdateBaseViewportSetting(FDisplayClusterViewport& DstViewport, ADisplayClusterRootActor& RootActor, const UDisplayClusterConfigurationViewport& InConfigurationViewport);
-
-	static void UpdateProjectionPolicy(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationProjection* InConfigurationProjectionPolicy = nullptr);
+	/** Get viewport overscan settings. */
+	static FDisplayClusterViewport_OverscanSettings GetViewportOverscanSettings(const FDisplayClusterConfigurationViewport_Overscan& InOverscan);
 };

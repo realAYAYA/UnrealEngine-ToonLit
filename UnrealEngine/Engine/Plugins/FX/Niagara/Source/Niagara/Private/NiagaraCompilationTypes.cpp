@@ -8,18 +8,12 @@
 #include "NiagaraAsyncCompile.h"
 #include "NiagaraModule.h"
 #include "NiagaraScriptSourceBase.h"
+#include "NiagaraSettings.h"
 #include "NiagaraSystem.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraSystem"
 
 #if WITH_EDITORONLY_DATA
-
-enum class ENiagaraCompilationMode : int32
-{
-	Original,
-	AsyncTasks,
-	Verify
-};
 
 enum class ENiagaraCompilationValidateMode : int32
 {
@@ -28,14 +22,6 @@ enum class ENiagaraCompilationValidateMode : int32
 	Ensure,
 	Assert
 };
-
-static int32 GNiagaraSystemCompileMode = (int32) ENiagaraCompilationMode::Original;
-static FAutoConsoleVariableRef CVarNiagaraSystemCompileMode(
-	TEXT("fx.Niagara.SystemCompileMode"),
-	GNiagaraSystemCompileMode,
-	TEXT("Defines how NiagaraSystem will be compiled"),
-	ECVF_Default
-);
 
 static bool GNiagaraCompileDumpTimings = false;
 static FAutoConsoleVariableRef CVarNiagaraCompileDumpTimings(
@@ -163,11 +149,6 @@ bool operator==(const FNiagaraDataSetProperties& Lhs, const FNiagaraDataSetPrope
 		&& Lhs.Variables == Rhs.Variables;
 }
 
-bool operator==(const FVectorVMExternalFunctionContextProxy& Lhs, const FVectorVMExternalFunctionContextProxy& Rhs)
-{
-	return true;
-}
-
 bool operator==(const FNiagaraCompilerTag& Lhs, const FNiagaraCompilerTag& Rhs)
 {
 	return Lhs.Variable == Rhs.Variable
@@ -205,7 +186,7 @@ public:
 		FNiagaraSystemAsyncCompileResults NewCompileRequest;
 		INiagaraModule& NiagaraModule = FModuleManager::GetModuleChecked<INiagaraModule>("Niagara");
 
-		CompileRequestHandle = NiagaraModule.RequestCompileSystem(Options.System, bForced);
+		CompileRequestHandle = NiagaraModule.RequestCompileSystem(Options.System, bForced, Options.TargetPlatform);
 
 		return CompileRequestHandle != INDEX_NONE;
 	}
@@ -308,8 +289,6 @@ public:
 
 	virtual void Apply(const FNiagaraQueryCompilationOptions& Options) override
 	{
-		bool bAnyRIParametersDirtied = false;
-
 		// we need to do this apply in multiple passes.  Because the script's VMCompilationId has dependencies
 		// on the rapid iteration parameters of all the related scripts then we need to be sure to update the
 		// RI parameters with the data that we've collected before we actually try to set the results.
@@ -319,16 +298,20 @@ public:
 		//	parameters just because things are disabled because the editor will forget the settings.
 		constexpr bool bAllowParameterRemoval = false;
 
+		auto GetValidTargetScript = [](UNiagaraScript* Script) -> UNiagaraScript*
+		{
+			return ::IsValid(Script) ? Script : nullptr;
+		};
+
 		for (FNiagaraSystemAsyncCompileResults::FCompileResultMap::TConstIterator ResultIt(CompileResults.CompileResultMap);
 			ResultIt;
 			++ResultIt)
 		{
-			UNiagaraScript* TargetScript = ResultIt->Key;
 			const FNiagaraScriptAsyncCompileData& ScriptCompileData = ResultIt->Value;
 
-			if (TargetScript->ApplyRapidIterationParameters(ScriptCompileData.RapidIterationParameters, bAllowParameterRemoval))
+			if (UNiagaraScript* TargetScript = GetValidTargetScript(ResultIt->Key))
 			{
-				bAnyRIParametersDirtied = true;
+				TargetScript->ApplyRapidIterationParameters(ScriptCompileData.RapidIterationParameters, bAllowParameterRemoval);
 			}
 		}
 
@@ -337,55 +320,65 @@ public:
 			ResultIt;
 			++ResultIt)
 		{
-			const FNiagaraScriptAsyncCompileData& ScriptCompileData = ResultIt->Value;
-			if (ensure(ScriptCompileData.ExeData.IsValid()))
+			if (UNiagaraScript* TargetScript = GetValidTargetScript(ResultIt->Key))
 			{
-				UNiagaraScript* TargetScript = ResultIt->Key;
-				TMap<FName, UNiagaraDataInterface*> ObjectNameMap;
+				const FNiagaraScriptAsyncCompileData& ScriptCompileData = ResultIt->Value;
 
-				if (ScriptCompileData.bFromDerivedDataCache)
+				if (ScriptCompileData.ExeData.IsValid())
 				{
-					// if the data was pulled from the DDC then we'll need to generate the map from the source
-					const UNiagaraScriptSourceBase* ScriptSource = TargetScript->GetLatestSource();
-					ObjectNameMap = ScriptSource->ComputeObjectNameMap(*Options.System, TargetScript->GetUsage(), TargetScript->GetUsageId(), ScriptCompileData.UniqueEmitterName);
-				}
-				else
-				{
-					// if we actually generated our data will include a name map that we can use
-					Algo::Transform(ScriptCompileData.NamedDataInterfaces, ObjectNameMap, [](const TMap<FName, TObjectPtr<UNiagaraDataInterface>>::ElementType& Element)
-					{
-						return TMap<FName, UNiagaraDataInterface*>::ElementType(Element.Key, Element.Value);
-					});
-				}
-
-				// if we dirtied any RI parameters then we need to regenerate our CompilationId
-				FNiagaraVMExecutableDataId UpdatedCompileId;
-				const FNiagaraVMExecutableDataId* CompileIdToUse = &ScriptCompileData.CompileId;
-
-				if (bAnyRIParametersDirtied)
-				{
+					// because our compilation process includes the generation of rapid iteration parameters and static
+					// variables we need to generate the ExecutableDataId
+					// if we dirtied any RI parameters then we need to regenerate our CompilationId
+					FNiagaraVMExecutableDataId UpdatedCompileId;
 					TargetScript->ComputeVMCompilationId(UpdatedCompileId, FGuid());
-					CompileIdToUse = &UpdatedCompileId;
-				}
 
-				constexpr bool bApplyRapidIterationParameters = false;
-				TargetScript->SetVMCompilationResults(
-					*CompileIdToUse,
-					*ScriptCompileData.ExeData,
-					ScriptCompileData.UniqueEmitterName,
-					ObjectNameMap,
-					bApplyRapidIterationParameters);
+					TMap<FName, UNiagaraDataInterface*> ObjectNameMap;
+
+					// The original implementation would generate DI references from the compilation data (unless things were pulled from
+					// the DDC).  We will always pull the data from the target scripts so that we can avoid any weird caching issues with
+					// our digested graphs, but it also should ensure more consistent behavior (the compilation should only depend on the
+					// aspects of DI that impact compilation, other changes that could have been made by the user shouldn't be erased
+					// when the compilation results are applied.
+					if (const UNiagaraScriptSourceBase* ScriptSource = TargetScript->GetLatestSource())
+					{
+						ObjectNameMap = ScriptSource->ComputeObjectNameMap(*Options.System, TargetScript->GetUsage(), TargetScript->GetUsageId(), ScriptCompileData.UniqueEmitterName);
+					}
+
+					constexpr bool bApplyRapidIterationParameters = false;
+					TargetScript->SetVMCompilationResults(
+						UpdatedCompileId,
+						*ScriptCompileData.ExeData,
+						ScriptCompileData.UniqueEmitterName,
+						ObjectNameMap,
+						bApplyRapidIterationParameters);
+
+					if (!ScriptCompileData.CompiledShaders.IsEmpty())
+					{
+						for (const FNiagaraCompiledShaderInfo& ShaderMapInfo : ScriptCompileData.CompiledShaders)
+						{
+							TargetScript->SetComputeCompilationResults(
+								ShaderMapInfo.TargetPlatform,
+								ShaderMapInfo.ShaderPlatform,
+								ShaderMapInfo.FeatureLevel,
+								ScriptCompileData.ExeData->ShaderScriptParametersMetadata,
+								ShaderMapInfo.CompiledShader,
+								ShaderMapInfo.CompilationErrors);
+						}
+					}
+				}
 			}
 		}
 
 		// Synchronize the variables that we actually encountered during precompile so that we can expose them to the end user.
-		FNiagaraUserRedirectionParameterStore& ExposedParameters = Options.System->GetExposedParameters();
-
-		for (const FNiagaraVariable& ExposedVariable : CompileResults.ExposedVariables)
 		{
-			if (!ExposedParameters.FindParameterOffset(ExposedVariable))
+			FNiagaraUserRedirectionParameterStore& ExposedParameters = Options.System->GetExposedParameters();
+
+			for (const FNiagaraVariable& ExposedVariable : CompileResults.ExposedVariables)
 			{
-				ExposedParameters.AddParameter(ExposedVariable, true, false);
+				if (!ExposedParameters.FindParameterOffset(ExposedVariable))
+				{
+					ExposedParameters.AddParameter(ExposedVariable, true, false);
+				}
 			}
 		}
 	}
@@ -412,6 +405,11 @@ public:
 
 			WriteTimingsEntry(TEXT("AsyncTask Compilation"), Options, SystemMetrics);
 		}
+	}
+
+	virtual bool BlocksGarbageCollection() const override
+	{
+		return false;
 	}
 
 	FNiagaraCompilationTaskHandle CompileRequestHandle;
@@ -776,11 +774,13 @@ private:
 TUniquePtr<FNiagaraActiveCompilation> FNiagaraActiveCompilation::CreateCompilation()
 {
 #if WITH_EDITORONLY_DATA
-	if (GNiagaraSystemCompileMode == (int32)ENiagaraCompilationMode::AsyncTasks)
+	const ENiagaraCompilationMode CompilationMode = GetDefault<UNiagaraSettings>()->CompilationMode;
+
+	if (CompilationMode == ENiagaraCompilationMode::AsyncTasks)
 	{
 		return MakeUnique<FNiagaraActiveCompilationAsyncTask>();
 	}
-	else if (GNiagaraSystemCompileMode == (int32)ENiagaraCompilationMode::Verify)
+	else if (CompilationMode == ENiagaraCompilationMode::Verify)
 	{
 		return MakeUnique<FNiagaraActiveCompilationVerify>();
 	}

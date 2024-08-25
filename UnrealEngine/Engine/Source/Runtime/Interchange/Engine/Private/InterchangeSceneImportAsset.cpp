@@ -9,6 +9,7 @@
 #include "Engine/Blueprint.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 
 UInterchangeSceneImportAsset::~UInterchangeSceneImportAsset()
@@ -24,14 +25,21 @@ UInterchangeSceneImportAsset::~UInterchangeSceneImportAsset()
 
 void UInterchangeSceneImportAsset::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UInterchangeSceneImportAsset::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 #if WITH_EDITORONLY_DATA
 	if (AssetImportData)
 	{
-		OutTags.Add(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
 	}
 #endif
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UInterchangeSceneImportAsset::PostLoad()

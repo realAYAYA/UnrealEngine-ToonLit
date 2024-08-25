@@ -287,7 +287,7 @@ struct FDelaunay2Connectivity
 			//  and depth-first traversal would be more sensitive to starting triangle in that case
 			PickIdx = (PickIdx + 1) % ToWalk.Num();
 			const FWalk Walk = ToWalk[PickIdx];
-			ToWalk.RemoveAtSwap(PickIdx, 1, false);
+			ToWalk.RemoveAtSwap(PickIdx, 1, EAllowShrinking::No);
 			int32 Vert = EdgeToVert[Walk.Edge];
 			FIndex3i UniqueTri = AsUniqueTriangle(Walk.Edge, Vert);
 			if (UniqueTri.A < 0) // it's a ghost
@@ -374,8 +374,8 @@ struct FDelaunay2Connectivity
 		{
 			if (!FillTri[TriIdx])
 			{
-				FillTri.RemoveAtSwap(TriIdx, 1, false);
-				TrianglesOut.RemoveAtSwap(TriIdx, 1, false);
+				FillTri.RemoveAtSwap(TriIdx, 1, EAllowShrinking::No);
+				TrianglesOut.RemoveAtSwap(TriIdx, 1, EAllowShrinking::No);
 				TriIdx--; // re-consider the index w/ the newly swapped element
 			}
 		}
@@ -453,7 +453,7 @@ struct FDelaunay2Connectivity
 		// Next walk up to the outer boundary
 		while (!ToWalkOuter.IsEmpty())
 		{
-			const FWalk Walk = ToWalkOuter.Pop(false);
+			const FWalk Walk = ToWalkOuter.Pop(EAllowShrinking::No);
 			int32 Vert = EdgeToVert[Walk.Edge];
 			FIndex3i UniqueTri = AsUniqueTriangle(Walk.Edge, Vert);
 			if (UniqueTri.A < 0) // it's a ghost
@@ -474,7 +474,7 @@ struct FDelaunay2Connectivity
 		int32 SolidTriCount = 0;
 		while (!ToWalkInner.IsEmpty())
 		{
-			const FWalk Walk = ToWalkInner.Pop(false);
+			const FWalk Walk = ToWalkInner.Pop(EAllowShrinking::No);
 			int32 Vert = EdgeToVert[Walk.Edge];
 			FIndex3i UniqueTri = AsUniqueTriangle(Walk.Edge, Vert);
 			if (UniqueTri.A < 0) // it's a ghost
@@ -792,7 +792,6 @@ namespace DelaunayInternal
 	{
 		IsDuplicateOfOut = FDelaunay2Connectivity::InvalidIndex;
 
-		FIndex2i FirstEdge(FDelaunay2Connectivity::InvalidIndex, FDelaunay2Connectivity::InvalidIndex);
 		constexpr int32 GhostV = FDelaunay2Connectivity::GhostIndex; // shorter name
 
 		auto ChooseCross = [&Random, bAssumeDelaunay, &Vertices, Vertex, GhostV](const FIndex3i& Tri, bool bSkipFirst) -> int32
@@ -912,7 +911,7 @@ namespace DelaunayInternal
 		TArray<FIndex2i> Border;
 		while (!ToConsider.IsEmpty())
 		{
-			FIndex2i Edge = ToConsider.Pop(false);
+			FIndex2i Edge = ToConsider.Pop(EAllowShrinking::No);
 			int32 TriV = Connectivity.GetVertex(Edge);
 			if (TriV != FDelaunay2Connectivity::InvalidIndex) // tri still existed (wasn't deleted by earlier traversal)
 			{
@@ -1320,7 +1319,7 @@ namespace DelaunayInternal
 		while (!Ranges.IsEmpty())
 		{
 
-			FIndex2i Range = Ranges.Pop(false);
+			FIndex2i Range = Ranges.Pop(EAllowShrinking::No);
 			int32 Mid = Range.A + 1;
 			if (Range.A + 2 == Range.B)
 			{

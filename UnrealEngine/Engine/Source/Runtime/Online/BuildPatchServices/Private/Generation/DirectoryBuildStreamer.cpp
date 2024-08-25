@@ -470,7 +470,7 @@ namespace BuildPatchServices
 			if (TabLocation != INDEX_NONE)
 			{
 				// Strip tab separated timestamp if it exists
-				Filename.LeftInline(TabLocation, false);
+				Filename.LeftInline(TabLocation, EAllowShrinking::No);
 			}
 			Filename = Config.BuildRoot / Filename;
 			FPaths::NormalizeFilename(Filename);

@@ -21,14 +21,30 @@ class EDITORINTERACTIVETOOLSFRAMEWORK_API UEditorTransformGizmo : public UTransf
 {
 	GENERATED_BODY()
 
+	/**  UTransformGizmo override */
+	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
+	
 protected:
 
 	/** Apply translate delta to transform proxy */
-	virtual void ApplyTranslateDelta(const FVector& InTranslateDelta);
+	virtual void ApplyTranslateDelta(const FVector& InTranslateDelta) override;
 
 	/** Apply rotate delta to transform proxy */
-	virtual void ApplyRotateDelta(const FQuat& InRotateDelta);
+	virtual void ApplyRotateDelta(const FQuat& InRotateDelta) override;
 
 	/** Apply scale delta to transform proxy */
-	virtual void ApplyScaleDelta(const FVector& InScaleDelta);
+	virtual void ApplyScaleDelta(const FVector& InScaleDelta) override;
+
+	/**  UTransformGizmo override */
+	virtual void SetActiveTarget(
+		UTransformProxy* Target,
+		IToolContextTransactionProvider* TransactionProvider = nullptr,
+		IGizmoStateTarget* InStateTarget = nullptr) override;
+
+	/**
+	 * Functions to listen to gizmo transform begin/end.
+	 * They are currently used to set data on the legacy widget as some viewport clients rely on current axis to be set.
+	 */
+	void OnGizmoTransformBegin(UTransformProxy* TransformProxy) const;
+	void OnGizmoTransformEnd(UTransformProxy* TransformProxy) const;;
 };

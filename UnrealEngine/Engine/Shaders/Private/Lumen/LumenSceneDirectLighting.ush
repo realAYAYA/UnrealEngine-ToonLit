@@ -3,12 +3,8 @@
 #pragma once
 
 #include "LumenSceneLighting.ush"
-
-// Must match ELumenLightType in LumenSceneDirectLighting.cpp
-#define LIGHT_TYPE_DIRECTIONAL 0
-#define LIGHT_TYPE_POINT 1
-#define LIGHT_TYPE_SPOT 2
-#define LIGHT_TYPE_RECT 3
+#include "../EyeAdaptationCommon.ush"
+#include "/Engine/Shared/LightDefinitions.h"
 
 RWStructuredBuffer<uint> RWShadowMaskTiles;
 StructuredBuffer<uint> ShadowMaskTiles;
@@ -98,7 +94,7 @@ void WriteShadowMaskRay(FShadowMaskRay Ray, uint CardTileIndex, uint2 CoordInCar
 // Must match FLumenPackedLight in LumenSceneDirectLighting.cpp
 struct FLumenPackedLight
 {
-	float3 WorldPosition;
+	float3 WorldPosition; // LUMEN_LWC_TODO
 	float InvRadius;
 
 	float3 Color;
@@ -131,9 +127,9 @@ struct FLumenPackedLight
 	float2 RectLightAtlasUVOffset;
 
 	uint LightingChannelMask;
-	uint bHasShadowMask;
+	uint LightFunctionAtlasIndex_bHasShadowMask;
 	float IESAtlasIndex;
-	uint Padding;
+	float InverseExposureBlend;
 };
 
 struct FLumenLight
@@ -155,14 +151,14 @@ struct FLumenLight
 
 StructuredBuffer<FLumenPackedLight> LumenPackedLights;
 
-FLumenLight LoadLumenLight(uint LightIndex, float3 PreViewTranslation)
+FLumenLight LoadLumenLight(uint LightIndex, float3 PreViewTranslation, float Exposure)
 {
 	FLumenPackedLight PackedLight = LumenPackedLights[LightIndex];
 
 	FDeferredLightData DeferredLightData = (FDeferredLightData)0;
 	DeferredLightData.TranslatedWorldPosition = PackedLight.WorldPosition + PreViewTranslation;
 	DeferredLightData.InvRadius = PackedLight.InvRadius;
-	DeferredLightData.Color = PackedLight.Color;
+	DeferredLightData.Color = PackedLight.Color * InverseExposureLerp(Exposure, PackedLight.InverseExposureBlend);
 	DeferredLightData.FalloffExponent = PackedLight.FalloffExponent;
 	DeferredLightData.Direction = PackedLight.Direction;
 	DeferredLightData.Tangent = PackedLight.Tangent;
@@ -186,6 +182,7 @@ FLumenLight LoadLumenLight(uint LightIndex, float3 PreViewTranslation)
 	DeferredLightData.bSpotLight = PackedLight.LightType == LIGHT_TYPE_SPOT;
 	DeferredLightData.bRectLight = PackedLight.LightType == LIGHT_TYPE_RECT;
 	DeferredLightData.IESAtlasIndex = PackedLight.IESAtlasIndex;
+	DeferredLightData.LightFunctionAtlasLightIndex = PackedLight.LightFunctionAtlasIndex_bHasShadowMask & 0x7FFFFFFF;
 
 	FLumenLight LumenLight = (FLumenLight)0;
 	LumenLight.DeferredLightData = DeferredLightData;
@@ -196,7 +193,7 @@ FLumenLight LoadLumenLight(uint LightIndex, float3 PreViewTranslation)
 	LumenLight.CosConeAngle = PackedLight.SinCosConeAngleOrRectLightAtlasUVScale.y;
 	LumenLight.SinConeAngle = PackedLight.SinCosConeAngleOrRectLightAtlasUVScale.x;
 	LumenLight.VirtualShadowMapId = PackedLight.VirtualShadowMapId;
-	LumenLight.bHasShadowMask = PackedLight.bHasShadowMask;
+	LumenLight.bHasShadowMask = PackedLight.LightFunctionAtlasIndex_bHasShadowMask >> 31;
 	LumenLight.LightingChannelMask = PackedLight.LightingChannelMask;
 	LumenLight.Type = PackedLight.LightType;
 	return LumenLight;
@@ -206,7 +203,7 @@ FLumenLight LoadLumenLight(uint LightIndex, float3 PreViewTranslation)
 /** Fade distance in x, disabled brightness in y, output for preview shadows mask in z. */
 float3 LightFunctionParameters2;
 
-float GetLightFunction(float3 TranslatedWorldPosition) 
+float GetLumenLightFunction(float3 TranslatedWorldPosition) 
 {
 	float4 LightVector = mul(float4(TranslatedWorldPosition, 1), LightFunctionTranslatedWorldToLight);
 	float3 LightFunction = GetLightFunctionColor(LightVector.xyz / LightVector.w, TranslatedWorldPosition);
@@ -214,7 +211,7 @@ float GetLightFunction(float3 TranslatedWorldPosition)
 	float GreyScale = dot(LightFunction, .3333f).x;
 
 	// Calculate radial view distance for stable fading
-	float ViewDistance = length(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+	float ViewDistance = GetDistanceToCameraFromViewVector(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
 
 	float DistanceFadeAlpha = saturate((LightFunctionParameters2.x - ViewDistance) / (LightFunctionParameters2.x * .2f));
 	// Fade to disabled based on LightFunctionFadeDistance
@@ -222,6 +219,8 @@ float GetLightFunction(float3 TranslatedWorldPosition)
 
 	// Fade to disabled based on ShadowFadeFraction
 	GreyScale = lerp(LightFunctionParameters2.y, GreyScale, LightFunctionParameters.y);
-	return GreyScale;
+
+	// We want to get the same light function contribution as if it was written to a unorm8 render target so we saturate. This will also avoid amplifying other shadow factors.
+	return saturate(GreyScale);
 }
 #endif

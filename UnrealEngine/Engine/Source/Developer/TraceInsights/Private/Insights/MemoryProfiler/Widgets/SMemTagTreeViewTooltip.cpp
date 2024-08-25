@@ -100,7 +100,7 @@ TSharedPtr<SToolTip> SMemTagTreeViewTooltip::GetRowTooltip(const TSharedPtr<FMem
 	if (MemTag)
 	{
 		TagText = FText::FromString(MemTag->GetStatName());
-		TagTextEx = FText::FromString(FString::Printf(TEXT(" (0x%X)"), MemTag->GetId()));
+		TagTextEx = FText::FromString(FString::Printf(TEXT(" (0x%llX)"), (uint64)MemTag->GetId()));
 	}
 
 	FText ParentTagText = FText::GetEmpty();
@@ -109,7 +109,7 @@ TSharedPtr<SToolTip> SMemTagTreeViewTooltip::GetRowTooltip(const TSharedPtr<FMem
 	if (ParentMemTag)
 	{
 		ParentTagText = FText::FromString(ParentMemTag->GetStatName());
-		ParentTagTextEx = FText::FromString(FString::Printf(TEXT(" (0x%X)"), ParentMemTag->GetId()));
+		ParentTagTextEx = FText::FromString(FString::Printf(TEXT(" (0x%llX)"), (uint64)ParentMemTag->GetId()));
 	}
 
 #if TOOLTIP_SHOW_AGGREGATED_STATS
