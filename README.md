@@ -1,6 +1,6 @@
 # ToonLit rendering pipeline based on UnrealEngine5
 
-![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.3/Features/Advertising.png)  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Advertising.png)  
 
 #### 介绍
 
@@ -13,7 +13,7 @@ Remembering: The code that was exchanged with days and nights, years and youth, 
 
 感谢入行以来遇到的所以大佬与同事，一直向他们模仿与学习 standing on the shoulders of giants  
 
-#### Rendering Features 渲染特性
+#### Rendering Features 渲染特性(Please check HowToStartToonRendering.md)
     
 1.  ToonLit ShadingModel 着色模型
     1.  GI, 为ToonLit的ShadingModel作额外的间接光照处理（天光，Lumen）
