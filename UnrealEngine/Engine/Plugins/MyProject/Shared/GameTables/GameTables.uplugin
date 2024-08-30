@@ -20,5 +20,11 @@
 			"Type": "RuntimeAndProgram",
 			"LoadingPhase": "Default"
 		}
+	],
+	"Plugins": [
+		{
+			"Name":"MProtocol",
+			"Enabled":true
+		}
 	]
 }
