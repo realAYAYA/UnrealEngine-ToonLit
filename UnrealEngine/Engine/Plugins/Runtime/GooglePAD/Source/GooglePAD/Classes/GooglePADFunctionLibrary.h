@@ -58,6 +58,15 @@ enum class EGooglePADErrorCode : uint8
 
 	// There was an error initializing the Asset Pack API.
 	AssetPack_INITIALIZATION_FAILED,
+
+	// The app isn't owned by any user on this device. An app is "owned" if it has been acquired from the Play Store.
+	AssetPack_APP_NOT_OWNED,
+
+	// Returned if showConfirmationDialog is called but no asset packs are waiting for user confirmation.
+	AssetPack_CONFIRMATION_NOT_REQUIRED,
+
+	// Returned if the app was not installed by Play.
+	AssetPack_UNRECOGNIZED_INSTALLATION,
 };
 
 // The status associated with Asset Pack download operations.
@@ -102,6 +111,9 @@ enum class EGooglePADDownloadStatus : uint8
 
 	// An AssetPackManager_requestRemoval() async request has failed.
 	AssetPack_REMOVAL_FAILED,
+
+	// The Asset Pack download is waiting for user confirmation to proceed.
+	AssetPack_REQUIRES_USER_CONFIRMATION,
 };
 
 // The method used to store an Asset Pack on the device.
@@ -138,6 +150,22 @@ enum class EGooglePADCellularDataConfirmStatus : uint8
 	AssetPack_CONFIRM_USER_CANCELED,
 };
 
+// The status associated with a request to display a confirmation dialog.
+UENUM(BlueprintType)
+enum class EGooglePADConfirmationDialogStatus : uint8
+{
+	// AssetPackManager_showConfirmationDialog() has not been called.
+	AssetPack_CONFIRMATION_DIALOG_UNKNOWN = 0,
+
+	// AssetPackManager_showConfirmationDialog() has been called, but the user hasn't made a choice.
+	AssetPack_CONFIRMATION_DIALOG_PENDING,
+
+	// The user approved of downloading asset packs.
+	AssetPack_CONFIRMATION_DIALOG_APPROVED,
+
+	// The user declined to download asset packs.
+	AssetPack_CONFIRMATION_DIALOG_CANCELED,
+};
 
 UCLASS()
 class GOOGLEPAD_API UGooglePADFunctionLibrary : public UBlueprintFunctionLibrary
@@ -180,13 +208,21 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Request Removal"), Category = "GooglePAD")
 	static EGooglePADErrorCode RequestRemoval(const FString& Name);
 
-	/** Show confirmation dialog requesting data download over cellular network */
+	/** Show confirmation dialog requesting data download over cellular network (DEPRECIATED) */
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Show Cellular Data Confirmation"), Category = "GooglePAD")
 	static EGooglePADErrorCode ShowCellularDataConfirmation();
 
-	/** Get status of cellular confirmation dialog  */
+	/** Get status of cellular confirmation dialog (DEPRECIATED) */
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Get Cellular Data Confirmation Status"), Category = "GooglePAD")
 	static EGooglePADErrorCode GetShowCellularDataConfirmationStatus(EGooglePADCellularDataConfirmStatus& Status);
+		
+	/** Show confirmation dialog to start all asset pack downloads in either REQUIRES_USER_CONFIRMATION or WAITING_FOR_WIFI state. */
+	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Show Confirmation dialog"), Category = "GooglePAD")
+	static EGooglePADErrorCode ShowConfirmationDialog();
+
+	/** Gets the status of confirmation dialog requests */
+	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Get Cellular Data Confirmation Status"), Category = "GooglePAD")
+	static EGooglePADErrorCode GetShowConfirmationDialogStatus(EGooglePADConfirmationDialogStatus& Status);
 		
 	/** Get location handle of requested asset pack (release when done) */
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Get AssetPack Location"), Category = "GooglePAD")
@@ -217,6 +253,7 @@ private:
 	static EGooglePADErrorCode ConvertErrorCode(AssetPackErrorCode Code);
 	static EGooglePADDownloadStatus ConvertDownloadStatus(AssetPackDownloadStatus Status);
 	static EGooglePADCellularDataConfirmStatus ConvertCellarDataConfirmStatus(ShowCellularDataConfirmationStatus Status);
+	static EGooglePADConfirmationDialogStatus ConvertConfirmationDialogStatus(ShowConfirmationDialogStatus Status);
 	static EGooglePADStorageMethod ConvertStorageMethod(AssetPackStorageMethod Code);
 #endif
 

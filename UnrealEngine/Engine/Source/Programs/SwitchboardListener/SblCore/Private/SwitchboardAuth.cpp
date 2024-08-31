@@ -481,9 +481,14 @@ namespace UE::SwitchboardListener::Private
 		X509_set_pubkey(x509, InPrivateKey);
 
 		// Set the common name, and copy the subject name to the issuer name.
+		const FUtf8String SubjectCommonName = FUtf8String::Printf(
+			"SwitchboardListener (%s@%s)",
+			TCHAR_TO_UTF8(FPlatformProcess::UserName()),
+			TCHAR_TO_UTF8(FPlatformProcess::ComputerName()));
+
 		X509_NAME* SubjectName = X509_get_subject_name(x509);
-		X509_NAME_add_entry_by_txt(SubjectName, "CN", MBSTRING_ASC,
-			(unsigned char*)"SwitchboardListener", -1, -1, 0);
+		X509_NAME_add_entry_by_txt(SubjectName, "CN", MBSTRING_UTF8,
+			(const unsigned char*)*SubjectCommonName, -1, -1, 0);
 		X509_set_issuer_name(x509, SubjectName);
 
 		// Actually sign the certificate with our key.

@@ -25,6 +25,7 @@ from switchboard.devices.unreal.plugin_unreal import DeviceUnreal, \
     DeviceWidgetUnreal, LiveLinkPresetSetting, MediaProfileSetting
 from switchboard.devices.unreal.uassetparser import UassetParser
 from switchboard.devices.device_base import DeviceStatus
+from switchboard.message_protocol import SyncStatusRequestFlags
 from switchboard.switchboard_logging import LOGGER
 from switchboard.sbcache import SBCache, Asset
 
@@ -524,12 +525,12 @@ class DevicenDisplay(DeviceUnreal):
         'lock_gpu_clock': BoolSetting(
             attr_name="lock_gpu_clock",
             nice_name="Lock GPU Clock",
-            value=False,
+            value=True,  # nDisplay hitches less whe GPU clocks are locked.
             tool_tip=(
                 "Hint to lock the GPU clock to its allowed maximum. Requires SwitchboardListenerHelper \n"
-                "to be running on the client machine, otherwise this option will be ignored."
+                "to be running on the client machine as administrator, otherwise this option will be ignored."
             ),
-            show_ui = True if sys.platform in ('win32','linux') else False, # Gpu Clocker is available in select platforms
+            show_ui=True if sys.platform in ('win32', 'linux') else False,  # Gpu Clocker is available in select platforms
         ),
     }
 
@@ -591,7 +592,6 @@ class DevicenDisplay(DeviceUnreal):
         self.bp_object_path: Optional[str] = None
         self.path_to_config_on_host = DevicenDisplay.csettings[
             'ndisplay_config_file'].get_value()
-
 
         CONFIG.ENGINE_DIR.signal_setting_overridden.connect(
             self.on_cmdline_affecting_override)
@@ -794,7 +794,7 @@ class DevicenDisplay(DeviceUnreal):
 
         if self.should_use_project_path_in_command_line():
             uproject = CONFIG.UPROJECT_PATH.get_value(self.name)
-        
+
         # normalize path if not empty
         if uproject != "":
             uproject = os.path.normpath(uproject)
@@ -970,13 +970,12 @@ class DevicenDisplay(DeviceUnreal):
                 '-dc_replicationserver_type listen'
             ])
 
-
         # fill in ExecCmds
         exec_cmds = self.csettings["ndisplay_exec_cmds"].get_value(self.name).copy()
 
         if DevicenDisplay.csettings['disable_all_screen_messages'].get_value() and 'DisableAllScreenMessages' not in exec_cmds:
             exec_cmds.append('DisableAllScreenMessages')
-        
+
         # LiveLink preset
         livelink_preset_gamepath = DevicenDisplay.csettings["livelink_preset"].get_value(self.name)
         if livelink_preset_gamepath:
@@ -1082,7 +1081,7 @@ class DevicenDisplay(DeviceUnreal):
 
         path_to_exe = self.generate_unreal_exe_path()
         args_expanded = ' '.join(args)
-        
+
         self.settings['ue_command_line'].update_value(
             f"{path_to_exe} {args_expanded}")
 
@@ -1156,19 +1155,6 @@ class DevicenDisplay(DeviceUnreal):
         except KeyError:
             LOGGER.error(
                 f'Error parsing "refresh mosaics" response ({message})')
-
-    def device_widget_registered(self, device_widget):
-        ''' Device interface method '''
-
-        super().device_widget_registered(device_widget)
-
-        # hook to its primary_button clicked event
-        device_widget.signal_device_widget_primary.connect(
-            self.select_as_primary)
-
-        # Update the state of the button depending on whether this device is
-        # the primary or not.
-        device_widget.primary_button.setChecked(self.is_primary())
 
     def get_primary_node_device(self):
         for device in self.active_unreal_devices:
@@ -1385,9 +1371,8 @@ class DevicenDisplay(DeviceUnreal):
             return cls.parse_config_json(cfg_file)
         elif ext == '.uasset':
             return cls.parse_config_uasset(cfg_file)
-        
-        raise Exception(f'Unknown config extension "{ext}"')
 
+        raise Exception(f'Unknown config extension "{ext}"')
 
     def update_settings_controlled_by_config(self, cfg_file):
         '''
@@ -1669,6 +1654,7 @@ class DevicenDisplay(DeviceUnreal):
         except Exception:
             LOGGER.warning("Could not soft kill the cluster")
 
+    # ~ Begin Device Interface
     @classmethod
     def all_devices_added(cls):
         ''' Device interface implementation '''
@@ -1716,3 +1702,48 @@ class DevicenDisplay(DeviceUnreal):
             if not primary_found:
                 LOGGER.error('Could not find or assign primary device in the '
                              f'current devices and config file "{cfg_file}"')
+
+    def device_widget_registered(self, device_widget):
+        ''' Device interface method '''
+
+        super().device_widget_registered(device_widget)
+
+        # hook to its primary_button clicked event
+        device_widget.signal_device_widget_primary.connect(
+            self.select_as_primary)
+
+        # Update the state of the button depending on whether this device is
+        # the primary or not.
+        device_widget.primary_button.setChecked(self.is_primary())
+
+    def on_device_name_changed(self, new_name):
+        super().on_device_name_changed(new_name)
+        if self.__class__.ndisplay_monitor:
+            self.__class__.ndisplay_monitor.update_device_name_and_address(self)
+
+    def on_address_changed(self, new_address):
+        super().on_address_changed(new_address)
+
+        if self.__class__.ndisplay_monitor:
+            self.__class__.ndisplay_monitor.update_device_name_and_address(self)
+    # ~ End Device Interface
+
+    # ~ Begin DeviceUnreal Interface
+    @QtCore.Slot()
+    def _on_listener_connected(self) -> None:
+        super()._on_listener_connected()
+        if self.__class__.ndisplay_monitor:
+            self.__class__.ndisplay_monitor.on_device_connected(device=self)
+
+    def on_listener_disconnect(self, unexpected=False, exception=None) -> None:
+        super().on_listener_disconnect(unexpected, exception)
+        if self.__class__.ndisplay_monitor:
+            self.__class__.ndisplay_monitor.on_device_disconnected(device=self)
+
+    def on_unreal_started(self) -> None:
+        super().on_unreal_started()
+
+        # Always try to disable Full Screen Optimizations. If this is removed, you can add back
+        # the "Disable FSO" button using ndisplay_monitor.show_disable_fso_btn
+        self.disable_fso()
+    # ~ End DeviceUnrealInterface

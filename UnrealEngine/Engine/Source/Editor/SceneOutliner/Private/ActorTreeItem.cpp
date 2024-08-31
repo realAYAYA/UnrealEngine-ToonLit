@@ -364,11 +364,14 @@ bool FActorTreeItem::ShouldShowVisibilityState() const
 
 void FActorTreeItem::OnVisibilityChanged(const bool bNewVisibility)
 {
-	// Save the actor to the transaction buffer to support undo/redo, but do
-	// not call Modify, as we do not want to dirty the actor's package and
-	// we're only editing temporary, transient values
-	SaveToTransactionBuffer(Actor.Get(), false);
-	Actor->SetIsTemporarilyHiddenInEditor(!bNewVisibility);
+	if (AActor* ActorPtr = Actor.Get())
+	{
+		// Save the actor to the transaction buffer to support undo/redo, but do
+		// not call Modify, as we do not want to dirty the actor's package and
+		// we're only editing temporary, transient values
+		SaveToTransactionBuffer(ActorPtr, false);
+		ActorPtr->SetIsTemporarilyHiddenInEditor(!bNewVisibility);
+	}
 }
 
 bool FActorTreeItem::GetVisibility() const

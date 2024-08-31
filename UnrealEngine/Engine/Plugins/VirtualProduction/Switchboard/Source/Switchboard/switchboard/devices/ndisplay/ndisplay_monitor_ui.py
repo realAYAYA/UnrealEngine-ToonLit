@@ -5,7 +5,7 @@ from typing import Dict, Optional
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 from PySide6.QtWidgets import QComboBox, QCompleter, QHBoxLayout, \
     QHeaderView, QLabel, QPushButton, QSizePolicy, QStyledItemDelegate, \
-    QTableView, QVBoxLayout, QWidget
+    QTableView, QVBoxLayout, QWidget, QCheckBox
 
 from switchboard.devices.ndisplay.ndisplay_monitor import nDisplayMonitor
 
@@ -62,30 +62,49 @@ class nDisplayMonitorUI(QWidget):
             lambda: self.try_issue_console_exec())
 
         # Create remaining buttons
-        btn_refresh_mosaics = QPushButton('Refresh Mosaics')
-        btn_refresh_mosaics.setToolTip(
+
+        # Refresh Table button to query all fields in the monitor
+        btn_refresh_table = QPushButton('Refresh Table')
+        btn_refresh_table.setToolTip(
             'Updates the cached mosaic topologies.')
-        btn_refresh_mosaics.clicked.connect(
-            self.monitor.on_refresh_mosaics_clicked)
+        btn_refresh_table.clicked.connect(
+            self.monitor.on_refresh_table_clicked)
 
-        btn_fix_exe_flags = QPushButton('Fix ExeFlags')
-        btn_fix_exe_flags.setToolTip(
-            'Disables fullscreen optimizations on the executable.')
-        btn_fix_exe_flags.clicked.connect(
-            self.monitor.on_fix_exe_flags_clicked)
+        # This button disables full screen optimizations on the executable
+        # This has been linked in the past to being 1 frame out of sync.
+        btn_disable_fso = QPushButton('Disable FSO')
+        btn_disable_fso.setToolTip(
+            'Disables Full Screen Optimizations on the Unreal Engine executable.'
+            '\nNote: The Remote executable must be running.')
+        btn_disable_fso.clicked.connect(
+            self.monitor.on_disable_fso_clicked)
 
+        # Minimize button to minimize all windows on the remote node.
+        # This has been useful in the past when there are windows that
+        # otherwise stay on top of the nDisplay window.
         btn_minimize_windows = QPushButton('Minimize')
         btn_minimize_windows.setToolTip(
             'Minimizes all windows in the nodes.')
         btn_minimize_windows.clicked.connect(
             self.monitor.on_minimize_windows_clicked)
 
+        # GPU Stats checkbox to enable GPU stats monitoring
+        chk_gpu_stats = QCheckBox('GPU Stats')
+        chk_gpu_stats.setToolTip(
+            'GPU Stats add overhead to the remote node that can cause hitches. Only enable when needed.')
+        chk_gpu_stats.stateChanged.connect(
+            self.monitor.on_gpu_stats_toggled)
+
         layout_buttons.addWidget(QLabel('Console:'))
         layout_buttons.addWidget(self.cmb_console_exec)
         layout_buttons.addWidget(btn_console_exec)
         layout_buttons.addStretch(1)
-        layout_buttons.addWidget(btn_refresh_mosaics)
-        layout_buttons.addWidget(btn_fix_exe_flags)
+        layout_buttons.addWidget(chk_gpu_stats)
+        layout_buttons.addWidget(btn_refresh_table)
+
+        if self.monitor.show_disable_fso_btn:
+            layout_buttons.addWidget(btn_disable_fso)
+
         layout_buttons.addWidget(btn_minimize_windows)
 
         return layout_buttons

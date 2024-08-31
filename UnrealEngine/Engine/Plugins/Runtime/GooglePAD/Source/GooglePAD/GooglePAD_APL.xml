@@ -182,7 +182,7 @@ android {
 <![CDATA[
 // for GooglePAD
 dependencies {
-	implementation('com.google.android.play:core:1.10.0')
+	implementation('com.google.android.play:asset-delivery:2.2.2')
 }
 
 // add the assetpacks
@@ -223,10 +223,10 @@ import com.google.android.play.core.assetpacks.AssetPackState;
 import com.google.android.play.core.assetpacks.AssetPackStateUpdateListener;
 import com.google.android.play.core.assetpacks.AssetPackStates;
 import com.google.android.play.core.assetpacks.model.AssetPackStatus;
-import com.google.android.play.core.tasks.OnCompleteListener;
-import com.google.android.play.core.tasks.OnSuccessListener;
-import com.google.android.play.core.tasks.RuntimeExecutionException;
-import com.google.android.play.core.tasks.Task;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.RuntimeExecutionException;
+import com.google.android.gms.tasks.Task;
 
 </insert>
 			</true>

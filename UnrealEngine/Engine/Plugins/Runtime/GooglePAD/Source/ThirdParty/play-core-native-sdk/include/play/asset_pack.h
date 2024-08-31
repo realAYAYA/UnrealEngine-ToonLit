@@ -72,6 +72,13 @@ enum AssetPackErrorCode {
   /// has been acquired from the Play Store.
   ASSET_PACK_APP_NOT_OWNED = -13,
 
+  /// Returned if showConfirmationDialog is called but no asset packs are
+  /// waiting for user confirmation.
+  ASSET_PACK_CONFIRMATION_NOT_REQUIRED = -14,
+
+  /// Returned if the app was not installed by Play.
+  ASSET_PACK_UNRECOGNIZED_INSTALLATION = -15,
+
   /// Unknown error downloading asset pack.
   ASSET_PACK_INTERNAL_ERROR = -100,
 
@@ -119,6 +126,12 @@ enum AssetPackDownloadStatus {
 
   /// The asset pack isn't installed.
   ASSET_PACK_NOT_INSTALLED = 8,
+
+  /// The asset pack download is waiting for user confirmation to proceed.
+  ///
+  /// Call AssetPackManaegr_showConfirmationDialog() to ask the user for
+  /// consent.
+  ASSET_PACK_REQUIRES_USER_CONFIRMATION = 9,
 
   /// An AssetPackManager_requestInfo() async request started, but the result
   /// isn't known yet.
@@ -173,6 +186,22 @@ enum ShowCellularDataConfirmationStatus {
 
   /// The user declined to download asset packs over cellular data.
   ASSET_PACK_CONFIRM_USER_CANCELED = 3,
+};
+
+/// The status associated with a request to display a confirmation dialog.
+enum ShowConfirmationDialogStatus {
+  /// AssetPackManager_showConfirmationDialog() has not been called.
+  ASSET_PACK_CONFIRMATION_DIALOG_UNKNOWN = 0,
+
+  /// AssetPackManager_showConfirmationDialog() has been called, but the
+  /// user hasn't made a choice.
+  ASSET_PACK_CONFIRMATION_DIALOG_PENDING = 1,
+
+  /// The user approved of downloading asset packs.
+  ASSET_PACK_CONFIRMATION_DIALOG_APPROVED = 2,
+
+  /// The user declined to download asset packs.
+  ASSET_PACK_CONFIRMATION_DIALOG_CANCELED = 3,
 };
 
 /// An opaque struct used to access the state of an individual asset pack
@@ -308,8 +337,10 @@ uint64_t AssetPackDownloadState_getTotalBytesToDownload(
 /// @return ASSET_PACK_NO_ERROR if the dialog is shown. Call
 /// AssetPackManager_getShowCellularDataConfirmationStatus() to get the dialog
 /// result.
-AssetPackErrorCode AssetPackManager_showCellularDataConfirmation(
-    jobject android_activity);
+[[deprecated(
+    "Please use AssetPackManager_showConfirmationDialog "
+    "instead.")]] AssetPackErrorCode
+AssetPackManager_showCellularDataConfirmation(jobject android_activity);
 
 /// Gets the status of AssetPackManager_showCellularDataConfirmation() requests.
 ///
@@ -317,8 +348,47 @@ AssetPackErrorCode AssetPackManager_showCellularDataConfirmation(
 /// @param out_status An out parameter for receiving the result.
 /// @return An AssetPackErrorCode, which if not ASSET_PACK_NO_ERROR indicates
 /// that the out parameter should not be used.
-AssetPackErrorCode AssetPackManager_getShowCellularDataConfirmationStatus(
+[[deprecated(
+    "Please use AssetPackManager_getShowConfirmationDialogStatus "
+    "instead.")]] AssetPackErrorCode
+AssetPackManager_getShowCellularDataConfirmationStatus(
     ShowCellularDataConfirmationStatus* out_status);
+
+/// Shows a confirmation dialog to start all asset pack downloads that are
+/// currently in either the ASSET_PACK_REQUIRES_USER_CONFIRMATION state or the
+/// ASSET_PACK_WAITING_FOR_WIFI state.
+///
+/// The status of an asset pack is set to ASSET_PACK_REQUIRES_USER_CONFIRMATION
+/// if the download cannot proceed without user consent. By showing this dialog,
+/// your app can ask the user for consent to download the asset pack from
+/// Google Play. If the app has not been installed by Play, an update may be
+/// triggered to ensure that a valid version is installed. This will cause the
+/// app to restart and all asset requests to be cancelled. These assets should
+/// be requested again after the app restarts.
+///
+/// The status of an asset pack is set to ASSET_PACK_WAITING_FOR_WIFI if the
+/// user is currently not on a Wi-Fi connection and the asset pack is large or
+/// the user has set their download preference in the Play Store to only
+/// download apps over Wi-Fi. By showing this dialog, your app can ask the user
+/// if they accept downloading the asset pack over cellular data instead of
+/// waiting for Wi-Fi.
+///
+/// @param android_activity An Android Activity, for example from
+/// ANativeActivity's "clazz" field.
+/// @return ASSET_PACK_NO_ERROR if the dialog is shown. Call
+/// AssetPackManager_getShowConfirmationDialogStatus() to get the dialog
+/// result.
+AssetPackErrorCode AssetPackManager_showConfirmationDialog(
+    jobject android_activity);
+
+/// Gets the status of AssetPackManager_showConfirmationDialog() requests.
+///
+/// This function does not make any JNI calls and can be called every frame.
+/// @param out_status An out parameter for receiving the result.
+/// @return An AssetPackErrorCode, which if not ASSET_PACK_NO_ERROR indicates
+/// that the out parameter should not be used.
+AssetPackErrorCode AssetPackManager_getShowConfirmationDialogStatus(
+    ShowConfirmationDialogStatus* out_status);
 
 /// Obtains an AssetPackLocation for the specified asset pack that can be used
 /// to query how and where the asset pack's assets are stored on the device.

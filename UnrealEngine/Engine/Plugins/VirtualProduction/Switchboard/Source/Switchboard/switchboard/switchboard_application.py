@@ -277,7 +277,6 @@ class MultiUserApplication:
         configured_server_name = CONFIG.MUSERVER_SERVER_NAME.get_value()
         return f'{configured_server_name}_{encoded}'
 
-
     def clear_process_info(self):
         self._running_endpoint = ""
         self._running_name = ""
@@ -290,6 +289,9 @@ class MultiUserApplication:
 
         self.clear_process_info()
         return False
+
+    def kill(self):
+        self.process.kill()
 
 
 MultiUserServerInstance: Optional[MultiUserApplication] = None

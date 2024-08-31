@@ -48,7 +48,7 @@ class VolumeReceiver extends BroadcastReceiver
 			receiver = new VolumeReceiver();
 		}
 
-		activity.registerReceiver( receiver, filter );
+		activity.registerReceiver( receiver, filter, Context.RECEIVER_EXPORTED );
 
 		AudioManager audio = (AudioManager)activity.getSystemService( Context.AUDIO_SERVICE );
 		int volume = audio.getStreamVolume( AudioManager.STREAM_MUSIC );

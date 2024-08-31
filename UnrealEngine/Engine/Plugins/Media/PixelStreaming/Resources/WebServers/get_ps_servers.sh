@@ -17,19 +17,19 @@ print_help() {
            release for
    -b      Specify a specific branch for the tool to download from repo
    -t      Specify a specific tag for the tool to download from repo
-   -r      Specify a specific release url path e.g. https://github.com/EpicGames/PixelStreamingInfrastructure/releases/download/<RELEASE_VERSION>/<RELEASE_VERSION>.zip
+   -r      Specify a specific release url path e.g. https://github.com/EpicGamesExt/PixelStreamingInfrastructure/releases/download/<RELEASE_VERSION>/<RELEASE_VERSION>.zip
    -h      Display this help message
 "
  exit 1
 }
 
 # Set all default variables (e.g. # Name and version of ps-infra that we are downloading)
-PSInfraOrg=EpicGames
+PSInfraOrg=EpicGamesExt
 PSInfraRepo=PixelStreamingInfrastructure
 PSInfraTagOrBranch=UE5.4
 RefType=heads
 IsTag=0
-ReleaseUrlBase=https://github.com/EpicGames/PixelStreamingInfrastructure/releases/download
+ReleaseUrlBase=https://github.com/EpicGamesExt/PixelStreamingInfrastructure/releases/download
 # Unset any variables that don't have defaults that we use that may have persisted between bash terminals.
 unset Url
 unset DownloadVersion
@@ -107,10 +107,10 @@ fi
 # We have a branch, no user-specified release, then check repo for the presence of a RELEASE_VERSION file in the current branch.
 if [ "$IsTag" -eq 0 ] && [ -z "$ReleaseUrl" ] && [ -z "$FlagPassed" ]
 then
-  RelUrl=https://raw.githubusercontent.com/EpicGames/PixelStreamingInfrastructure/$PSInfraTagOrBranch/RELEASE_VERSION
+  RelUrl=https://raw.githubusercontent.com/EpicGamesExt/PixelStreamingInfrastructure/$PSInfraTagOrBranch/RELEASE_VERSION
   if curl --output /dev/null --silent -r 0-0 --fail "$RelUrl"; then
     ReleaseVersion="$PSInfraTagOrBranch-$(curl -L -s $RelUrl)"
-    ReleaseUrl=https://github.com/EpicGames/PixelStreamingInfrastructure/releases/download/$ReleaseVersion/$ReleaseVersion.tar.gz
+    ReleaseUrl=https://github.com/EpicGamesExt/PixelStreamingInfrastructure/releases/download/$ReleaseVersion/$ReleaseVersion.tar.gz
     echo "Valid RELEASE_VERSION file found in Github repo at $RelUrl"
   else
     echo "RELEASE_VERSION file does not exist at: $RelUrl"

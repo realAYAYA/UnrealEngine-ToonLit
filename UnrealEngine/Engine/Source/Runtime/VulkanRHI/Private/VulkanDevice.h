@@ -22,7 +22,8 @@ class FVulkanRenderPassManager;
 class FVulkanRayTracingCompactionRequestHandler;
 #endif
 
-#define VULKAN_USE_DEBUG_NAMES 1
+// HOTFIX for UE-218250: Disable vulkan debug names to get around crash/performance issues
+#define VULKAN_USE_DEBUG_NAMES 0
 
 #if VULKAN_USE_DEBUG_NAMES
 #define VULKAN_SET_DEBUG_NAME(Device, Type, Handle, Format, ...) Device.VulkanSetObjectName(Type, (uint64)Handle, *FString::Printf(Format, __VA_ARGS__))

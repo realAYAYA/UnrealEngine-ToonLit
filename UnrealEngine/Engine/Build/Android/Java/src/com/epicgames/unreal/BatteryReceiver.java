@@ -85,7 +85,7 @@ class BatteryReceiver extends BroadcastReceiver
 			receiver = new BatteryReceiver();
 		}
 
-		activity.registerReceiver(receiver, filter);
+		activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
 
 		// initialize with the current battery state
 		receiver.processIntent( activity.getIntent() );

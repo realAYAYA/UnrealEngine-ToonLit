@@ -474,6 +474,14 @@ namespace UnrealBuildTool
 			Arguments.Add("-Wno-unknown-warning-option");
 			Arguments.Add("-Wno-range-loop-analysis");
 			Arguments.Add("-Wno-single-bit-bitfield-constant-conversion");
+
+			// Disable warnings for Xcode 16 for now
+			if (Info.ClangVersion.CompareTo(new Version(16, 0, 0)) >= 0)
+			{
+            	Arguments.Add("-Wno-shadow");
+				Arguments.Add("-Wno-invalid-unevaluated-string");
+				Arguments.Add("-Wno-deprecated-this-capture");
+			}
 		}
 
 		/// <inheritdoc/>
@@ -792,23 +800,12 @@ namespace UnrealBuildTool
 
 		protected virtual void GetLinkArguments_Global(LinkEnvironment LinkEnvironment, List<string> Arguments)
 		{
-			// Temp solution for UE-191350
-
-			// This Regex will extract a 2-4 segment version code from string containing a 2-5 segment code 
-			// ie: if given string: "Apple clang version 14.0.0 (clang-1400.0.17.3.1)"
-			//     it'll extract: "1400.0.17.3"  (note the dropped 5th segment)
-			Match M = Regex.Match(Info.ClangVersionString, @"(\(clang-(?<ver>\d+.\d+(.(\d+))?(.(\d+))?)(.(\d+))?\))");
-			if (M.Success)
-			{
-				string LibString = M.Groups["ver"].ToString();
-				Version? LibVersion = new Version(LibString);
-				// The Apple's new linker in Xcode 15 beta 5 (clang version 1500.0.38.1) has issues with some templated classes and dynamic linking.
-				// Fall back to using the classic.
-				if (LibVersion.CompareTo(new Version(1500, 0, 38, 1)) >= 0)
-				{
-					Arguments.Add(" -ld_classic");
-				}
-			}
+			// The Apple's new linker in Xcode 15 beta 5 (clang version 1500.0.38.1) has issues with some templated classes and dynamic linking.
+			// Fall back to using the classic.
+			if (Info.ClangVersion.CompareTo(new Version(15, 0, 38)) >= 0 && Info.ClangVersion.CompareTo(new Version(16, 0, 0)) < 0)
+            {
+                Arguments.Add(" -ld_classic");
+            }
 		}
 
 		#region Stub Xcode Projects

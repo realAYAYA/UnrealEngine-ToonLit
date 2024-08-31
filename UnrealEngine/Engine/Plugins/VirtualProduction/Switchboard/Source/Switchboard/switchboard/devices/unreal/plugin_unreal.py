@@ -82,9 +82,18 @@ def use_lock(func):
     '''
     @wraps(func)
     def _use_lock(self, *args, **kwargs):
+
         self.lock.acquire()
+
         try:
-            return func(self, *args, **kwargs)
+            ret = func(self, *args, **kwargs)
+
+            # Using the lock implies a write operation, which requires
+            # updating the reader indexed caches.
+            self._update_rd_caches()
+
+            return ret
+
         finally:
             self.lock.release()
 
@@ -92,7 +101,16 @@ def use_lock(func):
 
 
 class ProgramStartQueue:
-    ''' Queue of programs to launch that may have dependencies '''
+    ''' Queue of programs to launch that may have dependencies 
+    Write operations can from from the listener thread (e.g. program events)
+    or from the Main thread (e.g. add a program). Read operations can happen
+    on the Main thread (e.g. see if a program is running) or from the listener
+    thread.
+
+    The locking strategy is for the writers to use a lock and update a shallow
+    copy for the readers. Reading is expected to happen much more often than writing,
+    especially in relation to checking if programs are running or not.
+    '''
 
     def __init__(self):
         # Needed because these functions will be called from listener thread
@@ -100,11 +118,16 @@ class ProgramStartQueue:
         self.lock = threading.Lock()
 
         self.queued_programs: list[ProgramStartQueueItem] = []
-        self.starting_programs: OrderedDict[
-            uuid.UUID, ProgramStartQueueItem] = OrderedDict()
+        self.starting_programs: OrderedDict[uuid.UUID, ProgramStartQueueItem] = OrderedDict()
+
         # initialized as returned by listener
-        self.running_programs: OrderedDict[
-            uuid.UUID, ProgramStartQueueItem] = OrderedDict()
+        self.running_programs: OrderedDict[uuid.UUID, ProgramStartQueueItem] = OrderedDict()
+
+        # Indexed caches for the readers.
+        self.rd_running_progs_by_name: dict[str, list[ProgramStartQueueItem]] = dict()
+        self.rd_puuid_by_name: dict[uuid.UUID, str] = dict()
+
+    # Write operations
 
     @use_lock
     def reset(self):
@@ -112,39 +135,6 @@ class ProgramStartQueue:
         self.queued_programs = []
         self.starting_programs = OrderedDict()
         self.running_programs = OrderedDict()
-
-    def _name_from_puuid(self, puuid):
-        ''' Returns the name of the specified program id '''
-        for prog in self.queued_programs:
-            if prog.puuid == puuid:
-                return prog.name
-
-        for thedict in [self.starting_programs, self.running_programs]:
-            try:
-                return thedict[puuid].name
-            except KeyError:
-                pass
-
-        raise KeyError
-
-    @use_lock
-    def puuid_from_name(self, name):
-        '''
-        Returns the puuid of the specified program name.
-
-        Searches as to return the one most likely to return last - but not
-        guaranteed to do so.
-        '''
-        for prog in self.queued_programs:
-            if prog.name == name:
-                return prog.puuid
-
-        for thedict in [self.starting_programs, self.running_programs]:
-            for prog in thedict.values():
-                if prog.name == name:
-                    return prog.puuid
-
-        raise KeyError
 
     @use_lock
     def on_program_started(self, prog):
@@ -202,6 +192,40 @@ class ProgramStartQueue:
 
         return prog.name if prog else "unknown"
 
+    @use_lock
+    def add(self, prog, unreal_client) -> None:
+        ''' Adds a new program to be started in the queue
+        Must be of type ProgramStartQueueItem.
+        It may start launch it right away if it doesn't have any dependencies.
+        '''
+        assert isinstance(prog, ProgramStartQueueItem)
+
+        # Ensure that dependence is still possible, and if it isn't, replace
+        # with None.
+        if prog.puuid_dependency is not None:
+            try:
+                self._name_from_puuid(prog.puuid_dependency)
+            except KeyError:
+                LOGGER.debug(
+                    f"{prog.name} specified non-existent dependency on puuid "
+                    f"{prog.puuid_dependency}")
+                prog.puuid_dependency = None
+
+        self.queued_programs.append(prog)
+
+        # This effectively causes a launch if it doesn't have any dependencies
+        self._launch_dependents(puuid=None, unreal_client=unreal_client)
+
+    @use_lock
+    def clear_running_programs(self) -> None:
+        self.running_programs.clear()
+
+    @use_lock
+    def update_running_program(self, prog) -> None:
+        self.running_programs[prog.puuid] = prog
+
+    # Helper functions
+
     def _launch_dependents(self, puuid, unreal_client):
         ''' Launches programs dependend on given puuid
         Do not call externally because it does not use the thread lock.
@@ -221,51 +245,78 @@ class ProgramStartQueue:
         for prog in progs_launched:
             self.queued_programs.remove(prog)
 
-    @use_lock
-    def add(self, prog, unreal_client):
-        ''' Adds a new program to be started in the queue
-        Must be of type ProgramStartQueueItem.
-        It may start launch it right away if it doesn't have any dependencies.
-        '''
-        assert isinstance(prog, ProgramStartQueueItem)
+    def _name_from_puuid(self, puuid) -> str:
+        ''' Returns the name of the specified program id '''
+        for prog in self.queued_programs:
+            if prog.puuid == puuid:
+                return prog.name
 
-        # Ensure that dependance is still possible, and if it isn't, replace
-        # with None.
-        if prog.puuid_dependency is not None:
+        for thedict in [self.starting_programs, self.running_programs]:
             try:
-                self._name_from_puuid(prog.puuid_dependency)
+                return thedict[puuid].name
             except KeyError:
-                LOGGER.debug(
-                    f"{prog.name} specified non-existent dependency on puuid "
-                    f"{prog.puuid_dependency}")
-                prog.puuid_dependency = None
+                pass
 
-        self.queued_programs.append(prog)
+        raise KeyError
 
-        # This effectively causes a launch if it doesn't have any dependencies
-        self._launch_dependents(puuid=None, unreal_client=unreal_client)
+    def _update_rd_caches(self) -> None:
+        ''' Updates the indexed dictionaries for the readers.
+        This function assumes it is called by one of the writer functions
+        that already hold the lock.
+        '''
 
-    @use_lock
-    def running_programs_named(self, name):
+        # Update rd_running_progs_by_name
+        #
+        rd_running_progs_by_name: dict[str, list[ProgramStartQueueItem]] = dict()
+
+        for prog in self.running_programs.values():
+
+            if prog.name not in rd_running_progs_by_name:
+                rd_running_progs_by_name[prog.name] = []
+
+            rd_running_progs_by_name[prog.name].append(prog)
+
+        # Update rd_puuid_by_name
+        #
+        rd_puuid_by_name: dict[str, uuid.UUID] = dict()
+
+        # Combine all programs into one list, such that when iterated,
+        # the last program will be the the one more likely to finish last.
+        # I.e. a queued program of a given name is expected to end after
+        # one that is already running.
+        progs = reversed(
+            list(self.queued_programs) +
+            list(self.starting_programs.values()) +
+            list(self.running_programs.values())
+        )
+
+        for prog in progs:
+            rd_puuid_by_name[prog.name] = prog.puuid
+
+        # Atomically replace the dicts for the readers.
+
+        self.rd_running_progs_by_name = rd_running_progs_by_name
+        self.rd_puuid_by_name = rd_puuid_by_name
+
+    # Read operations
+
+    def running_programs_named(self, name) -> list[ProgramStartQueueItem]:
         ''' Returns the program ids of running programs named as specified '''
-        return [
-            prog for puuid, prog in self.running_programs.items()
-            if prog.name == name]
+        return self.rd_running_progs_by_name.get(name, [])
 
-    @use_lock
-    def running_puuids_named(self, name):
+    def running_puuids_named(self, name) -> list[uuid.UUID]:
         ''' Returns the program ids of running programs named as specified '''
-        return [
-            puuid for puuid, prog in self.running_programs.items()
-            if prog.name == name]
+        progs = self.running_programs_named(name)
+        return [prog.puuid for prog in progs]
 
-    @use_lock
-    def update_running_program(self, prog):
-        self.running_programs[prog.puuid] = prog
+    def puuid_from_name(self, name) -> uuid.UUID:
+        '''
+        Returns the puuid of the specified program name.
 
-    @use_lock
-    def clear_running_programs(self):
-        self.running_programs.clear()
+        Searches as to return the one most likely to return last - but not
+        guaranteed to do so.
+        '''
+        return self.rd_puuid_by_name[name]
 
 
 class LiveLinkPresetSetting(Setting):
@@ -834,6 +885,13 @@ class DeviceUnreal(Device):
     def is_designated_local_builder(self) -> bool:
         return self is DeviceUnreal.get_designated_local_builder()
 
+    def is_connected_and_authenticated(self) -> bool:
+        ''' Returns true if it is connected to the listener and authenticated.
+        If true, it means that the application layer can have normal communiations with
+        the device
+        '''
+        return self.unreal_client.is_connected and self.unreal_client.is_authenticated
+
     @QtCore.Slot()
     def _queue_notify_redeploy(self):
         # Ensure this code is run from the main thread
@@ -955,6 +1013,8 @@ class DeviceUnreal(Device):
             super().connecting_listener, QtCore.Qt.QueuedConnection)
         listener_qt_handler.listener_connected.connect(
             super().connect_listener, QtCore.Qt.QueuedConnection)
+        listener_qt_handler.listener_connected.connect(
+            self._on_listener_connected, QtCore.Qt.QueuedConnection)
         listener_qt_handler.listener_connection_failed.connect(
             self._on_listener_connection_failed, QtCore.Qt.QueuedConnection)
 
@@ -1122,6 +1182,10 @@ class DeviceUnreal(Device):
         if len(DeviceUnreal.active_unreal_devices) == 0:
             if DeviceUnreal.rsync_server.is_running():
                 DeviceUnreal.rsync_server.shutdown()
+
+    @QtCore.Slot()
+    def _on_listener_connected(self):
+        pass
 
     @QtCore.Slot()
     def _on_about_to_quit(self):
@@ -1670,7 +1734,7 @@ class DeviceUnreal(Device):
                         QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
 
                     if mb_ret == QtWidgets.QMessageBox.Yes:
-                        DeviceUnreal.mu_server.terminate(bypolling=True)
+                        DeviceUnreal.mu_server.process.kill()
 
                 puuid_dependency = self._build_mu_server(
                     puuid_dependency=puuid_dependency)
@@ -1787,8 +1851,8 @@ class DeviceUnreal(Device):
         else:
             self.status = DeviceStatus.CLOSING
 
-    def fix_exe_flags(self):
-        ''' Tries to force the correct UnrealEditor.exe flags '''
+    def disable_fso(self):
+        ''' Tries to disable Full Screen Optimizations on the remote UnrealEditor.exe executable '''
         unreals = self.program_start_queue.running_programs_named('unreal')
 
         if not len(unreals):
@@ -2659,11 +2723,15 @@ class DeviceUnreal(Device):
         else:
             local_project_dir = pathlib.Path(
                 CONFIG.UPROJECT_PATH.get_value()).parent
-            if local_project_dir.is_dir():
-                log_download_dir = \
-                    local_project_dir / 'Saved' / 'Logs' / 'Switchboard'
-                log_download_dir.mkdir(parents=True, exist_ok=True)
-                return log_download_dir
+            try:
+                if local_project_dir.is_dir():
+                    log_download_dir = \
+                        local_project_dir / 'Saved' / 'Logs' / 'Switchboard'
+                    log_download_dir.mkdir(parents=True, exist_ok=True)
+                    return log_download_dir
+            except OSError as e:
+                # This can happen if the drive is locked (e.g. by Bitlocker)
+                LOGGER.error(e)
 
         return None
 

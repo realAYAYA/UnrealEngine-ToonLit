@@ -6288,7 +6288,8 @@ void FAssetRegistryImpl::OnDirectoryChanged(Impl::FEventContext& EventContext,
 				}
 				case FFileChangeData::FCA_Removed:
 				{
-					RemoveAssetPath(EventContext, *LongPackageName);
+					FName Path(UE::String::RemoveFromEnd(FStringView(LongPackageName), TEXTVIEW("/")));
+					RemoveAssetPath(EventContext, Path);
 					UE_LOG(LogAssetRegistry, Verbose, TEXT("Directory was removed from content directory: %s"), *File);
 					break;
 				}

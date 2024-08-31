@@ -725,6 +725,10 @@ bool FRigVMBlockExprAST::IsObsolete() const
 		}
 	};
 
+	if(NumParents() == 0)
+	{
+		return Local::IsObsoleteExpr(this);
+	}
 	return Local::HasOnlyObsoleteParents(this);
 }
 

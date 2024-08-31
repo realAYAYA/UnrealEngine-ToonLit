@@ -11,7 +11,7 @@
 struct FSwitchboardPacket;
 struct FSwitchboardTask;
 struct FSyncStatus;
-
+enum class ESyncStatusRequestFlags;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogSwitchboardProtocol, Verbose, All);
 
@@ -38,7 +38,7 @@ FString CreateReceiveFileFromClientFailedMessage(const FString& InDestinationPat
 FString CreateSendFileToClientCompletedMessage(const FString& InSourcePath, const FString& InFileContent);
 FString CreateSendFileToClientFailedMessage(const FString& InSourcePath, const FString& InError);
 
-FString CreateSyncStatusMessage(const FSyncStatus& SyncStatus);
+FString CreateSyncStatusMessage(const FSyncStatus& SyncStatus, ESyncStatusRequestFlags RequestFlags);
 
 FString CreateRedeployStatusMessage(const FGuid& InMessageID, bool bAck, const FString& Status);
 

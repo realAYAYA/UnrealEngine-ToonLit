@@ -1065,7 +1065,7 @@ public abstract class DownloaderService extends CustomIntentService implements I
                 IntentFilter intentFilter = new IntentFilter(
                         ConnectivityManager.CONNECTIVITY_ACTION);
                 intentFilter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
-                registerReceiver(mConnReceiver, intentFilter);
+                registerReceiver(mConnReceiver, intentFilter, Context.RECEIVER_EXPORTED);
             }
 
             for (DownloadInfo info : infos) {

@@ -147,6 +147,12 @@
 		
 		<!-- Source code and demos for container images -->
 		Engine/Extras/Containers/...
+
+		<!-- Additional documentation -->
+		Engine/Plugins/Runtime/NetworkPrediction/readme.txt
+		Engine/Plugins/Experimental/Mover/README.md
+		Engine/Plugins/Runtime/GameplayAbilities/README.md
+
 	</Property>
 	
 	<!-- Files which can exist under any engine or engine-platform directory -->
@@ -280,6 +286,9 @@
 
 		<!-- Default resource files -->
 		Engine/Build/Windows/Resources/...
+
+		<!-- Steam Deck files -->
+		Engine/Build/SteamDeck/...
 
 		<!-- Binaries which are explicitly staged by UAT rather than listing runtime dependencies -->
 		Engine/Binaries/ThirdParty/OpenSSL/...
@@ -426,6 +435,9 @@
 		Engine/Build/BatchFiles/RunDotnet.sh
 		Engine/Build/BatchFiles/RunUAT.sh
 		Engine/Build/BatchFiles/RunUBT.sh
+
+		<!-- Steam Deck files -->
+		Engine/Build/SteamDeck/...
 
 		<!-- Debug tools -->
 		Engine/Binaries/Linux/dump_syms

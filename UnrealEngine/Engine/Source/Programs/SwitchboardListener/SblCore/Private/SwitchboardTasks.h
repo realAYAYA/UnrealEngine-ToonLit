@@ -79,15 +79,42 @@ struct FSwitchboardAuthenticateTask : public FSwitchboardTask
 	//~ End FSwitchboardTask interface
 };
 
+/** Bit flags for the request. It should match its counterpart's definition in message_protocol.py */
+enum class ESyncStatusRequestFlags
+{
+	None = 0,
+	SyncTopos = 1 << 0,
+	MosaicTopos = 1 << 1,
+	FlipModeHistory = 1 << 2,
+	ProgramLayers = 1 << 3,
+	DriverInfo = 1 << 4,
+	Taskbar = 1 << 5,
+	PidInFocus = 1 << 6,
+	CpuUtilization = 1 << 7,
+	AvailablePhysicalMemory = 1 << 8,
+	GpuUtilization = 1 << 9,
+	GpuCoreClockKhz = 1 << 10,
+	GpuTemperature = 1 << 11,
+};
+
 struct FSwitchboardGetSyncStatusTask : public FSwitchboardTask
 {
-	FSwitchboardGetSyncStatusTask(const FGuid& InTaskId, const FIPv4Endpoint& InEndpoint, const FGuid& InProgramID)
+	FSwitchboardGetSyncStatusTask(
+		const FGuid& InTaskId, 
+		const FIPv4Endpoint& InEndpoint, 
+		const FGuid& InProgramID, 
+		const ESyncStatusRequestFlags InRequestFlags
+	)
 		: FSwitchboardTask{ ESwitchboardTaskType::GetSyncStatus, InTaskId, InEndpoint }
 		, ProgramID(InProgramID)
+		, RequestFlags(InRequestFlags)
 	{}
 
 	/** ID of the program that we wish to get the FlipMode of */
 	FGuid ProgramID;
+
+	/** Mask for the information requested */
+	ESyncStatusRequestFlags RequestFlags = static_cast<ESyncStatusRequestFlags>(~0);
 
 	//~ Begin FSwitchboardTask interface
 	static constexpr const TCHAR* CommandName = TEXT("get sync status");
@@ -95,7 +122,8 @@ struct FSwitchboardGetSyncStatusTask : public FSwitchboardTask
 
 	virtual uint32 GetEquivalenceHash() const override
 	{
-		return HashCombine(FSwitchboardTask::GetEquivalenceHash(), GetTypeHash(ProgramID));
+		uint32 Hash = HashCombine(FSwitchboardTask::GetEquivalenceHash(), GetTypeHash(ProgramID));
+		return HashCombine(Hash, GetTypeHash(RequestFlags));
 	}
 	//~ End FSwitchboardTask interface
 };

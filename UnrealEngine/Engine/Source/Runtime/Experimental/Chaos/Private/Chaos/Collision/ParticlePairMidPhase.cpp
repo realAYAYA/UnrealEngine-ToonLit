@@ -1710,7 +1710,13 @@ namespace Chaos
 		}
 #endif
 
-		const FParticlePairMidPhaseCollisionKey CollisionKey = FParticlePairMidPhaseCollisionKey(InImplicitId0, InImplicitId1);
+		// @todo(chaos): bParticlesInExpectedOrder is a temporary cpp-only fix for a key collision in FindConstraint.
+		// When we have swapped the order of the particles, we need to make sure that the key uses the shapes
+		// in the order that the particles are in the MidPhase. We can fix this more cleanly by passing the 
+		// FParticlePairMidPhaseCollisionKey in from GenerateCollisionsImplicitLeafImplicitLeaf where we already
+		// know if we swapped particle order or not.
+		const bool bParticlesInExpectedOrder = (InParticle0 == Particle0) && (InParticle1 == Particle1);
+		const FParticlePairMidPhaseCollisionKey CollisionKey = bParticlesInExpectedOrder ? FParticlePairMidPhaseCollisionKey(InImplicitId0, InImplicitId1) : FParticlePairMidPhaseCollisionKey(InImplicitId1, InImplicitId0);
 		FPBDCollisionConstraint* Constraint = FindConstraint(CollisionKey);
 
 		// @todo(chaos): fix key uniqueness guarantee.  We need a truly unique key gen function

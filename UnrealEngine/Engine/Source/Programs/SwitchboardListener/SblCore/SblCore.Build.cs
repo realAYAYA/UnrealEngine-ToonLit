@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class SblCore : ModuleRules
@@ -60,5 +61,18 @@ public class SblCore : ModuleRules
 		);
 
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
+
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			PublicAdditionalLibraries.Add(Path.Combine(ModuleDirectory, "NvmlWrapper", "Lib", "Windows", "NvmlWrapper.lib"));
+
+			PublicIncludePaths.AddRange(
+				new string[]
+				{
+				Path.Combine(ModuleDirectory, "NvmlWrapper", "Public"),
+				}
+			);
+		}
+
 	}
 }

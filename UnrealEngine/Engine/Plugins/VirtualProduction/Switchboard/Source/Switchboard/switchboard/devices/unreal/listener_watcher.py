@@ -98,6 +98,10 @@ class ListenerWatcher(QtCore.QObject):
             except subprocess.CalledProcessError as e:
                 LOGGER.error(f"Non-zero exit code ({e.returncode}) when invoking `{e.cmd}`", exc_info=e)
                 time.sleep(retry_interval_sec)
+            except OSError as e:
+                # This can happen if the drive is locked (e.g. by Bitlocker)
+                LOGGER.error(e)
+                break
 
         if not updated:
             self.listener_mtime = 0

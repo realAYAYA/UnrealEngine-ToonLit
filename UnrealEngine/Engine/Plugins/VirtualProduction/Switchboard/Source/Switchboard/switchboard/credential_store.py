@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod, ABC, ABCMeta
+from abc import abstractmethod, ABC
 from dataclasses import dataclass
 import json
 import logging
@@ -11,32 +11,14 @@ import pathlib
 import stat
 import sys
 import tempfile
-import threading
-from typing import Callable, Optional
-
-from PySide6 import QtCore, QtWidgets
+from typing import Optional
 
 
-QObjectMeta = type(QtCore.QObject)
-
-
-class QObjectABCMeta(QObjectMeta, ABCMeta):
-    pass
-
-
-class CredentialStore(QtCore.QObject, ABC, metaclass=QObjectABCMeta):
+class CredentialStore(ABC):
     @dataclass
     class Credential:
         username: str
         blob: str
-
-    # def OnCredentialReady(credential: Optional[Credential], unsaved: bool)
-    ReadyCallback = Callable[
-        [Optional[Credential], bool],
-        None]
-
-    def __init__(self):
-        super().__init__()
 
     @classmethod
     def encrypted_at_rest(cls) -> bool:
@@ -45,11 +27,7 @@ class CredentialStore(QtCore.QObject, ABC, metaclass=QObjectABCMeta):
     @abstractmethod
     def get(
         self,
-        key: str,
-        *,
-        context: Optional[str] = None,
-        context_long: Optional[str] = None,
-        on_credential_ready: Optional[ReadyCallback] = None
+        key: str
     ) -> Optional[Credential]:
         pass
 
@@ -57,7 +35,7 @@ class CredentialStore(QtCore.QObject, ABC, metaclass=QObjectABCMeta):
     def set(
         self,
         key: str,
-        val: Optional[CredentialStore.Credential]
+        val: Optional[Credential]
     ) -> None:
         pass
 
@@ -72,41 +50,15 @@ class CredentialStore(QtCore.QObject, ABC, metaclass=QObjectABCMeta):
 
 
 class CredentialStoreGeneric(CredentialStore):
-    @dataclass
-    class QueuedPrompt:
-        key: str
-        context: Optional[str]
-        context_long: Optional[str]
-        on_credential_ready: Optional[CredentialStore.ReadyCallback] = None
-
     def __init__(self):
         super().__init__()
 
         self._tempstore: dict[str, CredentialStore.Credential] = {}
-        self._queued_prompts: list[CredentialStoreGeneric.QueuedPrompt] = []
 
     def get(
         self,
-        key: str,
-        *,
-        context: Optional[str] = None,
-        context_long: Optional[str] = None,
-        on_credential_ready: Optional[CredentialStore.ReadyCallback] = None
+        key: str
     ) -> Optional[CredentialStore.Credential]:
-        if cred := self._try_get(key):
-            if on_credential_ready:
-                on_credential_ready(cred, False)
-            return cred
-
-        self._queued_prompts.append(
-            CredentialStoreGeneric.QueuedPrompt(
-                key=key, context=context, context_long=context_long,
-                on_credential_ready=on_credential_ready)
-        )
-
-        self._show_queued_prompts_soon()
-
-    def _try_get(self, key: str) -> Optional[CredentialStore.Credential]:
         return self._tempstore.get(key)
 
     def set(
@@ -118,30 +70,6 @@ class CredentialStoreGeneric(CredentialStore):
             self._tempstore[key] = val
         elif key in self._tempstore:
             self._tempstore.pop(key)
-
-    @QtCore.Slot()
-    def _show_queued_prompts_soon(self):
-        # Ensure this code is run from the main thread
-        if threading.current_thread() is not threading.main_thread():
-            QtCore.QMetaObject.invokeMethod(
-                self, '_show_queued_prompts_soon', QtCore.Qt.QueuedConnection)
-            return
-
-        for prompt in self._queued_prompts:
-            blob, ok = QtWidgets.QInputDialog.getText(
-                None,
-                prompt.context or '',
-                prompt.context_long or '',
-                QtWidgets.QLineEdit.EchoMode.Password)
-
-            credential: Optional[CredentialStore.Credential] = None
-            if blob and ok:
-                credential = CredentialStore.Credential('', blob)
-
-            if prompt.on_credential_ready:
-                prompt.on_credential_ready(credential, True)
-
-        self._queued_prompts.clear()
 
 
 class CredentialStorePosix(CredentialStoreGeneric):
@@ -162,7 +90,7 @@ class CredentialStorePosix(CredentialStoreGeneric):
     def _credential_path(cls, key: str) -> pathlib.Path:
         return pathlib.Path(cls._credential_dir(), f'credential_{key}.json')
 
-    def _try_get(self, key: str) -> Optional[CredentialStore.Credential]:
+    def get(self, key: str) -> Optional[CredentialStore.Credential]:
         path = self._credential_path(key)
         if not path or not path.is_file():
             return None
@@ -197,7 +125,7 @@ class CredentialStorePosix(CredentialStoreGeneric):
 
         (tmp_fd, tmp_path) = tempfile.mkstemp(dir=cred_dir, text=True)
         with os.fdopen(tmp_fd, mode='w') as f:
-            f.write(json.dumps({ 'user': val.username, 'blob': val.blob }))
+            f.write(json.dumps({'user': val.username, 'blob': val.blob}))
         os.replace(tmp_path, cred_path)
 
 
@@ -316,7 +244,7 @@ if sys.platform.startswith('win'):
         def encrypted_at_rest(cls) -> bool:
             return True
 
-        def _try_get(self, key: str) -> Optional[CredentialStore.Credential]:
+        def get(self, key: str) -> Optional[CredentialStore.Credential]:
             need_credfree = False
             cred = ctypes.pointer(CREDENTIALW())
             try:

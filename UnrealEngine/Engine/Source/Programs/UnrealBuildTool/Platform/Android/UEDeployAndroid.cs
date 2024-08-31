@@ -3024,10 +3024,10 @@ namespace UnrealBuildTool
 
 			// Required for OBB download support
 			Text.AppendLine("\t\t<service android:name=\"OBBDownloaderService\" />");
-			Text.AppendLine("\t\t<receiver android:name=\"AlarmReceiver\" />");
+			Text.AppendLine("\t\t<receiver android:name=\"AlarmReceiver\" android:exported=\"false\"/>");
 
-			Text.AppendLine("\t\t<receiver android:name=\"com.epicgames.unreal.LocalNotificationReceiver\" />");
-			Text.AppendLine("\t\t<receiver android:name=\"com.epicgames.unreal.CellularReceiver\" />");
+			Text.AppendLine("\t\t<receiver android:name=\"com.epicgames.unreal.LocalNotificationReceiver\" android:exported=\"false\"/>");
+			Text.AppendLine("\t\t<receiver android:name=\"com.epicgames.unreal.CellularReceiver\" android:exported=\"false\"/>");
 
 			if (bRestoreNotificationsOnReboot)
 			{
@@ -5833,7 +5833,7 @@ popd
 			SavePackageInfo(ProjectName, ProjectDirectory.FullName, Type, bSkipGradleBuild);
 
 			MakeApk(ToolChain, ProjectName, Type, ProjectDirectory.FullName, ExecutablePath, EngineDirectory, bForDistribution: bForDistribution, CookFlavor: CookFlavor, Configuration: Configuration,
-				bMakeSeparateApks: ShouldMakeSeparateApks(), bIncrementalPackage: false, bDisallowPackagingDataInApk: bIsDataDeploy, bDisallowExternalFilesDir: !bForDistribution || bIsDataDeploy,
+				bMakeSeparateApks: ShouldMakeSeparateApks(), bIncrementalPackage: false, bDisallowPackagingDataInApk: bIsDataDeploy, bDisallowExternalFilesDir: bIsDataDeploy,
 				bSkipGradleBuild: bSkipGradleBuild, bIsArchive: bIsArchive, bIsFromUAT: true);
 			return true;
 		}

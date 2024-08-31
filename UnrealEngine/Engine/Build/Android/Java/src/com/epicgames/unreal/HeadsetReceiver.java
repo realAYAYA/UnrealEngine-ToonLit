@@ -42,7 +42,7 @@ class HeadsetReceiver extends BroadcastReceiver
 			receiver = new HeadsetReceiver();
 		}
 
-		activity.registerReceiver(receiver, filter);
+		activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
 
 		// initialize with the current headset state
 		int state = activity.getIntent().getIntExtra("state", 0);

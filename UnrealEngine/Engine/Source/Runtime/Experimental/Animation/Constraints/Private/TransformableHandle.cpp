@@ -536,14 +536,19 @@ bool UTransformableComponentHandle::AddTransformKeys(const TArray<FFrameNumber>&
 
 void UTransformableComponentHandle::ResolveBoundObjects(FMovieSceneSequenceID LocalSequenceID, IMovieScenePlayer& Player, UObject* SubObject)
 {
-	for (TWeakObjectPtr<> ParentObject : ConstraintBindingID.ResolveBoundObjects(LocalSequenceID, Player))
+	// in the context of blueprints being recompiled (cf. AActor::RerunConstructionScripts()) or with spawnable objects, the component has to be updated.
+	// as this can be called after it has been destroyed, we get the component even if it's pending kill otherwise Get() will return a nullptr.
+	static constexpr bool bEvenIfPendingKill = true;
+	const USceneComponent* ComponentEvenIfPendingKill = Component.Get(bEvenIfPendingKill);
+	
+	for (const TWeakObjectPtr<>& ParentObject : ConstraintBindingID.ResolveBoundObjects(LocalSequenceID, Player))
 	{
-		if (AActor* Actor = Cast<AActor>(ParentObject.Get()))
+		if (const AActor* Actor = Cast<AActor>(ParentObject.Get()))
 		{
 			const TInlineComponentArray<USceneComponent*> Components(Actor);
-			const int32 Index = Components.IndexOfByPredicate([this](const USceneComponent* SubComponent)
+			const int32 Index = Components.IndexOfByPredicate([this, ComponentEvenIfPendingKill](const USceneComponent* SubComponent)
 			{
-				return Component.IsValid() && (SubComponent->GetFName() == Component->GetFName()); 
+				return ComponentEvenIfPendingKill && (SubComponent->GetFName() == ComponentEvenIfPendingKill->GetFName());
 			});
 			Component = Index != INDEX_NONE ? Components[Index] : Actor->GetRootComponent();
 		}

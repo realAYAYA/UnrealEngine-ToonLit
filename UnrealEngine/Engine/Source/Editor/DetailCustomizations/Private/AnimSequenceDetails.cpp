@@ -304,7 +304,15 @@ void FAnimSequenceDetails::GenerateAnimationTrackNameArrayElementWidget(TSharedR
 			.AutoWidth()
 			[
 				SNew(SEditableTextBox)
-					.Text(FText::FromName(AnimationTrackNamesList[ArrayIndex]))
+					.Text_Lambda([this, ArrayIndex]()
+					{
+						if (AnimationTrackNamesList.IsValidIndex(ArrayIndex))
+						{
+							return FText::FromName(AnimationTrackNamesList[ArrayIndex]);
+						}
+						
+						return FText::GetEmpty();
+					})
 					.IsReadOnly(true)
 			]
 	];

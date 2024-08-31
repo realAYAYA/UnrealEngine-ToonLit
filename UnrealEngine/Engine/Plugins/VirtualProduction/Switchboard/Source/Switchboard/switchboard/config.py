@@ -247,8 +247,9 @@ class Setting(QtCore.QObject):
     def on_device_name_changed(self, old_name: str, new_name: str):
         if old_name in self._overrides.keys():
             self._overrides[new_name] = self._overrides.pop(old_name)
-            self._override_widgets[new_name] = (
-                self._override_widgets.pop(old_name))
+
+        if old_name in self._override_widgets.keys():
+            self._override_widgets[new_name] = (self._override_widgets.pop(old_name))
 
     def reset(self):
         self._value = self._original_value
@@ -2691,10 +2692,12 @@ class Config(object):
                     setting.on_device_name_changed(old_name, new_name)
                 break
 
-        new_key = (old_key[0], new_name)
-        self._device_settings[new_key] = self._device_settings.pop(old_key)
-
-        self.save()
+        if old_key is not None:
+            new_key = (old_key[0], new_name)
+            self._device_settings[new_key] = self._device_settings.pop(old_key)
+            self.save()
+        else:
+            LOGGER.warning(f"Device with name '{old_name}' not found in the config's _device_settings")
 
     def on_device_removed(self, _, device_type, device_name, update_config):
         if not update_config:

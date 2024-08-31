@@ -70,7 +70,7 @@ FString CreateCommandDeclinedMessage(const FGuid& InMessageID, const FString& In
 	return CreateMessage(TEXT("command accepted"), false, { { TEXT("id"), InMessageID.ToString() }, {TEXT("error"), InErrorMessage} });
 }
 
-FString CreateSyncStatusMessage(const FSyncStatus& SyncStatus)
+FString CreateSyncStatusMessage(const FSyncStatus& SyncStatus, ESyncStatusRequestFlags RequestFlags)
 {
 	FString SyncStatusJsonString;
 	const bool bJsonStringOk = FJsonObjectConverter::UStructToJsonObjectString(SyncStatus, SyncStatusJsonString);
@@ -79,11 +79,15 @@ FString CreateSyncStatusMessage(const FSyncStatus& SyncStatus)
 
 	FString Message;
 
+	using RequestFlagsIntType = std::underlying_type_t<ESyncStatusRequestFlags>;
+	RequestFlagsIntType RequestFlagsValue = static_cast<RequestFlagsIntType>(RequestFlags);
+
 	TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> JsonWriter = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Message);
 	JsonWriter->WriteObjectStart();
 	JsonWriter->WriteValue(TEXT("get sync status"), true); // TODO: Phase out this field and replace with two below because parser now needs to check all possibilities.
 	JsonWriter->WriteValue(TEXT("command"), TEXT("get sync status"));
 	JsonWriter->WriteValue(TEXT("bAck"), true);
+	JsonWriter->WriteValue(TEXT("request_flags"), RequestFlagsValue);
 	JsonWriter->WriteRawJSONValue(TEXT("syncStatus"), SyncStatusJsonString);
 	JsonWriter->WriteObjectEnd();
 	JsonWriter->Close();
@@ -341,13 +345,43 @@ FCreateTaskResult CreateTaskFromCommand(const FString& InCommand, const FIPv4End
 	{
 		TSharedPtr<FJsonValue> UUIDField = TryGetCommandRequiredField(JsonData, TEXT("uuid"));
 
-		FGuid ProgramID;
-		if (UUIDField.IsValid() && FGuid::Parse(UUIDField->AsString(), ProgramID))
+		if (!UUIDField.IsValid())
 		{
-			Result.Status = ECreateTaskStatus::Success;
-			Result.Task = MakeUnique<FSwitchboardGetSyncStatusTask>(MessageID, InEndpoint, ProgramID);
+			Result.Status = ECreateTaskStatus::Error_ParsingFailed;
 			return Result;
 		}
+
+		FGuid ProgramID;
+
+		if (!FGuid::Parse(UUIDField->AsString(), ProgramID))
+		{
+			Result.Status = ECreateTaskStatus::Error_ParsingFailed;
+			return Result;
+		}
+
+		TSharedPtr<FJsonValue> RequestFlagsField = TryGetCommandRequiredField(JsonData, TEXT("request_flags"));
+
+		if (!RequestFlagsField.IsValid())
+		{
+			Result.Status = ECreateTaskStatus::Error_ParsingFailed;
+			return Result;
+		}
+
+		using RequestFlagsIntType = std::underlying_type<ESyncStatusRequestFlags>::type;
+		RequestFlagsIntType RequestFlags;
+
+		if (!RequestFlagsField->TryGetNumber(RequestFlags))
+		{
+			Result.Status = ECreateTaskStatus::Error_ParsingFailed;
+			return Result;
+		}
+
+		const ESyncStatusRequestFlags RequestFlagsEnum = static_cast<ESyncStatusRequestFlags>(RequestFlags);
+
+		Result.Status = ECreateTaskStatus::Success;
+		Result.Task = MakeUnique<FSwitchboardGetSyncStatusTask>(MessageID, InEndpoint, ProgramID, RequestFlagsEnum);
+
+		return Result;
 	}
 	else if (CommandName == FSwitchboardRedeployListenerTask::CommandName)
 	{		

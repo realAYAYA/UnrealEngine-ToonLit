@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod, ABC
 import asyncio
+from asyncio import Future
 from collections import deque
 from datetime import datetime, timedelta
+import logging
 import ssl
 import threading
 import traceback
@@ -16,7 +19,9 @@ from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import QuicEvent, HandshakeCompleted
 from cryptography.hazmat.primitives import hashes
-from PySide6 import QtCore
+from cryptography.x509.oid import NameOID
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtWidgets import QMessageBox
 
 from . import message_protocol
 from .credential_store import CredentialStore, CREDENTIAL_STORE
@@ -32,6 +37,7 @@ class SwitchboardClientProtocol(QuicConnectionProtocol):
 
         self.client: Optional[ListenerClient] = None
         self.fingerprint_sha2: Optional[bytes] = None
+        self.subject_cn = ''
 
     # @override
     def quic_event_received(self, event: QuicEvent) -> None:
@@ -44,71 +50,60 @@ class SwitchboardClientProtocol(QuicConnectionProtocol):
 
             self.fingerprint_sha2 = server_cert.fingerprint(hashes.SHA256())
 
+            subject = server_cert.subject
+            cn_attrs = subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+            self.subject_cn = '+'.join([str(attr.value) for attr in cn_attrs])
+
     async def authenticate(self) -> bool:
+        assert self.client
         assert self.fingerprint_sha2
+
         fingerprint_str = self.fingerprint_sha2.hex()
 
         # truncated to 128 bits for visual comparison
         fingerprint_display_str = self.fingerprint_sha2[:16].hex(':').upper()
 
         host = self.client.address
+        credential = CREDENTIAL_STORE.get(key=host)
+        unsaved = credential is None
 
-        auth_response = self._loop.create_future()
-        closure_credential: Optional[CredentialStore.Credential] = None
-        closure_cred_unsaved = False
+        if not credential:
+            password = await self.client.listener_qt_handler.prompt_password(
+                host, self.subject_cn, fingerprint_display_str)
 
-        def on_credential_ready(
-            cred: Optional[CredentialStore.Credential],
-            unsaved: bool
-        ):
-            def auth_exception():
-                auth_response.set_exception(RuntimeError)
-                self.close()
-
-            if not cred:
-                self._quic._logger.error(
-                    'No credential for %s', host)
-                self._loop.call_soon_threadsafe(auth_exception)
-                return
-
-            nonlocal closure_credential, closure_cred_unsaved
-            closure_credential = cred
-            closure_cred_unsaved = unsaved
-
-            # First time update with expected remote fingerprint
-            if not cred.username:
-                cred.username = fingerprint_str
-            elif cred.username != fingerprint_str:
-                self._quic._logger.error(
-                    'MISMATCHED FINGERPRINT for %s\n\n'
-                    '%s (expected)\n'
-                    '%s (actual)',
-                    host, cred.username, fingerprint_str)
-                self._loop.call_soon_threadsafe(auth_exception)
-                return
-
-            if self.client:
-                jwt: Optional[str] = None
-                password: Optional[str] = None
-                if not unsaved and not CREDENTIAL_STORE.encrypted_at_rest():
-                    jwt = cred.blob
-                else:
-                    password = cred.blob
-
-                msgid, msg = message_protocol.create_authenticate_message(
-                    jwt=jwt, password=password)
-
-                self.client.get_message_response(msgid, msg,
-                                                 future=auth_response)
+            if password:
+                credential = CredentialStore.Credential('', password)
             else:
-                self._loop.call_soon_threadsafe(auth_exception)
+                logging.error('No credential for %s', host)
+                return False
 
-        CREDENTIAL_STORE.get(
-            key=host,
-            context='Input authentication token',
-            context_long=f'Input authentication token for {host}\n\n'
-                         f'(Fingerprint: {fingerprint_display_str})',
-            on_credential_ready=on_credential_ready)
+        if not credential.username:
+            # First time update with expected remote fingerprint
+            credential.username = fingerprint_str
+        elif credential.username != fingerprint_str:
+            # Warn the user if the key changed
+            result = await self.client.listener_qt_handler.prompt_fp_mismatch(
+                host, self.subject_cn, fingerprint_display_str)
+
+            if not result.proceed:
+                return False
+
+            if result.remember:
+                unsaved = True
+                credential.username = fingerprint_str
+
+        auth_jwt: Optional[str] = None
+        auth_password: Optional[str] = None
+        if not unsaved and not CREDENTIAL_STORE.encrypted_at_rest():
+            auth_jwt = credential.blob
+        else:
+            auth_password = credential.blob
+
+        msgid, msg = message_protocol.create_authenticate_message(
+            jwt=auth_jwt, password=auth_password)
+
+        auth_response = asyncio.get_running_loop().create_future()
+        self.client.get_message_response(msgid, msg, future=auth_response)
 
         try:
             response = await auth_response
@@ -116,15 +111,18 @@ class SwitchboardClientProtocol(QuicConnectionProtocol):
 
             if auth_succeeded:
                 if CREDENTIAL_STORE.encrypted_at_rest():
-                    if closure_cred_unsaved and closure_credential:
-                        CREDENTIAL_STORE.set(host, closure_credential)
+                    if unsaved and credential:
+                        logging.info(f'Saving password for {host}')
+                        CREDENTIAL_STORE.set(host, credential)
                 elif 'jwt' in response:
                     credential = CredentialStore.Credential(
                         fingerprint_str, response['jwt'])
+                    logging.info(f'Saving authentication token for {host}')
                     CREDENTIAL_STORE.set(host, credential)
             else:
                 # Clear invalid saved credential
-                if not closure_cred_unsaved:
+                if not unsaved:
+                    logging.info(f'Forgetting incorrect password for {host}')
                     CREDENTIAL_STORE.set(host, None)
 
             return auth_succeeded
@@ -132,10 +130,152 @@ class SwitchboardClientProtocol(QuicConnectionProtocol):
             return False
 
 
+class FingerprintMismatchUserAction:
+    def __init__(self):
+        self.proceed: bool = False
+        self.remember: bool = False
+
+
 class ListenerQtHandler(QtCore.QObject):
     listener_connecting = QtCore.Signal(object)
     listener_connected = QtCore.Signal(object)
     listener_connection_failed = QtCore.Signal(object)
+
+    class Prompt(ABC):
+        @abstractmethod
+        def display(self):
+            pass
+
+    class PromptPassword(Prompt):
+        def __init__(
+            self,
+            host: str,
+            subject_cn: str,
+            fingerprint_desc: str,
+        ):
+            self.host = host
+            self.subject_cn = subject_cn
+            self.fingerprint_desc = fingerprint_desc
+            self.future: Optional[Future[str]] = None
+
+        def display(self):
+            blob, ok = QtWidgets.QInputDialog.getText(
+                None,
+                'Enter Password',
+                f'Enter password for {self.host} ({self.subject_cn})\n\n'
+                f'(Fingerprint: {self.fingerprint_desc})',
+                QtWidgets.QLineEdit.EchoMode.Password)
+
+            assert self.future
+            if blob and ok:
+                self.future.set_result(blob)
+            else:
+                self.future.set_result('')
+
+
+    class PromptFingerprintMismatch(Prompt):
+        def __init__(
+            self,
+            host: str,
+            subject_cn: str,
+            fingerprint_desc: str,
+        ):
+            self.host = host
+            self.subject_cn = subject_cn
+            self.fingerprint_desc = fingerprint_desc
+            self.future: Optional[Future[FingerprintMismatchUserAction]] = None
+
+        def display(self):
+            title = 'Warning: Potential security breach!'
+            text = (
+                f'{title}'
+                '\n\n'
+                'The Switchboard Listener key does not match the key that has '
+                'been cached. This means that either another user has changed '
+                'the key, or you are actually trying to connect to another '
+                'computer pretending to be the device.'
+                '\n\n'
+                'If the key change was not expected, please contact your '
+                'administrator.'
+                '\n\n'
+                'Details for new key:\n'
+                f'Host: {self.host} ({self.subject_cn})\n'
+                f'Fingerprint: {self.fingerprint_desc}'
+                '\n\n'
+                'Trust the new key and carry on connecting?\n'
+            )
+            check_text = 'Update cached key for this device'
+
+            dialog = QMessageBox()
+            dialog.setWindowTitle(title)
+            dialog.setText(text)
+
+            checkbox = QtWidgets.QCheckBox(check_text)
+            dialog.setCheckBox(checkbox)
+
+            dialog.setIconPixmap(QtGui.QIcon(
+                ':icons/images/alert-triangle-64.svg').pixmap(48, 48))
+
+            ok_btn = dialog.addButton(QMessageBox.StandardButton.Ok)
+            dialog.addButton(QMessageBox.StandardButton.Cancel)
+            dialog.setDefaultButton(QMessageBox.StandardButton.NoButton)
+
+            dialog.exec()
+
+            result = FingerprintMismatchUserAction()
+
+            if dialog.checkBox().isChecked():
+                result.remember = True
+
+            if dialog.clickedButton() == ok_btn:
+                result.proceed = True
+
+            assert self.future
+            self.future.set_result(result)
+
+    def __init__(self):
+        super().__init__()
+
+        self._queued_prompts: list[ListenerQtHandler.Prompt] = []
+
+    async def prompt_password(
+        self,
+        host: str,
+        subject_cn: str,
+        fingerprint_desc: str,
+    ) -> str:
+        prompt = ListenerQtHandler.PromptPassword(host, subject_cn,
+                                                  fingerprint_desc)
+        prompt.future = asyncio.get_running_loop().create_future()
+        self._queued_prompts.append(prompt)
+        self._show_queued_prompts_soon()
+        return await prompt.future
+
+    async def prompt_fp_mismatch(
+        self,
+        host: str,
+        subject_cn: str,
+        fingerprint_desc: str,
+    ) -> FingerprintMismatchUserAction:
+        prompt = ListenerQtHandler.PromptFingerprintMismatch(
+            host, subject_cn, fingerprint_desc)
+        prompt.future = asyncio.get_running_loop().create_future()
+        self._queued_prompts.append(prompt)
+        self._show_queued_prompts_soon()
+        return await prompt.future
+
+    @QtCore.Slot()
+    def _show_queued_prompts_soon(self):
+        # Ensure this code is run from the main thread
+        if threading.current_thread() is not threading.main_thread():
+            QtCore.QMetaObject.invokeMethod(
+                self, '_show_queued_prompts_soon', QtCore.Qt.QueuedConnection)
+            return
+
+        for prompt in self._queued_prompts:
+            prompt.display()
+
+        self._queued_prompts.clear()
 
 
 class ListenerClient:
@@ -243,7 +383,7 @@ class ListenerClient:
         return True
 
     def disconnect(self, unexpected=False, exception=None):
-        if self.protocol and self.loop:
+        if self.protocol and self.loop and (not self.loop.is_closed()):
             _, msg = message_protocol.create_disconnect_message()
             self.send_message(msg)
             self.loop.call_soon_threadsafe(self.protocol.close)
@@ -446,8 +586,8 @@ class ListenerClient:
         message_bytes: bytes,
         *,
         max_wait=IDLE_TIMEOUT_SEC,
-        future: Optional[asyncio.Future[dict[str, str]]] = None
-    ) -> asyncio.Future[dict[str, str]]:
+        future: Optional[Future[dict[str, str]]] = None
+    ) -> Future[dict[str, str]]:
         if self.loop and self.protocol and self.writer:
             if not future:
                 future = self.loop.create_future()

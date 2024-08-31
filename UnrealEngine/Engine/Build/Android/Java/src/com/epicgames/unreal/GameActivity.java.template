@@ -247,7 +247,7 @@ public class GameActivity extends $${gameActivitySuperClass}$$ implements Surfac
 {
 	public int VersionCode = 0;
 	public String VersionName = "Unknown";
-	public int targetSdkVersion = 0;
+	public static int targetSdkVersion = 0;
 
 	private boolean bAllowIMU = true;
 	private SensorManager sensorManager;
@@ -622,7 +622,7 @@ public class GameActivity extends $${gameActivitySuperClass}$$ implements Surfac
 			// Create console command broadcast listener
 			Log.debug( "Creating console command broadcast listener");
 			consoleCmdReceiver = new ConsoleCmdReceiver(this);
-			registerReceiver(consoleCmdReceiver, new IntentFilter(Intent.ACTION_RUN));
+			registerReceiver(consoleCmdReceiver, new IntentFilter(Intent.ACTION_RUN), Context.RECEIVER_EXPORTED);
 		}
 //$${gameActivityOnStartAdditions}$$
 		Log.debug("==================================> Inside onStart function in GameActivity");

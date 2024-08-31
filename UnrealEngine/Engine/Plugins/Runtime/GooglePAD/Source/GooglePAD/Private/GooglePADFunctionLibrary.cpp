@@ -128,6 +128,12 @@ EGooglePADErrorCode UGooglePADFunctionLibrary::ConvertErrorCode(AssetPackErrorCo
 			return EGooglePADErrorCode::AssetPack_PLAY_STORE_NOT_FOUND;
 		case ASSET_PACK_NETWORK_UNRESTRICTED:
 			return EGooglePADErrorCode::AssetPack_NETWORK_UNRESTRICTED;
+		case ASSET_PACK_APP_NOT_OWNED:
+			return EGooglePADErrorCode::AssetPack_APP_NOT_OWNED;
+		case ASSET_PACK_CONFIRMATION_NOT_REQUIRED:
+			return EGooglePADErrorCode::AssetPack_CONFIRMATION_NOT_REQUIRED;
+		case ASSET_PACK_UNRECOGNIZED_INSTALLATION:
+			return EGooglePADErrorCode::AssetPack_UNRECOGNIZED_INSTALLATION;
 		case ASSET_PACK_INTERNAL_ERROR:
 			return EGooglePADErrorCode::AssetPack_INTERNAL_ERROR;
 		case ASSET_PACK_INITIALIZATION_NEEDED:
@@ -160,6 +166,8 @@ EGooglePADDownloadStatus UGooglePADFunctionLibrary::ConvertDownloadStatus(AssetP
 			return EGooglePADDownloadStatus::AssetPack_WAITING_FOR_WIFI;
 		case ASSET_PACK_NOT_INSTALLED:
 			return EGooglePADDownloadStatus::AssetPack_NOT_INSTALLED;
+		case ASSET_PACK_REQUIRES_USER_CONFIRMATION:
+			return EGooglePADDownloadStatus::AssetPack_REQUIRES_USER_CONFIRMATION;
 		case ASSET_PACK_INFO_PENDING:
 			return EGooglePADDownloadStatus::AssetPack_INFO_PENDING;
 		case ASSET_PACK_INFO_FAILED:
@@ -186,6 +194,22 @@ EGooglePADCellularDataConfirmStatus UGooglePADFunctionLibrary::ConvertCellarData
 			return EGooglePADCellularDataConfirmStatus::AssetPack_CONFIRM_USER_CANCELED;
 	}
 	return EGooglePADCellularDataConfirmStatus::AssetPack_CONFIRM_UNKNOWN;
+}
+
+EGooglePADConfirmationDialogStatus UGooglePADFunctionLibrary::ConvertConfirmationDialogStatus(ShowConfirmationDialogStatus Status)
+{
+	switch (Status)
+	{
+		case ASSET_PACK_CONFIRMATION_DIALOG_UNKNOWN:
+			return EGooglePADConfirmationDialogStatus::AssetPack_CONFIRMATION_DIALOG_UNKNOWN;
+		case ASSET_PACK_CONFIRMATION_DIALOG_PENDING:
+			return EGooglePADConfirmationDialogStatus::AssetPack_CONFIRMATION_DIALOG_PENDING;
+		case ASSET_PACK_CONFIRMATION_DIALOG_APPROVED:
+			return EGooglePADConfirmationDialogStatus::AssetPack_CONFIRMATION_DIALOG_APPROVED;
+		case ASSET_PACK_CONFIRMATION_DIALOG_CANCELED:
+			return EGooglePADConfirmationDialogStatus::AssetPack_CONFIRMATION_DIALOG_CANCELED;
+	}
+	return EGooglePADConfirmationDialogStatus::AssetPack_CONFIRMATION_DIALOG_UNKNOWN;
 }
 
 EGooglePADStorageMethod UGooglePADFunctionLibrary::ConvertStorageMethod(AssetPackStorageMethod Code)
@@ -373,8 +397,8 @@ EGooglePADErrorCode UGooglePADFunctionLibrary::ShowCellularDataConfirmation()
 {
 	EGooglePADErrorCode result = EGooglePADErrorCode::AssetPack_UNAVAILABLE;
 #if SUPPORTED_PLATFORM
-	AssetPackErrorCode ErrorCode = AssetPackManager_showCellularDataConfirmation(GGameActivityThis);
-	result = ConvertErrorCode(ErrorCode);
+	UE_LOG(LogGooglePAD, Warning, TEXT("ShowCellularDataConfirmation is deprecated; redirecting to ShowConfirmationDialog!"));
+	result = ShowConfirmationDialog();
 #endif
 	return result;
 }
@@ -384,10 +408,33 @@ EGooglePADErrorCode UGooglePADFunctionLibrary::GetShowCellularDataConfirmationSt
 	EGooglePADErrorCode result = EGooglePADErrorCode::AssetPack_UNAVAILABLE;
 	Status = EGooglePADCellularDataConfirmStatus::AssetPack_CONFIRM_UNKNOWN;
 #if SUPPORTED_PLATFORM
-	ShowCellularDataConfirmationStatus ReturnStatus = ASSET_PACK_CONFIRM_UNKNOWN;
-	AssetPackErrorCode ErrorCode = AssetPackManager_getShowCellularDataConfirmationStatus(&ReturnStatus);
+	EGooglePADConfirmationDialogStatus ConfirmStatus;
+	UE_LOG(LogGooglePAD, Warning, TEXT("GetShowCellularDataConfirmation is deprecated; redirecting to GetShowConfirmationDialog!"));
+	result = GetShowConfirmationDialogStatus(ConfirmStatus);
+	Status = static_cast<EGooglePADCellularDataConfirmStatus>(ConfirmStatus);
+#endif
+	return result;
+}
+
+EGooglePADErrorCode UGooglePADFunctionLibrary::ShowConfirmationDialog()
+{
+	EGooglePADErrorCode result = EGooglePADErrorCode::AssetPack_UNAVAILABLE;
+#if SUPPORTED_PLATFORM
+	AssetPackErrorCode ErrorCode = AssetPackManager_showConfirmationDialog(GGameActivityThis);
 	result = ConvertErrorCode(ErrorCode);
-	Status = ConvertCellarDataConfirmStatus(ReturnStatus);
+#endif
+	return result;
+}
+
+EGooglePADErrorCode UGooglePADFunctionLibrary::GetShowConfirmationDialogStatus(EGooglePADConfirmationDialogStatus& Status)
+{
+	EGooglePADErrorCode result = EGooglePADErrorCode::AssetPack_UNAVAILABLE;
+	Status = EGooglePADConfirmationDialogStatus::AssetPack_CONFIRMATION_DIALOG_UNKNOWN;
+#if SUPPORTED_PLATFORM
+	ShowConfirmationDialogStatus ReturnStatus = ASSET_PACK_CONFIRMATION_DIALOG_UNKNOWN;
+	AssetPackErrorCode ErrorCode = AssetPackManager_getShowConfirmationDialogStatus(&ReturnStatus);
+	result = ConvertErrorCode(ErrorCode);
+	Status = ConvertConfirmationDialogStatus(ReturnStatus);
 #endif
 	return result;
 }

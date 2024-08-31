@@ -267,7 +267,6 @@ private:
 	/** Client interface to the Switchboard Listener Helper external process */
 	TSharedPtr<FSBLHelperClient> SBLHelper;
 
-	bool bIsNvAPIInitialized;
 	bool bProcessorSMT;
 
 	TSharedPtr<FRWLock> CachedMosaicToposLock;
