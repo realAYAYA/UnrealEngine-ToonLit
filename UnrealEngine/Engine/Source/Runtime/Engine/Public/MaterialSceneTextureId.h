@@ -77,4 +77,10 @@ enum ESceneTextureId : int
 	PPI_WorldTangent UMETA(DisplayName = "WorldTangent"),
 	/** Material anisotropy, single channel (GBuffer) */
 	PPI_Anisotropy UMETA(DisplayName = "Anisotropy"),
+
+
+	// Change-begin
+	/** Material CustomData, 4 channels (GBuffer) */
+	PPI_CustomData UMETA(DisplayName = "CustomData"),
+	// Change-end
 };

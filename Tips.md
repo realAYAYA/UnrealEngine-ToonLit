@@ -25,3 +25,5 @@ AmbientOcclusion在有静态光照时候储存随机抖动过的IndirectIrradian
 而如果开启各项异性通道, 则可以额外使用: Tangent, Anistoropy  
 
 Now, what does ToonLit need to save in buffer?  
+Necessary: Outline Width, Outline Id, RampId, HairShadowMask, CustomShadowMask;  
+Additional: Outline Color, Outline Normal  

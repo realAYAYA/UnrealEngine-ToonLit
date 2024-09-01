@@ -7191,7 +7191,7 @@ static bool IsPropertyActive_Internal(EMaterialProperty InProperty,
 			Active = ShadingModels.HasAnyShadingModel({ MSM_ClearCoat, MSM_Hair, MSM_Cloth, MSM_Eye, MSM_SubsurfaceProfile/*Change-begin*/, MSM_ToonLit, MSM_ToonHair/*Change-end*/ });
 			break;
 		case MP_CustomData1:
-			Active = ShadingModels.HasAnyShadingModel({ MSM_ClearCoat, MSM_Eye });
+			Active = ShadingModels.HasAnyShadingModel({ MSM_ClearCoat, MSM_Eye/*Change-begin*/, MSM_ToonLit, MSM_ToonHair/*Change-end*/ });
 			break;
 		case MP_EmissiveColor:
 			// Emissive is always active, even for light functions and post process materials, 
