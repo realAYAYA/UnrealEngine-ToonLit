@@ -21,9 +21,10 @@ WRITES_VELOCITY_TO_GBUFFER 禁止从Gbuffer中读取速度值。
 
 AmbientOcclusion在有静态光照时候储存随机抖动过的IndirectIrradiance*Material AO  
 
-除开必要的光照计算，开发者可以自定义拓展的Buffer: Metalic, CustomData, AO  
+除开必要的光照计算，开发者可以自定义拓展的Buffer: Metalic(1), CustomData(2)  
 而如果开启各项异性通道, 则可以额外使用: Tangent, Anistoropy  
 
 Now, what does ToonLit need to save in buffer?  
-Necessary: Outline Width, Outline Id, RampId, HairShadowMask, CustomShadowMask;  
-Additional: Outline Color, Outline Normal  
+Necessary:                  Outline Width, Outline Id, RampId  
+Necessary but not GBuffer:  HairShadowMask, CustomShadowMask  
+Additional:                 Outline Color, Outline Normal  
