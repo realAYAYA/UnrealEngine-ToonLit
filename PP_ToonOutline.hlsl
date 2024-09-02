@@ -1,7 +1,11 @@
+// --------------------------------------------------------------------------------------
+float3 GetSceneColor(float2 Uv);
 float GetSceneTextureSize();
 float2 GetCurrentUV();
 float GetDepth(float2 Uv);
 float3 GetNormal(float2 Uv);
+float Fresnel(float ExponentIn, float BaseReflectFractionIn, float3 Normal);
+// --------------------------------------------------------------------------------------
 
 float2 GetKnernal(float2 Uv, float2 Offset, float InWidth)
 {
@@ -10,7 +14,7 @@ float2 GetKnernal(float2 Uv, float2 Offset, float InWidth)
     return Uv + Offset;
 }
 
-float DepthThicknessModulation(float MaxDepth, float MinThickness, float MaxThickness)
+float ThicknessModulation(float MaxDepth, float MinThickness, float MaxThickness)
 {
     float2 UVs = GetCurrentUV();
 
@@ -23,6 +27,13 @@ float DepthThicknessModulation(float MaxDepth, float MinThickness, float MaxThic
     float MinDepth = min(MaxDepth, min(Center, min(Left, min(Right, min(Up, Down)))));
 
     return MinThickness - (MaxThickness - MinThickness) * (MinDepth / MaxDepth);
+}
+
+float GrazingAngle(float GrazingAnglePower, float FresnelPower, flaot GrazingAngleModulationFactor)
+{
+    float F = Fresnel(FresnelPower, 0.04, GetNormal(GetCurrentUV()));
+
+    return saturate((F - 1) / GrazingAnglePower + 1) * GrazingAngleModulationFactor + 1;
 }
 
 float DetectEdge_Depth(float Threshold, float Thickness)
@@ -59,9 +70,21 @@ float DetectEdge_Normal(float Threshold, float Thickness)
 
 float DepthMask(float MaxThickness, float MaxDepth)
 {
-    return 0;
+    float Center = GetDepth(GetKnernal(UVs, float2(0, 0), MaxThickness));
+    float Left = GetDepth(GetKnernal(UVs, float2(-1, 0), MaxThickness));
+    float Right = GetDepth(GetKnernal(UVs, float2(1, 0), MaxThickness));
+    float Up = GetDepth(GetKnernal(UVs, float2(0, -1), MaxThickness));
+    float Down = GetDepth(GetKnernal(UVs, float2(0, 1), MaxThickness));
+
+    float MinDepth = min(Center, min(Left, min(Right, min(Up, Down))));
+
+    return 1 - step(MaxDepth, MinDepth);
 }
 
+
+float DepthOutline_GrazingAnglePower = 1;
+float DepthOutline_FresnelPower = 5;
+float DepthOutline_GrazingAngleModulationFactor = 10;
 
 float4 DepthOutline_Color;
 float DepthOutline_Threshold = 4;
@@ -79,4 +102,25 @@ float MaxDrawDistance = 500000;
 
 float4 Main()
 {
+    float3 FinalColor;
+    float3 SceneColor = GetSceneColor(GetCurrentUV());
+
+    // Calc depth outline
+    {
+        float FinalThickness = ThicknessModulation(DepthOutline_MaxDepth, DepthOutline_MinThickness, DepthOutline_Thickness);
+        float FinalThreshold = DepthOutline_Threshold * GrazingAngle(DepthOutline_GrazingAnglePower, DepthOutline_FresnelPower, DepthOutline_GrazingAngleModulationFactor);
+        float V = DetectEdge_Depth(FinalThreshold, FinalThickness);
+        float Mask = DepthMask(FinalThickness, MaxDrawDistance);
+        FinalColor = Lerp(SceneColor, DepthOutline_Color, V * Mask);
+    }
+
+    // Calc noraml outline
+    {
+        float FinalThickness = ThicknessModulation(NormalOutline_MaxDepth, NormalOutline_MinThickness, NormalOutline_Thickness);
+        float V = DetectEdge_Depth(NormalOutline_Threshold, FinalThickness);
+        float Mask = DepthMask(FinalThickness, MaxDrawDistance);
+        FinalColor = Lerp(SceneColor, NormalOutline_Color, V * Mask);
+    }
+
+    return float4(FinalColor, 1.0);
 }
