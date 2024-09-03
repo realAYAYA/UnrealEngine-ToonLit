@@ -1,3 +1,5 @@
+// How does PP_ToonOutline.uasset work
+
 // --------------------------------------------------------------------------------------
 float3 GetSceneColor(float2 Uv);
 float GetSceneTextureSize();
@@ -14,6 +16,9 @@ float2 GetKnernal(float2 Uv, float2 Offset, float InWidth)
     return Uv + Offset;
 }
 
+// 描边宽度控制, 根据输入参数重新决定采样范围
+// MaxDepth: 决定描边粗细由远到近的变化范围, 该值越小, 由深度引起的变化会更早的变为恒定固定值; 距离屏幕越近的像素, 描边会越细, 反之越粗
+// MinThickness, MaxThickness: 描边粗细, 参考范围, 二者差值越大, 采样距离越远, 描边越粗
 float ThicknessModulation(float MaxDepth, float MinThickness, float MaxThickness)
 {
     float2 UVs = GetCurrentUV();
@@ -26,7 +31,7 @@ float ThicknessModulation(float MaxDepth, float MinThickness, float MaxThickness
 
     float MinDepth = min(MaxDepth, min(Center, min(Left, min(Right, min(Up, Down)))));
 
-    return MinThickness - (MaxThickness - MinThickness) * (MinDepth / MaxDepth);
+    return MaxThickness - (MaxThickness - MinThickness) * (MinDepth / MaxDepth);
 }
 
 float GrazingAngle(float GrazingAnglePower, float FresnelPower, flaot GrazingAngleModulationFactor)
@@ -36,6 +41,7 @@ float GrazingAngle(float GrazingAnglePower, float FresnelPower, flaot GrazingAng
     return saturate((F - 1) / GrazingAnglePower + 1) * GrazingAngleModulationFactor + 1;
 }
 
+// Threshold: 超过阈值才会进行描边
 float DetectEdge_Depth(float Threshold, float Thickness)
 {
     float2 UVs = GetCurrentUV();
@@ -68,6 +74,7 @@ float DetectEdge_Normal(float Threshold, float Thickness)
     return step(Threshold, D1 + D2 + D3 + D4);
 }
 
+// 深度过大时不进行描边
 float DepthMask(float MaxThickness, float MaxDepth)
 {
     float Center = GetDepth(GetKnernal(UVs, float2(0, 0), MaxThickness));
@@ -102,8 +109,7 @@ float MaxDrawDistance = 500000;
 
 float4 Main()
 {
-    float3 FinalColor;
-    float3 SceneColor = GetSceneColor(GetCurrentUV());
+    float3 FinalColor = GetSceneColor(GetCurrentUV());
 
     // Calc depth outline
     {
@@ -111,7 +117,7 @@ float4 Main()
         float FinalThreshold = DepthOutline_Threshold * GrazingAngle(DepthOutline_GrazingAnglePower, DepthOutline_FresnelPower, DepthOutline_GrazingAngleModulationFactor);
         float V = DetectEdge_Depth(FinalThreshold, FinalThickness);
         float Mask = DepthMask(FinalThickness, MaxDrawDistance);
-        FinalColor = Lerp(SceneColor, DepthOutline_Color, V * Mask);
+        FinalColor = Lerp(FinalColor, DepthOutline_Color, V * Mask);
     }
 
     // Calc noraml outline
@@ -119,7 +125,15 @@ float4 Main()
         float FinalThickness = ThicknessModulation(NormalOutline_MaxDepth, NormalOutline_MinThickness, NormalOutline_Thickness);
         float V = DetectEdge_Depth(NormalOutline_Threshold, FinalThickness);
         float Mask = DepthMask(FinalThickness, MaxDrawDistance);
-        FinalColor = Lerp(SceneColor, NormalOutline_Color, V * Mask);
+        FinalColor = Lerp(FinalColor, NormalOutline_Color, V * Mask);
+    }
+
+    // Todo Calc Id outline
+    {
+        float FinalThickness = ThicknessModulation(NormalOutline_MaxDepth, NormalOutline_MinThickness, NormalOutline_Thickness);
+        float V = DetectEdge_Depth(NormalOutline_Threshold, FinalThickness);
+        float Mask = DepthMask(FinalThickness, MaxDrawDistance);
+        FinalColor = Lerp(FinalColor, NormalOutline_Color, V * Mask);
     }
 
     return float4(FinalColor, 1.0);
