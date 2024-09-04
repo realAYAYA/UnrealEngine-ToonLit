@@ -4551,7 +4551,7 @@ bool UMaterialInstance::HasOverridenBaseProperties()const
 	}
 
 	// Change-begin
-	if (UseToonOutline() != Parent->UseToonOutline() || GetOutlineMaterial() != Parent->GetOutlineMaterial())
+	if (Parent && (UseToonOutline() != Parent->UseToonOutline() || GetOutlineMaterial() != Parent->GetOutlineMaterial()))
 		return true;
 	// Change-end
 

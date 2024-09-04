@@ -3,10 +3,16 @@ Postprocess Mat
 
 
 卡通角色美术管线：  
-1. 角色身上的透明部分必须在材质球层面单独分离出来, 可以Mask（不准因为一个透明件而将整个部位使用半透明贴图）  
-    1. Buffer类型 BaseColor(3), RampId(1), Specular(1), Roughness(1), AO(1), Opacity(1)
-2. Eye rendering:   
-3. Hair rendering:  
+1. Texture data组织: BaseColor(3), Normal(3), RampId(1), Specular(1), Roughness(1), AO(1), Opacity(1), OutlineId(1)  
+2. 什么时候必须单独拆出来材质球? (1)透明部分(不准因为一个透明件而将整个部位使用半透明贴图);(2)不希望走ToonLit渲染流程(PBR, 比如身上的金属和宝石, etc);(3)双面材质  
+3. Eye rendering:   
+4. Hair rendering:  
+5. 设计角色时需要谨慎的地方，(1)特殊材质要求，比如特殊质感的衣服、带绒毛物件、等等  
+
+制作纹理时不要使用原画光照信息，不要添加描边，描边控制有单独流程  
+理论上一个角色基本需要'3'种材质球即可完成渲染（除开眼睛、头发），它们分别是ToonLit、半透明、非ToonLit，以及它们可能需要的双面  
+如果必须有多个贴图，不透明（或Mask）和半透明的分开，然后建议皮肤和非皮肤分开  
+贴图尺寸一定为2次幂，不接受反驳  
 
 
 真是 很多东西 心里觉得实现起来思路明确，只有实际做起来才真是各种踩坑  
