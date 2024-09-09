@@ -994,18 +994,36 @@ FDirectLighting ToonLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, fl
 	Init(Context, N, V, L);
 	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
 	//Context.NoV = saturate(abs( Context.NoV ) + 1e-5);
-	//GBuffer.CustomData.a;
 
-	float RampID = GBuffer.Metallic;
-	float Y = saturate(dot(N, L) * .5 + .5);
+	uint ToonShadingModel = GBuffer.CustomData.a;// Todo 拆分成两个4bit
+	// Default
+	{
+		float RampID = GBuffer.Metallic;
+		float Y = saturate(dot(N, L) * .5 + .5);
 	
-	// Diffuse
-	float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(Y, RampID), 0).rgb;
-	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * ToonFallOffColor * GBuffer.BaseColor / 3.1415927f;
+		// Diffuse
+		float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(Y, RampID), 0).rgb;
+		Lighting.Diffuse = AreaLight.FalloffColor * Falloff * ToonFallOffColor * GBuffer.BaseColor / 3.1415927f;
 
-	// Specular
-	float ToonSpecular = ToonStep(GBuffer.Roughness, Context.NoH);
-	Lighting.Specular = lerp(ToonSpecular, 0.0f, GBuffer.Roughness * GBuffer.Roughness) * AreaLight.FalloffColor * Falloff * GBuffer.BaseColor * GBuffer.Specular;
+		// Specular
+		float ToonSpecular = ToonStep(GBuffer.Roughness, Context.NoH);
+		Lighting.Specular = lerp(ToonSpecular, 0.0f, GBuffer.Roughness * GBuffer.Roughness) * AreaLight.FalloffColor * Falloff * GBuffer.BaseColor * GBuffer.Specular;
+	}
+
+	// Stocking
+	//if (ToonShadingModel == 2)
+	{
+	}
+	
+	// Face
+	//if (ToonShadingModel == 3)
+	{
+	}
+
+	// Eye
+	//if (ToonShadingModel == 4)
+	{
+	}
 	
 	Lighting.Transmission = float3(0, 0, 0);
 	return Lighting;

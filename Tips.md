@@ -1,5 +1,6 @@
 # Tips
-Postprocess Mat
+Postprocess Mat  
+力求最小拓展, 不搞花里胡哨(没事不要乱加TBuffer! 不要把渲染计算复杂化)  
 
 
 卡通角色美术管线：  
@@ -53,3 +54,18 @@ Now, what does ToonLit need to save in buffer?
 Necessary:                  Outline Width, Outline Id, RampId  
 Necessary but not GBuffer:  HairShadowMask, CustomShadowMask  
 Additional:                 Outline Color, Outline Normal  
+
+Final plan(最终安排):  
+对GBuffer的安排, Metaillic用作RampId, CustomData.a用作ToonShadingModel参数, CustomData.rgb视ToonShadingModel不同作不同处理  
+先说ToonShadingModel, 首先是UE自带的ShadingModel槽位不够用(且大可不必非要在C++中拓展)  
+ToonShadingModel的作用在于Shader中可以依据此变量来决定GBuffer-CustomData.rgb的数据初始化, 以及光照计算放方法的选择  
+ToonShadingModel目前暂定如下几种:  
+Default(0):     默认卡通渲染  
+Pbr(1):         属于ToonLit下但还是走Pbr流程, 这样可以吃到描边  
+Stocking(2):    丝袜渲染, 带有此表面计算  
+(3):  
+Eye(4):         独有的光照和阴影计算, 不参与描边  
+Face(5):        独有的光照和阴影计算, 自身不产生投影  
+(6):  
+Hair(7):        头发高光计算, 需要切线  
+这是参数还影响了描边的处理: Eye不进行描边  

@@ -206,15 +206,15 @@ void SetGBufferForShadingModel(
 #if MATERIAL_SHADINGMODEL_TOON_LIT
 	else if(ShadingModel == SHADINGMODELID_TOON_LIT)
 	{
-		GBuffer.CustomData.a = saturate( GetMaterialCustomData0(MaterialParameters) );
-		GBuffer.CustomData.z = saturate( GetMaterialCustomData1(MaterialParameters) );
+		GBuffer.CustomData.rgb = EncodeSubsurfaceColor(SubsurfaceColor);
+		GBuffer.CustomData.a = saturate( GetMaterialCustomData1(MaterialParameters) );
 	}
 #endif
 #if MATERIAL_SHADINGMODEL_TOON_HAIR
 	else if(ShadingModel == SHADINGMODELID_TOON_HAIR)
 	{
-		GBuffer.CustomData.a = saturate( GetMaterialCustomData0(MaterialParameters) );
-		GBuffer.CustomData.z = saturate( GetMaterialCustomData1(MaterialParameters) );
+		GBuffer.CustomData.rgb = EncodeSubsurfaceColor(SubsurfaceColor);
+		GBuffer.CustomData.a = saturate( GetMaterialCustomData1(MaterialParameters) );
 	}
 #endif
 	// Change-end

@@ -925,6 +925,17 @@ void FPixelShaderInOut_MainPS(
 		SubsurfaceProfile = SubsurfaceData.a;
 	}
 #endif
+
+	// change-begin
+#if MATERIAL_SHADINGMODEL_TOON_LIT || MATERIAL_SHADINGMODEL_TOON_HAIR
+	if (ShadingModel == SHADINGMODELID_TOON_LIT || ShadingModel == SHADINGMODELID_TOON_HAIR)
+	{
+		float4 SubsurfaceData = GetMaterialSubsurfaceData(PixelMaterialInputs);
+		SubsurfaceColor = SubsurfaceData.rgb;
+	}
+#endif
+	// change-end
+	
 #endif // !SUBSTRATE_ENABLED
 
 #if SUBSTRATE_ENABLED
