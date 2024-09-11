@@ -5,7 +5,11 @@ Postprocess Mat
 
 卡通角色美术管线：  
 1. Texture data组织: BaseColor(3), Normal(3), RampId(1), Specular(1), Roughness(1), AO(1), Opacity(1), OutlineId(1)  
-2. 什么时候必须单独拆出来材质球? (1)透明部分(不准因为一个透明件而将整个部位使用半透明贴图);(2)不希望走ToonLit渲染流程(PBR, 比如身上的金属和宝石, etc);(3)双面材质  
+2. 什么时候必须单独拆出来材质球?  
+    (1)透明部分(必须单独拆分), 带有Mask的材质;  
+    (2)不同ToonShadingModel(PBR, 比如身上的金属和宝石, 丝袜Stocking, etc);  
+    (3)双面绘制部分  
+    (4)其它不可抗因素, 待定  
 3. Eye rendering:   
 4. Hair rendering:  
 5. 设计角色时需要谨慎的地方，(1)特殊材质要求，比如特殊质感的衣服、带绒毛物件、等等  
