@@ -206,7 +206,7 @@ void SetGBufferForShadingModel(
 #if MATERIAL_SHADINGMODEL_TOON_LIT
 	else if(ShadingModel == SHADINGMODELID_TOON_LIT)
 	{
-		GBuffer.CustomData.rgb = EncodeSubsurfaceColor(SubsurfaceColor);
+		GBuffer.CustomData.rgb = SubsurfaceColor;
 		GBuffer.CustomData.a = saturate( GetMaterialCustomData0(MaterialParameters) );
 	}
 #endif

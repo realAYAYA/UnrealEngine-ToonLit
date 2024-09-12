@@ -73,3 +73,9 @@ Face(5):        独有的光照和阴影计算, 自身不产生投影
 (6):  
 Hair(7):        头发高光计算, 需要切线  
 这是参数还影响了描边的处理: Eye不进行描边  
+
+
+最小化拓展引擎，GBuffer或TBuffer 或 Pass什么的能不要就不要  
+重新分配引擎自带的各个GBuffer  
+阴影改造，GI改造  
+各个ToonShadingModel的实现细节  
