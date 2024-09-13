@@ -1700,7 +1700,7 @@ class FMaterial
 public:
 
 	// Change-begin
-	ENGINE_API virtual bool UseToonOutline() const { return false; }
+	ENGINE_API virtual bool DisableCastDynamicShadows() const { return false; }
 	ENGINE_API virtual FMaterial* GetOutlineMaterial(ERHIFeatureLevel::Type InFeatureLevel) const { return nullptr; }
 	// Change-end
 	
@@ -2615,7 +2615,7 @@ public:
 	ENGINE_API virtual ~FMaterialResource();
 
 	// Change-begin
-	ENGINE_API virtual bool UseToonOutline() const override;
+	ENGINE_API virtual bool DisableCastDynamicShadows() const override;
 	// Change-end
 
 	void SetMaterial(UMaterial* InMaterial, UMaterialInstance* InInstance, ERHIFeatureLevel::Type InFeatureLevel, EMaterialQualityLevel::Type InQualityLevel = EMaterialQualityLevel::Num)

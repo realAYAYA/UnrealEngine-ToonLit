@@ -1544,30 +1544,30 @@ void FMaterialInstanceParameterDetails::CreateBasePropertyOverrideWidgets(IDetai
 
 	// Change-begin
 	// 绑定回调: 响应编辑器参数修改事件
-	TAttribute<bool> IsOverrideUseToonOutlineEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineEnabled));
+	TAttribute<bool> IsOverrideDisableCastDynamicShadowsEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsEnabled));
 	TAttribute<bool> IsOverrideOutlineMaterilEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled));
 	
-	TSharedPtr<IPropertyHandle> UseToonOutlineProperty = BasePropertyOverridePropery->GetChildHandle("bUseToonOutline");
+	TSharedPtr<IPropertyHandle> DisableCastDynamicShadowsProperty = BasePropertyOverridePropery->GetChildHandle("bDisableCastDynamicShadows");
 	TSharedPtr<IPropertyHandle> OutlineMaterialProperty = BasePropertyOverridePropery->GetChildHandle("OutlineMaterial");
 
 	{
-		FIsResetToDefaultVisible IsUseToonOutlinePropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.bUseToonOutline != MaterialEditorInstance->Parent->UseToonOutline() : false;
+		FIsResetToDefaultVisible IsDisableCastDynamicShadowsPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
+			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.bDisableCastDynamicShadows != MaterialEditorInstance->Parent->DisableCastDynamicShadows() : false;
 			});
-		FResetToDefaultHandler ResetUseToonOutlinePropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
+		FResetToDefaultHandler ResetDisableCastDynamicShadowsPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
 			if (MaterialEditorInstance->Parent != nullptr)
 			{
-				MaterialEditorInstance->BasePropertyOverrides.bUseToonOutline = MaterialEditorInstance->Parent->UseToonOutline();
+				MaterialEditorInstance->BasePropertyOverrides.bDisableCastDynamicShadows = MaterialEditorInstance->Parent->DisableCastDynamicShadows();
 			}
 			});
-		FResetToDefaultOverride ResetUseToonOutlinePropertyOverride = FResetToDefaultOverride::Create(IsUseToonOutlinePropertyResetVisible, ResetUseToonOutlinePropertyHandler);
-		IDetailPropertyRow& UseToonOutlinePropertyRow = BasePropertyOverrideGroup.AddPropertyRow(UseToonOutlineProperty.ToSharedRef());
-		UseToonOutlinePropertyRow
-			.DisplayName(UseToonOutlineProperty->GetPropertyDisplayName())
-			.ToolTip(UseToonOutlineProperty->GetToolTipText())
-			.EditCondition(IsOverrideUseToonOutlineEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideUseToonOutlineEnabled)))
-			.OverrideResetToDefault(ResetUseToonOutlinePropertyOverride);
+		FResetToDefaultOverride ResetDisableCastDynamicShadowsPropertyOverride = FResetToDefaultOverride::Create(IsDisableCastDynamicShadowsPropertyResetVisible, ResetDisableCastDynamicShadowsPropertyHandler);
+		IDetailPropertyRow& DisableCastDynamicShadowsPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(DisableCastDynamicShadowsProperty.ToSharedRef());
+		DisableCastDynamicShadowsPropertyRow
+			.DisplayName(DisableCastDynamicShadowsProperty->GetPropertyDisplayName())
+			.ToolTip(DisableCastDynamicShadowsProperty->GetToolTipText())
+			.EditCondition(IsOverrideDisableCastDynamicShadowsEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsChanged))
+			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideDisableCastDynamicShadowsEnabled)))
+			.OverrideResetToDefault(ResetDisableCastDynamicShadowsPropertyOverride);
 	}
 	{
 		FIsResetToDefaultVisible IsOutlineWidthPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
@@ -1803,9 +1803,9 @@ void FMaterialInstanceParameterDetails::OnOverrideMaxWorldPositionOffsetDisplace
 }
 
 // Change-begin
-bool FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineEnabled() const
+bool FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsEnabled() const
 {
-	return MaterialEditorInstance->BasePropertyOverrides.bOverride_UseToonOutline;
+	return MaterialEditorInstance->BasePropertyOverrides.bOverride_DisableCastDynamicShadows;
 }
 
 bool FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled() const
@@ -1813,9 +1813,9 @@ bool FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled() const
 	return MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineMaterial;
 }
 
-void FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineChanged(bool NewValue)
+void FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsChanged(bool NewValue)
 {
-	MaterialEditorInstance->BasePropertyOverrides.bOverride_UseToonOutline = NewValue;
+	MaterialEditorInstance->BasePropertyOverrides.bOverride_DisableCastDynamicShadows = NewValue;
 	MaterialEditorInstance->PostEditChange();
 	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
 }

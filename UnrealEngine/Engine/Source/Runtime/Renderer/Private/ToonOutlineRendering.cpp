@@ -40,7 +40,7 @@ void FToonOutlineMeshPassProcessor::AddMeshBatch(
 	const FMaterial& Material = MaterialRenderProxy->GetMaterialWithFallback(Scene->GetFeatureLevel(), FallBackMaterialRenderProxyPtr);
 
 	const UMaterialInterface* MaterialInterface = Material.GetMaterialInterface()->GetOutlineMaterial();
-	if (!Material.UseToonOutline() || !MaterialInterface)
+	if (!MaterialInterface)
 		return;
 	
 	const FMaterial* OutlineMaterial = MaterialInterface->GetMaterialResource(Scene->GetFeatureLevel());

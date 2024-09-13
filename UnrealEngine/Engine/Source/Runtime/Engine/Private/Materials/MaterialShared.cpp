@@ -5054,10 +5054,10 @@ FMaterialInstanceBasePropertyOverrides::FMaterialInstanceBasePropertyOverrides()
 	,MaxWorldPositionOffsetDisplacement(0.0f)
 
 	// Change-begin
-	, bOverride_UseToonOutline(false)
+	, bOverride_DisableCastDynamicShadows(false)
 	, bOverride_OutlineMaterial(false)
 
-	, bUseToonOutline(false)
+	, bDisableCastDynamicShadows(false)
 	, OutlineMaterial(nullptr)
 	// Change-end
 {
@@ -5091,9 +5091,9 @@ bool FMaterialInstanceBasePropertyOverrides::operator==(const FMaterialInstanceB
 
 		// Change-begin
 		&&
-		bOverride_UseToonOutline == Other.bOverride_UseToonOutline &&
+		bOverride_DisableCastDynamicShadows == Other.bOverride_DisableCastDynamicShadows &&
 		bOverride_OutlineMaterial == Other.bOverride_OutlineMaterial &&
-		bUseToonOutline == Other.bUseToonOutline &&
+		bDisableCastDynamicShadows == Other.bDisableCastDynamicShadows &&
 		OutlineMaterial == Other.OutlineMaterial;
 		// Change-end
 }

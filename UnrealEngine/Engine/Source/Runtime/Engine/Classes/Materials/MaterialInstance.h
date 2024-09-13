@@ -534,15 +534,15 @@ class UMaterialInstance : public UMaterialInterface
 #endif // WITH_EDITORONLY_DATA
 
 	// Change-begin
-	/** If true, Mesh with this Material will be added in ToonOutlinePass. */
+	/** If true, Mesh with this Material will not cast dynamic shadows. */
 	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bUseToonOutline : 1;
+	uint8 bDisableCastDynamicShadows : 1;
 	
 	/** Outline material. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Toon, AssetRegistrySearchable)
 	TObjectPtr<UMaterialInterface> OutlineMaterial;
 	
-	ENGINE_API virtual bool UseToonOutline() const override { return bUseToonOutline; }
+	ENGINE_API virtual bool DisableCastDynamicShadows() const override { return bDisableCastDynamicShadows; }
 
 	ENGINE_API virtual UMaterialInterface* GetOutlineMaterial() const override { return OutlineMaterial; }
 	

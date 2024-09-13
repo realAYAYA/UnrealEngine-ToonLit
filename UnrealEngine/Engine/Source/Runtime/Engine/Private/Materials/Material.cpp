@@ -181,9 +181,9 @@ FMaterialResource::~FMaterialResource()
 }
 
 // Change-begin
-bool FMaterialResource::UseToonOutline() const
+bool FMaterialResource::DisableCastDynamicShadows() const
 {
-	return MaterialInstance ? MaterialInstance->bUseToonOutline : Material ? Material->bUseToonOutline : false;
+	return MaterialInstance ? MaterialInstance->bDisableCastDynamicShadows : Material ? Material->bDisableCastDynamicShadows : false;
 }
 // Change-end
 

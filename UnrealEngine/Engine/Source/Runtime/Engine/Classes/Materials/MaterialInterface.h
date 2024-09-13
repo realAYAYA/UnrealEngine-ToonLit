@@ -261,7 +261,7 @@ class UMaterialInterface : public UObject, public IBlendableInterface, public II
 	GENERATED_UCLASS_BODY()
 
 	// Change-begin
-	ENGINE_API virtual bool UseToonOutline() const { return false; }
+	ENGINE_API virtual bool DisableCastDynamicShadows() const { return false; }
 	ENGINE_API virtual UMaterialInterface* GetOutlineMaterial() const { return nullptr; }
 	// Change-end
 

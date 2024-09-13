@@ -2096,7 +2096,7 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 		MaxWorldPositionOffsetDisplacement = 0.0f;
 
 		// Change-begin
-		bUseToonOutline = false;
+		bDisableCastDynamicShadows = false;
 		OutlineMaterial = nullptr;
 		// Change-end
 		
@@ -2105,14 +2105,14 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 
 	// Change-begin
 	
-	if (BasePropertyOverrides.bOverride_UseToonOutline)
+	if (BasePropertyOverrides.bOverride_DisableCastDynamicShadows)
 	{
-		bUseToonOutline = BasePropertyOverrides.bUseToonOutline;
+		bDisableCastDynamicShadows = BasePropertyOverrides.bDisableCastDynamicShadows;
 	}
 	else
 	{
-		bUseToonOutline = Parent->UseToonOutline();
-		BasePropertyOverrides.bUseToonOutline = bUseToonOutline;
+		bDisableCastDynamicShadows = Parent->DisableCastDynamicShadows();
+		BasePropertyOverrides.bDisableCastDynamicShadows = bDisableCastDynamicShadows;
 	}
 
 	if (BasePropertyOverrides.bOverride_OutlineMaterial)
@@ -4504,12 +4504,12 @@ void UMaterialInstance::GetBasePropertyOverridesHash(FSHAHash& OutHash)const
 	GetPropertyOverrideHash(GetMaxWorldPositionOffsetDisplacement(), Mat->GetMaxWorldPositionOffsetDisplacement(), TEXT("bOverride_MaxWorldPositionOffsetDisplacement"));
 	
 	// Change-begin
-	bool bUsedToonOutline = UseToonOutline();
-	if (bUsedToonOutline != Mat->UseToonOutline())
+	bool bDisableDynamicShadows = DisableCastDynamicShadows();
+	if (bDisableDynamicShadows != Mat->DisableCastDynamicShadows())
 	{
-		const FString HashString = TEXT("bOverride_UseToonOutline");
+		const FString HashString = TEXT("bOverride_DisableCastDynamicShadows");
 		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&bUsedToonOutline, sizeof(bUsedToonOutline));
+		Hash.Update((uint8*)&bDisableDynamicShadows, sizeof(bDisableDynamicShadows));
 		bHasOverrides = true;
 	}
 	const UMaterialInterface* NewOutlineMaterial = GetOutlineMaterial();
@@ -4551,7 +4551,7 @@ bool UMaterialInstance::HasOverridenBaseProperties()const
 	}
 
 	// Change-begin
-	if (Parent && (UseToonOutline() != Parent->UseToonOutline() || GetOutlineMaterial() != Parent->GetOutlineMaterial()))
+	if (Parent && (DisableCastDynamicShadows() != Parent->DisableCastDynamicShadows() || GetOutlineMaterial() != Parent->GetOutlineMaterial()))
 		return true;
 	// Change-end
 
