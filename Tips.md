@@ -6,6 +6,10 @@ Postprocess Mat
 1.  去掉ShadingModel::ToonHair（实现在ToonLit中，基于ToonShadingModel）  
 2.  眼睛部分渲染  
 3.  风格化后处理  
+4.  导入几个姿势  
+5.  搞一个合适的场景  
+6.  思考阴影问题  
+7.  使用文档  
 
 卡通角色美术管线：  
 1. Texture data组织: BaseColor(3), Normal(3), RampId(1), Specular(1), Roughness(1), AO(1), Opacity(1), OutlineId(1)  
@@ -45,6 +49,7 @@ Postprocess Mat
 关于模型设计，骨骼绑定意见  
 1.  最好不要涉及带有飘飘衣服的设计，比如大袖口（如果有还是干练一点比较好）  
 2.  尽量不要设计拖很长装饰的（能拖地上），比如很长的尾巴或飘带  
+3.  胸部不要搞太爆，好么。。。  
 
 关于如何控制DCC中效果与引擎内效果一致的问题  
 
