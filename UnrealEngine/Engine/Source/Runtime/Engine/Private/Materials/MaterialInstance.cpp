@@ -2096,7 +2096,6 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 		MaxWorldPositionOffsetDisplacement = 0.0f;
 
 		// Change-begin
-		bDisableCastDynamicShadows = false;
 		OutlineMaterial = nullptr;
 		// Change-end
 		
@@ -2105,14 +2104,14 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 
 	// Change-begin
 	
-	if (BasePropertyOverrides.bOverride_DisableCastDynamicShadows)
+	if (BasePropertyOverrides.bOverride_RenderCustomDepthStencil)
 	{
-		bDisableCastDynamicShadows = BasePropertyOverrides.bDisableCastDynamicShadows;
+		RenderCustomDepthStencil = BasePropertyOverrides.RenderCustomDepthStencil;
 	}
 	else
 	{
-		bDisableCastDynamicShadows = Parent->DisableCastDynamicShadows();
-		BasePropertyOverrides.bDisableCastDynamicShadows = bDisableCastDynamicShadows;
+		RenderCustomDepthStencil = Parent->GetRenderCustomDepthStencil();
+		BasePropertyOverrides.RenderCustomDepthStencil = RenderCustomDepthStencil;
 	}
 
 	if (BasePropertyOverrides.bOverride_OutlineMaterial)
@@ -4504,12 +4503,12 @@ void UMaterialInstance::GetBasePropertyOverridesHash(FSHAHash& OutHash)const
 	GetPropertyOverrideHash(GetMaxWorldPositionOffsetDisplacement(), Mat->GetMaxWorldPositionOffsetDisplacement(), TEXT("bOverride_MaxWorldPositionOffsetDisplacement"));
 	
 	// Change-begin
-	bool bDisableDynamicShadows = DisableCastDynamicShadows();
-	if (bDisableDynamicShadows != Mat->DisableCastDynamicShadows())
+	auto OtherRenderCustomDepthStencil = GetRenderCustomDepthStencil();
+	if (OtherRenderCustomDepthStencil != Mat->GetRenderCustomDepthStencil())
 	{
 		const FString HashString = TEXT("bOverride_DisableCastDynamicShadows");
 		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&bDisableDynamicShadows, sizeof(bDisableDynamicShadows));
+		Hash.Update((uint8*)&OtherRenderCustomDepthStencil, sizeof(OtherRenderCustomDepthStencil));
 		bHasOverrides = true;
 	}
 	const UMaterialInterface* NewOutlineMaterial = GetOutlineMaterial();
@@ -4551,7 +4550,7 @@ bool UMaterialInstance::HasOverridenBaseProperties()const
 	}
 
 	// Change-begin
-	if (Parent && (DisableCastDynamicShadows() != Parent->DisableCastDynamicShadows() || GetOutlineMaterial() != Parent->GetOutlineMaterial()))
+	if (Parent && (GetRenderCustomDepthStencil() != Parent->GetRenderCustomDepthStencil() || GetOutlineMaterial() != Parent->GetOutlineMaterial()))
 		return true;
 	// Change-end
 

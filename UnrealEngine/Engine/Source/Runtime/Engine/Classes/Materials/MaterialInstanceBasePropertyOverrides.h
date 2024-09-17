@@ -16,14 +16,14 @@ struct FMaterialInstanceBasePropertyOverrides
 	// Change-begin
 	
 	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bOverride_DisableCastDynamicShadows : 1;
+	uint8 bOverride_RenderCustomDepthStencil : 1;
 
 	UPROPERTY(EditAnywhere, Category = Toon)
 	uint8 bOverride_OutlineMaterial : 1;
 
 	/** If true, Mesh with this Material will not cast dynamic shadows. */
-	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_DisableCastDynamicShadows"))
-	uint8 bDisableCastDynamicShadows : 1;
+	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_RenderCustomDepthStencil"))
+	FRenderCustomDepthStencilForMaterial RenderCustomDepthStencil;
 
 	/** Outline material. */
 	UPROPERTY(EditAnywhere, Category = Toon, AssetRegistrySearchable)

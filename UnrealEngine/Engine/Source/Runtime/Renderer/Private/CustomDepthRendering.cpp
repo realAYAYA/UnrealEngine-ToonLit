@@ -490,7 +490,7 @@ void FCustomDepthPassMeshProcessor::AddMeshBatch(const FMeshBatch& RESTRICT Mesh
 	}
 }
 
-FRHIDepthStencilState* GetCustomDepthStencilState(bool bWriteCustomStencilValues, EStencilMask StencilWriteMask)
+FRHIDepthStencilState* GetCustomDepthStencilState(bool bWriteCustomStencilValues, EStencilMask StencilWriteMask/* change-begin*/, bool bIgnoreDepth = true/* change-end*/)
 {
 	if (bWriteCustomStencilValues)
 	{
@@ -508,6 +508,29 @@ FRHIDepthStencilState* GetCustomDepthStencilState(bool bWriteCustomStencilValues
 			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Replace, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 128>::GetRHI()
 		};
 		checkSlow(EStencilMask::SM_Count == UE_ARRAY_COUNT(StencilStates));
+
+		// change-begin
+		static FRHIDepthStencilState* StencilStates2[EStencilMask::SM_Count] =
+		{
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 255>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 255>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 1>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 2>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 4>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 8>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 16>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 32>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 64>::GetRHI(),
+			TStaticDepthStencilState<true, CF_DepthNearOrEqual, true, CF_Always, SO_Keep, SO_Keep, SO_Replace, false, CF_Always, SO_Keep, SO_Keep, SO_Keep, 255, 128>::GetRHI()
+		};
+		checkSlow(EStencilMask::SM_Count == UE_ARRAY_COUNT(StencilStates2));
+
+		if (!bIgnoreDepth)
+		{
+			return StencilStates2[(int32)StencilWriteMask];
+		}
+		// change-end
+		
 		return StencilStates[(int32)StencilWriteMask];
 	}
 	else
@@ -565,6 +588,14 @@ bool FCustomDepthPassMeshProcessor::TryAddMeshBatch(
 		const uint32 CustomDepthStencilValue = PrimitiveSceneProxy->GetCustomDepthStencilValue();
 		PassDrawRenderState.SetStencilRef(CustomDepthStencilValue);
 	}
+
+	// change-begin
+	if (Material.IsCustomDepthPassWritingStencil())
+	{
+		PassDrawRenderState.SetDepthStencilState(GetCustomDepthStencilState(bWriteCustomStencilValues, Material.GetStencilWriteMask(), Material.IsIgnoreCustomDepth()));
+		PassDrawRenderState.SetStencilRef(Material.GetCustomDepthStencilValue());
+	}
+	// change-end
 
 	// Using default material?
 	bool bIgnoreThisMaterial = false;

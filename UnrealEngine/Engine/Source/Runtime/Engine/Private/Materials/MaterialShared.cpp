@@ -5054,10 +5054,10 @@ FMaterialInstanceBasePropertyOverrides::FMaterialInstanceBasePropertyOverrides()
 	,MaxWorldPositionOffsetDisplacement(0.0f)
 
 	// Change-begin
-	, bOverride_DisableCastDynamicShadows(false)
+	, bOverride_RenderCustomDepthStencil(false)
 	, bOverride_OutlineMaterial(false)
 
-	, bDisableCastDynamicShadows(false)
+	, RenderCustomDepthStencil()
 	, OutlineMaterial(nullptr)
 	// Change-end
 {
@@ -5091,9 +5091,9 @@ bool FMaterialInstanceBasePropertyOverrides::operator==(const FMaterialInstanceB
 
 		// Change-begin
 		&&
-		bOverride_DisableCastDynamicShadows == Other.bOverride_DisableCastDynamicShadows &&
+		bOverride_RenderCustomDepthStencil == Other.bOverride_RenderCustomDepthStencil &&
 		bOverride_OutlineMaterial == Other.bOverride_OutlineMaterial &&
-		bDisableCastDynamicShadows == Other.bDisableCastDynamicShadows &&
+		RenderCustomDepthStencil == Other.RenderCustomDepthStencil &&
 		OutlineMaterial == Other.OutlineMaterial;
 		// Change-end
 }

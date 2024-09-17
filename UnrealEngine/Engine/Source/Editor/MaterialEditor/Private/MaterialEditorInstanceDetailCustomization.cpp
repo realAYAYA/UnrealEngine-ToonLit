@@ -1544,30 +1544,30 @@ void FMaterialInstanceParameterDetails::CreateBasePropertyOverrideWidgets(IDetai
 
 	// Change-begin
 	// 绑定回调: 响应编辑器参数修改事件
-	TAttribute<bool> IsOverrideDisableCastDynamicShadowsEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsEnabled));
-	TAttribute<bool> IsOverrideOutlineMaterilEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled));
+	TAttribute<bool> IsOverrideMyPropertyEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideMyPropertyEnabled));
+	TAttribute<bool> IsOverrideOutlineMaterialEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled));
 	
-	TSharedPtr<IPropertyHandle> DisableCastDynamicShadowsProperty = BasePropertyOverridePropery->GetChildHandle("bDisableCastDynamicShadows");
+	TSharedPtr<IPropertyHandle> MyProperty = BasePropertyOverridePropery->GetChildHandle("RenderCustomDepthStencil");
 	TSharedPtr<IPropertyHandle> OutlineMaterialProperty = BasePropertyOverridePropery->GetChildHandle("OutlineMaterial");
 
 	{
-		FIsResetToDefaultVisible IsDisableCastDynamicShadowsPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.bDisableCastDynamicShadows != MaterialEditorInstance->Parent->DisableCastDynamicShadows() : false;
+		FIsResetToDefaultVisible IsMyPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
+			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.RenderCustomDepthStencil != MaterialEditorInstance->Parent->GetRenderCustomDepthStencil() : false;
 			});
-		FResetToDefaultHandler ResetDisableCastDynamicShadowsPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
+		FResetToDefaultHandler ResetMyPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
 			if (MaterialEditorInstance->Parent != nullptr)
 			{
-				MaterialEditorInstance->BasePropertyOverrides.bDisableCastDynamicShadows = MaterialEditorInstance->Parent->DisableCastDynamicShadows();
+				MaterialEditorInstance->BasePropertyOverrides.RenderCustomDepthStencil = MaterialEditorInstance->Parent->GetRenderCustomDepthStencil();
 			}
 			});
-		FResetToDefaultOverride ResetDisableCastDynamicShadowsPropertyOverride = FResetToDefaultOverride::Create(IsDisableCastDynamicShadowsPropertyResetVisible, ResetDisableCastDynamicShadowsPropertyHandler);
-		IDetailPropertyRow& DisableCastDynamicShadowsPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(DisableCastDynamicShadowsProperty.ToSharedRef());
-		DisableCastDynamicShadowsPropertyRow
-			.DisplayName(DisableCastDynamicShadowsProperty->GetPropertyDisplayName())
-			.ToolTip(DisableCastDynamicShadowsProperty->GetToolTipText())
-			.EditCondition(IsOverrideDisableCastDynamicShadowsEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideDisableCastDynamicShadowsEnabled)))
-			.OverrideResetToDefault(ResetDisableCastDynamicShadowsPropertyOverride);
+		FResetToDefaultOverride ResetMyPropertyOverride = FResetToDefaultOverride::Create(IsMyPropertyResetVisible, ResetMyPropertyHandler);
+		IDetailPropertyRow& MyPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(MyProperty.ToSharedRef());
+		MyPropertyRow
+			.DisplayName(MyProperty->GetPropertyDisplayName())
+			.ToolTip(MyProperty->GetToolTipText())
+			.EditCondition(IsOverrideMyPropertyEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideMyPropertyChanged))
+			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideMyPropertyEnabled)))
+			.OverrideResetToDefault(ResetMyPropertyOverride);
 	}
 	{
 		FIsResetToDefaultVisible IsOutlineWidthPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
@@ -1584,8 +1584,8 @@ void FMaterialInstanceParameterDetails::CreateBasePropertyOverrideWidgets(IDetai
 		OutlineWidthPropertyRow
 			.DisplayName(OutlineMaterialProperty->GetPropertyDisplayName())
 			.ToolTip(OutlineMaterialProperty->GetToolTipText())
-			.EditCondition(IsOverrideOutlineMaterilEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideOutlineMaterilEnabled)))
+			.EditCondition(IsOverrideOutlineMaterialEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialChanged))
+			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideOutlineMaterialEnabled)))
 			.OverrideResetToDefault(ResetOutlineWidthPropertyOverride);
 	}
 	
@@ -1803,9 +1803,9 @@ void FMaterialInstanceParameterDetails::OnOverrideMaxWorldPositionOffsetDisplace
 }
 
 // Change-begin
-bool FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsEnabled() const
+bool FMaterialInstanceParameterDetails::OnOverrideMyPropertyEnabled() const
 {
-	return MaterialEditorInstance->BasePropertyOverrides.bOverride_DisableCastDynamicShadows;
+	return MaterialEditorInstance->BasePropertyOverrides.bOverride_RenderCustomDepthStencil;
 }
 
 bool FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled() const
@@ -1813,9 +1813,9 @@ bool FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled() const
 	return MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineMaterial;
 }
 
-void FMaterialInstanceParameterDetails::OnOverrideDisableCastDynamicShadowsChanged(bool NewValue)
+void FMaterialInstanceParameterDetails::OnOverrideMyPropertyChanged(bool NewValue)
 {
-	MaterialEditorInstance->BasePropertyOverrides.bOverride_DisableCastDynamicShadows = NewValue;
+	MaterialEditorInstance->BasePropertyOverrides.bOverride_RenderCustomDepthStencil = NewValue;
 	MaterialEditorInstance->PostEditChange();
 	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
 }

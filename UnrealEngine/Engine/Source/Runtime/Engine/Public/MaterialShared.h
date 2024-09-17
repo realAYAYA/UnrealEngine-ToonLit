@@ -1700,7 +1700,10 @@ class FMaterial
 public:
 
 	// Change-begin
-	ENGINE_API virtual bool DisableCastDynamicShadows() const { return false; }
+	ENGINE_API virtual bool IsCustomDepthPassWritingStencil() const { return false; }
+	ENGINE_API virtual bool IsIgnoreCustomDepth() const { return false; }
+	ENGINE_API virtual EStencilMask GetStencilWriteMask() const { return EStencilMask::SM_Default; }
+	ENGINE_API virtual uint32 GetCustomDepthStencilValue() const { return 0; }
 	ENGINE_API virtual FMaterial* GetOutlineMaterial(ERHIFeatureLevel::Type InFeatureLevel) const { return nullptr; }
 	// Change-end
 	
@@ -2615,7 +2618,10 @@ public:
 	ENGINE_API virtual ~FMaterialResource();
 
 	// Change-begin
-	ENGINE_API virtual bool DisableCastDynamicShadows() const override;
+	ENGINE_API virtual bool IsCustomDepthPassWritingStencil() const override;
+	ENGINE_API virtual bool IsIgnoreCustomDepth() const override;
+	ENGINE_API virtual EStencilMask GetStencilWriteMask() const override;
+	ENGINE_API virtual uint32 GetCustomDepthStencilValue() const override;
 	// Change-end
 
 	void SetMaterial(UMaterial* InMaterial, UMaterialInstance* InInstance, ERHIFeatureLevel::Type InFeatureLevel, EMaterialQualityLevel::Type InQualityLevel = EMaterialQualityLevel::Num)

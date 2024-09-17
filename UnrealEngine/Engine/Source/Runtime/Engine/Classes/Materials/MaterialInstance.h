@@ -534,15 +534,14 @@ class UMaterialInstance : public UMaterialInterface
 #endif // WITH_EDITORONLY_DATA
 
 	// Change-begin
-	/** If true, Mesh with this Material will not cast dynamic shadows. */
-	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bDisableCastDynamicShadows : 1;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Toon, AssetRegistrySearchable)
+	FRenderCustomDepthStencilForMaterial RenderCustomDepthStencil;
 	
 	/** Outline material. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Toon, AssetRegistrySearchable)
-	TObjectPtr<UMaterialInterface> OutlineMaterial;
+	TObjectPtr<class UMaterialInterface> OutlineMaterial;
 	
-	ENGINE_API virtual bool DisableCastDynamicShadows() const override { return bDisableCastDynamicShadows; }
+	ENGINE_API virtual FRenderCustomDepthStencilForMaterial GetRenderCustomDepthStencil() const override { return RenderCustomDepthStencil; }
 
 	ENGINE_API virtual UMaterialInterface* GetOutlineMaterial() const override { return OutlineMaterial; }
 	

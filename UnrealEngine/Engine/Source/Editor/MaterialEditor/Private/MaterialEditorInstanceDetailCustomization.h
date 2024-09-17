@@ -136,10 +136,10 @@ private:
 	void OnOverrideCastDynamicShadowAsMaskedChanged(bool NewValue);
 
 	// Change-begin
-	bool OnOverrideDisableCastDynamicShadowsEnabled() const;
+	bool OnOverrideMyPropertyEnabled() const;
 	bool OnOverrideOutlineMaterialEnabled() const;
 	
-	void OnOverrideDisableCastDynamicShadowsChanged(bool NewValue);
+	void OnOverrideMyPropertyChanged(bool NewValue);
 	void OnOverrideOutlineMaterialChanged(bool NewValue) const;
 	
 	// Change-end

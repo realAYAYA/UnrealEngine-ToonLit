@@ -3977,3 +3977,59 @@ enum class ELevelCollectionType : uint8
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"
 #endif
+
+// Change-begin
+UENUM()
+enum class ERendererStencilMaskForMaterial : uint8
+{
+	ERSM_Default UMETA(DisplayName = "Default"),
+	ERSM_255 UMETA(DisplayName = "All bits (255)"),
+	ERSM_1 UMETA(DisplayName = "First bit (1)"),
+	ERSM_2 UMETA(DisplayName = "Second bit (2)"),
+	ERSM_4 UMETA(DisplayName = "Third bit (4)"),
+	ERSM_8 UMETA(DisplayName = "Fourth bit (8)"),
+	ERSM_16 UMETA(DisplayName = "Fifth bit (16)"),
+	ERSM_32 UMETA(DisplayName = "Sixth bit (32)"),
+	ERSM_64 UMETA(DisplayName = "Seventh bit (64)"),
+	ERSM_128 UMETA(DisplayName = "Eighth bit (128)"),
+};
+
+USTRUCT(BlueprintType)
+struct FRenderCustomDepthStencilForMaterial
+{
+	GENERATED_USTRUCT_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CustomDepthStencil, meta=(DisplayName = "Render CustomDepth Pass"))
+	uint8 bRenderCustomDepth:1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CustomDepthStencil, meta=(editcondition = "bRenderCustomDepth"))
+	uint8 bIgnoreDepth:1;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = CustomDepthStencil, meta=(editcondition = "bRenderCustomDepth"))
+	ERendererStencilMaskForMaterial WriteMaskBit;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = CustomDepthStencil, meta = (editcondition = "bRenderCustomDepth", NoSpinbox = true, ClampMin = "0", ClampMax = "255", UIMin = "0", UIMax = "255"))
+	int32 CustomDepthStencilValue;
+
+public:
+	FRenderCustomDepthStencilForMaterial()
+	: bRenderCustomDepth(false)
+	, bIgnoreDepth(true)
+	, WriteMaskBit(ERendererStencilMaskForMaterial::ERSM_Default)
+	, CustomDepthStencilValue(0)
+	{
+	}
+
+	/** Equality operator. */
+	bool operator==(const FRenderCustomDepthStencilForMaterial& Other) const
+	{
+		return bRenderCustomDepth == Other.bRenderCustomDepth && bIgnoreDepth == Other.bIgnoreDepth && WriteMaskBit == Other.WriteMaskBit && CustomDepthStencilValue == Other.CustomDepthStencilValue;
+	}
+
+	/** Inequality operator. */
+	bool operator!=(const FRenderCustomDepthStencilForMaterial& Other) const
+	{
+		return !(*this == Other);
+	}
+};
+// Change-end

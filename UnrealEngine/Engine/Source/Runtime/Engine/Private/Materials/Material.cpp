@@ -181,9 +181,34 @@ FMaterialResource::~FMaterialResource()
 }
 
 // Change-begin
-bool FMaterialResource::DisableCastDynamicShadows() const
+bool FMaterialResource::IsCustomDepthPassWritingStencil() const
 {
-	return MaterialInstance ? MaterialInstance->bDisableCastDynamicShadows : Material ? Material->bDisableCastDynamicShadows : false;
+	return MaterialInstance ? MaterialInstance->RenderCustomDepthStencil.bRenderCustomDepth : Material ? Material->RenderCustomDepthStencil.bRenderCustomDepth : false;
+}
+
+bool FMaterialResource::IsIgnoreCustomDepth() const
+{
+	return MaterialInstance ? MaterialInstance->RenderCustomDepthStencil.bIgnoreDepth : Material ? Material->RenderCustomDepthStencil.bIgnoreDepth : false;
+}
+
+EStencilMask FMaterialResource::GetStencilWriteMask() const
+{
+	if (MaterialInstance)
+		return static_cast<EStencilMask>(MaterialInstance->RenderCustomDepthStencil.WriteMaskBit);
+	else
+	{
+		if (Material)
+		{
+			return static_cast<EStencilMask>(Material->RenderCustomDepthStencil.WriteMaskBit);
+		}
+	}
+	
+	return EStencilMask::SM_Default;
+}
+
+uint32 FMaterialResource::GetCustomDepthStencilValue() const
+{
+	return MaterialInstance ? MaterialInstance->RenderCustomDepthStencil.CustomDepthStencilValue : Material ? Material->RenderCustomDepthStencil.CustomDepthStencilValue : 0;
 }
 // Change-end
 
