@@ -1,6 +1,7 @@
 # ToonLit rendering pipeline based on UnrealEngine5
 
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Advertising.png)  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonLitShow.png)  
 
 #### 介绍
 
