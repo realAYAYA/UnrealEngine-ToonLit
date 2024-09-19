@@ -3,10 +3,10 @@
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Advertising.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonLitShow.png)  
 
-#### 介绍
+## Introduction
 #### Copyright Epic Games, Inc. All Rights Reserved
 
-魔改UE5引擎，基于此实现一套ToonLit流程  
+改造UE5引擎，基于此实现一套ToonLit流程  
 提升对引擎代码的理解  
 此外包含了其它游戏相关的功能拓展，插件实现  
 
@@ -15,24 +15,20 @@ Remembering: The code that was exchanged with days and nights, years and youth, 
 
 感谢入行以来遇到的所以大佬与同事，一直向他们模仿与学习 standing on the shoulders of giants  
 
-#### Rendering Features 渲染特性(Please check HowToStartToonRendering.md)
-    
-1.  ToonLit ShadingModel 着色模型
-    1.  GI, 为ToonLit的ShadingModel作额外的间接光照处理（天光，Lumen）
-    2.  Toon diffuse(Ramp controling) in deferred rendering
-2.  Outline 描边控制
-    Extend custom material paramters，filted in rendering  
-    Color and Weight control, stored in model's VertexColor  
-    smoothed normal, generated in engine editor，stored in SkeletonMesh's uv1 slot  
-    1.  Custom Pass, Backface
-    2.  Post process based
-        1.  Sobel
-        2.  Data: Normal | Depth | TextureID
-3.  Character eyes rendering，hair rendering（based on Kajiya-Kay）, coat rendering 角色各种部位渲染
-4.  ToonLit postproces 后处理
+## Rendering Features
 
-#### Other Features 其它特性
-1.  MMO frame, 基于Tcp连接的后端网络框架, details: Engine/Plugins/MyProject
+[HowToStartToonRendering](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/HowToStartToonRendering.md)
+    
+- [X]   ToonLit ShadingModel
+- [X]   GI with ToonLit(SkyLighting，Lumen, etc)
+- [X]   Toon diffuse(self-shadow) in deferred rendering
+- [X]   Outline control
+- [ ]   Shadow control(Hair, Eye, Face)
+- [ ]   Toon Toonmapping
+- [ ]   Toon Bloom
+
+## Other Features
+1.  MMO network frame, 基于Tcp连接的后端网络框架, details: Engine/Plugins/MyProject
     1. Websocket, current tcp lib, 当前使用的网tcp网络库
     2. protobuf, 接入了google的消息协议
 2.  PuerTs, 接入脚本
@@ -41,23 +37,15 @@ Remembering: The code that was exchanged with days and nights, years and youth, 
 5.  GAS
 
 
-#### 使用说明
+## How to use
 
-1.  git clone 该项目
-2.  进入到UnrealEngine目录下生成引擎项目，编译（2小时起）
-3.  使用编译过的引擎打开目录下的Demo.uproject（待部署）
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
-
+1.  git clone .  
+2.  Compile UnrealEngine  
+3.  Open project Projects/Demo/Demo.uproject  
 
 ## Log
 
-#### Add ThirdParty
+### Add ThirdParty
 Python  
 UnrealEngine\Engine\Binaries\ThirdParty\Python3\Linux | Mac | Win64\lib\site-packages\  
 1. jinja2
@@ -70,7 +58,7 @@ Other lib
 · UnrealEngine\Engine\Binaries\ThirdParty\Windows\msys  
 
 
-#### Add Custom Variables in Material  
+### Add Custom Variables in Material  
 1. UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\MaterialInterface.h  
 2. UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\Material.h  
 3. UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\MaterialInstance.h  
@@ -83,7 +71,7 @@ Other lib
 9. UnrealEngine\Engine\Source\Editor\MaterialEditor\Private\MaterialEditorInstanceDetailCustomization.h  
 10. UnrealEngine\Engine\Source\Editor\MaterialEditor\Private\MaterialEditorInstanceDetailCustomization.cpp  
 
-#### Add Custom MeshDrawPass  
+### Add Custom MeshDrawPass  
 0. New file: UnrealEngine\Engine\Source\Runtime\Engine\Classes\Engine\ToonRenderingSettings.h  
 0. New file: UnrealEngine\Engine\Source\Runtime\Engine\Private\ToonRenderingSettings.cpp  
 
@@ -93,14 +81,14 @@ Other lib
 4. UnrealEngine\Engine\Source\Runtime\Renderer\Private\SceneRendering.h  
 5. UnrealEngine\Engine\Source\Runtime\Renderer\Private\DeferredShadingRenderer.cpp  
 
-#### Add custom PreIntegrated-Texture  
+### Add custom PreIntegrated-Texture  
 1. UnrealEngine\Engine\Source\Runtime\Engine\Classes\Engine\Engine.h  
 2. UnrealEngine\Engine\Source\Runtime\Engine\Private\UnrealEngine.cpp  
 3. UnrealEngine\Engine\Source\Runtime\Engine\Public\SceneView.h  
 4. UnrealEngine\Engine\Source\Runtime\Engine\Private\SceneManagement.cpp  
 5. UnrealEngine\Engine\Source\Runtime\Renderer\Private\SceneRendering.cpp  
 
-#### Add Custom ShadingModel  
+### Add Custom ShadingModel  
 1. UnrealEngine\Engine\Source\Runtime\Engine\Classes\Engine\EngineTypes.h  
 2. UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\MaterialShader.cpp  
 3. UnrealEngine\Engine\Source\Editor\PixelInspector\Private\PixelInspectorResult.h  
@@ -120,7 +108,7 @@ Other lib
 16. UnrealEngine\Engine\Shaders\Private\ShadingModels.ush  
 17. UnrealEngine\Engine\Shaders\Private\BasePassPixelShader.usf  
 
-#### Custom Toon IndirectLighting  
+### Custom Toon IndirectLighting  
 18. UnrealEngine\Engine\Shaders\Private\SkyLightingDiffuseShared.usf  
 19. UnrealEngine\Engine\Shaders\Private\BasePassPixelShader.usf  
 20. UnrealEngine\Engine\Shaders\Private\DeferredShadingCommon.ush  
@@ -128,7 +116,7 @@ Other lib
 22. UnrealEngine\Engine\Shaders\Private\ReflectionEnvironment.usf  
 23. UnrealEngine\Engine\Shaders\Private\DiffuseIndirectComposite.usf  
 
-#### Enable Anisotropy for Shadingmodel  
+### Enable Anisotropy for Shadingmodel  
 1. UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\Material.cpp  
 2. UnrealEngine\Engine\Source\Runtime\Renderer\Private\AnisotropyRendering.cpp  
 3. UnrealEngine\Engine\Source\Runtime\Renderer\Private\PrimitiveSceneInfo.cpp  

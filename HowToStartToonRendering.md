@@ -53,6 +53,9 @@ Todo
 ### Postprocess outline
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline01.png)  
 Todo   
+1.  Sobel
+2.  Data: Normal | Depth | TextureID
+3.  SmoothNormal
 
 ## Postprocess
 
