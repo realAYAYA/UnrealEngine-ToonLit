@@ -1018,7 +1018,7 @@ FDirectLighting ToonLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, fl
 		float ToonSpecular = ToonStep(GBuffer.Roughness, Context.NoH);
 		Specular = lerp(ToonSpecular, 0.0f, GBuffer.Roughness * GBuffer.Roughness) * AreaLight.FalloffColor * Falloff * GBuffer.BaseColor * GBuffer.Specular;
 		
-		float bDefault = (float)(ToonShadingModel == 0);
+		float bDefault = (float)(ToonShadingModel == 0 || ToonShadingModel == 7);
 		Lighting.Diffuse += Diffuse * bDefault;
 		Lighting.Specular += Specular * bDefault;
 	}
@@ -1026,17 +1026,23 @@ FDirectLighting ToonLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, fl
 	// Stocking
 	{
 	}
-	
+
+	// Eye
+	{
+		//ToonShadingModel == 4
+	}
+
 	// Face
 	{
 		float FaceShadow = GBuffer.CustomData.r;
 		Diffuse = AreaLight.FalloffColor * Falloff * GBuffer.BaseColor * FaceShadow / 3.1415927f;
-		float bFace = (float)(ToonShadingModel == 3);
+		float bFace = (float)(ToonShadingModel == 5);
 		Lighting.Diffuse += Diffuse * bFace;
 	}
 
-	// Eye
+	// Hair
 	{
+		//ToonShadingModel == 7
 	}
 	
 	Lighting.Transmission = float3(0, 0, 0);

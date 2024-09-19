@@ -31,8 +31,8 @@ Todo: Introduce the purpose of material expressions for different ToonShadingMod
 ## Shadow control
 Todo  
 ### SelfShadow
-* Face
-* Hair
+* Face(SDF)
+* Hair(SSHS)
 * Eye
 
 ## Outline

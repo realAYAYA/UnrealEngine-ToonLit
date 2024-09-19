@@ -2,6 +2,7 @@
 
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Advertising.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonLitShow.png)  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/SSHairShadow.png)  
 
 ## Introduction
 #### Copyright Epic Games, Inc. All Rights Reserved
@@ -23,7 +24,10 @@ Remembering: The code that was exchanged with days and nights, years and youth, 
 - [X]   GI with ToonLit(SkyLighting，Lumen, etc)
 - [X]   Toon diffuse(self-shadow) in deferred rendering
 - [X]   Outline control
-- [ ]   Shadow control(Hair, Eye, Face)
+- [ ]   Shadow control
+    - [X]   ScreenSpace Hair Shadow
+    - [X]   Face SDF
+    - [ ]   Eye
 - [ ]   Toon Toonmapping
 - [ ]   Toon Bloom
 
