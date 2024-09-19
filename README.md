@@ -4,6 +4,7 @@
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonLitShow.png)  
 
 #### 介绍
+#### Copyright Epic Games, Inc. All Rights Reserved
 
 魔改UE5引擎，基于此实现一套ToonLit流程  
 提升对引擎代码的理解  

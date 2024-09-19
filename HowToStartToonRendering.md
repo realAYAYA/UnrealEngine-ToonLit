@@ -1,13 +1,13 @@
 # How to start ToonLit
 
-### Ramp
+## Ramp
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Ramp01.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Ramp02.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Ramp03.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Ramp04.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Ramp05.png)  
 
-### ToonShadingModel
+## ToonShadingModel
 First, I try my best not to malloc additional gpu memory(ToonBuffer, etc) to implement ToonLit  
 Everything should be implemented locally as much as possible, because it will introduce fewer problems  
 
@@ -22,14 +22,38 @@ Also, there are another 'Channel' follow the ToonShadingModel, not used yet, it 
 For some purposes, you can try extract ToonShadingModel in postprocess materials, look like:  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonShadingModel02.png)  
 
-#### ToonLit materials output expression
+### ToonLit materials output expression
 I reassigned the GBuffer for ToonLit  
 Depending on the ToonShadingModel, their definitions and purpose may vary  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonShadingModel03.png)  
 Todo: Introduce the purpose of material expressions for different ToonShadingModel separately  
 
-### Outline
+## Shadow control
+Todo  
+### SelfShadow
+* Face
+* Hair
+* Eye
+
+## Outline
+I supplied two solutions to render toon outline  
+
+### Backface outline
+I extented source code of Material, you can set a 'Outline Material' in material(include instance) property pannel  
+then you can render outline for what model sections you want  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline02.png)  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline03.png)  
+Here it looks like:  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline04.png)  
+
+* About how to make a outline material
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline05.png)  
 Todo  
 
-### Postprocess
-Todo  
+### Postprocess outline
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline01.png)  
+Todo   
+
+## Postprocess
+
+## CustomDepthStencil in material property pannel
