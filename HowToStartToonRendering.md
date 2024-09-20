@@ -44,7 +44,7 @@ then you can render outline for what model sections you want
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline02.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline03.png)  
 Here it looks like:  
-![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline04.png)  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/SSHairShadow.png)  
 
 * About how to make a outline material
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Outline05.png)  
