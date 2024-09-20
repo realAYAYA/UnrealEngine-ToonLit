@@ -123,30 +123,27 @@ void MainVS(
 	float3 WorldNormal = VertexFactoryGetWorldNormal(Input, VFIntermediates);
 	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
-
-	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
-	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
-
-	// Interpolation
-	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 	
-	// GetMaterial Attributes
+	// Extract Material Attributes
+	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Output.FactoryInterpolants, float4(0, 0, 0, 0));
 	FPixelMaterialInputs PixelMaterialInputs;
 	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, Input.Position, true);
 
-	// Mask outline, depending on the material blend mode
-	//if (GetMaterialOpacity(PixelMaterialInputs) <= 0)
-	//	discard;
-
-	// Expand along WorldNormal | 根据用户自定义材质来决定使用何种描边算法
-	float3 WorldPositionOffset = GetMaterialWorldPositionOffset(VertexParameters);
-	if (WorldPositionOffset.x + WorldPositionOffset.y + WorldPositionOffset.z > 0)
+	// Position WorldToClip
+	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
+	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+	
+	// Expand along WorldNormal
 	{
-		// Use Custom Outline Algorithm form MATERIAL
-		WorldPos.xyz += WorldPositionOffset;
+		float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs);
+		float3 NormalVS = mul(WorldNormal, ResolvedView.TranslatedWorldToClip);
+		float2 ExtendDir = normalize(NormalVS.xy);
+		Output.Position.xy += ExtendDir * (OutlineWidth * 0.1) * Output.Position.w;
 	}
-	else
+
+	// Nilo solution
+	/*
 	{
 		// Use NiloCat Outline Algorithm
 		float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs) * 1000;
@@ -156,7 +153,7 @@ void MainVS(
 
 	// WorldToClip
 	RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
-	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip) * Output.Position.w;
 
 	// [Remap ZOffset value]
 	// Flip read value so default black area = apply ZOffset, because usually outline mask texture are using this format(black = hide outline)
@@ -167,7 +164,7 @@ void MainVS(
 	
 	// [Apply ZOffset, Use remapped value as ZOffset]
 	//float OutlineZOffset = GetMaterialPixelDepthOffset(PixelMaterialInputs);	// Range[0,1] = 0.0001
-	//Output.Position = GetNewClipPosWithZOffset(Output.Position, OutlineZOffset * OutlineZOffsetWeight);// + 0.03f if IsFace
+	//Output.Position = GetNewClipPosWithZOffset(Output.Position, OutlineZOffset * OutlineZOffsetWeight);// + 0.03f if IsFace*/
 }
 #endif
 
