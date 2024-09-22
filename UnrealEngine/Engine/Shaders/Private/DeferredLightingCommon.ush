@@ -436,13 +436,14 @@ FLightAccumulator AccumulateDynamicLighting(
 		{
 			#if NON_DIRECTIONAL_DIRECT_LIGHTING
 			#else
-			if (ShadingModelID == SHADINGMODELID_TOON_LIT || ShadingModelID == SHADINGMODELID_TOON_HAIR)
+			if (ShadingModelID == SHADINGMODELID_TOON_LIT)
 			{
 				if (!LightData.bSpotLight && !LightData.bRectLight)
 				{
-					const bool bNeedsSeparateSubsurfaceLightAccumulation = UseSubsurfaceProfile(GBuffer.ShadingModelID);
-					FDirectLighting Lighting = ToonShadow( GBuffer, N, V, ToLight, 0, dot(N, ToLight), (FAreaLight)0, Shadow );
-					LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, 0.0f, 0, float3(1, 1, 1), bNeedsSeparateSubsurfaceLightAccumulation );
+					FCapsuleLight Capsule = GetCapsule( ToLight, LightData );
+					FAreaLightIntegrateContext Context = CreateCapsuleIntegrateContext(GBuffer.Roughness, N, V, Capsule, LightData.bInverseSquared);
+					FDirectLighting Lighting = ToonShadow( GBuffer, N, V, ToLight, 0, dot(N, ToLight), Context.AreaLight, Shadow );
+					LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, 0.0f, 0, float3(1, 1, 1), false );
 				}
 			}
 			#endif
@@ -457,13 +458,14 @@ FLightAccumulator AccumulateDynamicLighting(
 #else
 		#if NON_DIRECTIONAL_DIRECT_LIGHTING
 		#else
-		if (ShadingModelID == SHADINGMODELID_TOON_LIT || ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		if (ShadingModelID == SHADINGMODELID_TOON_LIT)
 		{
 			if (!LightData.bSpotLight && !LightData.bRectLight)
 			{
-				const bool bNeedsSeparateSubsurfaceLightAccumulation = UseSubsurfaceProfile(GBuffer.ShadingModelID);
-				FDirectLighting Lighting = ToonShadow( GBuffer, N, V, ToLight, 0, dot(N, ToLight), (FAreaLight)0, (FShadowTerms)0 );
-				LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, 0.0f, 0, float3(1, 1, 1), bNeedsSeparateSubsurfaceLightAccumulation );
+				FCapsuleLight Capsule = GetCapsule( ToLight, LightData );
+				FAreaLightIntegrateContext Context = CreateCapsuleIntegrateContext(GBuffer.Roughness, N, V, Capsule, LightData.bInverseSquared);
+				FDirectLighting Lighting = ToonShadow( GBuffer, N, V, ToLight, 0, dot(N, ToLight), Context.AreaLight, (FShadowTerms)0 );
+				LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, 0.0f, 0, float3(1, 1, 1), false );
 			}
 		}
 		#endif

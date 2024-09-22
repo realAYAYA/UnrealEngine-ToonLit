@@ -966,9 +966,20 @@ FDirectLighting ToonShadow( FGBufferData GBuffer, half3 N, half3 V, half3 L, flo
 
 	float RampID = GBuffer.Metallic;
 	float Y = 0;
+
+	uint Raw = GBuffer.CustomData.a * 0xFF;
+	uint ToonShadingModel = (Raw >> 0) & 0x0F;
 	
 	float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(Y, RampID), 0).rgb;
+
 	Lighting.Diffuse = ToonFallOffColor * GBuffer.BaseColor / 3.1415927f;
+	
+	if (ToonShadingModel == 5)
+	{
+		float FaceShadow = GBuffer.CustomData.r;
+		Lighting.Diffuse = AreaLight.FalloffColor * GBuffer.BaseColor;//AreaLight.FalloffColor * Falloff * GBuffer.BaseColor / 3.1415927f * FaceShadow;// Face shadow has calculated in mat
+	}
+	
 	Lighting.Specular = float3(0, 0, 0);
 	Lighting.Transmission = float3(0, 0, 0);
 	
