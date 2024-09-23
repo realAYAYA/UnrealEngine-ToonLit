@@ -46,6 +46,7 @@ Remembering: The code that was exchanged with days and nights, years and youth, 
 1.  git clone .  
 2.  Compile UnrealEngine  
 3.  Open project Projects/Demo/Demo.uproject  
+4.	Get the demo project [ToonLitContent]https://github.com/realAYAYA/ToonLitContent
 
 ## Log
 

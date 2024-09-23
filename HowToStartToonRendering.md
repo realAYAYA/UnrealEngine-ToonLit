@@ -18,7 +18,7 @@ Ensure your M_FileName.uasset has been set ShadingModel with ToonLit
 For example:  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonShadingModel01.png)  
 Above picture, we can see the ToonShadingModel(Face) was set on 'ToonData0', which is GBufferD.a  
-Also, there are another 'Channel' follow the ToonShadingModel, not used yet, it can be used for something else in future  
+Also, there are another 'Channel' follow the ToonShadingModel, not used yet, it can be used for something else in the future  
 For some purposes, you can try extract ToonShadingModel in postprocess materials, look like:  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonShadingModel02.png)  
 
