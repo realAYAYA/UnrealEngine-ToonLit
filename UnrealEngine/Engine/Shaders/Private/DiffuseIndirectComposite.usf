@@ -587,8 +587,11 @@ void MainPS(
 				IndirectLighting.Transmission = 0;
 
 				// Change-begin
-				if(GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
-					EnvBRDFValue = EnvBRDF(SpecularColor, 1.0f, NoV);
+				if(GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
+				{
+					IndirectLighting.Diffuse = DiffuseIndirectLighting * DiffuseColor;// Todo: 这里的间接光不够平
+					EnvBRDFValue = EnvBRDF(SpecularColor, 1.0f, 1);
+				}
 				// Change-end
 						
 				#if DIM_APPLY_DIFFUSE_INDIRECT == DIM_APPLY_DIFFUSE_INDIRECT_SCREEN_PROBE_GATHER

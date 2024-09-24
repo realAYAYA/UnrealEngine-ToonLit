@@ -97,12 +97,10 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	float3 DiffuseWeight = ComputeEnergyPreservation(EnergyTerms);
 
 	// Change-begin
-	// Custom Toon SkyLight
 	BRANCH
-	if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+	if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 	{
-		float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
-		Lighting = GBuffer.BaseColor * SubsurfaceColor;
+		Lighting = float3(1, 0, 0);//GBuffer.BaseColor;// Todo 天光计算，但没有效果，不清楚何时生效
 		return Lighting;
 	}
 	// Change-end
