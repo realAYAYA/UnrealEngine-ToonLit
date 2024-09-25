@@ -72,7 +72,6 @@ float3 GetShadingModelColor(uint ShadingModelID)
 
 	// Change-begin
 	else if (ShadingModelID == SHADINGMODELID_TOON_LIT) return float3(0.4f, 1.0f, 0.8f);
-	else if (ShadingModelID == SHADINGMODELID_TOON_HAIR) return float3(0.1f, 0.1f, 0.9f);
 	// Change-end
 	
 >>>>>>> Stashed changes
@@ -96,7 +95,6 @@ float3 GetShadingModelColor(uint ShadingModelID)
 		
 		// Change-begin
 		case SHADINGMODELID_TOON_LIT: return float3(0.4f, 1.0f, 0.8f);
-		case SHADINGMODELID_TOON_HAIR: return float3(0.1f, 0.1f, 0.9f);
 		// Change-end
 
 		default: return float3(1.0f, 1.0f, 1.0f); // White

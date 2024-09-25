@@ -320,8 +320,7 @@ bool HasCustomGBufferData(int ShadingModelID)
 		|| ShadingModelID == SHADINGMODELID_EYE
 
 	// Change-begin
-		|| ShadingModelID == SHADINGMODELID_TOON_LIT
-		|| ShadingModelID == SHADINGMODELID_TOON_HAIR;
+		|| ShadingModelID == SHADINGMODELID_TOON_LIT;
 	// Change-end
 }
 
@@ -746,7 +745,7 @@ FGBufferData MobileDecodeGBuffer(half4 InGBufferA, half4 InGBufferB, half4 InGBu
 		// Change-begin
 		// Discard the Effect of Metallic for Toon
 		BRANCH
-		if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 		{
 			GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, 0.0f);
 			GBuffer.DiffuseColor = GBuffer.BaseColor;// - GBuffer.BaseColor * 0.0f;
@@ -1019,7 +1018,7 @@ FGBufferData DecodeGBufferData(
 		// Change-begin
 		// Discard the Effect of Metallic for Toon's SpecularColor
 		BRANCH
-		if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 			GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, 0.0f);
 		else
 			GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Metallic);
@@ -1033,7 +1032,7 @@ FGBufferData DecodeGBufferData(
 		// Change-begin
 		// Discard the Effect of Metallic for Toon's SpecularColor
 		BRANCH
-		if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 			GBuffer.DiffuseColor = GBuffer.BaseColor;
 		else
 			GBuffer.DiffuseColor = GBuffer.BaseColor - GBuffer.BaseColor * GBuffer.Metallic;

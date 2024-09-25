@@ -216,7 +216,7 @@ float3 CombineRoughSpecular(FGBufferData GBuffer, bool bHasBackfaceDiffuse, floa
 		Lighting = ClearCoatLayerCombine(GBuffer, NoV, AddContrastAndSpecularScale(RayTracedReflections.xyz), AddContrastAndSpecularScale(RoughReflections), SpecularColor);
 	}
 	// Change-begin
-	else if(GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+	else if(GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 	{
 		Lighting = MixSpecularAndRoughReflections(1.0f, bHasBackfaceDiffuse, RayTracedReflections, RoughReflections) * EnvBRDF;
 	}

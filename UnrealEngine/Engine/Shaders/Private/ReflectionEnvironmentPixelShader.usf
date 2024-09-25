@@ -133,7 +133,7 @@ float3 ReflectionEnvironment(FGBufferData GBuffer, float AmbientOcclusion, float
 {
 	// Change-begin
 	// Discard ReflectionEnvironment for ToonLit
-	if( GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+	if( GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 		return float3(0.0f, 0.0f, 0.0f);
 	// Change-end
 	

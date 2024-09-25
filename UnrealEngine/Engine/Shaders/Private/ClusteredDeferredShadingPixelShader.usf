@@ -535,7 +535,6 @@ void ClusteredShadingPixelShader(
 
 	// Change-begin
 	GET_LIGHT_GRID_LOCAL_LIGHTING_SINGLE_SM(SHADINGMODELID_TOON_LIT,			PixelShadingModelID, CompositedLighting, ScreenUV, CulledLightGridData, Dither, FirstNonSimpleLightIndex);
-	GET_LIGHT_GRID_LOCAL_LIGHTING_SINGLE_SM(SHADINGMODELID_TOON_HAIR,			PixelShadingModelID, CompositedLighting, ScreenUV, CulledLightGridData, Dither, FirstNonSimpleLightIndex);
 	// Change-end
 	
 #else // !USE_PASS_PER_SHADING_MODEL

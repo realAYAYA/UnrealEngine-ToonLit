@@ -927,8 +927,8 @@ void FPixelShaderInOut_MainPS(
 #endif
 
 	// change-begin
-#if MATERIAL_SHADINGMODEL_TOON_LIT || MATERIAL_SHADINGMODEL_TOON_HAIR
-	if (ShadingModel == SHADINGMODELID_TOON_LIT || ShadingModel == SHADINGMODELID_TOON_HAIR)
+#if MATERIAL_SHADINGMODEL_TOON_LIT
+	if (ShadingModel == SHADINGMODELID_TOON_LIT)
 	{
 		float4 SubsurfaceData = GetMaterialSubsurfaceData(PixelMaterialInputs);
 		SubsurfaceColor = SubsurfaceData.rgb;
@@ -1112,7 +1112,7 @@ void FPixelShaderInOut_MainPS(
 	// Change-begin
 	// Discard the Effect of Metallic for SpecularColor
 	BRANCH
-	if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+	if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 		GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, 0.0f);
 	else
 		GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, Metallic);
@@ -1142,7 +1142,7 @@ void FPixelShaderInOut_MainPS(
 	// Change-begin
 	// Discard the Effect of Metallic for DiffuseColor
 	BRANCH
-	if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+	if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT)
 		GBuffer.DiffuseColor = BaseColor; // - BaseColor * 0.0f;
 	else
 		GBuffer.DiffuseColor = BaseColor - BaseColor * Metallic;
@@ -1417,7 +1417,7 @@ void FPixelShaderInOut_MainPS(
 
 	// Volume lighting for lit translucency
 #if (MATERIAL_SHADINGMODEL_DEFAULT_LIT || MATERIAL_SHADINGMODEL_SUBSURFACE/*Change-begin*/ || MATERIAL_SHADINGMODEL_TOON_LIT || MATERIAL_SHADINGMODEL_TOON_HAIR/*Change-end*/) && (MATERIALBLENDING_TRANSLUCENT || MATERIALBLENDING_ADDITIVE) && !FORWARD_SHADING
-	if (GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT || GBuffer.ShadingModelID == SHADINGMODELID_SUBSURFACE/*Change-begin*/ || GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR/*Change-end*/)
+	if (GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT || GBuffer.ShadingModelID == SHADINGMODELID_SUBSURFACE/*Change-begin*/ || GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT/*Change-end*/)
 	{
 		Color += GetTranslucencyVolumeLighting(MaterialParameters, PixelMaterialInputs, BasePassInterpolants, GBuffer, IndirectIrradiance);
 	}

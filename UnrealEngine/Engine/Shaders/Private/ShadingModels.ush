@@ -1126,8 +1126,6 @@ FDirectLighting IntegrateBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, 
 		// Change-begin
 		case SHADINGMODELID_TOON_LIT:
 			return ToonLitBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
-		case SHADINGMODELID_TOON_HAIR:
-			return ToonHairBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
 		// Change-end
 		
 		default:

@@ -422,7 +422,7 @@ void GBufferPostDecode(inout FGBufferData Ret, bool bChecker, bool bGetNormalize
 	{
 		// Change-begin
 		// Discard the Effect of Metallic for Toon's SpecularColor
-		if (Ret.ShadingModelID == SHADINGMODELID_TOON_LIT || Ret.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		if (Ret.ShadingModelID == SHADINGMODELID_TOON_LIT)
 			Ret.SpecularColor = ComputeF0(Ret.Specular, Ret.BaseColor, 0.0f);
 		else
 			Ret.SpecularColor = ComputeF0(Ret.Specular, Ret.BaseColor, Ret.Metallic);
@@ -435,7 +435,7 @@ void GBufferPostDecode(inout FGBufferData Ret, bool bChecker, bool bGetNormalize
 	
 		// Change-begin
 		// Discard the Effect of Metallic for Toon's DiffuseColor
-		if (Ret.ShadingModelID == SHADINGMODELID_TOON_LIT || Ret.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		if (Ret.ShadingModelID == SHADINGMODELID_TOON_LIT)
 			Ret.DiffuseColor = Ret.BaseColor;// - Ret.BaseColor * 0.0f;
 		else
 			Ret.DiffuseColor = Ret.BaseColor - Ret.BaseColor * Ret.Metallic;
