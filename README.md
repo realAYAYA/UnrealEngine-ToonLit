@@ -2,6 +2,7 @@
 
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/Advertising.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonLitShow.png)  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/ToonLitShow2.png)  
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.4/Features/SSHairShadow.png)  
 
 ## Introduction
