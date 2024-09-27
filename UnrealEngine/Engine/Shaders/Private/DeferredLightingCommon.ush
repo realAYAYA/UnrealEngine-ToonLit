@@ -355,6 +355,25 @@ FLightAccumulator AccumulateDynamicLighting(
 
 		LightAccumulator.EstimatedCost += 0.3f;		// add the cost of getting the shadow terms
 
+		// change-begin
+		{
+			// Custom shadow
+			uint ToonShadingModel = DecodeToonShadingModel(GBuffer.CustomData.a);// Face does not receive shadow
+			if(ShadingModelID == SHADINGMODELID_TOON_LIT
+				&& Shadow.SurfaceShadow + Shadow.TransmissionShadow <= 0
+				&& ToonShadingModel != 5)
+			{
+				// Here I did not use it with its define，but resign its values
+				Shadow.SurfaceShadow = 0;
+				Shadow.TransmissionShadow = 1;
+			}
+			else
+			{
+				Shadow.SurfaceShadow = 1;
+			}
+		}
+		// change-end
+
 #if SHADING_PATH_MOBILE
 		const bool bNeedsSeparateSubsurfaceLightAccumulation = UseSubsurfaceProfile(GBuffer.ShadingModelID);
 		
@@ -431,47 +450,8 @@ FLightAccumulator AccumulateDynamicLighting(
 			LightAccumulator.EstimatedCost += 0.4f;		// add the cost of the lighting computations (should sum up to 1 form one light)
 		#endif
 		}
-		// Change-begin
-		else
-		{
-			#if NON_DIRECTIONAL_DIRECT_LIGHTING
-			#else
-			if (ShadingModelID == SHADINGMODELID_TOON_LIT)
-			{
-				if (!LightData.bSpotLight && !LightData.bRectLight)
-				{
-					FCapsuleLight Capsule = GetCapsule( ToLight, LightData );
-					FAreaLightIntegrateContext Context = CreateCapsuleIntegrateContext(GBuffer.Roughness, N, V, Capsule, LightData.bInverseSquared);
-					FDirectLighting Lighting = ToonShadow( GBuffer, N, V, ToLight, 0, dot(N, ToLight), Context.AreaLight, Shadow );
-					LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, 0.0f, 0, float3(1, 1, 1), false );
-				}
-			}
-			#endif
-		}
-		// Change-end
 #endif // SHADING_PATH_MOBILE
 	}
-	// Change-begin
-	else
-	{
-#if SHADING_PATH_MOBILE
-#else
-		#if NON_DIRECTIONAL_DIRECT_LIGHTING
-		#else
-		if (ShadingModelID == SHADINGMODELID_TOON_LIT)
-		{
-			if (!LightData.bSpotLight && !LightData.bRectLight)
-			{
-				FCapsuleLight Capsule = GetCapsule( ToLight, LightData );
-				FAreaLightIntegrateContext Context = CreateCapsuleIntegrateContext(GBuffer.Roughness, N, V, Capsule, LightData.bInverseSquared);
-				FDirectLighting Lighting = ToonShadow( GBuffer, N, V, ToLight, 0, dot(N, ToLight), Context.AreaLight, (FShadowTerms)0 );
-				LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, 0.0f, 0, float3(1, 1, 1), false );
-			}
-		}
-		#endif
-#endif
-	}
-	// Change-end
 	
 	return LightAccumulator;
 }
