@@ -359,11 +359,11 @@ FLightAccumulator AccumulateDynamicLighting(
 		if (ShadingModelID == SHADINGMODELID_TOON_LIT)
 		{
 			// Custom shadow
-			uint ToonShadingModel = DecodeToonShadingModel(GBuffer.CustomData.a);// Face does not receive shadow
-			if(Shadow.SurfaceShadow + Shadow.TransmissionShadow <= 0 && ToonShadingModel != 5)
+			uint ToonShadingModel = DecodeToonShadingModel(GBuffer.CustomData.a);
+			if(Shadow.SurfaceShadow + Shadow.TransmissionShadow <= 0)
 			{
 				// Here I did not use it with its define，but resign its values
-				Shadow.SurfaceShadow = 0;
+				Shadow.SurfaceShadow = 1 - step(ToonShadingModel, 3); // 'Face, Eye, EyeWhite' do not receive shadow
 				Shadow.TransmissionShadow = 1;
 			}
 			else

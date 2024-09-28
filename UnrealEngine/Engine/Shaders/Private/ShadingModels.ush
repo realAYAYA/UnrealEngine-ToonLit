@@ -1010,7 +1010,7 @@ FDirectLighting ToonLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, fl
 		float ToonSpecular = ToonStep(GBuffer.Roughness, Context.NoH);
 		Specular = lerp(ToonSpecular, 0.0f, GBuffer.Roughness * GBuffer.Roughness) * LightColor * GBuffer.BaseColor * GBuffer.Specular;
 		
-		float bDefault = (float)(ToonShadingModel == 0 || ToonShadingModel == 7);
+		float bDefault = (float) (ToonShadingModel != 5);
 		Lighting.Diffuse += Diffuse * bDefault;
 		Lighting.Specular += Specular * bDefault;
 	}

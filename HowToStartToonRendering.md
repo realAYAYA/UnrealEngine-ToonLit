@@ -12,7 +12,9 @@ First, I try my best not to malloc additional gpu memory(ToonBuffer, etc) to imp
 Everything should be implemented locally as much as possible, because it will introduce fewer problems  
 
 ToonShadingModel is designed to complement the unreal shadingmodels  
-For now, it includes the following types: Default(0), FaceNoSdf(1), Stocking(2), (3), Eye(4), Face(5), (6), Hair(7)  
+For now, it includes the following types:  
+Default(0), FaceNoSdf(1), Stocking(2), (3), Eye(4), Face(5), EyeWhite(6), Hair(7)  
+When 'ToonShadingModel' > 3, it will not receive shadow  
 
 Ensure your M_FileName.uasset has been set ShadingModel with ToonLit  
 For example:  
